@@ -21,7 +21,7 @@
   --warn: #8a5a00; --warn-bg: #fff1c9; --review: #b42318; --review-bg: #fde3df;
   /* a person must look (fixed yellow): unverified soft, undecided / needs review stronger */
   --ok-ink: #5fa878; --ok-soft: #e7f3ea; --no-ink: #d07f76; --no-soft: #fbeae7;   /* softened grade glyphs */
-  --blank-faded: #a3abb3; --ask: #8f1ccc; --ask-soft: #f2e6fb;                      /* ? = not determined */
+  --blank-faded: #a3abb3; --ask: #6b5ce8; --ask-soft: #ebe9fc;                      /* ? = not determined */
   --unv-bg: #fff3c2; --unv-ink: #6b5300; --done-bg: #eef0f2; --man-bg: #e2ebfb; --man-ink: #2c5fb8;
   --stale: #8a8378;
   --glyph-font: system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
@@ -50,7 +50,7 @@ body.p-grid { --page-max: 100vw; }       /* grid.js sets it to the table's width
   --blank: #b6bec6; --blank-bg: #2b3135; --none: #7f8c8c;
   --warn: #e3b456; --warn-bg: #3a2f13; --review: #f2786d; --review-bg: #43211e;
   --ok-ink: #9ccfab; --ok-soft: #1c3124; --no-ink: #eba59d; --no-soft: #3a211e;
-  --blank-faded: #6c767e; --ask: #cc7afc; --ask-soft: #311b40;
+  --blank-faded: #6c767e; --ask: #aaa6ff; --ask-soft: #24234a;
   --unv-bg: #37320f; --unv-ink: #f1d978; --done-bg: #262c2e; --man-bg: #1d2a45; --man-ink: #8cb1f4;
   --stale: #9a9285;
   --manual: #84abf2; --manual-bg: #1d2a42; --hl: #4a4216;
@@ -154,7 +154,7 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 .pill b { font-size: 13px; }
 /* Two axes, for grid cells and the question page's pills alike.
    The glyph is the grade: ✓ correct, ✗ incorrect (pastel green and red), ∅ blank (grey, faded),
-   a number for points, ? not determined (magenta, heavy: the first thing the eye finds).
+   a number for points, ? not determined (light blue-violet, heavy: the first thing the eye finds).
    The background is the grading status: yellow = needs verification, grey = verified and
    counting, blue = decided by hand; none = not started or in progress. Outdated keeps its
    status colour and adds a corner mark. One font for every status glyph. */
