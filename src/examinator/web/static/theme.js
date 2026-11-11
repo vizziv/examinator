@@ -2,6 +2,7 @@
 // Loaded synchronously in <head> so the saved theme and accents apply before first paint.
 // Per browser (localStorage):
 //   'theme'               "system" (default) | "light" | "dark"
+//   'invertScans'         true (default) | false: show scans inverted when the theme is dark
 //   'accent', 'accent2'   {h, c}: an OKLCH hue (degrees) and chroma. Lightness is not
 //                         chosen: each theme derives it per role (fill, link, ring…),
 //                         so one choice reads well on light and on dark surfaces.
@@ -61,6 +62,7 @@ const Theme = (() => {
     const mode = read('theme', 'system');
     const theme = mode === 'dark' || (mode !== 'light' && dark.matches) ? 'dark' : 'light';
     html.dataset.theme = theme;
+    html.dataset.invertImages = read('invertScans', true) === false ? 'off' : 'on';
     const picks = {accent: accent('accent'), accent2: accent('accent2')};
     for (const [role, [key, L]] of Object.entries(ROLES[theme])) {
       html.style.setProperty('--' + role, color(L, picks[key].c, picks[key].h));
@@ -68,6 +70,6 @@ const Theme = (() => {
   }
   apply();
   dark.addEventListener('change', apply);
-  addEventListener('storage', e => { if (['theme', 'accent', 'accent2'].includes(e.key)) apply(); });
+  addEventListener('storage', e => { if (['theme', 'invertScans', 'accent', 'accent2'].includes(e.key)) apply(); });
   return {apply, accent, color, maxChroma, DEFAULTS, ROLES, MAX_C};
 })();

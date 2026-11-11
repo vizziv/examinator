@@ -14,6 +14,11 @@
 {% block head %}{% endblock %}
 </head>
 <body class="p-{{ nav or 'other' }}">
+<svg class="defs" width="0" height="0" aria-hidden="true" focusable="false"><defs>
+<!-- Apply gamma in display RGB before CSS inversion: gray x becomes 1 - x^2 -->
+<filter id="image-gamma" color-interpolation-filters="sRGB"><feComponentTransfer>
+<feFuncR type="gamma" amplitude="1" exponent="2" offset="0"/><feFuncG type="gamma" amplitude="1" exponent="2" offset="0"/><feFuncB type="gamma" amplitude="1" exponent="2" offset="0"/>
+</feComponentTransfer></filter></defs></svg>
 <nav class="top">
 <a href="{{ root }}/" id="home">{{ exam.title }}</a>
 {% block nav %}{% endblock %}

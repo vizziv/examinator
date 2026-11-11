@@ -36,6 +36,9 @@
   const theme = $('theme');
   theme.value = pref('theme', 'system');
   theme.addEventListener('change', () => { setPref('theme', theme.value); Theme.apply(); });
+  const invert = $('invert-scans');
+  invert.checked = pref('invertScans', true) !== false;
+  invert.addEventListener('change', () => { setPref('invertScans', invert.checked); Theme.apply(); });
   // Accents as OKLCH hue + chroma; the lightness is per theme and role (theme.js).
   for (const box of document.querySelectorAll('.picker')) {
     const key = box.dataset.key, two = key === 'accent2';

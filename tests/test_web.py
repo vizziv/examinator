@@ -772,3 +772,14 @@ def test_focus_values_follow_decisions(site):
     assert site.decide('s1', 'b', '', True).status_code == 200
     data = site.get('/focus/values').json()['values']
     assert data['b/state']['s1'] == ['manual'] and data['b/grade']['s1'] == ['✓']
+
+
+def test_inverted_scans_filter_setting_and_csp(site):
+    for path in ('/', '/s/s1/a', '/settings', '/scan'):
+        r = site.get(path)
+        assert '<filter id="image-gamma"' in r.text
+        assert "style-src 'self'" in r.headers['content-security-policy']
+        assert "default-src 'none'" in r.headers['content-security-policy']
+    assert 'id="invert-scans"' in site.get('/settings').text
+    assert 'invertImages' in site.get('/static/theme.js').text
+    assert 'image-gamma' in site.get('/static/app.css').text
