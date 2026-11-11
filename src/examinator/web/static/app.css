@@ -20,7 +20,7 @@
   /* workflow states (fixed) */
   --warn: #8a5a00; --warn-bg: #fff1c9; --review: #b42318; --review-bg: #fde3df;
   /* a person must look (fixed yellow): unverified soft, undecided / needs review stronger */
-  --ok-ink: #3b8552; --ok-soft: #e7f3ea; --no-ink: #8a5a2e; --no-soft: #f4ebe1;   /* softened grade glyphs */
+  --ok-ink: #5fa878; --ok-soft: #e7f3ea; --no-ink: #d07f76; --no-soft: #fbeae7;   /* softened grade glyphs */
   --blank-faded: #a3abb3; --ask: #a814bd; --ask-soft: #f6e6fa;                      /* ? = not determined */
   --unv-bg: #fff3c2; --unv-ink: #6b5300; --done-bg: #eef0f2; --man-bg: #e2ebfb; --man-ink: #2c5fb8;
   --stale: #8a8378;
@@ -49,7 +49,7 @@ body.p-grid { --page-max: 100vw; }       /* grid.js sets it to the table's width
   --good: #5cc97a; --good-bg: #1a3323; --good-ink: #7fd897; --bad: #f2786d; --bad-bg: #3d201d; --bad-ink: #f6968d;
   --blank: #b6bec6; --blank-bg: #2b3135; --none: #7f8c8c;
   --warn: #e3b456; --warn-bg: #3a2f13; --review: #f2786d; --review-bg: #43211e;
-  --ok-ink: #7cc492; --ok-soft: #1c3124; --no-ink: #d8a877; --no-soft: #33271b;
+  --ok-ink: #9ccfab; --ok-soft: #1c3124; --no-ink: #eba59d; --no-soft: #3a211e;
   --blank-faded: #6c767e; --ask: #e274fa; --ask-soft: #381a3d;
   --unv-bg: #37320f; --unv-ink: #f1d978; --done-bg: #262c2e; --man-bg: #1d2a45; --man-ink: #8cb1f4;
   --stale: #9a9285;
@@ -153,7 +153,7 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
   line-height: 20px; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
 .pill b { font-size: 13px; }
 /* Two axes, for grid cells and the question page's pills alike.
-   The glyph is the grade: ✓ correct, ✗ incorrect (soft green and brown), ∅ blank (grey, faded),
+   The glyph is the grade: ✓ correct, ✗ incorrect (pastel green and red), ∅ blank (grey, faded),
    a number for points, ? not determined (magenta, heavy: the first thing the eye finds).
    The background is the grading status: yellow = needs verification, grey = verified and
    counting, blue = decided by hand; none = not started or in progress. Outdated keeps its
