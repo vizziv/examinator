@@ -21,7 +21,7 @@
   --warn: #8a5a00; --warn-bg: #fff1c9; --review: #b42318; --review-bg: #fde3df;
   /* a person must look (fixed yellow): unverified soft, undecided / needs review stronger */
   --ok-ink: #3b8552; --ok-soft: #e7f3ea; --no-ink: #b84c41; --no-soft: #fbeae7;   /* softened grade glyphs */
-  --blank-faded: #a3abb3; --ask: #4a32d4; --ask-soft: #e9e6fb;                      /* ? = not determined */
+  --blank-faded: #a3abb3; --ask: #3d22e0; --ask-soft: #e9e6fb;                      /* ? = not determined */
   --unv-bg: #fff3c2; --unv-ink: #6b5300; --done-bg: #eef0f2; --man-bg: #e2ebfb; --man-ink: #2c5fb8;
   --stale: #8a8378;
   --glyph-font: system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
@@ -50,7 +50,7 @@ body.p-grid { --page-max: 100vw; }       /* grid.js sets it to the table's width
   --blank: #b6bec6; --blank-bg: #2b3135; --none: #7f8c8c;
   --warn: #e3b456; --warn-bg: #3a2f13; --review: #f2786d; --review-bg: #43211e;
   --ok-ink: #7cc492; --ok-soft: #1c3124; --no-ink: #ec8b80; --no-soft: #3a211e;
-  --blank-faded: #6c767e; --ask: #9d8cff; --ask-soft: #25214d;
+  --blank-faded: #6c767e; --ask: #a595ff; --ask-soft: #25214d;
   --unv-bg: #37320f; --unv-ink: #f1d978; --done-bg: #262c2e; --man-bg: #1d2a45; --man-ink: #8cb1f4;
   --stale: #9a9285;
   --manual: #84abf2; --manual-bg: #1d2a42; --hl: #4a4216;
@@ -160,7 +160,7 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
    status colour and adds a corner mark. One font for every status glyph. */
 .glyph, .cell > a, .pill b, .qm, .decide button.v-t, .decide button.v-f, .decide button.v-b {
   font-family: var(--glyph-font); font-variant-emoji: text; }
-.qm { color: var(--ask); font-weight: 800; }
+.qm { color: var(--ask); font-weight: 900; font-size: 115%; line-height: 1; }
 .g-t { color: var(--ok-ink); background: var(--ok-soft); }
 .g-f { color: var(--no-ink); background: var(--no-soft); }
 .g-b { color: var(--blank); background: var(--blank-bg); font-weight: 500; }
@@ -188,7 +188,7 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 .cell[data-b] { --ink: var(--blank-faded); }
 .cell[data-b] > a { font-weight: 400; }
 .cell.s-unverified[data-v=""], .cell.s-needs_review[data-v=""], .cell.var.open { --ink: var(--ask); }
-.cell.s-unverified[data-v=""] > a, .cell.s-needs_review[data-v=""] > a, .cell.var.open > a { font-weight: 800; }
+.cell.s-unverified[data-v=""] > a, .cell.s-needs_review[data-v=""] > a, .cell.var.open > a { font-weight: 900; }
 /* background: the grading status */
 .cell.s-unverified, .cell.s-outdated { --tint: var(--unv-bg); }
 .cell.s-graded, .cell.s-needs_review { --tint: var(--done-bg); }
@@ -230,6 +230,8 @@ details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var
 #grid td.c, #grid td.var { text-align: center; min-width: 30px; }
 #grid td.var { min-width: 24px; }
 #grid td.c a, #grid td.var a { display: block; padding: 0 6px; line-height: 20px; font-size: 13.5px; font-weight: 600; text-decoration: none; }
+/* ? stands out: heavier and a little larger than the other glyphs (the row keeps its height) */
+#grid td.cell.s-unverified[data-v=""] a, #grid td.cell.s-needs_review[data-v=""] a, #grid td.cell.var.open a { font-weight: 900; font-size: 15px; line-height: 18px; }
 #grid td.c a:hover, #grid td.var a:hover { outline: 2px solid var(--ring); outline-offset: -2px; }
 #grid td.c { border-left: 1px solid var(--panel); }     /* a hairline between tinted squares */
 /* variant: a short grey code (the index in the question's variants); '?' when a person must decide */
