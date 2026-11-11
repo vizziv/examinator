@@ -110,5 +110,13 @@
   document.addEventListener('click', e => { if (legend?.open && !legend.contains(e.target)) legend.open = false; });
   addEventListener('storage', e => { if (e.key === 'focus') refresh(); });
   addEventListener('pageshow', e => { if (e.persisted) refresh(); });
+  // The table's width changes after the first measurement too (late layout, zoom, a search).
+  if (window.ResizeObserver) {
+    const watch = new ResizeObserver(measure);
+    watch.observe(document.getElementById('grid-wrap'));
+    const first = document.querySelector('#grid thead th');
+    if (first) watch.observe(first);
+  }
+  measure();
   refresh().then(() => { if (location.search) history.replaceState(null, '', location.pathname); });
 })();
