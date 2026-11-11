@@ -160,8 +160,10 @@ class Client:
 
     def __init__(self, base_url: str, model: str, *, max_tokens: int = 4096,
                  timeout: float = 120.0, retry_delays: Sequence[float] = (10, 20),
-                 extra_body: Mapping | None = None, reasoning_extra: Mapping | None = None):
+                 extra_body: Mapping | None = None, reasoning_extra: Mapping | None = None,
+                 preamble: str | None = PREAMBLE):
         self.base_url = check_url(base_url)
+        self.preamble = preamble        # None: no system message (a model with its own fixed prompts)
         self.model = model
         self.max_tokens = max_tokens
         self.timeout = timeout
@@ -184,7 +186,7 @@ class Client:
             content.append({'type': 'image_url', 'image_url': {'url': _data_url(image)}})
         body = {
             'model': self.model,
-            'messages': [{'role': 'system', 'content': PREAMBLE},
+            'messages': [*([{'role': 'system', 'content': self.preamble}] if self.preamble else []),
                          {'role': 'user', 'content': content}],
             'temperature': 0,
             'max_tokens': self.max_tokens,

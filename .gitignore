@@ -32,3 +32,6 @@ workspaces/
 *.sqlite-shm
 *.pdf
 fake_model.json
+
+# Agent worktrees
+.claude/worktrees/

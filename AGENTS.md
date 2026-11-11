@@ -66,4 +66,5 @@ uv run pytest                             # tests (offline, fake model)
 uv run examinator synth exams/toy_exam /path/outside/repo/ws   # synthetic workspace
 uv run examinator run exams/toy_exam --workspace WS            # run stages from the CLI
 uv run examinator serve exams/toy_exam --workspace WS          # the app
+uv run examinator compare exams/toy_exam --workspace WS --fake # compare transcription models (report only)
 ```
