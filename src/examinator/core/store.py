@@ -186,18 +186,22 @@ class Store:
     def write(self, submission: str, question: str, kind: str, body: Any, *,
               origin: str, author: str | None = None, inputs: Mapping | None = None,
               expect_rev: int | None | _Any = ANY, guard: Mapping[str, int | None] | None = None,
-              verified: bool = False) -> Artifact:
+              verified: bool = False, unless_protected: bool = False) -> Artifact:
         """Create or replace one artifact; the replaced row goes to history.
 
         `expect_rev` is the revision the writer last saw (`None`: must not
         exist). `guard` maps other kinds of the same submission and question to
         the revisions a computation read; the write happens only if all are
-        still current. Saving unchanged content by hand is a no-op.
+        still current. With `unless_protected`, content a grader wrote or
+        verified is never replaced, even if that happened a moment ago.
+        Saving unchanged content by hand is a no-op.
         """
         assert origin in ('auto', 'manual')
         text = json.dumps(body, ensure_ascii=False)
         with self._lock, self._tx():
             cur = self._check(submission, question, kind, expect_rev, guard)
+            if unless_protected and cur is not None and cur.protected:
+                raise Conflict(f"{kind} is protected")
             if (cur is not None and origin == 'manual' and inputs is None
                     and json.dumps(cur.body, ensure_ascii=False) == text):
                 if verified and not cur.verified:
@@ -238,13 +242,22 @@ class Store:
                                  (submission, question, kind))
 
     def restore(self, submission: str, question: str, kind: str, rev: int, *,
-                author: str | None) -> Artifact:
-        """Undo: bring a replaced version back as a new manual write."""
-        old = next((a for a in self.history(submission, question, kind) if a.rev == rev), None)
-        if old is None:
-            raise KeyError(rev)
-        return self.write(submission, question, kind, old.body, origin='manual', author=author,
-                          inputs=dict(old.inputs) or None)
+                expect_rev: int | None | _Any = ANY) -> Artifact:
+        """Undo: bring a replaced version back as it was (same origin, author and
+        inputs), under a new revision and unverified."""
+        with self._lock, self._tx():
+            old = next((a for a in self.history(submission, question, kind) if a.rev == rev), None)
+            if old is None:
+                raise KeyError(rev)
+            cur = self._check(submission, question, kind, expect_rev, None)
+            if cur is not None:
+                self._archive(cur)
+            new = self._next_rev()
+            self._db.execute(
+                f'insert or replace into artifact ({COLUMNS}) values (?,?,?,?,?,?,?,?,?,?,?)',
+                (submission, question, kind, json.dumps(old.body, ensure_ascii=False), old.origin,
+                 old.author, _now(), new, json.dumps(dict(old.inputs)) if old.inputs else None, None, None))
+            return self.get(submission, question, kind)
 
     def purge_history(self) -> None:
         with self._lock:

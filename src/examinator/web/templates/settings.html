@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block title %}Settings · {{ exam.title }}{% endblock %}
+{% block head %}<script src="{{ root }}/static/settings.js" defer></script>{% endblock %}
+{% block body %}
+<main class="narrow" id="settings">
+<form id="defaults" autocomplete="off">
+<fieldset><legend>scan layout (workspace default)</legend>
+<label>cover pages <input type="number" id="cover" min="0" max="99" value="{{ cover }}"></label>
+<label>left <input type="number" class="win" min="0" max="1000" value="{{ window[0] }}"></label>
+<label>top <input type="number" class="win" min="0" max="1000" value="{{ window[1] }}"></label>
+<label>right <input type="number" class="win" min="0" max="1000" value="{{ window[2] }}"></label>
+<label>bottom <input type="number" class="win" min="0" max="1000" value="{{ window[3] }}"></label>
+<button type="button" id="save" class="primary">Save</button> <span id="msg" role="status"></span>
+<p class="help">Cover pages are scanned pages before printed page 1. The scan window is where the printed page
+sits on the scanned page, in per-mille of the scan. Changing either moves every crop; it does not rerun anything.
+A submission that differs gets its own override on a question page, under “pages”.</p>
+</fieldset>
+<fieldset><legend>preview</legend>
+<label>submission <select id="pv-sub">{% for s in subs %}<option>{{ s.id }}</option>{% endfor %}</select></label>
+<label>printed page <input type="number" id="pv-page" min="1" max="{{ pages }}" value="1"></label>
+<div id="pv"><img id="pv-img" alt="scanned page"><div id="pv-rect"></div></div>
+</fieldset>
+<fieldset><legend>this browser</legend>
+<label>crop width <input type="range" id="crop-size" min="160" max="1000" step="20"> <span id="crop-n" class="dim"></span></label>
+</fieldset>
+</form>
+</main>
+{% endblock %}

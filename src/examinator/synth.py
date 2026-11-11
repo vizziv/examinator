@@ -221,7 +221,7 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
                         continue
                     want = case.expect[col]
                     got = 'blank' if 'blank' in st.flags else st.value
-                    counts_ok = st.counts if want is not None else st.state == 'needs_review'
+                    counts_ok = st.counts if want is not None else not st.counts
                     if got != want or not counts_ok:
                         problems.append(f"{case.name} {col}: expected {want!r}, got {got!r} "
                                         f"({st.state}{': ' + st.reason if st.reason else ''})")

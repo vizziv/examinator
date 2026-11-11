@@ -32,4 +32,4 @@ packages = ["src/examinator"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-markers = ["live: opt-in tests against the real loopback model (blank or synthetic material only)"]
+markers = ["slow: takes more than about 20 s", "live: opt-in tests against the real loopback model (blank or synthetic material only)"]

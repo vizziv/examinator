@@ -34,9 +34,12 @@ class Row:
 def load(exam: Exam, store: Store) -> list[Row]:
     small = {'variant'} | {grade_kind(p) for q in exam.questions.values() for p in q.result}
     arts: dict[tuple[str, str], dict[str, Artifact]] = {}
+    bodies = {(a.submission, a.question, a.kind): a for a in store.all(kinds=small)}
     for a in store.all(bodies=False):
-        arts.setdefault((a.submission, a.question), {})[a.kind] = a
-    for a in store.all(kinds=small):
+        if a.kind in small:      # the two queries are not one snapshot: keep only rows seen whole
+            a = bodies.get((a.submission, a.question, a.kind))
+            if a is None:
+                continue
         arts.setdefault((a.submission, a.question), {})[a.kind] = a
     rows = []
     for sub in store.submissions():

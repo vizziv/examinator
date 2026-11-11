@@ -32,7 +32,8 @@ class Selection:
     questions: tuple[str, ...]
     stages: tuple[str, ...]
     missing_only: bool = False        # fill gaps without touching anything that exists
-    include_protected: bool = False   # overwrite what graders wrote or verified (kept in history)
+    include_protected: bool = False   # overwrite what graders wrote or verified (kept in history);
+                                      # manual grades too, but only if 'grade' is among the stages
 
 
 @dataclass(frozen=True)
@@ -84,7 +85,7 @@ def plan(exam: Exam, store: Store, selection: Selection, *, model_available: boo
                 if name == 'grade':      # one row per result part
                     rows = [arts.get(grade_kind(part)) for part in q.result]
                     present = all(r is not None for r in rows)
-                    protected = present and all(r.origin == 'manual' for r in rows)
+                    protected = any(r is not None and r.origin == 'manual' for r in rows)
                 else:
                     present = name in arts
                     protected = present and arts[name].protected
@@ -141,13 +142,16 @@ class BatchRun:
         self.state = 'running'
         todo = [i for i in self.plan.items if i.action == 'run']
         stopped: set[tuple[str, str]] = set()
-        protect = self.plan.selection.include_protected
+        overwrite = self.plan.selection.include_protected
+        # Manual grades are replaced only when the grade stage itself was selected.
+        regrade = overwrite and 'grade' in self.plan.selection.stages
 
         def task(item):
             if self._cancel.is_set():
                 return None
             return self.runner.run_stage(item.submission, item.question, item.stage,
-                                         deliberate=protect and item.stage == 'evidence',
+                                         overwrite=overwrite,
+                                         deliberate=regrade and item.stage in ('evidence', 'grade'),
                                          reasoning=self.reasoning)
 
         with ThreadPoolExecutor(max_workers=max(1, self.parallel)) as pool:

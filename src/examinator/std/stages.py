@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from ..core.context import BadOutput, Context
-from ..core.defs import Stage, describe
+from ..core.defs import Stage
 from ..core.evidence import Evidence, EvidenceView
 from ..core.variants import read_variant  # noqa: F401  (re-exported)
 from . import prompts
@@ -92,7 +92,7 @@ def parse_math(prompt: str = prompts.PARSE_ANSWERS, *, symbols: Sequence[str] = 
                functions: Sequence[str] | None = None, notes: str = "") -> Stage:
     """Model, text in, `{label: answer}` out. This is what graders edit and verify."""
     return Stage('parse', ParseMath(prompt, tuple(symbols), None if functions is None else tuple(functions), notes),
-                 inputs=('transcript',), uses_model=True, editable=True)
+                 inputs=('transcript',), uses_model=True, editable=True, shape='fields')
 
 
 @dataclass(frozen=True)
@@ -119,7 +119,7 @@ def parse_pseudocode(entries: Sequence[str], *, language: Any = None,
                      then: Callable[[str], str] | None = None) -> Stage:
     """Model, text in, source in the pseudocode language out."""
     return Stage('parse', ParsePseudocode(tuple(entries), language, prompt, notes, then),
-                 inputs=('transcript',), uses_model=True, editable=True)
+                 inputs=('transcript',), uses_model=True, editable=True, shape='code')
 
 
 # --- check --------------------------------------------------------------------
@@ -137,10 +137,24 @@ class CheckMath:
         data = math.check_answers(ctx.input('parse'), key, symbols=self.symbols, functions=self.functions)
         rows = [[label, f.get('answer') or "", f.get('outcome') or "?", f.get('note') or ""]
                 for label, f in data['fields'].items()]
-        shown = [[label, entry if isinstance(entry, str) else str(describe(entry))]
-                 for label, entry in key.items()]
+        shown = [[label, show_entry(entry)] for label, entry in key.items()]
         return Evidence(data, [Table(['', "answer", "", ""], rows),
                                Details("Key", Table(['', "key"], shown), audience='grader')])
+
+
+def show_entry(entry: Any) -> str:
+    """A key entry as graders see it. A callable entry may carry a `label`."""
+    if isinstance(entry, str):
+        return entry
+    label = getattr(entry, 'label', None)
+    if label:
+        return str(label)
+    accepted = getattr(entry, 'accepted', None)
+    if accepted:
+        return " | ".join(accepted)
+    if hasattr(entry, 'value') and hasattr(entry, 'tol'):
+        return f"{entry.value} ± {entry.tol}"
+    return getattr(entry, '__name__', type(entry).__name__)
 
 
 def check_math(key: Mapping[str, Any], *, symbols: Mapping[str, str] | Sequence[str] = (),

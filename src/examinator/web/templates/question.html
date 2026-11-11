@@ -1,0 +1,185 @@
+{% extends 'base.html' %}
+{% import 'blocks.html' as blocks %}
+{% set here = root ~ '/s/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) %}
+{% block title %}{{ sub.id }} · {{ q.id }}{% endblock %}
+{% block head %}
+<script src="{{ root }}/static/plot.js" defer></script>
+<script src="{{ root }}/static/question.js" defer></script>
+{% endblock %}
+{% block nav %}
+<button type="button" data-act="prev" title="previous student">‹ <kbd>k</kbd> <kbd>⌥K</kbd></button>
+<b id="who" title="{{ sub.id }}">{{ sub.name or sub.id }}</b> <span class="dim" id="pos"></span>
+<button type="button" data-act="next" title="next student"><kbd>j</kbd> <kbd>⌥J</kbd> ›</button>
+<span class="qnav">
+{% if prev_q %}<a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ prev_q|urlencode }}" id="prev-q" title="{{ prev_q }}">‹<kbd>h</kbd></a>{% endif %}
+<b title="{{ q.title }}">{{ q.id }}</b>
+{% if next_q %}<a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ next_q|urlencode }}" id="next-q" title="{{ next_q }}"><kbd>l</kbd>›</a>{% endif %}
+</span>
+<a href="{{ root }}/scan" target="examinator-scan" id="scan-link">scan <kbd>p</kbd></a>
+<label class="dim">crop <input type="range" id="crop-size" min="160" max="1000" step="20"></label>
+<span id="busy" hidden>running…</span>
+{% endblock %}
+{% block body %}
+<main id="question" data-sub="{{ sub.id }}" data-q="{{ q.id }}" data-name="{{ sub.name }}" data-count="{{ count }}"
+ data-pages='{{ scans|map(attribute="index")|list|tojson }}' data-ids='{{ ids|tojson }}'>
+<section id="scan">
+{% for s in scans %}
+<img class="scan" src="{{ root }}/page/{{ sub.id|urlencode }}/{{ s.index }}.jpg" alt="page {{ s.page }}" loading="lazy">
+{% else %}
+<p class="dim">no scan pages</p>
+{% endfor %}
+</section>
+<section id="work">
+
+<div id="parts" data-live data-seen='{{ seen|tojson }}'>
+{% for p in parts %}
+<div class="part">
+{% if parts|length > 1 %}<span class="pname">{{ p.part }}</span>{% endif %}
+<span class="badge s-{{ p.st.state }}"><b class="{{ p.cls }}">{{ p.glyph }}</b> {{ labels[p.st.state] }}{% if p.st.author %} · {{ p.st.author }}{% endif %}</span>
+{% if p.st.waiting == ('input',) %}<span class="dim">decide</span>{% elif p.st.waiting %}<span class="dim">verify {{ p.st.waiting|reject('equalto', 'input')|join(', ') }}</span>{% endif %}
+{% if p.st.reason and p.st.value is none %}<span class="reason">{{ p.st.reason }}</span>{% endif %}
+{% if p.st.stale_code %}<span class="tag warn" title="checked with older exam code">old code</span>{% endif %}
+<span class="decide" data-part="{{ p.part }}" data-rev="{{ p.rev }}">
+{% if p.bool %}
+<button type="button" data-act="decide" data-value="true" class="v-t">✓</button>
+<button type="button" data-act="decide" data-value="false" class="v-f">✗</button>
+{% else %}
+<input type="number" class="num" {% if p.min is not none %}min="{{ p.min }}"{% endif %} {% if p.max is not none %}max="{{ p.max }}"{% endif %} step="{{ p.step }}" aria-label="grade"
+ {%- if p.max is not none %} placeholder="{{ '%g'|format(p.min or 0) }}–{{ '%g'|format(p.max) }}"{% endif %}>
+<button type="button" data-act="decide-number">set</button>
+{% endif %}
+<button type="button" data-act="decide-blank" class="v-b" title="blank">∅</button>
+{% if p.manual %}<button type="button" data-act="undecide" title="clear decision">clear</button>{% endif %}
+</span>
+</div>
+{% endfor %}
+</div>
+
+{% if parse %}
+<form class="draft" id="ed-parse" data-kind="parse" data-mode="{{ parse.mode }}" data-rev="{{ parse.rev }}" autocomplete="off">
+{% if parse.mode == 'form' %}
+<div class="fields">
+{% for f in parse.fields %}
+<label class="field{% if f.marker %} marked{% endif %}">
+<span class="flabel">{{ f.label }}</span>
+<input type="text" data-label="{{ f.label }}" value="{{ f.value }}" spellcheck="false"{% if not parse.editable %} readonly{% endif %}>
+{% if f.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}"></span>{% endif %}
+</label>
+{% endfor %}
+</div>
+{% else %}
+<div class="codeedit">
+<textarea spellcheck="false" rows="{{ [[parse.text.count('\n') + 2, 8]|max, 40]|min }}"{% if not parse.editable %} readonly{% endif %}>
+{{ parse.text }}</textarea>
+<div class="crops">
+{% for c in parse.crops %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ c.index }}.jpg" data-box="{{ c.box }}"></span>{% endfor %}
+</div>
+</div>
+{% endif %}
+<div class="bar">
+{% if parse.editable %}
+<button type="button" data-act="verify" class="primary" title="save and verify">Verify <kbd>v</kbd> <kbd>⌘↵</kbd></button>
+<button type="button" data-act="save">Save <kbd>s</kbd> <kbd>⌘S</kbd></button>
+<kbd title="focus the first field; Esc leaves it">e</kbd>
+{% endif %}
+<span class="notice" hidden>changed elsewhere <button type="button" data-act="discard">discard draft, reload</button></span>
+<span id="meta-parse" data-live class="meta">
+{% if parse.art %}
+{% if parse.art.verified %}<span class="tag good">verified · {{ parse.art.verified_by }}</span>
+{% if parse.editable %}<button type="button" data-act="unverify" data-kind="parse" data-rev="{{ parse.rev }}" class="link">undo</button>{% endif %}{% endif %}
+{% if parse.marker %}<span class="tag bad">review marker</span>{% endif %}
+<span class="dim">{{ parse.art.author or parse.art.origin }}</span>
+{% else %}<span class="dim">no parse</span>{% endif %}
+</span>
+</div>
+</form>
+{% endif %}
+
+{% if variant %}
+<div id="variant" data-live data-rev="{{ variant.rev }}" class="panel{% if not variant.resolved %} attention{% endif %}">
+<div class="bar">
+<span class="plabel">variant</span>
+{% if variant.resolved %}<b>{{ variant.resolved }}</b>{% else %}<span class="tag bad">unresolved</span>{% if variant.candidates %}<span class="dim">{{ variant.candidates|join(' / ') }}</span>{% endif %}{% endif %}
+{% if variant.manual %}<span class="tag">manual · {{ variant.art.author }}</span>{% endif %}
+{% if variant.art and variant.art.verified %}<span class="tag good">verified · {{ variant.art.verified_by }}</span>
+{% elif variant.resolved and not variant.trusted %}<span class="tag warn">unverified</span>{% endif %}
+<select id="variant-pick" aria-label="choose variant"><option value="">choose…</option>{% for v in q.variants %}<option{% if v == variant.resolved and variant.manual %} selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+<button type="button" data-act="variant-choose">set</button>
+{% if variant.art %}<button type="button" data-act="variant-clear" title="back to the cue readings">clear</button>{% endif %}
+{% if variant.resolved and variant.art and not variant.art.verified %}<button type="button" data-act="variant-verify">Verify</button>{% endif %}
+</div>
+{% if variant.cues %}
+<div class="cues">
+{% for c in variant.cues %}
+<div class="cue">
+{% if c.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ c.crop.index }}.jpg" data-box="{{ c.crop.box }}"></span>{% endif %}
+<span class="cueline"><span class="flabel" title="{{ c.ask }}">{{ c.name }}</span>
+<input type="text" value="{{ '' if c.reading is none else c.reading }}" data-cue="{{ c.name }}" size="8" aria-label="reading" spellcheck="false">
+<button type="button" data-act="cue">set</button>
+<span class="{{ 'dim' if c.variant else 'tag bad' }}">→ {{ c.variant or '?' }}</span></span>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+</div>
+{% endif %}
+
+<div id="evidence" data-live class="{% if evidence.art and not evidence.current %}stale{% endif %}">
+{% if evidence.art %}
+{% if not evidence.current %}<span class="tag warn">outdated</span>{% endif %}
+{% if evidence.plots %}<div class="plots">{{ blocks.render(evidence.plots, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode)) }}</div>{% endif %}
+{{ blocks.render(evidence.rest, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode)) }}
+{% endif %}
+</div>
+
+<div id="run" class="bar" data-live>
+<span class="plabel">run</span>
+{% for s in stages %}
+<span class="pair"><button type="button" data-act="run" data-stage="{{ s.name }}"{% if s.model %} data-model="1"{% endif %}{% if s.replaces %} class="guard" data-confirm="{{ s.replaces }}" title="replaces {{ s.replaces }}"{% endif %}>{{ s.name }}</button><button type="button" data-act="run" data-stage="{{ s.name }}" data-onward="1"{% if s.model %} data-model="1"{% endif %}{% if s.replaces_on %} class="guard" data-confirm="{{ s.replaces_on }}"{% endif %} title="{{ s.name }} and everything after{% if s.replaces_on %}; replaces {{ s.replaces_on }}{% endif %}">↓</button></span>
+{% endfor %}
+{% if model %}<label><input type="checkbox" id="run-reasoning"> reasoning</label>{% endif %}
+<input type="text" id="run-params" placeholder="key=value" size="12" aria-label="params" spellcheck="false">
+</div>
+
+{% if transcript %}
+<details id="transcript">
+<summary>transcript <span id="meta-transcript" data-live class="meta">{% if transcript.marker %}<span class="tag bad">review marker</span>{% endif %}{% if not transcript.art %}<span class="dim">none</span>{% endif %}</span></summary>
+<form class="draft" id="ed-transcript" data-kind="transcript" data-mode="code" data-rev="{{ transcript.rev }}" autocomplete="off">
+<textarea spellcheck="false" rows="{{ [[transcript.text.count('\n') + 2, 4]|max, 30]|min }}"{% if not transcript.editable %} readonly{% endif %}>
+{{ transcript.text }}</textarea>
+<div class="bar">
+{% if transcript.editable %}<button type="button" data-act="save">Save</button>{% endif %}
+<span class="notice" hidden>changed elsewhere <button type="button" data-act="discard">discard draft, reload</button></span>
+</div>
+</form>
+</details>
+{% endif %}
+
+<details id="pages">
+<summary>pages{% if pages != pages_default %} <span class="tag">{{ pages|join(', ') }}</span>{% endif %}{% if layout_over %} <span class="tag">layout</span>{% endif %}</summary>
+<div class="bar">
+<label>pages <input type="text" id="pg-list" value="{{ pages|join(', ') }}" size="10" placeholder="{{ pages_default|join(', ') }}"></label>
+<label>note <input type="text" id="pg-note" value="{{ note }}" size="30"></label>
+<button type="button" data-act="pages">set</button>
+<span class="dim">default {{ pages_default|join(', ') }} · {{ count }} scanned</span>
+</div>
+<div class="bar">
+<label>cover pages <input type="number" id="lo-cover" min="0" max="99" size="3" value="{{ layout_over.cover_pages if layout_over and layout_over.cover_pages is not none else '' }}" placeholder="{{ layout.cover_pages }}"></label>
+<label>scan window <input type="text" id="lo-window" size="18" value="{{ layout_over.scan_window|join(' ') if layout_over and layout_over.scan_window else '' }}" placeholder="{{ layout.window|join(' ') }}"></label>
+<button type="button" data-act="layout">set for this submission</button>
+</div>
+</details>
+
+<details id="history" data-live>
+<summary>history <span class="dim">{{ history|length }}</span></summary>
+<table class="ev">
+{% for h in history %}
+<tr><td>{{ h.at }}</td><td>{{ h.who }}{% if h.verified %} ✓{% endif %}</td><td class="preview">{{ h.preview }}</td>
+<td><button type="button" data-act="restore" data-rev="{{ h.rev }}">restore</button></td></tr>
+{% endfor %}
+</table>
+</details>
+
+</section>
+</main>
+{% endblock %}

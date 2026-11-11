@@ -1,0 +1,19 @@
+{% macro render(blocks, base) %}
+{% for b in blocks %}
+{% if b.type == 'note' %}
+<p class="note tone-{{ b.tone }}">{{ b.text }}</p>
+{% elif b.type == 'table' %}
+<table class="ev"><thead><tr>{% for c in b.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+<tbody>{% for r in b.rows %}<tr>{% for c in r %}<td>{{ '' if c is none else c }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
+{% elif b.type == 'code' %}
+<pre class="code">{% for n, line, hl in b.lines %}<span class="ln{% if hl %} hl{% endif %}" data-n="{{ n }}">{{ line }}</span>
+{% endfor %}</pre>
+{% elif b.type == 'details' %}
+<details><summary>{{ b.summary }}</summary>{{ render(b.blocks, base) }}</details>
+{% elif b.type == 'raw' %}
+<iframe class="raw" sandbox src="{{ base }}/{{ b.path }}" loading="lazy" title="figure"></iframe>
+{% elif b.type == 'plot' %}
+<figure class="plot" data-plot='{{ b.plot|tojson }}'></figure>
+{% endif %}
+{% endfor %}
+{% endmacro %}

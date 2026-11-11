@@ -325,9 +325,8 @@ def _sample(symbol: sympy.Symbol, rng: random.Random) -> sympy.Rational:
     elif symbol.is_nonpositive:
         hi = 0.0
     if symbol.is_integer:
-        choices = [n for n in range(-6, 7) if lo <= n <= hi and (n or not symbol.is_nonzero)
-                   and not (n == 0 and lo == 0.1) and not (n == 0 and hi == -0.1)]
-        return sympy.Integer(rng.choice(choices))
+        zero_ok = lo <= 0 <= hi and not symbol.is_nonzero
+        return sympy.Integer(rng.choice([n for n in range(-6, 7) if lo <= n <= hi and (n or zero_ok)]))
     while True:
         k = rng.randint(int(lo * 1000), int(hi * 1000))
         if k % 1000:                 # skip integers: they hide differences such as x vs x**2

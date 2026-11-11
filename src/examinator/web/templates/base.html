@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="token" content="{{ token }}">
+<meta name="root" content="{{ root }}">
+<title>{% block title %}{{ exam.title }}{% endblock %}</title>
+<link rel="stylesheet" href="{{ root }}/static/app.css">
+<script src="{{ root }}/static/common.js" defer></script>
+{% block head %}{% endblock %}
+</head>
+<body>
+<nav class="top">
+<a href="{{ root }}/" id="home">{{ exam.title }}</a>
+{% block nav %}{% endblock %}
+<span class="grow"></span>
+<span id="flash" role="status"></span>
+{% if not model %}<span class="tag warn">no model</span>{% endif %}
+<a href="{{ root }}/runs">Runs</a>
+<a href="{{ root }}/settings">Settings</a>
+</nav>
+{% block body %}{% endblock %}
+</body>
+</html>

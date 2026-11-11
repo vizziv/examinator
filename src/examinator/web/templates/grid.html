@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block head %}<script src="{{ root }}/static/grid.js" defer></script>{% endblock %}
+{% block nav %}
+<input type="search" id="f-text" placeholder="search" size="14" title="/">
+<select id="f-col" title="column"><option value="">any column</option>
+{% for c in columns %}<option>{{ c.name }}</option>{% endfor %}</select>
+<select id="f-state" title="state"><option value="">any state</option>
+{% for s in states %}<option value="{{ s }}">{{ labels[s] }}</option>{% endfor %}</select>
+<select id="f-value" title="value"><option value="">any value</option>
+<option value="t">✓</option><option value="f">✗</option><option value="blank">∅ blank</option><option value="none">no value</option></select>
+<button type="button" id="f-clear" title="clear filters">×</button>
+<span id="shown" class="dim"></span>
+{% endblock %}
+{% block body %}
+<table id="grid">
+<thead><tr>
+<th data-sort="text">id</th><th data-sort="text">name</th>
+{% for q in questions %}
+{% if q.variants %}<th data-sort="text" class="var" title="{{ q.title }} variant">{{ q.id }}·v</th>{% endif %}
+{% for part in q.result %}<th data-sort="cell" data-col="{{ q.column(part) }}" title="{{ q.title }}">{{ q.column(part) }}</th>{% endfor %}
+{% endfor %}
+<th data-sort="num">total</th>
+</tr></thead>
+<tbody>
+{% for r in rows %}
+<tr data-id="{{ r.sub.id }}">
+<td class="id">{{ r.sub.id }}</td><td class="name">{{ r.sub.name }}</td>
+{% for c in r.cells %}
+{% if c.variant %}
+<td class="var{% if c.open %} open{% endif %}"><a href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}">{{ c.text }}</a></td>
+{% else %}
+<td class="c s-{{ c.state }}" data-col="{{ c.col }}" data-s="{{ c.state }}" data-v="{{ c.v }}"{% if c.blank %} data-b="1"{% endif %}{% if c.counts %} data-c="1"{% endif %}><a class="{{ c.cls }}" href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ labels[c.state] }}">{{ c.glyph }}</a></td>
+{% endif %}
+{% endfor %}
+<td class="total{% if not r.complete %} open{% endif %}" data-n="{{ r.sort }}">{{ r.points }}{% if not r.complete %}<span class="dim">+?</span>{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+<tfoot><tr>
+<td colspan="2" class="dim">counted</td>
+{% for q in questions %}
+{% if q.variants %}<td></td>{% endif %}
+{% for part in q.result %}<td class="tally" data-col="{{ q.column(part) }}"></td>{% endfor %}
+{% endfor %}
+<td></td>
+</tr></tfoot>
+</table>
+{% endblock %}

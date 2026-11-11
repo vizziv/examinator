@@ -26,6 +26,10 @@ class StageTimeout(Exception):
     pass
 
 
+class PoolClosed(Exception):
+    """The app is shutting down; nothing was run."""
+
+
 class StageCrash(Exception):
     """The stage raised, or its worker died. `detail` is a traceback, for graders only."""
 
@@ -81,7 +85,7 @@ class Pool:
         """
         with self._lock:
             if self._closed:
-                raise RuntimeError("pool is closed")
+                raise PoolClosed()
             proc = self._idle.pop() if self._idle else None
         proc = proc or self._spawn()
         try:

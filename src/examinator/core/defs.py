@@ -10,9 +10,11 @@ import dataclasses
 import functools
 import hashlib
 import importlib.util
+import inspect
 import json
 import re
 import sys
+import types
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
@@ -22,7 +24,7 @@ if TYPE_CHECKING:
 
 # --- review markers ---------------------------------------------------------
 
-REVIEW = re.compile(r'\[REVIEW\b[^\]]*\]')
+REVIEW = re.compile(r'\[REVIEW\b', re.I)   # also catches a marker cut off before its ']'
 
 
 def has_marker(body: Any) -> bool:
@@ -186,6 +188,7 @@ class Stage:
     timeout: float | None = None    # seconds; None means the runner's default
     uses_variant: bool = False      # result depends on the resolved variant
     accepts_markers: bool = False   # consume inputs that still carry [REVIEW: ...]
+    shape: str = 'text'             # how the body is edited: 'text' | 'fields' ({label: answer}) | 'code'
 
 
 @dataclass(frozen=True)
@@ -201,6 +204,7 @@ class Question:
     cues: tuple[Cue, ...] = ()
     require: int | None = None             # cues that must agree to resolve; None = all
     trust: int = 2                         # agreeing cues needed to count without review
+    _hashes: dict = field(init=False, default_factory=dict, compare=False, repr=False)
 
     def stage(self, name: str) -> Stage | None:
         return next((s for s in self.stages if s.name == name), None)
@@ -264,32 +268,76 @@ class Exam:
 
 # --- describing and hashing definitions --------------------------------------
 
-def describe(x: Any) -> Any:
+def _is_exam_code(fn) -> bool:
+    """A plain function defined outside the library and the standard library:
+    its source is part of the exam's definition."""
+    root = (getattr(fn, '__module__', '') or '').split('.')[0]
+    return bool(root) and root != __name__.split('.')[0] and root not in sys.stdlib_module_names \
+        and root not in ('numpy', 'scipy', 'sympy', 'PIL')
+
+
+def _code_names(code) -> set[str]:
+    names = set(code.co_names)
+    for c in code.co_consts:
+        if isinstance(c, types.CodeType):
+            names |= _code_names(c)
+    return names
+
+
+def describe(x: Any, _seen: frozenset = frozenset()) -> Any:
     """A JSON-serializable description of a definition value.
 
-    Dataclasses become dicts of their fields, functions become their qualified
-    names, so that two runs of the same exam source describe identically and an
-    edit to a key or prompt changes the description.
+    Dataclasses become dicts of their fields. A function written in an exam
+    package becomes a hash of its source together with the values it closes
+    over and the module-level data and functions it names, so that editing a
+    key held in code changes the description of exactly the stages that use
+    it. Library functions are described by name. What this cannot see (data
+    reached indirectly) is covered by the coarser exam-wide code hash.
     """
     if x is None or isinstance(x, (bool, int, float, str)):
         return x
     if dataclasses.is_dataclass(x) and not isinstance(x, type):
-        d = {f.name: describe(getattr(x, f.name)) for f in dataclasses.fields(x)}
+        d = {f.name: describe(getattr(x, f.name), _seen) for f in dataclasses.fields(x) if f.init}
         d['__type__'] = type(x).__qualname__
         return d
     if isinstance(x, Mapping):
-        return {str(k): describe(v) for k, v in sorted(x.items(), key=lambda kv: str(kv[0]))}
+        return {str(k): describe(v, _seen) for k, v in sorted(x.items(), key=lambda kv: str(kv[0]))}
     if isinstance(x, (list, tuple)):
-        return [describe(v) for v in x]
+        return [describe(v, _seen) for v in x]
     if isinstance(x, (set, frozenset)):
-        return sorted((describe(v) for v in x), key=repr)
+        return sorted((describe(v, _seen) for v in x), key=repr)
     if isinstance(x, functools.partial):
-        return {'__partial__': describe(x.func), 'args': describe(x.args), 'kw': describe(x.keywords)}
+        return {'__partial__': describe(x.func, _seen), 'args': describe(x.args, _seen),
+                'kw': describe(x.keywords, _seen)}
+    if isinstance(x, types.ModuleType):
+        return f'<module {x.__name__}>'
+    if isinstance(x, types.FunctionType) and _is_exam_code(x):
+        name = f'{x.__module__}:{x.__qualname__}'
+        if id(x) in _seen:
+            return name
+        seen = _seen | {id(x)}
+        try:
+            src = inspect.getsource(x)
+        except (OSError, TypeError):
+            src = repr(x.__code__.co_code) + repr(x.__code__.co_consts)
+        cells = [describe(c.cell_contents, seen) for c in (x.__closure__ or ()) if _has_contents(c)]
+        used = {n: describe(x.__globals__[n], seen) for n in sorted(_code_names(x.__code__))
+                if n in x.__globals__}
+        return {'__fn__': name, 'src': hashlib.sha256(src.encode()).hexdigest()[:16],
+                'closure': cells, 'globals': used}
     if isinstance(x, type) or callable(x):
         name = getattr(x, '__qualname__', None)
         if name:
             return f"{getattr(x, '__module__', '')}:{name}"
     return f'<{type(x).__module__}:{type(x).__qualname__}>'
+
+
+def _has_contents(cell) -> bool:
+    try:
+        cell.cell_contents
+        return True
+    except ValueError:
+        return False
 
 
 def digest(x: Any) -> str:
@@ -299,11 +347,17 @@ def digest(x: Any) -> str:
 def stage_hash(question: Question, stage: Stage) -> str:
     """Hash of the definition as one stage sees it.
 
-    Covers the stage's own configuration and the question's labels, result and
-    variants, so editing a key outdates the checks that used it and nothing else.
+    Covers the stage's own configuration (including exam code it calls) and the
+    question's labels, result and variants; for the variant stage also the cues.
+    Editing a key outdates the checks that used it and nothing else.
     """
-    return digest({'stage': stage, 'labels': question.labels,
-                   'result': question.result, 'variants': question.variants})
+    if stage.name not in question._hashes:
+        seen = {'stage': stage, 'labels': question.labels,
+                'result': question.result, 'variants': question.variants}
+        if stage.name == 'variant':
+            seen.update(cues=question.cues, require=question.require)
+        question._hashes[stage.name] = digest(seen)
+    return question._hashes[stage.name]
 
 
 # --- loading an exam package --------------------------------------------------
@@ -326,7 +380,6 @@ def load_exam(path: str | Path) -> Exam:
         sys.modules[name] = pkg
         spec.loader.exec_module(pkg)
     else:
-        import types
         pkg = types.ModuleType(name)
         pkg.__path__ = [str(path)]
         sys.modules[name] = pkg

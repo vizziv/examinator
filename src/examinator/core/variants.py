@@ -28,7 +28,12 @@ Use null for the value if the printed text is unreadable or absent. Do not infer
 
 
 def normalize(reading: str) -> str:
-    return re.sub(r'\s+', '', reading).lower()
+    """Fold away what a model varies when reporting the same printed value:
+    case, whitespace, one layer of brackets or quotes, a trailing '.' or '%'."""
+    s = re.sub(r'\s+', '', reading).lower().rstrip('.%')
+    if len(s) >= 2 and (s[0], s[-1]) in (('[', ']'), ('(', ')'), ('"', '"'), ("'", "'"), ('{', '}')):
+        s = s[1:-1]
+    return s
 
 
 def match(cue: Cue, reading: str | None) -> str | None:
@@ -89,7 +94,10 @@ class ReadVariant:
         return narrow(ctx.question, readings)
 
     def _read(self, ctx: Context, cue: Cue) -> str:
-        out = ctx.model(self.prompt.format(ask=cue.ask), images=[ctx.crop(cue.region)], expect='json')
+        prompt = self.prompt.format(ask=cue.ask)
+        if cue.reads:       # readings identify the printing; they are not answer keys
+            prompt += "\nThe value is expected to be one of: " + " | ".join(cue.reads) + "."
+        out = ctx.model(prompt, images=[ctx.crop(cue.region)], expect='json')
         try:
             value: Any = json.loads(out).get('value')
         except (ValueError, AttributeError):

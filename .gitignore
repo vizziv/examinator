@@ -1,14 +1,34 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
-.pytest_cache/
-dist/
 *.egg-info/
-.DS_Store
+build/
+dist/
 
-# Workspaces hold exam data and never belong in a repository.
+# Tools
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local agent/app configuration
+.claude/launch.json
+.claude/settings.local.json
+
+# Exam data never belongs in a repository: workspaces, scans, blank exams,
+# model scripts and anything rendered from them.
 workspace/
 workspaces/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.pdf
+fake_model.json

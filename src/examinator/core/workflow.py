@@ -56,27 +56,81 @@ def started(arts: Mapping[str, Artifact]) -> bool:
 
 def variant_trusted(question: Question, arts: Mapping[str, Artifact]) -> bool:
     """A resolved variant counts without review if a person chose or verified it,
-    or if at least `question.trust` independent cues agreed."""
+    or if at least `question.trust` independent cues agreed. (Who last wrote the
+    row does not matter: correcting one cue's reading is not choosing the variant.)"""
     v = arts.get('variant')
     if v is None or not (v.body or {}).get('resolved'):
         return False
-    return v.origin == 'manual' or v.verified or (v.body.get('agree') or 0) >= question.trust
+    return bool(v.body.get('chosen')) or v.verified or (v.body.get('agree') or 0) >= question.trust
+
+
+def variant_current(question: Question, arts: Mapping[str, Artifact]) -> bool:
+    """The stored variant follows from the current cue definitions (or a person chose it)."""
+    v, stage = arts.get('variant'), question.stage('variant')
+    if v is None or stage is None:
+        return True
+    return bool((v.body or {}).get('chosen')) or v.inputs.get('defn') == stage_hash(question, stage)
+
+
+def _derived(question: Question, kind: str) -> bool:
+    """An artifact people do not edit: it must follow from its own inputs."""
+    stage = question.stage(kind)
+    return stage is not None and not stage.editable
+
+
+def _follows(question: Question, kind: str, arts: Mapping[str, Artifact]) -> bool:
+    """The artifact was computed from the current content of its inputs, under the
+    current definition; and so, in turn, was every derived input. The walk stops
+    at editable artifacts: a person vouches for those by verifying them."""
+    a, stage = arts.get(kind), question.stage(kind)
+    if a is None or stage is None:
+        return False
+    for k in stage.inputs:
+        i = arts.get(k)
+        if i is None or a.revs.get(k) != i.rev:
+            return False
+        if _derived(question, k) and not _follows(question, k, arts):
+            return False
+    if stage.uses_variant and question.variants:
+        v = arts.get('variant')
+        if a.revs.get('variant') != (v.rev if v else None) or not variant_current(question, arts):
+            return False
+    return a.inputs.get('defn') == stage_hash(question, stage)
+
+
+def verifiable(question: Question) -> tuple[str, ...]:
+    """The editable artifacts a check's result rests on: what a person must
+    verify, and what a manual grade is recorded against. Usually ('parse',)."""
+    out: list[str] = []
+
+    def walk(kind):
+        stage = question.stage(kind)
+        for k in (stage.inputs if stage else ()):
+            if _derived(question, k):
+                walk(k)
+            elif k not in out:
+                out.append(k)
+
+    if question.stage('evidence') is not None:
+        walk('evidence')
+    elif question.stage('parse') is not None:
+        out.append('parse')
+    return tuple(out)
+
+
+def uses_variant(question: Question) -> bool:
+    """Some stage between the verifiable artifacts and the evidence reads the variant."""
+    def walk(kind):
+        stage = question.stage(kind)
+        if stage is None:
+            return False
+        return stage.uses_variant or any(_derived(question, k) and walk(k) for k in stage.inputs)
+    return bool(question.variants) and walk('evidence')
 
 
 def evidence_current(question: Question, arts: Mapping[str, Artifact]) -> bool:
     """Evidence was computed from the current inputs, variant and definition."""
-    ev, stage = arts.get('evidence'), question.stage('evidence')
-    if ev is None or stage is None:
-        return False
-    for kind in stage.inputs:
-        a = arts.get(kind)
-        if a is None or ev.revs.get(kind) != a.rev:
-            return False
-    if stage.uses_variant and question.variants:
-        v = arts.get('variant')
-        if ev.revs.get('variant') != (v.rev if v else None):
-            return False
-    return ev.inputs.get('defn') == stage_hash(question, stage)
+    return _follows(question, 'evidence', arts)
 
 
 def grade_current(question: Question, part: str, arts: Mapping[str, Artifact]) -> bool:
@@ -88,17 +142,21 @@ def grade_current(question: Question, part: str, arts: Mapping[str, Artifact]) -
 
 
 def waiting(question: Question, arts: Mapping[str, Artifact]) -> tuple[str, ...]:
-    """What a person must still confirm before an automatic grade counts."""
-    out = []
-    check = question.stage('evidence')
-    for kind in (check.inputs if check else ()):
-        stage = question.stage(kind)
-        a = arts.get(kind)
-        if stage is not None and stage.editable and not (a is not None and a.verified):
-            out.append(kind)
-    if check and check.uses_variant and question.variants and not variant_trusted(question, arts):
+    """What a person must still confirm before an automatic grade counts.
+    Fails closed: a result that rests on nothing a person can verify never
+    counts on its own ('input'); it needs a manual decision."""
+    kinds = verifiable(question)
+    out = [k for k in kinds if not ((a := arts.get(k)) is not None and a.verified)]
+    if not kinds:
+        out.append('input')
+    if uses_variant(question) and not variant_trusted(question, arts):
         out.append('variant')
     return tuple(out)
+
+
+def seen_revs(question: Question, arts: Mapping[str, Artifact]) -> dict[str, int | None]:
+    """The revisions a manual grade is recorded against."""
+    return {k: (arts[k].rev if k in arts else None) for k in verifiable(question)}
 
 
 def part_status(question: Question, part: str, arts: Mapping[str, Artifact],
@@ -109,8 +167,7 @@ def part_status(question: Question, part: str, arts: Mapping[str, Artifact],
     stale = bool(code_hash and ev is not None and ev.inputs.get('code') not in (None, code_hash))
 
     if g is not None and g.origin == 'manual':
-        parse = arts.get('parse')
-        same = g.revs.get('parse') == (parse.rev if parse else None)
+        same = dict(g.revs) == seen_revs(question, arts)
         return Status('manual' if same else 'manual_outdated', g.body.get('value'),
                       tuple(g.body.get('flags') or ()), g.body.get('reason'), author=g.author)
 

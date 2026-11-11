@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% block title %}Runs · {{ exam.title }}{% endblock %}
+{% block head %}<script src="{{ root }}/static/runs.js" defer></script>{% endblock %}
+{% block body %}
+<main class="narrow" id="runs" data-total="{{ total }}">
+<form id="sel" autocomplete="off">
+<fieldset><legend>submissions</legend>
+<label><input type="radio" name="scope" value="all" checked> all ({{ total }})</label>
+<label><input type="radio" name="scope" value="grid"> the grid's current filter (<span id="grid-n">0</span>)</label>
+</fieldset>
+<fieldset><legend>questions</legend>
+{% for q in questions %}<label><input type="checkbox" name="question" value="{{ q.id }}" checked> {{ q.id }}</label>{% endfor %}
+<button type="button" class="link" id="q-toggle">all / none</button>
+</fieldset>
+<fieldset><legend>stages</legend>
+{% for s in stages %}<label{% if s.model and not model %} class="dim"{% endif %}><input type="checkbox" name="stage" value="{{ s.name }}"{% if not s.model %} checked{% endif %}> {{ s.name }}{% if s.model %} <span class="dim">model</span>{% endif %}</label>{% endfor %}
+<p class="help">Each stage finishes for every submission before the next begins. The grade follows its check.</p>
+</fieldset>
+<fieldset><legend>options</legend>
+<label><input type="checkbox" name="missing_only"> missing only</label>
+<label><input type="checkbox" name="include_protected"> include protected</label>
+<label>parallel <input type="number" name="parallel" value="2" min="1" max="16"></label>
+<label><input type="checkbox" name="reasoning"> reasoning</label>
+<p class="help"><b>Missing only</b> fills gaps and touches nothing that exists.
+<b>Include protected</b> overwrites what graders wrote, verified or decided; the replaced versions stay in history.
+Without it, protected work is skipped.</p>
+</fieldset>
+<div class="bar">
+<button type="button" id="preview" class="primary">Preview</button>
+<button type="button" id="start" disabled>Run</button>
+<button type="button" id="stop" disabled>Stop</button>
+<span id="msg" role="status"></span>
+</div>
+</form>
+<section id="plan" hidden>
+<h2>Preview</h2>
+<p id="counts"></p>
+<table class="ev" id="groups"></table>
+</section>
+<section id="progress" hidden>
+<h2>Run</h2>
+<progress id="bar" value="0" max="1"></progress> <span id="prog"></span>
+<table class="ev" id="failures"></table>
+</section>
+</main>
+{% endblock %}
