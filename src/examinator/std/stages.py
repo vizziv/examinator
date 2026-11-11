@@ -218,9 +218,10 @@ def math(key: Mapping[str, Any], *, symbols: Mapping[str, str] | Sequence[str] =
 
 def pseudocode(entries: Sequence[str], check_fn: Callable[[Context], Any], *, language: Any = None,
                notes: str = "", then: Callable[[str], str] | None = None,
-               grade_rule: Callable[[EvidenceView], Any], timeout: float | None = None) -> list[Stage]:
+               grade_rule: Callable[[EvidenceView], Any], timeout: float | None = None,
+               uses_variant: bool = False) -> list[Stage]:
     """Transcribe and parse pseudocode, then run a custom check."""
     return [transcribe(prompts.TRANSCRIBE_PSEUDOCODE, notes=notes),
             parse_pseudocode(entries, language=language, notes=notes, then=then),
-            check(check_fn, timeout=timeout),
+            check(check_fn, timeout=timeout, uses_variant=uses_variant),
             grade(grade_rule)]

@@ -204,6 +204,8 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
     try:
         for case in cases:
             for qid, q in exam.questions.items():
+                if not q.stages:        # decided by hand only: nothing to run
+                    continue
                 runner.run_from(case.name, qid, q.stages[0].name)
                 arts = ws.store.for_question(case.name, qid)
                 for kind in ('variant', 'parse'):
