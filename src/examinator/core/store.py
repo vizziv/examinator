@@ -39,7 +39,7 @@ create table if not exists history (
   replaced_at text not null
 );
 create index if not exists history_key on history (submission, question, kind, rev);
-create table if not exists submission (id text primary key, name text, email text, pdf text);
+create table if not exists submission (id text primary key, name text, email text, pdf text, student text);
 create table if not exists setting (key text primary key, value text not null);
 create table if not exists override (
   path text primary key, value text, author text, updated_at text not null, rev integer not null
@@ -111,6 +111,7 @@ class Submission:
     name: str
     email: str
     pdf: str
+    student: str = ''       # the student's ID, when a roster gives one
 
 
 @dataclass(frozen=True)
@@ -165,6 +166,9 @@ class Store:
         self._db.execute('pragma journal_mode = wal')
         self._db.execute('pragma busy_timeout = 5000')
         self._db.executescript(SCHEMA)
+        cols = {r[1] for r in self._db.execute('pragma table_info(submission)')}
+        if 'student' not in cols:       # a workspace made before submissions carried a student ID
+            self._db.execute("alter table submission add column student text")
 
     def close(self) -> None:
         with self._lock:
@@ -390,18 +394,19 @@ class Store:
     def put_submissions(self, subs: Iterable[Submission]) -> None:
         with self._lock, self._tx():
             for s in subs:
-                self._db.execute('insert or replace into submission values (?,?,?,?)',
-                                 (s.id, s.name, s.email, s.pdf))
+                self._db.execute('insert or replace into submission values (?,?,?,?,?)',
+                                 (s.id, s.name, s.email, s.pdf, s.student))
 
     def submissions(self) -> list[Submission]:
         with self._lock:
-            rows = self._db.execute('select id, name, email, pdf from submission order by id').fetchall()
-        return [Submission(*r) for r in rows]
+            rows = self._db.execute('select id, name, email, pdf, student from submission order by id').fetchall()
+        return [Submission(*r[:4], r[4] or '') for r in rows]
 
     def submission(self, id: str) -> Submission | None:
         with self._lock:
-            r = self._db.execute('select id, name, email, pdf from submission where id=?', (id,)).fetchone()
-        return Submission(*r) if r else None
+            r = self._db.execute('select id, name, email, pdf, student from submission where id=?',
+                                 (id,)).fetchone()
+        return Submission(*r[:4], r[4] or '') if r else None
 
     def delete_submission(self, id: str) -> None:
         with self._lock:

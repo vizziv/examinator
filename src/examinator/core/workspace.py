@@ -79,7 +79,7 @@ class Workspace:
     def sync_roster(self) -> int:
         """Record every PDF in `pdfs/` as a submission: named from the roster file,
         or for one written by intake, from the person picked for it."""
-        from .intake import who
+        from .identity import submission
         made = self.store.made()
         pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink()]
         handed = [p for p in pdfs if p.stem not in made]
@@ -91,8 +91,11 @@ class Workspace:
             roster = {}
         subs = []
         for pdf in pdfs:
-            name, email = who(self, pdf.stem) if pdf.stem in made else roster.get(pdf.stem, ("", ""))
-            subs.append(Submission(pdf.stem, name, email, pdf.name))
+            if pdf.stem in made:
+                subs.append(submission(self, pdf.stem, pdf.name))
+            else:
+                name, email = roster.get(pdf.stem, ("", ""))
+                subs.append(Submission(pdf.stem, name, email, pdf.name))
         self.store.put_submissions(subs)
         return len(subs)
 

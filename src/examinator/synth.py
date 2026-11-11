@@ -96,10 +96,11 @@ def _printed_pages(exam: Exam, case: Case, renderer: Renderer) -> list[Image.Ima
                 if text:
                     l, t, r, b = _box(lm.region)
                     d.text((l + 6, t + 4), text, fill='black', font=_font(max(14, min(30, (b - t) - 8))))
-            if exam.name_region is not None and exam.name_region.page == p:
-                l, t, r, b = _box(exam.name_region)
-                d.text((l, t - 22), "Name:", fill='black', font=_font(16))
-                d.line((l, b, r, b), fill='black')
+            for f in exam.identity:
+                if f.region.page == p:
+                    l, t, r, b = _box(f.region)
+                    d.text((l, t - 22), f"{f.name}:", fill='black', font=_font(16))
+                    d.line((l, b, r, b), fill='black')
         pages.append(im)
     return pages
 
@@ -111,11 +112,13 @@ def landmark_text(lm, page: int) -> str | None:
     return str(page) if page >= lm.region.page else None
 
 
-def _draw_name(exam: Exam, pages: list[Image.Image], name: str) -> None:
-    r = exam.name_region
-    if r is not None and 1 <= r.page <= len(pages):
-        l, t, _, _ = _box(r)
-        ImageDraw.Draw(pages[r.page - 1]).text((l + 14, t + 12), name, fill=(20, 30, 140), font=_font(26))
+def _draw_identity(exam: Exam, pages: list[Image.Image], person: Mapping[str, str]) -> None:
+    """Write a person into the exam's identity boxes (the box's roster field, else its name)."""
+    for f in exam.identity:
+        text = person.get(f.roster or f.name) or ""
+        if text and 1 <= f.region.page <= len(pages):
+            l, t, _, _ = _box(f.region)
+            ImageDraw.Draw(pages[f.region.page - 1]).text((l + 14, t + 12), text, fill=(20, 30, 140), font=_font(26))
 
 
 def _draw_answers(exam: Exam, case: Case, pages: list[Image.Image]) -> None:
@@ -191,7 +194,8 @@ def generate(exam: Exam, root: str | Path, cases: list[Case]) -> Path:
         for i, case in enumerate(cases, 1):
             printed = _printed_pages(exam, case, renderer)
             _draw_answers(exam, case, printed)
-            _draw_name(exam, printed, f"Synthetic Student {i:02d}")
+            _draw_identity(exam, printed, {'name': f"Synthetic Student {i:02d}", 'id': f"9{i:07d}",
+                                           'email': f"synthetic{i:02d}@example.invalid"})
             scan = _scan(exam, printed)
             scan[0].save(pdfs / f'{case.name}.pdf', 'PDF', save_all=True,
                          append_images=scan[1:], resolution=100.0)
@@ -267,19 +271,25 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
     blank sheet after printed page 2, one put in upside down. `stack-2.pdf`:
     fed in upside down as a whole, three students and the first two sheets of a
     fourth, so its length is not a multiple of the exam's. The model reads a
-    landmark only on a sheet turned the right way up."""
+    landmark, or an identity box, only on a sheet turned the right way up.
+
+    Who is who (`STACK_PEOPLE`, the exam's identity boxes): what the scripted
+    model reads is in `STACK_READS`: clean reads, an ID misread by one
+    character, a misread name, an ID that belongs to someone else, an empty ID
+    box, an unreadable name, and a student not on the roster, which also lists
+    one person with no exam."""
     from .pdf.orient import HALF, IDENTITY
     cases = load_cases(exam) if cases is None else cases
     root = Path(root)
     (root / 'incoming').mkdir(parents=True, exist_ok=True, mode=0o700)
     renderer = Renderer(root / 'cache' / 'blanks', dpi=100)
-    names = [f"Synthetic Student {k:02d}" for k in range(1, 11)]
+    names = [name for name, _ in STACK_PEOPLE]
 
     def student(k: int) -> list[tuple[Image.Image, int | None]]:
         case = cases[k % len(cases)]
         printed = _printed_pages(exam, case, renderer)
         _draw_answers(exam, case, printed)
-        _draw_name(exam, printed, names[k])
+        _draw_identity(exam, printed, {'name': names[k], 'id': STACK_PEOPLE[k][1]})
         sheets = _scan(exam, printed)[exam.cover_pages:]       # a raw stack has no cover sheets
         return list(zip(sheets, range(1, len(sheets) + 1)))
 
@@ -290,23 +300,23 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
         i = next(j for j, x in enumerate(sheets) if x[1] == after) + 1
         return sheets[:i] + [(Image.new('RGB', PAGE, 'white'), None)] + sheets[i:]
 
-    def turned(sheets, o):
-        return [(o.apply(im), p, o) for im, p in sheets]
+    def turned(sheets, o, k):
+        return [(o.apply(im), p, o, k) for im, p in sheets]
 
-    one = (turned(student(0), IDENTITY) + turned(without(student(1), 3), IDENTITY)
-           + turned(stray(student(2), 2), IDENTITY) + turned(student(3), IDENTITY)
-           + turned(student(4), HALF) + turned(student(5), IDENTITY))
-    two = [x for k in (6, 7, 8) for x in turned(student(k), HALF)] + turned(student(9), HALF)[:2]
+    one = (turned(student(0), IDENTITY, 0) + turned(without(student(1), 3), IDENTITY, 1)
+           + turned(stray(student(2), 2), IDENTITY, 2) + turned(student(3), IDENTITY, 3)
+           + turned(student(4), HALF, 4) + turned(student(5), IDENTITY, 5))
+    two = [x for k in (6, 7, 8) for x in turned(student(k), HALF, k)] + turned(student(9), HALF, 9)[:2]
     script = json.loads((root / SCRIPT).read_text()) if (root / SCRIPT).exists() else {}
     out = []
     for name, sheets in (('stack-1.pdf', one), ('stack-2.pdf', two)):
         path = root / 'incoming' / name
-        images = [im for im, _, _ in sheets]
+        images = [im for im, _, _, _ in sheets]
         images[0].save(path, 'PDF', save_all=True, append_images=images[1:], resolution=100.0)
         import hashlib
         sid = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
         replies = {}
-        for i, (_, page, o) in enumerate(sheets):
+        for i, (_, page, o, k) in enumerate(sheets):
             # the model reads a sheet only when it is shown the right way up: undoing `o`
             up = HALF if o == HALF else IDENTITY
             replies[f'{i}@{up.turn}{int(up.flip)}|landmark'] = {
@@ -315,12 +325,41 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
             if up != IDENTITY:      # shown as scanned, it reads as nothing
                 replies[f'{i}@00|landmark'] = {lm.ask: json.dumps({'quote': "", 'value': None})
                                                for lm in exam.landmarks}
+            boxes = [f for f in exam.identity if f.region.page == page]
+            if boxes:
+                said = STACK_READS[k]
+                replies[f'{i}@{up.turn}{int(up.flip)}|identity'] = {
+                    f.ask: json.dumps({'value': said.get(f.roster or f.name)}) for f in boxes}
+                if up != IDENTITY:
+                    replies[f'{i}@00|identity'] = {f.ask: json.dumps({'value': None}) for f in boxes}
         script[sid] = replies
         out.append(path)
     (root / SCRIPT).write_text(json.dumps(script, indent=1))
     with (root / 'roster.csv').open('w', newline='') as fh:
         w = csv.writer(fh)
         w.writerow(['Name', 'Email', 'Student ID'])
-        for k, n in enumerate(names, 1):
-            w.writerow([n, f"synthetic{k:02d}@example.invalid", f"9{k:07d}"])
+        for k, (n, id) in enumerate(STACK_ROSTER, 1):
+            w.writerow([n, f"synthetic{k:02d}@example.invalid", id])
     return out
+
+
+# Who the students in the synthetic stacks are (name, ID), in stack order ...
+STACK_PEOPLE = [
+    ("Avery Testwell", "90412873"), ("Blake Mockford", "91736250"), ("Casey Stubbs", "92058461"),
+    ("Devon Fakely", "93681724"), ("Emery Sampleton", "94207536"), ("Finley Dummond", "95830142"),
+    ("Gray Placeholt", "96174385"), ("Harper Fixtura", "97352618"), ("Indigo Exemplar", "98546039"),
+    ("Jules Synthe", "99021457")]
+# ... what the scripted model reads in their boxes (by roster field) ...
+STACK_READS = [
+    {'name': "Avery Testwell", 'id': "90412873"},       # clean
+    {'name': "Blake Mockford", 'id': "91786250"},       # the ID misread by one character
+    {'name': "Kasey Stubs", 'id': "92058461"},          # the name misread
+    {'name': "Devon Fakely", 'id': "96174385"},         # the ID is Gray Placeholt's
+    {'name': "Emery Sampleton", 'id': "94207536"},      # clean (once the exam is turned upright)
+    {'name': "Finley Dummond", 'id': "95830142"},       # not on the roster
+    {'name': "Gray Placeholt", 'id': None},             # the ID box left empty
+    {'name': None, 'id': "97352618"},                   # the name unreadable
+    {'name': "Indigo Exemplar", 'id': "98546039"},
+    {'name': "Jules Synthe", 'id': "99021457"}]
+# ... and the roster: everyone but Finley Dummond, and one person who sat no exam.
+STACK_ROSTER = [p for p in STACK_PEOPLE if p[0] != "Finley Dummond"] + [("Kit Absentia", "90655318")]

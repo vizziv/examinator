@@ -120,18 +120,23 @@ def vote(ctx: Context, cue: Cue) -> str | None:
     return match(cue, reading(ctx, cue))
 
 
+def json_value(out: str) -> str | None:
+    """The `value` of a model's JSON reply (cues, landmarks, identity boxes), as
+    text; None if absent, null or not JSON."""
+    try:
+        value: Any = json.loads(out).get('value')
+    except (ValueError, AttributeError):
+        return None
+    if value is not None and not isinstance(value, str):
+        value = json.dumps(value)
+    return value
+
+
 def _ask(ctx: Context, cue: Cue, prompt: str = CUE_PROMPT) -> str:
     prompt = prompt.format(ask=cue.ask)
     if cue.reads:       # readings identify the printing; they are not answer keys
         prompt += "\nThe value is expected to be one of: " + " | ".join(cue.reads) + "."
-    out = ctx.model(prompt, images=[ctx.crop(cue.region)], expect='json')
-    try:
-        value: Any = json.loads(out).get('value')
-    except (ValueError, AttributeError):
-        value = None
-    if value is not None and not isinstance(value, str):
-        value = json.dumps(value)
-    return json.dumps(value)
+    return json.dumps(json_value(ctx.model(prompt, images=[ctx.crop(cue.region)], expect='json')))
 
 
 @dataclass(frozen=True)

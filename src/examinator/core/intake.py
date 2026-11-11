@@ -15,15 +15,12 @@ that would change or disappear while it has grading work is not touched unless
 the caller insists (`force`): `Busy` names them.
 
 Who a submission is stays an attribute: the id is opaque and never changes.
-A roster can be added (any CSV with a name, and optionally email and student
-id columns), and a person picked per submission; the pick is the artifact
-`(submission, '', 'who')`.
+The roster, the model's reading of the name and ID boxes, and the person a
+grader picks are `core.identity`.
 """
 from __future__ import annotations
 
-import csv
 import hashlib
-import io
 import json
 import os
 import shutil
@@ -36,14 +33,13 @@ from PIL import Image
 from ..pdf import pages as pdf_pages
 from ..pdf.layout import Layout
 from ..pdf.orient import HALF, MIRROR, QUARTER, Orient
-from . import split
+from . import identity, split
 from .defs import Landmark, digest
-from .store import ANY, Artifact, Conflict, Made, Source, Submission
-from .variants import CUE_PROMPT, normalize
+from .store import ANY, Artifact, Conflict, Made, Source
+from .variants import CUE_PROMPT, json_value, normalize
 
 PLAN = 'split'
-WHO = 'who'
-NO_WORK = (WHO, 'layout')       # kinds that are not grading work
+NO_WORK = (identity.WHO, identity.READ, 'layout')       # kinds that are not grading work
 
 
 class Busy(Conflict):
@@ -184,14 +180,7 @@ def _ask(model, image: Image.Image, lm: Landmark, tag: tuple[str, str, str]) -> 
     prompt = LANDMARK_PROMPT.format(ask=lm.ask)
     if lm.reads:
         prompt += "\nThe value is expected to be one of: " + " | ".join(lm.reads) + "."
-    out = model.complete(prompt, images=[image], expect='json', tag=tag)
-    try:
-        value: Any = json.loads(out).get('value')
-    except (ValueError, AttributeError):
-        return None
-    if value is not None and not isinstance(value, str):
-        value = json.dumps(value)
-    return value
+    return json_value(model.complete(prompt, images=[image], expect='json', tag=tag))
 
 
 def reader(ws, src: Source, body: Mapping, model) -> split.Reader | None:
@@ -405,9 +394,9 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
         cur = ws.store.write(id, '', PLAN, body, origin=art.origin, author=art.author, expect_rev=art.rev)
         for sid, pages, orients in writes:
             ws.store.set_made(Made(sid, id, tuple(pages), {'sheets': orients}, now))
-            name, email = who(ws, sid)
-            ws.store.put_submissions([Submission(sid, name, email, f'{sid}.pdf')])
+            ws.store.put_submissions([identity.submission(ws, sid, f'{sid}.pdf')])
             ws.store.clear_memo(sid)        # readings of the old pages
+            ws.store.delete(sid, '', identity.READ)     # and what the model read on them
             # The written PDF starts with as many cover sheets as the plan has, whatever the workspace's default.
             kept = ws.store.get(sid, '', 'layout')
             ws.set_layout(sid, cover_pages=cover(ws, body), author=author,
@@ -420,75 +409,3 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
         (ws.pdfs / f'{sid}.pdf').unlink(missing_ok=True)
     report['rev'] = cur.rev
     return report
-
-
-# --- who is it ------------------------------------------------------------------------
-
-NAME_COLUMNS = ('name', 'full name', 'student name', 'student')
-FIRST, LAST = ('first name', 'first', 'given name'), ('last name', 'last', 'surname', 'family name')
-EMAIL = ('email', 'e-mail', 'email address')
-SID = ('student id', 'sid', 'id', 'student number', 'netid', 'net id')
-
-
-def parse_roster(text: str) -> list[dict]:
-    """People from a CSV: a name (or first and last name), optionally an email and a student id."""
-    rows = list(csv.DictReader(io.StringIO(text.lstrip('﻿'))))
-    out, seen = [], set()
-    for row in rows:
-        r = {str(k).strip().lower(): (v or '').strip() for k, v in row.items() if k is not None}
-
-        def pick(names):
-            return next((r[n] for n in names if r.get(n)), '')
-        name = pick(NAME_COLUMNS) or f"{pick(FIRST)} {pick(LAST)}".strip()
-        if not name:
-            continue
-        person = {'name': name[:200], 'email': pick(EMAIL)[:200], 'sid': pick(SID)[:100]}
-        person['key'] = person['email'] or person['sid'] or person['name']
-        if person['key'] not in seen:
-            seen.add(person['key'])
-            out.append(person)
-    if not out:
-        raise ValueError("no names found: expected a Name column (or First Name and Last Name)")
-    return out
-
-
-def set_roster(ws, text: str) -> int:
-    people = parse_roster(text)
-    ws.store.set_setting('people', people)
-    return len(people)
-
-
-def people(ws) -> list[dict]:
-    return ws.store.setting('people', [])
-
-
-def label(person: Mapping) -> str:
-    """How a person appears in the picker (also what it sends back)."""
-    extra = person.get('email') or person.get('sid')
-    return f"{person['name']} <{extra}>" if extra else person['name']
-
-
-def who(ws, submission: str) -> tuple[str, str]:
-    a = ws.store.get(submission, '', WHO)
-    if a is None or not isinstance(a.body, dict):
-        return "", ""
-    return a.body.get('name', ""), a.body.get('email', "")
-
-
-def set_who(ws, submission: str, text: str, *, author: str | None) -> dict:
-    """Name a submission: a roster entry's label (or key), free text if the roster
-    has no match, or nothing to clear it."""
-    s = ws.store.submission(submission)
-    if s is None:
-        raise KeyError(submission)
-    text = (text or '').strip()[:300]
-    if not text:
-        ws.store.delete(submission, '', WHO)
-        body = {'name': "", 'email': ""}
-    else:
-        person = next((p for p in people(ws) if text in (label(p), p['key'])), None)
-        body = ({'name': person['name'], 'email': person['email'], 'key': person['key']} if person
-                else {'name': text, 'email': ""})
-        ws.store.write(submission, '', WHO, body, origin='manual', author=author)
-    ws.store.put_submissions([Submission(s.id, body['name'], body['email'], s.pdf)])
-    return body

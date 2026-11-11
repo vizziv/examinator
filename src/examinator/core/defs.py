@@ -90,6 +90,24 @@ class Landmark:
     reads: Mapping[str, int] | None = None
 
 
+ROSTER_FIELDS = ('name', 'id', 'email')     # what a roster row may hold (`core.identity`)
+
+
+@dataclass(frozen=True)
+class Identity:
+    """A box where the student writes who they are (a name, an ID, ...), read by
+    the model to propose a roster entry (`core.identity`). Like a `Cue`: a
+    `region` on a printed page and what to `ask` about it, here about the
+    handwriting. `roster` names the roster field the reading is compared with
+    ('name', 'id' or 'email'); None shows the reading without comparing it.
+    Several boxes may share a roster field (first and last name): their
+    readings are joined."""
+    name: str
+    region: Region
+    ask: str
+    roster: str | None = None
+
+
 # --- results and grades -----------------------------------------------------
 
 @dataclass(frozen=True)
@@ -247,7 +265,7 @@ class Exam:
                  front: Sequence[int] = (), extra: Sequence[int] = (),
                  scan_window: Sequence[int] = (0, 0, 1000, 1000), cover_pages: int = 0,
                  crop_pad: int = 12, landmarks: Sequence[Landmark] = (),
-                 name_region: Region | None = None):
+                 identity: Sequence[Identity] = ()):
         self.id = id
         self.title = title or id
         self.pages = pages
@@ -257,10 +275,14 @@ class Exam:
         self.cover_pages = cover_pages          # likewise
         self.crop_pad = crop_pad                # per-mille of the printed page around every crop
         self.landmarks = tuple(landmarks)       # how to tell which printed page a scanned sheet is (intake)
-        self.name_region = name_region          # where the student writes their name (intake: who is it)
-        names = [lm.name for lm in self.landmarks]
-        if len(set(names)) != len(names):
-            raise ValueError(f"duplicate landmark names {names}")
+        self.identity = tuple(identity)         # where students write who they are (intake: who is it)
+        for what, items in (('landmark', self.landmarks), ('identity', self.identity)):
+            names = [x.name for x in items]
+            if len(set(names)) != len(names):
+                raise ValueError(f"duplicate {what} names {names}")
+        for f in self.identity:
+            if f.roster not in (None, *ROSTER_FIELDS):
+                raise ValueError(f"identity {f.name!r}: roster must be one of {ROSTER_FIELDS} or None")
         self.questions: dict[str, Question] = {}   # live: base definitions plus overrides
         self.base: dict[str, Question] = {}        # as built by the package
         self.overrides: dict[str, Any] = {}        # applied overrides {path: JSON value}; see `overrides`

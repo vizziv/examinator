@@ -9,7 +9,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from examinator import Exam, Landmark, Region, load_exam, synth
-from examinator.core import intake, split
+from examinator.core import identity, intake, split
 from examinator.core.workspace import Workspace, RosterError
 from examinator.model.fake import FakeModel
 from examinator.pdf import render
@@ -242,18 +242,19 @@ def test_roster_and_names(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    assert intake.set_roster(ws, (ws.root / 'roster.csv').read_text()) == 10
-    p = intake.people(ws)[2]
-    intake.set_who(ws, 's0003', intake.label(p), author='t')
-    assert ws.store.submission('s0003').name == "Synthetic Student 03"
+    assert identity.set_roster(ws, (ws.root / 'roster.csv').read_text()) == 10
+    p = identity.people(ws)[2]
+    identity.set_who(ws, 's0003', identity.label(p), author='t')
+    assert ws.store.submission('s0003').name == "Casey Stubbs"
     assert ws.sync_roster() == 6 and ws.store.submission('s0003').email == p['email']
-    intake.set_who(ws, 's0004', "Someone Unlisted", author='t')
+    assert ws.store.submission('s0003').student == p['id']
+    identity.set_who(ws, 's0004', "Someone Unlisted", author='t')
     assert ws.store.submission('s0004').name == "Someone Unlisted"
-    intake.set_who(ws, 's0004', "", author='t')
+    identity.set_who(ws, 's0004', "", author='t')
     assert ws.store.submission('s0004').name == ""
     with pytest.raises(ValueError):
-        intake.parse_roster("Email\nx@example.invalid\n")
-    assert intake.parse_roster("First Name,Last Name\nAda,Lovelace\n")[0]['name'] == "Ada Lovelace"
+        identity.parse_roster("Email\nx@example.invalid\n")
+    assert identity.parse_roster("First Name,Last Name\nAda,Lovelace\n")[0]['name'] == "Ada Lovelace"
 
 
 def test_handed_pdfs_still_need_their_roster(tmp_path, toy):
