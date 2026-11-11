@@ -23,9 +23,65 @@ uv run examinator synth exams/toy_exam /tmp/toy-ws     # a synthetic workspace
 uv run examinator serve exams/toy_exam -w /tmp/toy-ws --fake
 ```
 
-For a real workspace, put `ID.pdf` scans and one roster file (the scanning
-service's YAML, or a CSV with `Submission ID`, `First Name`, `Last Name`,
-`Email`) in `WORKSPACE/pdfs/`, then:
+## Scans in
+
+Examinator takes the raw scans itself: stacks of exams scanned in one go, many
+students per PDF.
+
+```sh
+uv run examinator intake path/to/my_exam -w WORKSPACE stack-1.pdf stack-2.pdf --roster students.csv
+uv run examinator serve path/to/my_exam -w WORKSPACE      # then the Scans page
+```
+
+(or add the PDFs with **Add scans** on the Scans page). Each PDF is kept
+unchanged under `WORKSPACE/sources/`; adding the same file twice is noticed.
+Examinator proposes a split, every N pages (N = cover pages + exam pages), and
+if the exam declares landmarks (`Exam(landmarks=[...])`: a printed title on
+page 1, a page-number footer) and the model is up, **check** reads them only
+at the expected boundaries and their neighbours, moving each boundary to where
+a first page really is and flagging what looks wrong: too few or too many
+pages, an unexpected page number, a first page not recognised.
+
+On the Scans page you step through the boundaries one at a time: the guessed
+first page of the next exam, large, between its neighbours.
+
+| Key (left hand) | Right hand | |
+| --- | --- | --- |
+| `V` | `N` | this is the first page; go to the next guess |
+| `A` / `D` (or arrows) | `J` / `L` | the guess is a page too late / too early |
+| `W` / `S` | `I` / `K` | previous / next boundary |
+| `X` | `M` | drop this page (blank or stray) |
+| `R` | `U` | turn this exam 180° |
+| `Shift+R` | `Shift+U` | turn the whole scan 90° (also: mirror, as a button) |
+
+A confirmed first page is your decision: it outranks the every-N guess and any
+landmark reading, and later guesses follow from it. Turn a stack fed in
+sideways or upside down before checking: landmarks are read on the turned page.
+The overview below lists every exam (doubtful ones first) with its pages, where
+pages are dropped, an exam is started at a page or joined with the next.
+
+**Accept** writes one PDF per exam into `pdfs/`, named by an opaque id
+(`s0001`, ...) that never changes, with pages upright (turned pages are written
+as new single-image pages; others are copied untouched). Accepting again after
+a fix rewrites only the exams whose pages or turning changed; one that already
+has grading work is not changed unless you insist. Then pick who each exam is
+from the roster (any CSV with a name, and optionally email and student id),
+beside the crop of the name box (`Exam(name_region=...)`).
+
+Try it on synthetic stacks (a missing page, a stray page, an upside-down exam,
+an upside-down stack, a length that is not a multiple of N):
+
+```sh
+uv run examinator synth exams/toy_exam /tmp/st --stacks
+uv run examinator intake exams/toy_exam -w /tmp/st --fake --roster /tmp/st/roster.csv /tmp/st/incoming/*.pdf
+uv run examinator serve exams/toy_exam -w /tmp/st --fake
+```
+
+## PDFs already split
+
+A workspace can instead be handed `ID.pdf` scans and one roster file (the
+scanning service's YAML, or a CSV with `Submission ID`, `First Name`,
+`Last Name`, `Email`) in `WORKSPACE/pdfs/`, then:
 
 ```sh
 uv run examinator serve path/to/my_exam -w WORKSPACE
