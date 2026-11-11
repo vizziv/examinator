@@ -34,18 +34,32 @@ def jpeg(im):
     return buf.getvalue()
 
 
-def make_pdf(path, images=(), text=False):
-    """One letter page holding `images`, each (PIL image or JPEG bytes, (x, y, w, h) in points)."""
+def rect(doc, page, x, y, w, h):
+    obj = pdfium_c.FPDFPageObj_CreateNewRect(x, y, w, h)
+    pdfium_c.FPDFPageObj_SetFillColor(obj, 255, 255, 255, 255)
+    pdfium_c.FPDFPath_SetDrawMode(obj, pdfium_c.FPDF_FILLMODE_ALTERNATE, 0)
+    pdfium_c.FPDFPage_InsertObject(page, obj)
+
+
+def make_pdf(path, images=(), text=False, size=LETTER, under=(), over=(), matrix=None, rotation=0):
+    """One page holding `images`, each (PIL image or JPEG bytes, (x, y, w, h) in points), or
+    placed by `matrix` (a b c d e f). `under` and `over` are white rectangles below and above."""
     doc = pdfium.PdfDocument.new()
-    page = doc.new_page(*LETTER)
+    page = doc.new_page(*size)
+    for r in under:
+        rect(doc, page, *r)
     for source, (x, y, w, h) in images:
         obj = pdfium.PdfImage.new(doc)
         if isinstance(source, bytes):
             obj.load_jpeg(io.BytesIO(source), inline=False)
         else:
             obj.set_bitmap(pdfium.PdfBitmap.from_pil(source))
-        obj.set_matrix(pdfium.PdfMatrix().scale(w, h).translate(x, y))
+        obj.set_matrix(pdfium.PdfMatrix(*matrix) if matrix else pdfium.PdfMatrix().scale(w, h).translate(x, y))
         page.insert_obj(obj)
+    for r in over:
+        rect(doc, page, *r)
+    if rotation:
+        page.set_rotation(rotation)
     if text:
         font = pdfium_c.FPDFText_LoadStandardFont(doc, b'Helvetica')
         obj = pdfium_c.FPDFPageObj_CreateTextObj(doc, font, 24.0)
@@ -96,13 +110,55 @@ def test_lossless_scan_pixels_are_the_source(tmp_path, taken, mode):
     pytest.param(lambda s: [], True, id='vector'),
     pytest.param(lambda s: [(s, FULL), (s, (300, 300, 100, 100))], False, id='two-images'),
     pytest.param(lambda s: [(s, FULL)], True, id='image-and-text'),
-    pytest.param(lambda s: [(s, (0, 0, 306, 792))], False, id='image-on-half-the-page'),
-    pytest.param(lambda s: [(s.rotate(90, expand=True), FULL)], False, id='sideways-pixels'),
 ])
 def test_other_pages_are_rasterized(tmp_path, taken, content, text):
     pdf = make_pdf(tmp_path / 's.pdf', content(scan(100)), text=text)
     page = Renderer(tmp_path / 'cache', dpi=72).page(pdf, 0)
     assert taken == [False] and page.size == LETTER
+
+
+def test_something_drawn_over_the_image_is_not_a_plain_scan(tmp_path, taken):
+    pdf = make_pdf(tmp_path / 's.pdf', [(jpeg(scan(100)), FULL)], over=[(100, 100, 200, 50)])
+    Renderer(tmp_path / 'cache', dpi=72).page(pdf, 0)
+    assert taken == [False]
+
+
+def test_a_background_and_a_wrong_page_size_do_not_matter(tmp_path, taken):
+    """What scanning services produce: white rectangles, then the image on part of a page of the wrong size."""
+    data = jpeg(scan(100))
+    pdf = make_pdf(tmp_path / 's.pdf', [(data, (27.75, 77.25, 242.25, 342.75))], size=(298.08, 420),
+                   under=[(0, 0, 298.08, 420), (27.75, 0, 242.25, 420)])
+    assert Renderer(tmp_path / 'cache', dpi=160).page_path(pdf, 0).read_bytes() == data
+    assert taken == [True]
+
+
+W, H = LETTER
+ORIENTATIONS = {                                    # a b c d e f: every quarter turn and mirror image
+    'upright': (W, 0, 0, H, 0, 0), 'mirrored': (-W, 0, 0, H, W, 0), 'upside-down-mirrored': (W, 0, 0, -H, 0, H),
+    'half-turn': (-W, 0, 0, -H, W, H), 'quarter': (0, W, -H, 0, H, 0), 'three-quarter': (0, -W, H, 0, 0, W),
+    'diagonal': (0, W, H, 0, 0, 0), 'other-diagonal': (0, -W, -H, 0, H, W),
+}
+
+
+@pytest.mark.parametrize('name', ORIENTATIONS)
+@pytest.mark.parametrize('rotation', [0, 90])
+def test_the_image_comes_out_as_the_page_draws_it(tmp_path, taken, name, rotation):
+    """The fast path against PDFium's own rendering, for each way an image can be drawn."""
+    m = ORIENTATIONS[name]
+    size = LETTER if m[0] else (H, W)
+    pdf = make_pdf(tmp_path / 's.pdf', [(scan(50), FULL)], size=size, matrix=m, rotation=rotation)
+    fast = Renderer(tmp_path / 'fast', dpi=50).page(pdf, 0)
+    assert taken == [True]
+    page = pdfium.PdfDocument(str(pdf))[0]
+    want = page.render(scale=50 / 72).to_pil().convert('L').resize((40, 40), Image.Resampling.BOX)
+    got = fast.convert('L').resize((40, 40), Image.Resampling.BOX)
+    assert np.abs(np.asarray(got, dtype=float) - np.asarray(want, dtype=float)).mean() < 4
+
+
+def test_a_skewed_image_is_rasterized(tmp_path, taken):
+    pdf = make_pdf(tmp_path / 's.pdf', [(scan(50), FULL)], matrix=(W, 60, -60, H, 30, 0))
+    Renderer(tmp_path / 'cache', dpi=72).page(pdf, 0)
+    assert taken == [False]
 
 
 def test_crops_land_in_the_same_place_on_both_paths(tmp_path, monkeypatch):
@@ -123,4 +179,4 @@ def test_crops_land_in_the_same_place_on_both_paths(tmp_path, monkeypatch):
 def test_cache_names_differ_from_rasterized_ones(tmp_path):
     pdf = make_pdf(tmp_path / 's.pdf', [(jpeg(scan(100)), FULL)])
     path = Renderer(tmp_path / 'cache', dpi=160).page_path(pdf, 0)
-    assert path.name == 'p000-160n.jpg'
+    assert path.name == 'p000-160i.jpg'
