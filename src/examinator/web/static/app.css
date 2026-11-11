@@ -21,7 +21,7 @@
   --warn: #8a5a00; --warn-bg: #fff1c9; --review: #b42318; --review-bg: #fde3df;
   /* a person must look (fixed yellow): unverified soft, undecided / needs review stronger */
   --ok-ink: #3b8552; --ok-soft: #e7f3ea; --no-ink: #8a5a2e; --no-soft: #f4ebe1;   /* softened grade glyphs */
-  --blank-faded: #a3abb3; --ask: #c0129f; --ask-soft: #fae6f6;                      /* ? = not determined */
+  --blank-faded: #a3abb3; --ask: #a814bd; --ask-soft: #f6e6fa;                      /* ? = not determined */
   --unv-bg: #fff3c2; --unv-ink: #6b5300; --done-bg: #eef0f2; --man-bg: #e2ebfb; --man-ink: #2c5fb8;
   --stale: #8a8378;
   --glyph-font: system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
@@ -50,7 +50,7 @@ body.p-grid { --page-max: 100vw; }       /* grid.js sets it to the table's width
   --blank: #b6bec6; --blank-bg: #2b3135; --none: #7f8c8c;
   --warn: #e3b456; --warn-bg: #3a2f13; --review: #f2786d; --review-bg: #43211e;
   --ok-ink: #7cc492; --ok-soft: #1c3124; --no-ink: #d8a877; --no-soft: #33271b;
-  --blank-faded: #6c767e; --ask: #fa6fe6; --ask-soft: #3d1a37;
+  --blank-faded: #6c767e; --ask: #e274fa; --ask-soft: #381a3d;
   --unv-bg: #37320f; --unv-ink: #f1d978; --done-bg: #262c2e; --man-bg: #1d2a45; --man-ink: #8cb1f4;
   --stale: #9a9285;
   --manual: #84abf2; --manual-bg: #1d2a42; --hl: #4a4216;
