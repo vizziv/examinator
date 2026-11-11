@@ -28,7 +28,8 @@ text. Answer keys never appear in any prompt.
 ```text
 src/examinator/
   core/     definitions, store, workflow rules, runner, batch, workspace;
-            split (pure boundary logic) and intake (sources, plans, accepting into pdfs/)
+            split (pure boundary logic) and intake (sources, plans, accepting into pdfs/);
+            identity (roster, reading name/ID boxes, pure proposals, the pick)
   pdf/      page rendering, scan layout, orientation, writing submission PDFs
   model/    loopback model client, scripted fake model
   std/      standard library: stages, prompts, math, pseudocode, blocks
@@ -67,6 +68,7 @@ uv run pytest                             # tests (offline, fake model)
 uv run examinator synth exams/toy_exam /path/outside/repo/ws   # synthetic workspace
 uv run examinator synth exams/toy_exam /outside/repo/st --stacks          # synthetic stacks of scans
 uv run examinator intake exams/toy_exam -w WS --fake --roster R.csv A.pdf   # add scans, propose splits
+uv run examinator intake exams/toy_exam -w WS --fake --names                # read name/ID boxes, list proposals
 uv run examinator run exams/toy_exam --workspace WS            # run stages from the CLI
 uv run examinator serve exams/toy_exam --workspace WS          # the app
 uv run examinator compare exams/toy_exam --workspace WS --fake # compare transcription models (report only)

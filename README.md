@@ -64,12 +64,44 @@ pages are dropped, an exam is started at a page or joined with the next.
 (`s0001`, ...) that never changes, with pages upright (turned pages are written
 as new single-image pages; others are copied untouched). Accepting again after
 a fix rewrites only the exams whose pages or turning changed; one that already
-has grading work is not changed unless you insist. Then pick who each exam is
-from the roster (any CSV with a name, and optionally email and student id),
-beside the crop of the name box (`Exam(name_region=...)`).
+has grading work is not changed unless you insist.
+
+**Names.** Then say who wrote each exam, on the Scans page's **Names** tab.
+The roster comes from **Roster** (paste, or load a file) or `--roster`: either
+a CSV or tab-separated table with a header (`Name`, or `First Name` and
+`Last Name`; `Student ID`; optionally `Email`), or plain lines, one person per
+line, name and ID separated by a comma or a tab, in either order. On a plain
+line the ID is the part with no spaces and a digit (failing that, the part
+with no spaces). The box shows how many people it read, the first few rows,
+and any line it could not read, before you save.
+
+If the exam declares where students write who they are
+(`Exam(identity=[Identity('name', Region(...), ask=..., roster='name'),
+Identity('id', ..., roster='id')])`), **read** asks the model what is
+written in each box (once per exam; reading again is free) and each exam gets
+ranked proposals from the roster, with why ("ID exact, name close", "ID 1
+off") and how sure: *both agree*, *ID only*, *name only*, *they disagree*,
+*nobody close*, *not read*. Nothing is named until a person says so. One
+exam at a time, its boxes large beside the best proposal:
+
+| Key (left hand) | Right hand | |
+| --- | --- | --- |
+| `V` | `N` | this person; go to the next unnamed exam |
+| `A` / `D` (or arrows) | `J` / `L` | previous / next proposal |
+| `W` / `S` | `I` / `K` | previous exam / skip |
+| `E` | `U` | type a name or ID (the roster picker); `↵` names the exam, also someone not on the roster |
+
+Unnamed and doubtful exams come first; a person named for two exams is
+flagged *name twice*. Below: every exam, and the roster entries no exam is
+named for (**No exam**). The name and ID then show wherever the submission's
+name does (the grid's name column searches the ID too). `intake --names`
+reads the boxes from the command line and lists the proposals.
 
 Try it on synthetic stacks (a missing page, a stray page, an upside-down exam,
-an upside-down stack, a length that is not a multiple of N):
+an upside-down stack, a length that is not a multiple of N; and for names: an
+ID misread by one character, a misread name, an ID that is someone else's, an
+empty ID box, an unreadable name, a student not on the roster, and one on the
+roster with no exam):
 
 ```sh
 uv run examinator synth exams/toy_exam /tmp/st --stacks

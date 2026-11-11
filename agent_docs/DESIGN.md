@@ -274,7 +274,7 @@ create table artifact (
   primary key (submission, question, kind)
 );
 create table history (...);        -- same columns plus replaced_at; written on overwrite
-create table submission (id text primary key, name text, email text, pdf text);
+create table submission (id text primary key, name text, email text, pdf text, student text);
 ```
 
 - Every read on the normal path is a keyed lookup on `artifact`. History is
@@ -495,11 +495,37 @@ submission into `pdfs/`; everything downstream is unchanged.
   disappear while it has grading work (any artifact but the name) is refused
   with the list (`Busy`); a forced accept keeps the work and clears that
   submission's model memo.
-- **Who.** A roster is optional for intake workspaces (still required for PDFs
-  handed in already split). A CSV of people is stored as a setting; each
-  submission's pick is the artifact `(submission, '', 'who')`, beside a crop of
-  `Exam(name_region=...)`. Not built: the model reading the name to propose a
-  roster entry.
+- **Who** (`core/identity.py`). A roster is optional for intake workspaces
+  (still required for PDFs handed in already split). It is stored as a
+  setting, `[{'name', 'id', 'email', 'key'}]`, read from a CSV/TSV with a
+  header or from plain lines (name and ID, comma or tab, either order; the ID
+  is the part with no spaces and a digit). A preview (count, first rows,
+  unreadable lines) comes before saving.
+  - **Declared boxes**: `Exam(identity=[Identity(name, region, ask, roster)])`,
+    shaped like a `Cue`, but about handwriting (`IDENTITY_PROMPT`); `roster`
+    is the roster field the reading is compared with (`'name'`, `'id'`,
+    `'email'`, or None to show only); boxes sharing a field are joined (first
+    and last name). The library names no field beyond those three.
+  - **Reading**: per written submission and box, through the model, memoised
+    per box (region and question), scan window and cover pages. Stored as the
+    artifact `(submission, '', 'identity')`, `{'fields', 'basis'}` (history like
+    any artifact; unchanged readings are not rewritten); a reading under an old
+    box definition is ignored. A background job on the Scans page; hidden
+    without a model or boxes. Accepting a rewritten submission drops its
+    reading (and memo), not its pick. No roster text ever reaches a prompt.
+  - **Proposing** is pure: `propose(readings by roster field, roster)` ranks
+    candidates (an exact ID first; then IDs within 2 edits for 6+ characters,
+    1 for 3-5, letters read as look-alike digits for all-digit IDs; names by
+    order-insensitive token similarity, accents, case and punctuation folded)
+    with a reason, and gives a doubt: `agree`, `id`, `name`, `disagree`,
+    `nobody`, `unread`. A person already picked elsewhere is flagged, not
+    dropped. Computed on read, cached by reading revision and roster.
+  - **Picking**: only a person writes `(submission, '', 'who')`
+    (`{'name', 'id', 'email', 'key'}`, against the revision they saw). The
+    submission row carries the name, email and the student ID (`student`).
+    The Names tab steps through unnamed exams, most doubtful first (V take,
+    A/D other proposals, W/S back/skip, E type), and lists roster entries
+    with no exam.
 - A pre-split PDF that came in sideways could be fixed by adding it as a
   source of one submission (`length` = its pages), at the cost of a new id.
 
