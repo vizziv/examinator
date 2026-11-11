@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+{% set nav = 'scans' %}
+{% block title %}Scans · {{ exam.title }}{% endblock %}
+{% block head %}<script src="{{ root }}/static/scans.js" defer></script>{% endblock %}
+{% block body %}
+<main class="narrow" id="scans" data-landmarks="{{ 1 if landmarks else 0 }}"
+{% if name_crop %} data-name-offset="{{ name_crop.offset }}" data-name-box="{{ name_crop.box }}"{% endif %}>
+<div class="bar">
+<label class="btn primary" title="scanned PDFs, many exams each">Add scans <input type="file" id="up" accept="application/pdf,.pdf" multiple hidden></label>
+<label class="btn" title="CSV: Name (or First Name, Last Name), Email, Student ID">Roster <input type="file" id="roster" accept=".csv,text/csv" hidden></label>
+<span class="dim">{{ people|length }} people</span>
+{% if sources %}<select id="src" aria-label="scan">{% for s in sources %}<option value="{{ s.id }}">{{ s.name }} · {{ s.pages }} pages</option>{% endfor %}</select>{% endif %}
+<span id="msg" role="status"></span>
+</div>
+{% if not sources %}
+<p class="help">No scans yet. Add the scanned PDFs (a stack of exams each, {{ expected }} pages per exam).
+They are kept unchanged; each exam becomes its own submission when you accept the split.
+{% if handed %}This workspace also has {{ handed }} submissions handed in already split.{% endif %}</p>
+{% else %}
+<section id="srcbar" class="panel bar" hidden>
+<b id="s-name"></b> <span id="s-info" class="dim"></span>
+<span class="sep"></span>
+<span id="s-orient" class="tag"></span>
+<button type="button" data-action="split-turn-source">turn scan 90°</button>
+<button type="button" data-action="split-flip-source" class="quiet">mirror</button>
+<span class="sep"></span>
+<label>pages per exam <input type="number" id="s-length" min="1" max="999"></label>
+<button type="button" data-action="split-guess" title="guess the unconfirmed first pages again">re-guess</button>
+{% if model and landmarks %}<button type="button" data-action="split-check" title="read page landmarks with the model where needed">check</button>{% endif %}
+<button type="button" data-action="split-undo" class="quiet">undo</button>
+<span class="grow"></span>
+<span id="s-sum"></span>
+<button type="button" data-action="split-accept" class="primary">Accept</button>
+</section>
+
+<section id="step" class="panel" hidden>
+<div class="bar"><b id="st-k"></b> <span id="st-tags"></span><span class="grow"></span><span id="st-prev" class="dim"></span></div>
+<div id="st-done" hidden><p>Every first page is confirmed. <span id="st-done-sum" class="dim"></span></p></div>
+<div id="st-pages">
+<figure class="ctx" id="st-a"><img alt="page before"><figcaption></figcaption></figure>
+<figure class="main" id="st-b"><img alt="guessed first page"><figcaption></figcaption></figure>
+<figure class="ctx" id="st-c"><img alt="page after"><figcaption></figcaption></figure>
+</div>
+<div class="bar">
+<button type="button" data-action="split-earlier">◀ earlier</button>
+<button type="button" data-action="split-confirm" class="primary">first page ✓</button>
+<button type="button" data-action="split-later">later ▶</button>
+<span class="sep"></span>
+<button type="button" data-action="split-back" class="quiet">back</button>
+<button type="button" data-action="split-next" class="quiet">skip</button>
+<span class="sep"></span>
+<button type="button" data-action="split-drop">drop page</button>
+<button type="button" data-action="split-turn">turn exam 180°</button>
+</div>
+</section>
+
+<section id="over" class="panel" hidden>
+<div class="bar"><h2>Submissions</h2> <span class="dim">to look at first</span></div>
+<div id="rows"></div>
+<div id="loose" hidden><h2>Not in a submission</h2><div class="sheets" id="loose-sheets"></div></div>
+</section>
+<datalist id="people">{% for p in people %}<option value="{{ p }}">{% endfor %}</datalist>
+{% endif %}
+</main>
+{% endblock %}

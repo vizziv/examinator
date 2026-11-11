@@ -1,14 +1,17 @@
 """A workspace: one exam's data on disk.
 
     workspace/
-      pdfs/        ID.pdf per submission, plus one roster file
+      sources/     scanned PDFs as added, many submissions each (intake: `core.intake`)
+      pdfs/        ID.pdf per submission, plus (for PDFs handed in already split) one roster file
       exam.sqlite
       cache/       rendered pages
       exports/
 
-The roster is either the scanning service's YAML metadata (file name to a list
-of submitters with names and emails) or a CSV with `Submission ID`, `First
-Name`, `Last Name`, `Email`. Exactly one must be present.
+PDFs handed in already split come with a roster: either the scanning service's
+YAML metadata (file name to a list of submitters with names and emails) or a
+CSV with `Submission ID`, `First Name`, `Last Name`, `Email`. Exactly one must
+be present then. Submissions written by intake are named on the scans page
+instead, and need no roster file.
 """
 from __future__ import annotations
 
@@ -74,13 +77,21 @@ class Workspace:
         self.store.close()
 
     def sync_roster(self) -> int:
-        """Record every PDF in `pdfs/` as a submission, named from the roster."""
-        roster = read_roster(self.pdfs)
+        """Record every PDF in `pdfs/` as a submission: named from the roster file,
+        or for one written by intake, from the person picked for it."""
+        from .intake import who
+        made = self.store.made()
+        pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink()]
+        handed = [p for p in pdfs if p.stem not in made]
+        try:
+            roster = read_roster(self.pdfs)
+        except RosterError:
+            if handed:
+                raise
+            roster = {}
         subs = []
-        for pdf in sorted(self.pdfs.glob('*.pdf')):
-            if pdf.is_symlink():
-                continue
-            name, email = roster.get(pdf.stem, ("", ""))
+        for pdf in pdfs:
+            name, email = who(self, pdf.stem) if pdf.stem in made else roster.get(pdf.stem, ("", ""))
             subs.append(Submission(pdf.stem, name, email, pdf.name))
         self.store.put_submissions(subs)
         return len(subs)

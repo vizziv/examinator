@@ -450,7 +450,60 @@ Do not build these in M1–M3. Do not block them either.
 | "Review me later" flag (a TA marks an answer for the professor to look over) | Not built. The glyph `!` is reserved for it in the grid and on the question page; `?` means only "a person must decide". The flag would be a small manual artifact per submission and question, with author and an optional note, and a built-in facet so the filter page can gather flagged answers. It must not affect whether a grade counts. |
 | A pluggable interpreter back end (vectorized, masked execution) | Not built; the closure interpreter is fast enough so far. The route: keep one front end (parse, whitelist, validate), expose the validated tree, and route operators through an overridable table; a masked executor is then a second back end. |
 
-## 16. Testing
+## 16. Intake: scans in, submissions out
+
+Examinator takes stacks of scans (many students per PDF) and writes one PDF per
+submission into `pdfs/`; everything downstream is unchanged.
+
+- **Sources.** Each scanned PDF is kept unchanged as `sources/ID.pdf`, ID the
+  start of its SHA-256 (so adding it twice is noticed); a `source` table lists
+  them. CLI `examinator intake`, or a streamed upload on the Scans page.
+- **Split plan.** One artifact per source, `(source id, '', 'split')`, so it has
+  revisions and history like any grader edit. It is a list of *starts* (the
+  sheet where each submission begins; its pages run to the next start, less
+  dropped sheets), each marked confirmed or a guess, plus dropped sheets,
+  landmark readings, the expected length and orientation (`core/split.py`).
+  Boundary logic is pure: `propose(n, length, read)` takes a reader
+  `sheet -> position | None` and is tested with plain dicts.
+- **Landmarks** (`Exam(landmarks=[Landmark(name, region, ask, reads)])`): like
+  a `Cue`, a region and a question for the model about printed text, reading
+  normalised; `reads` maps a reading to a printed page (a title on page 1),
+  or, absent, the reading is the page number. Readings are taken only where
+  needed: at the expected boundary, then neighbours back and forth (a page
+  number jumps straight to the right place), and memoised per source, sheet,
+  landmark, orientation and scan window.
+- **Doubts** are computed, never stored: too few or too many pages, a first
+  page whose landmark did not read as one, a page number out of place. A sheet
+  never read is no doubt.
+- **People decide.** The Scans page steps through boundaries (V confirm, A/D
+  move a page, W/S back/forward). A confirmed start is never moved by a guess;
+  guesses after it are recomputed from it (every N kept sheets, adjusted by
+  stored readings). A length mismatch after confirmation is a flag, not a block.
+- **Orientation**: one of the 8 square symmetries (`pdf/orient.py`: mirror,
+  then quarter turns clockwise; `then` composes, `apply` transposes exactly).
+  The plan holds one for the source and optionally one per submission (the
+  submission's wins); per-page orientation would be one more optional field.
+  The page shows sheets turned in the web layer (`/sheet/...?o=`), landmark
+  crops are cut from the turned sheet, and accepting writes pages upright.
+- **Accepting** writes changed submissions (pages or orientation) with
+  `pdf/pages.py`: an upright sheet is copied untouched by PDFium; a turned one
+  is baked as a new page holding one full-page JPEG (quality 95) shaped like
+  the image, so every written page is a plain scan for the renderer's fast
+  path. A `made` table records each submission's source sheets and their
+  orientation. Ids are opaque (`s0001`), allocated once, never reused.
+  Accepting marks every start confirmed. A submission that would change or
+  disappear while it has grading work (any artifact but the name) is refused
+  with the list (`Busy`); a forced accept keeps the work and clears that
+  submission's model memo.
+- **Who.** A roster is optional for intake workspaces (still required for PDFs
+  handed in already split). A CSV of people is stored as a setting; each
+  submission's pick is the artifact `(submission, '', 'who')`, beside a crop of
+  `Exam(name_region=...)`. Not built: the model reading the name to propose a
+  roster entry.
+- A pre-split PDF that came in sideways could be fixed by adding it as a
+  source of one submission (`length` = its pages), at the cost of a new id.
+
+## 17. Testing
 
 - Unit tests for the workflow rules, one per table row and further rule in §7.
 - Store tests for concurrent edits, discarded stale checks and history.

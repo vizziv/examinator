@@ -13,6 +13,10 @@
     GET  /runs                      batch runs;  POST /runs/preview|start|stop,  GET /runs/status
     GET  /settings                  workspace defaults;  POST /settings
     GET  /exam                      exam data (overrides);  POST /exam/set|clear|variants
+    GET  /scans                     intake: sources, split plans, accept;  GET /scans/{src}/plan (JSON)
+    POST /scans/upload?name=        a scanned PDF as the raw request body (streamed to disk)
+    POST /scans/{src}/{action}      edit propose undo accept;  POST /scans/roster, /scans/who
+    GET  /sheet/{src}/{index}.jpg   one sheet of a source (?o= orientation, ?w= width)
 
 Every POST takes a JSON object (or a form), needs the page token, and answers
 JSON: 403 bad token, 404 unknown target, 409 stale revision or plan, 400 input
@@ -21,8 +25,10 @@ off `app.state`.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
+import os
 import secrets
 import threading
 from collections import OrderedDict
@@ -40,18 +46,22 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainT
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from ..core import batch, focus, grid, overrides
+from ..core import batch, focus, grid, intake, overrides, split
 from ..core.defs import Bool, Exam, Question, grade_kind, has_marker
 from ..core.runner import Runner
 from ..core.store import Conflict
 from ..core.variants import resolved
 from ..core.workflow import evidence_current, question_status, seen_revs, variant_current, variant_trusted
 from ..core.workspace import Workspace
+from ..pdf.layout import Layout
+from ..pdf.orient import Orient
 from .jobs import Batch, Jobs
 
 HERE = Path(__file__).parent
 LOOPBACK = ('127.0.0.1', 'localhost', '[::1]')
 MAX_BODY = 400_000          # characters of an edited artifact
+MAX_UPLOAD = 4 << 30        # bytes of one scanned PDF
+SHEET_WIDTHS = (140, 360, 1000)   # pixel widths a sheet is served at (0: as rendered)
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
 RAW_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'"
@@ -918,6 +928,169 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
         return {'job': jobs.start_each(items, reread), 'n': len(items)}
 
+    # --- intake: scans in, submissions out ---
+
+    def the_source(request: Request):
+        src = store.source(request.path_params['src'])
+        if src is None:
+            raise HTTPException(404)
+        return src
+
+    def code(o: Orient) -> str:
+        return f'{o.turn}{int(o.flip)}'
+
+    def plan_view(src) -> dict:
+        art = intake.plan(ws, src.id)
+        body, n, cover = art.body, src.pages, ws.cover_pages
+        pages, doubts, states = split.pages(body, n), split.doubts(body, n), intake.state(ws, src.id)
+        made = store.made()
+        entries = []
+        for k, e in enumerate(body['entries']):
+            sid = e.get('id')
+            entries.append({'start': e['start'], 'confirmed': bool(e.get('confirmed')), 'id': sid,
+                            'pages': pages[k], 'doubts': [split.DOUBTS[d] for d in doubts[k]],
+                            'state': states[k], 'own': e.get('orient') is not None,
+                            'name': intake.who(ws, sid)[0] if sid in made else ''})
+        so = Orient.from_json(body.get('orient'))
+        return {'id': src.id, 'name': src.name, 'n': n, 'rev': art.rev, 'length': body['length'],
+                'checked': bool(body.get('checked')), 'o': code(so), 'orient': so.label(),
+                'sheet_o': [code(intake.sheet_orient(body, i)) for i in range(n)],
+                'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
+                'readings': {i: (None if r is None else 'cover' if r < cover else f'p.{r - cover + 1}')
+                             for i, r in split.readings(body).items()},
+                'removed': intake.removed(ws, src.id), 'cursor': split.cursor(body),
+                'undo': bool(store.history(src.id, '', intake.PLAN))}
+
+    def scans_page(request: Request) -> Response:
+        name = None
+        if exam.name_region is not None:
+            box = Layout(0, ws.scan_window).box(exam.name_region, exam.crop_pad)
+            name = {'offset': ws.cover_pages + exam.name_region.page - 1,
+                    'box': ','.join(f'{v:.4f}' for v in box)}
+        made = store.made()
+        return page('scans.html', sources=store.sources(), people=[intake.label(p) for p in intake.people(ws)],
+                    expected=intake.expected_length(ws), landmarks=bool(exam.landmarks), name_crop=name,
+                    handed=sum(1 for s in store.submissions() if s.id not in made))
+
+    def scans_plan(request: Request) -> Response:
+        return JSONResponse(plan_view(the_source(request)))
+
+    async def scans_upload(request: Request) -> Response:
+        sent = request.headers.get('x-token') or ''
+        if not hmac.compare_digest(sent.encode(), token.encode()):
+            return JSONResponse({'error': "bad token"}, 403)
+        name = Path(request.query_params.get('name') or 'scan.pdf').name[:200] or 'scan.pdf'
+        tmp = intake.sources_dir(ws) / f'.upload-{secrets.token_hex(8)}.part'
+        h, size, head = hashlib.sha256(), 0, b''
+        try:
+            with open(tmp, 'wb') as fh:
+                os.chmod(tmp, 0o600)
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > MAX_UPLOAD:
+                        return JSONResponse({'error': "file too large"}, 400)
+                    if len(head) < 5:
+                        head += chunk[:5]
+                    h.update(chunk)
+                    fh.write(chunk)
+            if not head.startswith(b'%PDF-'):
+                return JSONResponse({'error': "not a PDF"}, 400)
+            try:
+                src, new = await run_in_threadpool(intake.add_source, ws, tmp, name, move=True,
+                                                   sha256=h.hexdigest())
+            except ValueError as e:
+                return JSONResponse({'error': str(e)[:300]}, 400)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return JSONResponse({'ok': True, 'id': src.id, 'new': new, 'pages': src.pages})
+
+    def scans_edit(request, data):
+        src = the_source(request)
+        op = data.get('op')
+        if op not in intake.EDITS:
+            raise Bad("unknown edit")
+        kw = {}
+        if 'k' in data:
+            kw['k'] = _int(data['k'], "submission", 0, src.pages)
+        if 'sheet' in data:
+            kw['sheet'] = _int(data['sheet'], "page", 0, src.pages - 1)
+        if 'delta' in data:
+            kw['delta'] = _int(data['delta'], "move", -1, 1)
+        intake.edit(ws, src.id, op, expect_rev=_rev(data), author=who(request), **kw)
+        return {'plan': plan_view(src)}
+
+    def scans_propose(request, data):
+        src = the_source(request)
+        length = data.get('length')
+        length = None if length in (None, '') else _int(length, "pages per exam", 1, 999)
+        kw = dict(length=length, fresh=bool(data.get('fresh')), author=who(request), expect_rev=_rev(data))
+        if data.get('check'):
+            if not have_model():
+                raise Bad("model unavailable")
+            if not exam.landmarks:
+                raise Bad("the exam declares no landmarks")
+
+            def work():
+                intake.propose(ws, src.id, model=runner.model, **kw)
+            return {'job': jobs.start(work)}
+        intake.propose(ws, src.id, **kw)
+        return {'plan': plan_view(src)}
+
+    def scans_undo(request, data):
+        src = the_source(request)
+        intake.undo(ws, src.id, expect_rev=_rev(data))
+        return {'plan': plan_view(src)}
+
+    def scans_accept(request, data):
+        src = the_source(request)
+        with lock:
+            report = intake.accept(ws, src.id, author=who(request), force=bool(data.get('force')),
+                                   expect_rev=_rev(data))
+        return {'report': report, 'plan': plan_view(src)}
+
+    def scans_roster(request, data):
+        text = data.get('csv')
+        if not isinstance(text, str) or len(text) > 2_000_000:
+            raise Bad("expected a CSV file")
+        return {'people': intake.set_roster(ws, text)}
+
+    def scans_who(request, data):
+        sub = store.submission(str(data.get('sub')))
+        if sub is None or sub.id not in store.made():
+            raise Bad("unknown submission")
+        text = data.get('text')
+        if text is not None and not isinstance(text, str):
+            raise Bad("expected text")
+        return {'who': intake.set_who(ws, sub.id, text or '', author=who(request))}
+
+    def sheet_image(request: Request) -> Response:
+        """A sheet turned as asked (the page asks for the plan's orientation) and
+        shrunk to one of a few widths, cached; the source and the renderer are untouched."""
+        src = the_source(request)
+        index = request.path_params['index']
+        o = request.query_params.get('o', '00')
+        w = request.query_params.get('w', '0')
+        if not 0 <= index < src.pages or len(o) != 2 or o[0] not in '0123' or o[1] not in '01' \
+                or not w.isdigit() or int(w) not in (0, *SHEET_WIDTHS):
+            raise HTTPException(404)
+        cache = (ws.root / 'cache').resolve()
+        out = cache / 'sheets' / src.id / f'{index:04d}-{o}-{int(w)}.jpg'
+        if not out.exists():
+            try:
+                im = ws.renderer.page(intake.source_path(ws, src), index)
+            except (KeyError, IndexError, OSError):
+                raise HTTPException(404) from None
+            im = Orient(int(o[0]), o[1] == '1').apply(im)
+            if int(w) and im.width > int(w):
+                im = im.resize((int(w), max(1, round(im.height * int(w) / im.width))))
+            out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            tmp = out.with_suffix(f'.{os.getpid()}.{threading.get_ident()}.tmp')
+            im.convert('RGB').save(tmp, 'JPEG', quality=85)
+            os.replace(tmp, out)
+        if out.is_symlink() or cache not in out.resolve().parents:
+            raise HTTPException(404)
+        return FileResponse(out, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=3600'})
+
     def post(path, fn):
         return Route(path, action(fn), methods=['POST'])
 
@@ -951,6 +1124,16 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         post('/exam/set', exam_set),
         post('/exam/clear', exam_clear),
         post('/exam/variants', exam_variants),
+        Route('/scans', scans_page),
+        Route('/scans/upload', scans_upload, methods=['POST']),
+        post('/scans/roster', scans_roster),
+        post('/scans/who', scans_who),
+        Route('/scans/{src}/plan', scans_plan),
+        post('/scans/{src}/edit', scans_edit),
+        post('/scans/{src}/propose', scans_propose),
+        post('/scans/{src}/undo', scans_undo),
+        post('/scans/{src}/accept', scans_accept),
+        Route('/sheet/{src}/{index:int}.jpg', sheet_image),
         Mount('/static', StaticFiles(directory=HERE / 'static'), name='static'),
     ]
     app = Starlette(routes=routes)
