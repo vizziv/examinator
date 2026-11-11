@@ -25,10 +25,22 @@ A submission that differs gets its own override on a question page, under “pag
 </fieldset>
 <fieldset><legend>appearance <span class="dim">(this browser)</span></legend>
 <label>theme <select id="theme"><option value="system">follow system</option><option value="light">light</option><option value="dark">dark</option></select></label>
-<label>accent <input type="color" id="accent" data-key="accent"></label>
-<button type="button" class="quiet" data-reset="accent">reset</button>
-<label>second accent <input type="color" id="accent2" data-key="accent2"></label>
-<button type="button" class="quiet" data-reset="accent2">reset</button>
+<div class="picker" id="pk-accent" data-key="accent">
+<span class="pk-name">accent</span>
+<span class="pk-swatch" title="on light and on dark"><i class="pk-light"><b></b>Aa</i><i class="pk-dark"><b></b>Aa</i></span>
+<label>hue <input type="range" class="pk-h" min="0" max="359" step="1" aria-label="accent hue"></label>
+<label>vivid <input type="range" class="pk-c" min="0" max="0.25" step="0.005" aria-label="accent chroma"></label>
+<span class="pk-quick" role="group" aria-label="accent: quick hues"></span>
+<button type="button" class="quiet pk-reset">reset</button>
+</div>
+<div class="picker" id="pk-accent2" data-key="accent2">
+<span class="pk-name">second accent</span>
+<span class="pk-swatch" title="on light and on dark"><i class="pk-light"><b></b>Aa</i><i class="pk-dark"><b></b>Aa</i></span>
+<label>hue <input type="range" class="pk-h" min="0" max="359" step="1" aria-label="second accent hue"></label>
+<label>vivid <input type="range" class="pk-c" min="0" max="0.25" step="0.005" aria-label="second accent chroma"></label>
+<span class="pk-quick" role="group" aria-label="second accent: quick hues"></span>
+<button type="button" class="quiet pk-reset">reset</button>
+</div>
 <label>crop width <input type="range" id="crop-size" min="160" max="1000" step="20"> <span id="crop-n" class="dim"></span></label>
 </fieldset>
 <fieldset id="keyboard"><legend>keyboard <span class="dim">(this browser)</span></legend>

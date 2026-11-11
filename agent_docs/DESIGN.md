@@ -447,6 +447,8 @@ Do not build these in M1–M3. Do not block them either.
 | PDF exports by question variant | Resolved variants are queryable per question; page selection and cover counts are stored per submission; each variant names its blank template PDF. |
 | Several exams in one process | No module-level state; exam packages loaded under distinct names. |
 | Cross-question variant constraints | Variants stored as candidate sets per question. |
+| "Review me later" flag (a TA marks an answer for the professor to look over) | Not built. The glyph `!` is reserved for it in the grid and on the question page; `?` means only "a person must decide". The flag would be a small manual artifact per submission and question, with author and an optional note, and a built-in facet so the filter page can gather flagged answers. It must not affect whether a grade counts. |
+| A pluggable interpreter back end (vectorized, masked execution) | Not built; the closure interpreter is fast enough so far. The route: keep one front end (parse, whitelist, validate), expose the validated tree, and route operators through an overridable table; a masked executor is then a second back end. |
 
 ## 16. Testing
 

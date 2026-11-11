@@ -3,46 +3,51 @@
   color-scheme: light;
   --bg: #f7f9f9; --panel: #fff; --panel-2: #f0f5f4; --line: #dce3e3; --line-strong: #becdcb;
   --fg: #243238; --muted: #687879;
-  /* the one accent, and what derives from it */
-  --accent: #187367;
-  --accent-hover: color-mix(in srgb, var(--accent) 80%, #000);
-  --accent-soft: color-mix(in srgb, var(--accent) 11%, var(--panel));
-  --accent-line: color-mix(in srgb, var(--accent) 45%, var(--panel));
-  --link: color-mix(in srgb, var(--accent) 92%, #000);
-  --ring: var(--accent);
+  /* Two accents, picked as OKLCH hue + chroma in Settings. theme.js sets the role colours
+     (--accent, --accent-hover, --link, --ring, --accent2, --accent2-text) on <html> with a
+     lightness per theme; the values here are the defaults, for a page without script. */
+  --accent: #087879; --accent-hover: #056263; --link: #066869; --ring: #0a8283;
+  --accent-soft: color-mix(in oklch, var(--accent) 11%, var(--panel));
+  --accent-line: color-mix(in oklch, var(--accent) 45%, var(--panel));
   --on-accent: #fff;
   /* the second accent: selection and active highlights, the focus chip, region boxes, progress, key hints */
-  --accent2: #5b5fc7;
-  --accent2-soft: color-mix(in srgb, var(--accent2) 12%, var(--panel));
-  --accent2-line: color-mix(in srgb, var(--accent2) 45%, var(--panel));
-  --accent2-text: color-mix(in srgb, var(--accent2) 88%, #000);
+  --accent2: #da8a11; --accent2-text: #8b5505;
+  --accent2-soft: color-mix(in oklch, var(--accent2) 14%, var(--panel));
+  --accent2-line: color-mix(in oklch, var(--accent2) 50%, var(--panel));
   /* grades (fixed) */
-  --good: #1a7f37; --good-bg: #e3f3e8; --bad: #b42318; --bad-bg: #fce8e5;
-  --blank: #6a4caf; --blank-bg: #eee9f9; --none: #6b7a7b;
+  --good: #1a7f37; --good-bg: #e3f3e8; --good-ink: #17692f; --bad: #b42318; --bad-bg: #fce8e5; --bad-ink: #9c1f15;
+  --blank: #56606b; --blank-bg: #e8ebee; --none: #7d898a;
   /* workflow states (fixed) */
   --warn: #8a5a00; --warn-bg: #fff1c9; --review: #b42318; --review-bg: #fde3df;
+  /* a person must look (fixed yellow): unverified soft, undecided / needs review stronger */
+  --unv: #614b00; --unv-bg: #fff6c7; --ask-bg: #ffe57a; --ask-line: #d1a900;
+  --stale: #8a8378; --stale-bg: #efeeea; --stale-line: #d6d2ca;
   --manual: #2c5fb8; --manual-bg: #e5edfb; --hl: #fff4bf;
   /* plot series */
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300;
   --shadow: 0 1px 2px #24323814;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --head: 34px;
+  --page-max: 72em;     /* the centred column; the header's content lines up with it */
+  --gutter: 12px;
 }
+body.p-question { --page-max: 1760px; }
+body.p-grid { --page-max: 100vw; }       /* grid.js sets it to the table's width */
 :root[data-theme=dark] {
   color-scheme: dark;
   --bg: #131718; --panel: #1b2122; --panel-2: #222a2b; --line: #2f393a; --line-strong: #455251;
   --fg: #e1e7e7; --muted: #93a3a3;
-  --accent-hover: color-mix(in srgb, var(--accent) 80%, #fff);
-  --accent-soft: color-mix(in srgb, var(--accent) 24%, var(--panel));
-  --accent-line: color-mix(in srgb, var(--accent) 60%, var(--panel));
-  --link: color-mix(in srgb, var(--accent) 55%, #fff);
-  --ring: color-mix(in srgb, var(--accent) 60%, #fff);
-  --accent2-soft: color-mix(in srgb, var(--accent2) 26%, var(--panel));
-  --accent2-line: color-mix(in srgb, var(--accent2) 60%, var(--panel));
-  --accent2-text: color-mix(in srgb, var(--accent2) 50%, #fff);
-  --good: #5cc97a; --good-bg: #1a3323; --bad: #f2786d; --bad-bg: #3d201d;
-  --blank: #b9a3ef; --blank-bg: #2a2540; --none: #8d9b9b;
+  --accent: #0b8586; --accent-hover: #0e999a; --link: #4fcdce; --ring: #3ec0c1;
+  --accent-soft: color-mix(in oklch, var(--accent) 26%, var(--panel));
+  --accent-line: color-mix(in oklch, var(--accent) 60%, var(--panel));
+  --accent2: #e89629; --accent2-text: #feb25a;
+  --accent2-soft: color-mix(in oklch, var(--accent2) 22%, var(--panel));
+  --accent2-line: color-mix(in oklch, var(--accent2) 55%, var(--panel));
+  --good: #5cc97a; --good-bg: #1a3323; --good-ink: #7fd897; --bad: #f2786d; --bad-bg: #3d201d; --bad-ink: #f6968d;
+  --blank: #b6bec6; --blank-bg: #2b3135; --none: #7f8c8c;
   --warn: #e3b456; --warn-bg: #3a2f13; --review: #f2786d; --review-bg: #43211e;
+  --unv: #f5dc72; --unv-bg: #2f2b10; --ask-bg: #4f4410; --ask-line: #b39a1f;
+  --stale: #9a9285; --stale-bg: #262523; --stale-line: #3f3c37;
   --manual: #84abf2; --manual-bg: #1d2a42; --hl: #4a4216;
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #2a9d2a;
   --shadow: none;
@@ -53,14 +58,14 @@
 /* --- base --- */
 * { box-sizing: border-box; }
 html { font: 13.5px/1.4 system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; accent-color: var(--accent); }
-body { margin: 0; background: var(--bg); color: var(--fg); }
+body { margin: 0; background: var(--bg); color: var(--fg); min-width: fit-content; }   /* grows with a wide grid, so the header can stick */
 a { color: var(--link); text-decoration: none; text-underline-offset: 2px; }
 a:hover { text-decoration: underline; }
 h2 { font-size: 1.05rem; font-weight: 650; margin: .2rem 0 .35rem; }
 [hidden] { display: none !important; }
 .dim { color: var(--muted); }
 .grow { flex: 1; }
-::selection { background: color-mix(in srgb, var(--accent2) 30%, transparent); }
+::selection { background: color-mix(in oklch, var(--accent2) 32%, transparent); }
 code, pre, textarea, .mono { font-family: var(--mono); }
 code { font-size: .93em; }
 kbd { font: 10.5px/1.3 var(--mono); color: var(--accent2-text); background: var(--accent2-soft); border: 1px solid var(--accent2-line);
@@ -97,7 +102,10 @@ details > summary:hover { color: var(--fg); }
 details[open] > summary { margin-bottom: 4px; }
 
 /* --- header --- */
-nav.top { position: sticky; top: 0; z-index: 10; display: flex; gap: 8px; align-items: center; padding: 3px 10px;
+/* Sticky both ways: when the page scrolls sideways (a wide grid), the header stays across the window. */
+nav.top { position: sticky; top: 0; left: 0; z-index: 10; width: var(--vw, 100%);   /* the window's width: common.js */
+  display: flex; gap: 8px; align-items: center;
+  padding: 3px max(var(--gutter), calc((100% - max(var(--page-max), 60em)) / 2 + var(--gutter)));
   background: var(--panel); border-bottom: 1px solid var(--line); min-height: var(--head); flex-wrap: wrap; box-shadow: var(--shadow); }
 nav.top #home { font-weight: 700; color: var(--fg); margin-right: 6px; }
 nav.top .nav { color: var(--muted); padding: 2px 6px; border-radius: 4px; }
@@ -114,6 +122,7 @@ nav.top button { padding: 1px 7px; }
 .tag.good { color: var(--good); background: var(--good-bg); border-color: transparent; }
 .tag.bad { color: var(--bad); background: var(--bad-bg); border-color: transparent; }
 .tag.warn { color: var(--warn); background: var(--warn-bg); border-color: transparent; }
+.tag.ask { color: var(--unv); background: var(--ask-bg); border-color: var(--ask-line); font-weight: 600; }
 .tag.accent { color: var(--link); background: var(--accent-soft); border-color: transparent; }
 .tag.accent2 { color: var(--accent2-text); background: var(--accent2-soft); border-color: transparent; }
 a.tag:hover { text-decoration: none; filter: brightness(.97); }
@@ -122,35 +131,51 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 .pill { display: inline-flex; align-items: center; gap: 4px; padding: 0 9px; border-radius: 11px; font-size: 12px;
   line-height: 20px; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
 .pill b { font-size: 13px; }
-.g-t { color: var(--good); background: var(--good-bg); }
-.g-f { color: var(--bad); background: var(--bad-bg); }
-.g-b { color: var(--blank); background: var(--blank-bg); }
-.g-n { color: var(--none); background: var(--panel-2); border-color: var(--line); }
+/* One system for the grid's cells and the question page's pills: a soft tint of a hue with
+   the glyph or text in a darker tone of the same hue.
+   Settled (counting): correct green, incorrect red, blank grey (faded), points neutral.
+   A person must look: yellow. Unverified = soft yellow showing the proposal; undecided or
+   needs review = stronger yellow with a border, the loudest thing on the grid. '?' means
+   only "a person must decide". Outdated = a grey corner mark and struck glyph; manual =
+   a blue underline: marks, not colours. */
+.g-t { color: var(--good-ink); background: var(--good-bg); }
+.g-f { color: var(--bad-ink); background: var(--bad-bg); }
+.g-b { color: var(--blank); background: var(--blank-bg); font-weight: 500; }
+.g-n { color: var(--unv); background: var(--ask-bg); border-color: var(--ask-line); }
+.g-n.idle { color: var(--muted); background: transparent; border-color: var(--line-strong); }
 .g-num { color: var(--fg); background: var(--panel-2); border-color: var(--line); font-variant-numeric: tabular-nums; }
 .st { font-weight: 500; color: var(--muted); background: transparent; border-color: var(--line-strong); }
-.st-unverified { border-style: dashed; }
-.st-graded { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
-.st-needs_review { color: var(--review); background: var(--review-bg); border-color: transparent; }
-.st-outdated { color: var(--warn); background: var(--warn-bg); border-color: transparent; }
-.st-manual { color: var(--manual); background: var(--manual-bg); border-color: transparent; }
-.st-manual_outdated { color: var(--warn); background: var(--warn-bg); border-color: var(--manual); }
+.st-graded { color: var(--good-ink); border-color: color-mix(in srgb, var(--good) 35%, transparent); }
+.st-unverified { color: var(--unv); background: var(--unv-bg); }
+.st-needs_review { color: var(--unv); background: var(--ask-bg); border-color: var(--ask-line); font-weight: 650; }
+.st-outdated { color: var(--stale); background: var(--stale-bg); border-color: var(--stale-line); }
+.st-manual { color: var(--manual); background: var(--manual-bg); }
+.st-manual_outdated { color: var(--manual); background: var(--stale-bg); border-color: var(--manual); }
 
-/* grade glyphs (grid and anywhere a value is one character) */
-.v-t { color: var(--good); } .v-f { color: var(--bad); } .v-b { color: var(--blank); } .v-n { color: var(--none); }
+/* grade glyphs outside the grid (decide buttons) */
+.v-t { color: var(--good); } .v-f { color: var(--bad); } .v-b { color: var(--blank); } .v-n { color: var(--unv); }
 .v-num { color: var(--fg); }
 
-/* grid states: the cell around the glyph */
-.s-unverified { outline: 1px dashed var(--line-strong); outline-offset: -3px; }
-.s-unverified > a { opacity: .7; }
-.s-manual { box-shadow: inset 0 -2px 0 var(--manual); }
-.s-needs_review { background: var(--review-bg); }
-.s-outdated, .s-manual_outdated { background: var(--warn-bg); }
-.s-outdated > a, .s-manual_outdated > a { text-decoration: line-through; }
-.s-manual_outdated { box-shadow: inset 0 -2px 0 var(--manual); }
+/* grid cells (and the legend's samples): .cell with data-v (t, f, a number, or empty),
+   data-b (blank) and s-{state} */
+.cell { --tint: transparent; --ink: var(--muted); background-color: var(--tint); position: relative; }
+.cell > a, .cell > a[class] { color: var(--ink); }
+.cell[data-v=t] { --tint: var(--good-bg); --ink: var(--good-ink); }
+.cell[data-v=f] { --tint: var(--bad-bg); --ink: var(--bad-ink); }
+.cell:where([data-v]:not([data-v=t], [data-v=f], [data-v=""])) { --tint: var(--panel-2); --ink: var(--fg); }
+.cell[data-b] { --tint: var(--blank-bg); --ink: color-mix(in srgb, var(--blank) 60%, var(--blank-bg)); }
+.cell.s-unverified { --tint: var(--unv-bg); --ink: var(--unv); }
+.cell.s-needs_review, .cell.s-unverified[data-v=""] { --tint: var(--ask-bg); --ink: var(--unv); box-shadow: inset 0 0 0 1px var(--ask-line); }
+.cell.s-needs_review > a, .cell.s-unverified[data-v=""] > a { font-weight: 800; }
+.cell.s-not_started, .cell.s-in_progress { --tint: transparent; --ink: var(--muted); }
+.cell.s-outdated > a, .cell.s-manual_outdated > a { text-decoration: line-through; text-decoration-thickness: 1px; }
+.cell.s-outdated::after, .cell.s-manual_outdated::after { content: ''; position: absolute; top: 0; right: 0;
+  border-style: solid; border-width: 0 7px 7px 0; border-color: transparent var(--stale) transparent transparent; }
+.cell.s-manual, .cell.s-manual_outdated { box-shadow: inset 0 -2px 0 var(--manual); }
 
 /* --- panels --- */
 .panel, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; box-shadow: var(--shadow); }
-.panel.attention { border-color: color-mix(in srgb, var(--bad) 55%, var(--panel)); }
+.panel.attention { border-color: var(--ask-line); }
 details.panel > summary { margin: -5px -8px; padding: 5px 8px; border-radius: 6px; }
 details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0; }
 .plabel, .pname { color: var(--muted); font-size: 11.5px; font-weight: 600; min-width: 3.5em; }
@@ -158,7 +183,7 @@ details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var
 .bar.row { flex-basis: 100%; gap: 5px 14px; }
 
 /* --- grid --- */
-#grid-wrap { padding: 6px 10px 24px; }
+#grid-wrap { padding: 6px var(--gutter) 24px; width: max-content; margin: 0 auto; }
 #grid { border-collapse: separate; border-spacing: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow); }
 #grid th { position: sticky; top: var(--head); background: var(--panel-2); border-bottom: 1px solid var(--line-strong); padding: 3px 6px;
   font-weight: 650; font-size: 12px; cursor: pointer; white-space: nowrap; user-select: none; z-index: 2; }
@@ -170,14 +195,24 @@ details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var
 #grid td { padding: 0; border-bottom: 1px solid var(--line); height: 21px; white-space: nowrap; }
 #grid td.id, #grid td.name, #grid td.total, #grid tfoot td { padding: 0 7px; }
 #grid td.id { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+/* id and name stay in view when the grid scrolls sideways (grid.js sets --name-left) */
+#grid td.id, #grid td.name, #grid th:nth-child(-n+2), #grid tfoot td:first-child { position: sticky; left: 0; z-index: 1; background-color: var(--panel); }
+#grid td.name, #grid th:nth-child(2) { left: var(--name-left, 0); box-shadow: inset -1px 0 0 var(--line); }
+#grid thead th:nth-child(-n+2) { z-index: 3; background-color: var(--panel-2); }
+#grid tfoot td:first-child { background-color: var(--panel-2); }
 #grid td.name { max-width: 16em; overflow: hidden; text-overflow: ellipsis; }
 #grid td.c, #grid td.var { text-align: center; min-width: 30px; }
-#grid td.c a, #grid td.var a { display: block; padding: 1px 6px; min-height: 20px; font-weight: 700; text-decoration: none; }
-#grid td.c a:hover, #grid td.var a:hover { background: var(--accent-soft); }
-#grid td.var a { color: var(--muted); font-weight: 400; font-size: 12px; }
-#grid td.var.open a { color: var(--bad); }
+#grid td.var { min-width: 24px; }
+#grid td.c a, #grid td.var a { display: block; padding: 1px 6px; min-height: 20px; font-weight: 600; text-decoration: none; }
+#grid td.c a:hover, #grid td.var a:hover { outline: 2px solid var(--ring); outline-offset: -2px; }
+#grid td.c { border-left: 1px solid var(--panel); }     /* a hairline between tinted squares */
+/* variant: a short grey code (the index in the question's variants); '?' when a person must decide */
+.cell.var { --tint: var(--blank-bg); --ink: var(--blank); }
+.cell.var.open { --tint: var(--ask-bg); --ink: var(--unv); box-shadow: inset 0 0 0 1px var(--ask-line); }
+#grid td.var a { font-weight: 500; font-size: 12px; }
+.cell.var.open a { font-weight: 800; }
 #grid td.total { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
-#grid tbody tr:hover > td { background-color: color-mix(in srgb, var(--accent) 5%, transparent); }
+#grid tbody tr:hover > td:not(.cell) { background-color: color-mix(in oklch, var(--accent) 6%, var(--panel)); }
 #grid tfoot td { text-align: center; color: var(--muted); font-size: 11px; border: 0; background: var(--panel-2); }
 #grid th.var { font-weight: 400; color: var(--muted); }
 #f-text { width: 12em; }
@@ -192,12 +227,15 @@ details.legend[open] > summary { margin: 0; background: var(--accent2-soft); }
   white-space: nowrap; font-size: 12px; }
 .legend-body h3 { margin: 4px 0 0; font-size: 11px; color: var(--muted); font-weight: 600; }
 .legend-body h3:nth-child(-n+2) { margin-top: 0; }
-.legend-body .sw { display: inline-block; min-width: 26px; text-align: center; font-weight: 700; margin-right: 6px; padding: 0 3px; }
+.legend-body .sw { display: inline-block; min-width: 26px; text-align: center; margin-right: 6px; border-radius: 3px; }
+.legend-body .sw > a { display: block; padding: 0 4px; font-weight: 600; }
 
 /* --- question page --- */
-#question { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0; }
+#question { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0; max-width: var(--page-max); margin: 0 auto; }
+body.p-question { background: var(--bg); }
+@media (min-width: 1760px) { #question { border-left: 1px solid var(--line); border-right: 1px solid var(--line); } }
 #scan { position: sticky; top: var(--head); height: calc(100vh - var(--head)); overflow: auto; border-right: 1px solid var(--line);
-  resize: horizontal; width: 38vw; min-width: 200px; max-width: 75vw; background: var(--panel-2); }
+  resize: horizontal; width: min(38vw, calc(var(--page-max) * .38)); min-width: 200px; max-width: 75vw; background: var(--panel-2); }
 #scan img.scan, .scanwin img { display: block; width: 100%; height: auto; border-bottom: 1px solid var(--line); }
 #work { padding: 6px 10px 40vh; min-width: 0; }
 #work > * { margin-bottom: 6px; }
@@ -209,7 +247,7 @@ a.navbtn:hover { background: var(--accent-soft); border-color: var(--accent-line
 a.navbtn.off { visibility: hidden; }
 #parts { display: flex; flex-direction: column; gap: 4px; }
 .part { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.reason { color: var(--bad); }
+.reason { color: var(--unv); }
 .decide { display: inline-flex; gap: 3px; align-items: center; margin-left: auto; }
 .decide button.v-t, .decide button.v-f, .decide button.v-b { font-weight: 700; min-width: 30px; }
 .decide button.v-t:hover { background: var(--good-bg); border-color: var(--good); }
@@ -220,7 +258,7 @@ a.navbtn.off { visibility: hidden; }
 .field { display: grid; grid-template-columns: minmax(3em, max-content) minmax(8em, 22em) auto; gap: 6px; align-items: center; }
 .flabel { color: var(--muted); font-family: var(--mono); font-size: 12px; }
 .field input { width: 100%; }
-.field.marked input { background: var(--review-bg); }
+.field.marked input { background: var(--ask-bg); }
 form.draft > .bar { margin-top: 5px; }
 form.draft.dirty .bar button[data-action=save] { border-color: var(--warn); color: var(--warn); }
 .notice { color: var(--bad); }
@@ -273,7 +311,7 @@ pre.code .ln.hl { background: var(--hl); }
 iframe.raw { width: 100%; height: 320px; border: 1px solid var(--line); border-radius: 4px; background: #fff; resize: vertical; }
 
 /* --- narrow pages: runs, settings, filter, exam data --- */
-main.narrow { max-width: 72em; padding: 8px 12px 24px; }
+main.narrow { max-width: var(--page-max); margin: 0 auto; padding: 8px var(--gutter) 24px; }
 main.narrow > * + * { margin-top: 8px; }
 fieldset { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; margin: 0 0 8px; padding: 4px 10px 7px;
   display: flex; flex-wrap: wrap; gap: 5px 14px; align-items: center; box-shadow: var(--shadow); }
@@ -296,7 +334,22 @@ body.scanwin #pages { padding: 0; }
 #keymap td:first-child { min-width: 12em; }
 #keymap td.keys kbd { margin-right: 4px; }
 #keymap tr.listening td { background: var(--accent2-soft); }
-#accent { width: 2.4em; height: 1.7em; vertical-align: middle; cursor: pointer; }
+/* settings: accent pickers (OKLCH hue + chroma; tracks painted by settings.js) */
+.picker { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.pk-name { min-width: 7.5em; font-weight: 600; }
+.pk-swatch { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 5px; overflow: hidden; }
+.pk-swatch i { font: 600 12px/1 system-ui, sans-serif; font-style: normal; display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; }
+.pk-swatch i b { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.pk-light { background: #fff; } .pk-dark { background: #1b2122; }
+.picker input[type=range] { -webkit-appearance: none; appearance: none; width: 11em; height: 10px; border-radius: 5px;
+  border: 1px solid var(--line-strong); vertical-align: middle; }
+.picker input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; border: 2px solid #243238; box-shadow: 0 0 0 1px #fff; cursor: pointer; }
+.picker input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid #243238; cursor: pointer; }
+.picker input[type=range]:focus { outline: 2px solid var(--ring); outline-offset: 2px; }
+.pk-quick { display: inline-flex; gap: 2px; }
+.pk-q { width: 16px; height: 16px; padding: 0; border-radius: 3px; border: 1px solid var(--line); }
+.pk-q:hover { transform: scale(1.15); }
 
 @media (max-width: 800px) {
   #question { grid-template-columns: 1fr; }

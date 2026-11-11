@@ -35,6 +35,13 @@
     sum.title = parts.join('\n');
   }
 
+  // The header lines up with the centred table; id and name stick on sideways scrolling.
+  function measure() {
+    const wrap = document.getElementById('grid-wrap'), first = document.querySelector('#grid thead th');
+    document.body.style.setProperty('--page-max', wrap.offsetWidth + 'px');
+    if (first) document.getElementById('grid').style.setProperty('--name-left', first.offsetWidth + 'px');
+  }
+
   function apply() {
     const q = text.value.trim().toLowerCase();
     const inFocus = data && Focus.size(sel) ? new Set(Focus.focused(data.values, sel, data.subs)) : null;
@@ -64,6 +71,7 @@
       cell.textContent = n;
     }
     summary();
+    measure();
     try {
       sessionStorage.setItem('order', JSON.stringify(visible.map(r => r.dataset.id)));
       sessionStorage.setItem('grid', JSON.stringify({text: text.value, sort}));

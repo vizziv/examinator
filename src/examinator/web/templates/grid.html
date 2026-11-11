@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% set nav = 'grid' %}
 {% block head %}<script src="{{ root }}/static/grid.js" defer></script>{% endblock %}
 {% block nav %}
 <input type="search" id="f-text" placeholder="search" aria-label="search">
@@ -9,25 +10,26 @@
 <details class="legend">
 <summary title="what the cells mean">legend</summary>
 <div class="legend-body">
-<h3>grade</h3><h3>state</h3>
-<span><span class="sw v-t">✓</span>correct</span><span><span class="sw">✓</span>graded</span>
-<span><span class="sw v-f">✗</span>incorrect</span><span><span class="sw s-unverified"><a class="v-t">✓</a></span>unverified</span>
-<span><span class="sw v-b">∅</span>blank</span><span><span class="sw s-needs_review">?</span>needs review</span>
-<span><span class="sw v-num">2</span>points</span><span><span class="sw s-outdated"><a class="v-f">✗</a></span>outdated</span>
-<span><span class="sw v-n">?</span>undecided</span><span><span class="sw s-manual">✓</span>manual</span>
-<span><span class="sw v-n">·</span>in progress</span><span><span class="sw s-manual_outdated"><a class="v-t">✓</a></span>manual, outdated</span>
-<h3>variant</h3><span></span>
-<span><span class="sw dim">a</span>resolved</span><span><span class="sw v-f">?</span>open</span>
+<h3>settled</h3><h3>a person must look</h3>
+<span><span class="sw cell s-graded" data-v="t"><a>✓</a></span>correct</span><span><span class="sw cell s-unverified" data-v="t"><a>✓</a></span>unverified (proposal shown)</span>
+<span><span class="sw cell s-graded" data-v="f"><a>✗</a></span>incorrect</span><span><span class="sw cell s-unverified" data-v=""><a>?</a></span>undecided</span>
+<span><span class="sw cell s-graded" data-v="0" data-b="1"><a>∅</a></span>blank</span><span><span class="sw cell s-needs_review" data-v="f"><a>✗</a></span>needs review</span>
+<span><span class="sw cell s-graded" data-v="2"><a>2</a></span>points</span><span><span class="sw cell var open"><a>?</a></span>variant unresolved</span>
+<h3>marks</h3><h3>other</h3>
+<span><span class="sw cell s-outdated" data-v="t"><a>✓</a></span>outdated</span><span><span class="sw cell s-not_started" data-v=""><a>&nbsp;</a></span>not started</span>
+<span><span class="sw cell s-manual" data-v="t"><a>✓</a></span>manual</span><span><span class="sw cell s-in_progress" data-v=""><a>·</a></span>in progress</span>
+<span><span class="sw cell var"><a>1</a></span>variant (index)</span><span><span class="sw">12…</span>total so far</span>
 </div>
 </details>
 {% endblock %}
 {% block body %}
+{% set vindex = {} %}{% for q in questions %}{% if q.variants and vindex.update({q.id: q.variants|list}) %}{% endif %}{% endfor %}
 <div id="grid-wrap">
 <table id="grid">
 <thead><tr>
 <th data-sort="text">id</th><th data-sort="text">name</th>
 {% for q in questions %}
-{% if q.variants %}<th data-sort="text" class="var" title="{{ q.title }} variant">{{ q.id }}·v</th>{% endif %}
+{% if q.variants %}<th data-sort="text" class="var" title="{{ q.title }}: variant ({% for v in q.variants %}{{ loop.index0 }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %})">v</th>{% endif %}
 {% for part in q.result %}<th data-sort="cell" data-col="{{ q.column(part) }}" title="{{ q.title }}">{{ q.column(part) }}</th>{% endfor %}
 {% endfor %}
 <th data-sort="num">total</th>
@@ -38,12 +40,12 @@
 <td class="id">{{ r.sub.id }}</td><td class="name">{{ r.sub.name }}</td>
 {% for c in r.cells %}
 {% if c.variant %}
-<td class="var{% if c.open %} open{% endif %}"><a href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}">{{ c.text }}</a></td>
+<td class="cell var{% if c.open %} open{% endif %}"><a href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ c.text if not c.open else 'variant unresolved' }}">{% if c.open %}?{% else %}{{ vindex[c.qid].index(c.text) if c.text in vindex[c.qid] else c.text }}{% endif %}</a></td>
 {% else %}
-<td class="c s-{{ c.state }}" data-col="{{ c.col }}" data-s="{{ c.state }}" data-v="{{ c.v }}"{% if c.blank %} data-b="1"{% endif %}{% if c.counts %} data-c="1"{% endif %}><a class="{{ c.cls }}" href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ labels[c.state] }}">{{ c.glyph }}</a></td>
+<td class="c cell s-{{ c.state }}" data-col="{{ c.col }}" data-s="{{ c.state }}" data-v="{{ c.v }}"{% if c.blank %} data-b="1"{% endif %}{% if c.counts %} data-c="1"{% endif %}><a class="{{ c.cls }}" href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ labels[c.state] }}">{{ c.glyph }}</a></td>
 {% endif %}
 {% endfor %}
-<td class="total{% if not r.complete %} open{% endif %}" data-n="{{ r.sort }}">{{ r.points }}{% if not r.complete %}<span class="dim">+?</span>{% endif %}</td>
+<td class="total{% if not r.complete %} open{% endif %}" data-n="{{ r.sort }}">{{ r.points }}{% if not r.complete %}<span class="dim" title="incomplete: some grades do not count yet">…</span>{% endif %}</td>
 </tr>
 {% endfor %}
 </tbody>

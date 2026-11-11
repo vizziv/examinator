@@ -36,19 +36,49 @@
   const theme = $('theme');
   theme.value = pref('theme', 'system');
   theme.addEventListener('change', () => { setPref('theme', theme.value); Theme.apply(); });
-  for (const input of document.querySelectorAll('input[type=color][data-key]')) {
-    const key = input.dataset.key;
-    input.value = pref(key, Theme.DEFAULTS[key]);
-    input.addEventListener('input', () => { setPref(key, input.value); Theme.apply(); });
+  // Accents as OKLCH hue + chroma; the lightness is per theme and role (theme.js).
+  for (const box of document.querySelectorAll('.picker')) {
+    const key = box.dataset.key, two = key === 'accent2';
+    const hue = box.querySelector('.pk-h'), vivid = box.querySelector('.pk-c'), quick = box.querySelector('.pk-quick');
+    const L = {light: Theme.ROLES.light[key][1], dark: Theme.ROLES.dark[key][1]};
+    const text = {light: Theme.ROLES.light[two ? 'accent2-text' : 'link'][1], dark: Theme.ROLES.dark[two ? 'accent2-text' : 'link'][1]};
+    const quicks = [];
+    for (let h = 0; h < 360; h += 30) {
+      const b = make('button', {type: 'button', className: 'pk-q', title: `hue ${h}`});
+      b.setAttribute('aria-label', `hue ${h}`);
+      b.addEventListener('click', () => { hue.value = h; changed(); });
+      quick.append(b);
+      quicks.push([b, h]);
+    }
+    function paint() {
+      const {h, c} = Theme.accent(key);
+      hue.value = h;
+      vivid.value = c;
+      const stops = n => Array.from({length: n + 1}, (_, i) => i / n);
+      hue.style.background = `linear-gradient(to right, ${stops(12).map(f => Theme.color(L.light, c, f * 360)).join(', ')})`;
+      vivid.style.background = `linear-gradient(to right, ${stops(8).map(f => Theme.color(L.light, f * Theme.MAX_C, h)).join(', ')})`;
+      for (const [b, qh] of quicks) b.style.background = Theme.color(L.light, c, qh);
+      for (const theme of ['light', 'dark']) {
+        const chip = box.querySelector('.pk-' + theme);
+        chip.style.color = Theme.color(text[theme], c, h);
+        chip.firstElementChild.style.background = Theme.color(L[theme], c, h);
+      }
+    }
+    function changed() {
+      setPref(key, {h: Number(hue.value), c: Number(vivid.value)});
+      Theme.apply();
+      paint();
+    }
+    hue.addEventListener('input', changed);
+    vivid.addEventListener('input', changed);
+    box.querySelector('.pk-reset').addEventListener('click', () => {
+      try { localStorage.removeItem(key); } catch (err) { /* private mode */ }
+      Theme.apply();
+      paint();
+    });
+    addEventListener('storage', e => { if (e.key === key) paint(); });
+    paint();
   }
-  document.addEventListener('click', e => {
-    const b = e.target.closest('[data-reset]');
-    if (!b) return;
-    const key = b.dataset.reset;
-    try { localStorage.removeItem(key); } catch (err) { /* private mode */ }
-    $(key).value = Theme.DEFAULTS[key];
-    Theme.apply();
-  });
 
   // --- keyboard (this browser): single keys on/off, layout preset, own bindings ---
   const single = $('k-single'), preset = $('k-preset'), table = $('keymap').tBodies[0];

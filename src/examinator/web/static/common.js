@@ -72,7 +72,12 @@ function drawCrops(root) {
   for (const crop of (root || document).querySelectorAll('.crop')) drawCrop(crop);
 }
 
+// The header spans the window, not the page, so it stays put when a wide page scrolls sideways.
+function sizeHeader() { document.documentElement.style.setProperty('--vw', document.documentElement.clientWidth + 'px'); }
+addEventListener('resize', sizeHeader);
+if (window.ResizeObserver) new ResizeObserver(sizeHeader).observe(document.documentElement);
 document.addEventListener('DOMContentLoaded', () => {
+  sizeHeader();
   drawCrops();
   const size = document.getElementById('crop-size');
   if (size) {

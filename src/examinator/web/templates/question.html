@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% set nav = 'question' %}
 {% import 'blocks.html' as blocks %}
 {% import 'entries.html' as ed %}
 {% set here = root ~ '/s/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) %}
@@ -62,7 +63,8 @@
 <div class="part">
 {% if parts|length > 1 %}<span class="pname">{{ p.part }}</span>{% endif %}
 {% set g = p.cls[2:] %}
-<span class="pill g-{{ g }}">{% if g == 'num' %}<b>{{ p.glyph }}</b>{% if p.max is not none %} / {{ '%g'|format(p.max) }}{% endif %}{% else %}{% if g != 'n' %}<b>{{ p.glyph }}</b> {% endif %}{{ {'t': "correct", 'f': "incorrect", 'b': "blank", 'n': "undecided"}[g] }}{% endif %}</span>
+{% set ask = p.st.state in ('unverified', 'needs_review') %}
+<span class="pill g-{{ g }}{% if g == 'n' and not ask %} idle{% endif %}">{% if g == 'num' %}<b>{{ p.glyph }}</b>{% if p.max is not none %} / {{ '%g'|format(p.max) }}{% endif %}{% else %}{% if g != 'n' %}<b>{{ p.glyph }}</b> {% elif ask %}<b>?</b> {% endif %}{{ {'t': "correct", 'f': "incorrect", 'b': "blank", 'n': "undecided" if ask else "no grade"}[g] }}{% endif %}</span>
 <span class="pill st st-{{ p.st.state }}">{{ labels[p.st.state] }}{% if p.st.author %} · {{ p.st.author }}{% endif %}</span>
 {% if p.st.waiting == ('input',) %}<span class="dim">decide</span>{% elif p.st.waiting %}<span class="dim">verify {{ p.st.waiting|reject('equalto', 'input')|join(', ') }}</span>{% endif %}
 {% if p.st.reason and p.st.value is none %}<span class="reason">{{ p.st.reason }}</span>{% endif %}
@@ -125,7 +127,7 @@
 {% if parse.art %}
 {% if parse.art.verified %}<span class="tag good">verified · {{ parse.art.verified_by }}</span>
 {% if parse.editable %}<button type="button" data-action="unverify" data-kind="parse" data-rev="{{ parse.rev }}" class="quiet">undo</button>{% endif %}{% endif %}
-{% if parse.marker %}<span class="tag bad">review marker</span>{% endif %}
+{% if parse.marker %}<span class="tag ask">review marker</span>{% endif %}
 <span class="dim">{{ parse.art.author or parse.art.origin }}</span>
 {% else %}<span class="dim">no parse</span>{% endif %}
 </span>
@@ -137,7 +139,7 @@
 <div id="variant" data-live data-rev="{{ variant.rev }}" class="panel{% if not variant.resolved %} attention{% endif %}">
 <div class="bar">
 <span class="plabel">variant</span>
-{% if variant.resolved %}<b>{{ variant.resolved }}</b>{% else %}<span class="tag bad">unresolved</span>{% if variant.candidates %}<span class="dim">{{ variant.candidates|join(' / ') }}</span>{% endif %}{% endif %}
+{% if variant.resolved %}<b>{{ variant.resolved }}</b>{% else %}<span class="tag ask">? unresolved</span>{% if variant.candidates %}<span class="dim">{{ variant.candidates|join(' / ') }}</span>{% endif %}{% endif %}
 {% if variant.manual %}<span class="tag">manual · {{ variant.art.author }}</span>{% endif %}
 {% if variant.art and variant.art.verified %}<span class="tag good">verified · {{ variant.art.verified_by }}</span>
 {% elif variant.resolved and not variant.trusted %}<span class="tag warn">unverified</span>{% endif %}
@@ -154,7 +156,7 @@
 <span class="cueline"><span class="flabel" title="{{ c.ask }}">{{ c.name }}</span>
 <input type="text" value="{{ '' if c.reading is none else c.reading }}" data-cue="{{ c.name }}" size="8" aria-label="reading" spellcheck="false">
 <button type="button" data-action="cue">set</button>
-<span class="{{ 'dim' if c.variant else 'tag bad' }}">→ {{ c.variant or '?' }}</span></span>
+<span class="{{ 'dim' if c.variant else 'tag ask' }}">→ {{ c.variant or '?' }}</span></span>
 </div>
 {% endfor %}
 </div>
@@ -189,7 +191,7 @@
 
 {% if transcript %}
 <details id="transcript" class="panel">
-<summary>transcript <span id="meta-transcript" data-live class="meta">{% if transcript.marker %}<span class="tag bad">review marker</span>{% endif %}{% if not transcript.art %}<span class="dim">none</span>{% endif %}</span></summary>
+<summary>transcript <span id="meta-transcript" data-live class="meta">{% if transcript.marker %}<span class="tag ask">review marker</span>{% endif %}{% if not transcript.art %}<span class="dim">none</span>{% endif %}</span></summary>
 <form class="draft" id="ed-transcript" data-kind="transcript" data-mode="code" data-rev="{{ transcript.rev }}" autocomplete="off">
 <textarea spellcheck="false" rows="{{ [[transcript.text.count('\n') + 2, 4]|max, 30]|min }}"{% if not transcript.editable %} readonly{% endif %}>
 {{ transcript.text }}</textarea>

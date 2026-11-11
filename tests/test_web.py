@@ -122,8 +122,11 @@ def test_theme_and_actions_are_static_and_controls_declare_actions(site):
     assert 'data-action="clear-filter"' in site.get('/filter').text
     runs = site.get('/runs').text
     assert all(f'data-action="{a}"' in runs for a in ('run-preview', 'run-start', 'run-stop'))
+    grid = site.get('/').text
+    assert 'class="c cell s-' in grid and '+?' not in grid          # '?' only means "a person must decide"
+    assert 'title="incomplete' in grid and '>?</a>' in grid         # s2's variant is open
     settings = site.get('/settings').text
-    assert all(f'id="{i}"' in settings for i in ('theme', 'accent', 'accent2', 'k-single', 'k-preset', 'keymap'))
+    assert all(f'id="{i}"' in settings for i in ('theme', 'pk-accent', 'pk-accent2', 'k-single', 'k-preset', 'keymap'))
     assert 'aria-current="page"' in settings
 
 
