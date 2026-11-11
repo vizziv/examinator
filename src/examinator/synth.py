@@ -91,8 +91,31 @@ def _printed_pages(exam: Exam, case: Case, renderer: Renderer) -> list[Image.Ima
                         l, t, r, b = _box(f.region)
                         d.rectangle((l, t, r, b), outline='black')
                         d.text((max(l - 60, 5), t + 5), f.label, fill='black', font=_font(16))
+            for lm in exam.landmarks:
+                text = landmark_text(lm, p)
+                if text:
+                    l, t, r, b = _box(lm.region)
+                    d.text((l + 6, t + 4), text, fill='black', font=_font(max(14, min(30, (b - t) - 8))))
+            if exam.name_region is not None and exam.name_region.page == p:
+                l, t, r, b = _box(exam.name_region)
+                d.text((l, t - 22), "Name:", fill='black', font=_font(16))
+                d.line((l, b, r, b), fill='black')
         pages.append(im)
     return pages
+
+
+def landmark_text(lm, page: int) -> str | None:
+    """What a landmark shows on a printed page: its reading for that page, if any."""
+    if lm.reads:
+        return next((k for k, v in lm.reads.items() if v == page), None)
+    return str(page) if page >= lm.region.page else None
+
+
+def _draw_name(exam: Exam, pages: list[Image.Image], name: str) -> None:
+    r = exam.name_region
+    if r is not None and 1 <= r.page <= len(pages):
+        l, t, _, _ = _box(r)
+        ImageDraw.Draw(pages[r.page - 1]).text((l + 14, t + 12), name, fill=(20, 30, 140), font=_font(26))
 
 
 def _draw_answers(exam: Exam, case: Case, pages: list[Image.Image]) -> None:
@@ -168,6 +191,7 @@ def generate(exam: Exam, root: str | Path, cases: list[Case]) -> Path:
         for i, case in enumerate(cases, 1):
             printed = _printed_pages(exam, case, renderer)
             _draw_answers(exam, case, printed)
+            _draw_name(exam, printed, f"Synthetic Student {i:02d}")
             scan = _scan(exam, printed)
             scan[0].save(pdfs / f'{case.name}.pdf', 'PDF', save_all=True,
                          append_images=scan[1:], resolution=100.0)
@@ -231,3 +255,72 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
         runner.close()
         ws.close()
     return problems
+
+
+# --- stacks of scans, for intake ---------------------------------------------------
+
+def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> list[Path]:
+    """Synthetic "big bad" scans for intake, in `root/incoming/`, with a roster
+    (`root/roster.csv`) and scripted landmark readings (`root/fake_model.json`).
+
+    `stack-1.pdf`: six students, one missing printed page 3, one with a stray
+    blank sheet after printed page 2, one put in upside down. `stack-2.pdf`:
+    fed in upside down as a whole, three students and the first two sheets of a
+    fourth, so its length is not a multiple of the exam's. The model reads a
+    landmark only on a sheet turned the right way up."""
+    from .pdf.orient import HALF, IDENTITY
+    cases = load_cases(exam) if cases is None else cases
+    root = Path(root)
+    (root / 'incoming').mkdir(parents=True, exist_ok=True, mode=0o700)
+    renderer = Renderer(root / 'cache' / 'blanks', dpi=100)
+    names = [f"Synthetic Student {k:02d}" for k in range(1, 11)]
+
+    def student(k: int) -> list[tuple[Image.Image, int | None]]:
+        case = cases[k % len(cases)]
+        printed = _printed_pages(exam, case, renderer)
+        _draw_answers(exam, case, printed)
+        _draw_name(exam, printed, names[k])
+        sheets = _scan(exam, printed)
+        return [(im, p - exam.cover_pages if p > exam.cover_pages else None) for p, im in enumerate(sheets, 1)]
+
+    def without(sheets, printed_page):
+        return [x for x in sheets if x[1] != printed_page]
+
+    def stray(sheets, after):
+        i = next(j for j, x in enumerate(sheets) if x[1] == after) + 1
+        return sheets[:i] + [(Image.new('RGB', PAGE, 'white'), None)] + sheets[i:]
+
+    def turned(sheets, o):
+        return [(o.apply(im), p, o) for im, p in sheets]
+
+    one = (turned(student(0), IDENTITY) + turned(without(student(1), 3), IDENTITY)
+           + turned(stray(student(2), 2), IDENTITY) + turned(student(3), IDENTITY)
+           + turned(student(4), HALF) + turned(student(5), IDENTITY))
+    two = [x for k in (6, 7, 8) for x in turned(student(k), HALF)] + turned(student(9), HALF)[:2]
+    script = json.loads((root / SCRIPT).read_text()) if (root / SCRIPT).exists() else {}
+    out = []
+    for name, sheets in (('stack-1.pdf', one), ('stack-2.pdf', two)):
+        path = root / 'incoming' / name
+        images = [im for im, _, _ in sheets]
+        images[0].save(path, 'PDF', save_all=True, append_images=images[1:], resolution=100.0)
+        import hashlib
+        sid = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+        replies = {}
+        for i, (_, page, o) in enumerate(sheets):
+            # the model reads a sheet only when it is shown the right way up: undoing `o`
+            up = HALF if o == HALF else IDENTITY
+            replies[f'{i}@{up.turn}{int(up.flip)}|landmark'] = {
+                lm.ask: json.dumps({'quote': "synthetic", 'value': landmark_text(lm, page) if page else None})
+                for lm in exam.landmarks}
+            if up != IDENTITY:      # shown as scanned, it reads as nothing
+                replies[f'{i}@00|landmark'] = {lm.ask: json.dumps({'quote': "", 'value': None})
+                                               for lm in exam.landmarks}
+        script[sid] = replies
+        out.append(path)
+    (root / SCRIPT).write_text(json.dumps(script, indent=1))
+    with (root / 'roster.csv').open('w', newline='') as fh:
+        w = csv.writer(fh)
+        w.writerow(['Name', 'Email', 'Student ID'])
+        for k, n in enumerate(names, 1):
+            w.writerow([n, f"synthetic{k:02d}@example.invalid", f"9{k:07d}"])
+    return out

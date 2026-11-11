@@ -1,11 +1,17 @@
 """A deliberately small exam, unlike any real one: it exists to show that the
 library is generic. One question scored as a number in a range with three
 variants, and one boolean question with no variants."""
-from examinator import Bool, Cue, Exam, Field, Grade, Number, Region
+from examinator import Bool, Cue, Exam, Field, Grade, Landmark, Number, Region
 from examinator.std import math, stages
 
 exam = Exam('toy', title="Toy exam", pages=4, front=[1], extra=[4],
-            scan_window=[50, 40, 950, 900], cover_pages=1)
+            scan_window=[50, 40, 950, 900], cover_pages=1,
+            # intake: how to tell a scanned sheet's printed page, and where the name is written
+            landmarks=[Landmark('title', region=Region(1, 300, 90, 700, 150),
+                                ask="the title printed in this box", reads={'TOY EXAM': 1}),
+                       Landmark('page_number', region=Region(1, 900, 940, 990, 990),
+                                ask="the printed page number, as a number")],
+            name_region=Region(1, 100, 200, 800, 280))
 
 
 def count_correct(evidence):

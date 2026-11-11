@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,13 @@ create table if not exists override (
 create table if not exists override_history (
   path text not null, value text, author text, updated_at text not null, rev integer not null,
   replaced_at text not null
+);
+create table if not exists source (
+  id text primary key, file text not null, name text, sha256 text not null unique,
+  pages integer not null, added_at text not null
+);
+create table if not exists made (
+  submission text primary key, source text not null, pages text not null, orient text, made_at text not null
 );
 create table if not exists memo (
   submission text not null, key text not null, value text not null,
@@ -114,6 +122,27 @@ class Override:
     updated_at: str
     rev: int
     replaced_at: str | None = None   # set on history rows
+
+
+@dataclass(frozen=True)
+class Source:
+    """A scanned PDF as added (many submissions), kept unchanged under `sources/`."""
+    id: str
+    file: str            # file name under sources/
+    name: str            # the name it was added under (display only)
+    sha256: str
+    pages: int
+    added_at: str
+
+
+@dataclass(frozen=True)
+class Made:
+    """A submission PDF written from a source: which sheets, and how they were turned."""
+    submission: str
+    source: str
+    pages: tuple[int, ...]
+    orient: Mapping[str, Any]
+    made_at: str
 
 
 def _row(r) -> Artifact:
@@ -373,6 +402,61 @@ class Store:
         with self._lock:
             r = self._db.execute('select id, name, email, pdf from submission where id=?', (id,)).fetchone()
         return Submission(*r) if r else None
+
+    def delete_submission(self, id: str) -> None:
+        with self._lock:
+            self._db.execute('delete from submission where id=?', (id,))
+
+    def has_work(self, submission: str, *, ignore: Iterable[str] = ()) -> bool:
+        """Whether any artifact exists for a submission (kinds in `ignore` aside)."""
+        ignore = tuple(ignore)
+        sql = 'select 1 from artifact where submission=?'
+        if ignore:
+            sql += f" and kind not in ({','.join('?' * len(ignore))})"
+        with self._lock:
+            return self._db.execute(sql + ' limit 1', (submission, *ignore)).fetchone() is not None
+
+    @contextmanager
+    def transaction(self):
+        """Several writes as one: all or none."""
+        with self._lock, self._tx():
+            yield self
+
+    # --- intake: sources and the submissions made from them ---
+
+    def add_source(self, src: Source) -> None:
+        with self._lock:
+            self._db.execute('insert into source values (?,?,?,?,?,?)',
+                             (src.id, src.file, src.name, src.sha256, src.pages, src.added_at))
+
+    def sources(self) -> list[Source]:
+        with self._lock:
+            rows = self._db.execute('select id, file, name, sha256, pages, added_at from source '
+                                    'order by added_at, id').fetchall()
+        return [Source(*r) for r in rows]
+
+    def source(self, id: str) -> Source | None:
+        return next((s for s in self.sources() if s.id == id), None)
+
+    def made(self) -> dict[str, Made]:
+        with self._lock:
+            rows = self._db.execute('select submission, source, pages, orient, made_at from made').fetchall()
+        return {r[0]: Made(r[0], r[1], tuple(json.loads(r[2])), json.loads(r[3]) if r[3] else {}, r[4])
+                for r in rows}
+
+    def set_made(self, m: Made) -> None:
+        with self._lock:
+            self._db.execute('insert or replace into made values (?,?,?,?,?)',
+                             (m.submission, m.source, json.dumps(list(m.pages)), json.dumps(dict(m.orient)),
+                              m.made_at))
+
+    def delete_made(self, submission: str) -> None:
+        with self._lock:
+            self._db.execute('delete from made where submission=?', (submission,))
+
+    def clear_memo(self, submission: str) -> None:
+        with self._lock:
+            self._db.execute('delete from memo where submission=?', (submission,))
 
     def setting(self, key: str, default: Any = None) -> Any:
         with self._lock:

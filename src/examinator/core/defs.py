@@ -72,6 +72,24 @@ class Cue:
     fn: Callable[['Context'], str | None] | None = None
 
 
+@dataclass(frozen=True)
+class Landmark:
+    """Printed evidence on a scanned sheet of which printed page it is, used to
+    split a stack of scans into submissions (`core.split`).
+
+    The model is asked `ask` about the printed text in `region` (printed-page
+    coordinates, on whatever sheet is being looked at). With `reads`, a reading
+    maps (normalised, as for a `Cue`) to a printed page number, e.g. the title
+    that only page 1 carries: `reads={'Midterm 2': 1}`. Without `reads`, the
+    reading is the printed page number itself (a page-number footer).
+    `region.page` is the first printed page that carries the landmark.
+    """
+    name: str
+    region: Region
+    ask: str
+    reads: Mapping[str, int] | None = None
+
+
 # --- results and grades -----------------------------------------------------
 
 @dataclass(frozen=True)
@@ -228,7 +246,8 @@ class Exam:
     def __init__(self, id: str, *, title: str = "", pages: int,
                  front: Sequence[int] = (), extra: Sequence[int] = (),
                  scan_window: Sequence[int] = (0, 0, 1000, 1000), cover_pages: int = 0,
-                 crop_pad: int = 12):
+                 crop_pad: int = 12, landmarks: Sequence[Landmark] = (),
+                 name_region: Region | None = None):
         self.id = id
         self.title = title or id
         self.pages = pages
@@ -237,6 +256,11 @@ class Exam:
         self.scan_window = tuple(scan_window)   # initial default; the workspace may override
         self.cover_pages = cover_pages          # likewise
         self.crop_pad = crop_pad                # per-mille of the printed page around every crop
+        self.landmarks = tuple(landmarks)       # how to tell which printed page a scanned sheet is (intake)
+        self.name_region = name_region          # where the student writes their name (intake: who is it)
+        names = [lm.name for lm in self.landmarks]
+        if len(set(names)) != len(names):
+            raise ValueError(f"duplicate landmark names {names}")
         self.questions: dict[str, Question] = {}   # live: base definitions plus overrides
         self.base: dict[str, Question] = {}        # as built by the package
         self.overrides: dict[str, Any] = {}        # applied overrides {path: JSON value}; see `overrides`
