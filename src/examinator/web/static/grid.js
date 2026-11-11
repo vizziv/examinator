@@ -48,7 +48,8 @@
     const visible = [];
     for (const row of rows) {
       const show = (!inFocus || inFocus.has(row.dataset.id)) &&
-        (!q || row.cells[0].textContent.toLowerCase().includes(q) || row.cells[1].textContent.toLowerCase().includes(q));
+        (!q || row.cells[0].textContent.toLowerCase().includes(q) || row.cells[1].textContent.toLowerCase().includes(q) ||
+         (row.cells[1].dataset.student || '').toLowerCase().includes(q));
       row.hidden = !show;
       if (show) visible.push(row);
     }

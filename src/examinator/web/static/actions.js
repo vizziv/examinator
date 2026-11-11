@@ -30,6 +30,10 @@ const Actions = (() => {
     ['split-later', "scans: a page later", 'scans'], ['split-back', "scans: previous boundary", 'scans'],
     ['split-next', "scans: next boundary", 'scans'], ['split-drop', "scans: drop this page", 'scans'],
     ['split-turn', "scans: turn this exam 180°", 'scans'], ['split-turn-source', "scans: turn whole scan 90°", 'scans'],
+    // Names (the scans page's other tab): the same shapes again; one tab's keys work at a time.
+    ['who-confirm', "names: this person, next", 'names'], ['who-prev', "names: previous proposal", 'names'],
+    ['who-next', "names: next proposal", 'names'], ['who-back', "names: previous exam", 'names'],
+    ['who-skip', "names: next exam", 'names'], ['who-search', "names: type a name or ID", 'names'],
   ];
   const LEFT = {
     'prev-student': ['a', 'ArrowLeft'], 'next-student': ['d', 'ArrowRight'],
@@ -39,6 +43,8 @@ const Actions = (() => {
     'split-confirm': ['v'], 'split-earlier': ['a', 'ArrowLeft'], 'split-later': ['d', 'ArrowRight'],
     'split-back': ['w'], 'split-next': ['s'], 'split-drop': ['x'],
     'split-turn': ['r'], 'split-turn-source': ['Shift+r'],
+    'who-confirm': ['v'], 'who-prev': ['a', 'ArrowLeft'], 'who-next': ['d', 'ArrowRight'],
+    'who-back': ['w'], 'who-skip': ['s'], 'who-search': ['e'],
   };
   // The same shapes for the right hand: students and questions on I J K L as on W A S D;
   // grid on the outer top key (P for Q), edit on the inner top key (U for E), scan on the

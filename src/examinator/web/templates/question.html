@@ -13,7 +13,7 @@
 {% block nav %}
 <span class="sep"></span>
 <button type="button" data-action="prev-student" title="previous student">‹</button>
-<b id="who" title="{{ sub.id }}">{{ sub.name or sub.id }}</b> <span class="dim" id="pos"></span>
+<b id="who" title="{{ sub.id }}{% if sub.student %} · {{ sub.student }}{% endif %}">{{ sub.name or sub.id }}</b> <span class="dim" id="pos"></span>
 <button type="button" data-action="next-student" data-hint="before" title="next student">›</button>
 <a id="unfocused" class="tag warn" href="{{ root }}/filter" title="this submission no longer matches the focus" hidden>not in focus</a>
 <span class="sep"></span>

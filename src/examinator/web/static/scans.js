@@ -30,15 +30,52 @@
     }
     location.reload();
   });
+  // The roster: pasted or loaded, read by the server as it is typed (nothing saved) so a wrong
+  // paste shows at once: how many people, the first few rows, the lines it could not read.
+  const box = $('roster-box'), text = $('roster-text');
+  $('roster-open').addEventListener('click', () => {
+    box.hidden = !box.hidden;
+    $('roster-open').setAttribute('aria-expanded', String(!box.hidden));
+    if (!box.hidden) text.focus();
+  });
+  let timer = 0, asked = 0;
+  async function preview() {
+    const mine = ++asked;
+    const value = text.value;
+    if (!value.trim()) { show(null); return; }
+    const r = await request('/scans/roster', {text: value, dry: true});
+    if (mine === asked) show(r.ok ? r.body : {error: r.body.error || 'failed'});
+  }
+  function show(b) {
+    const ok = !!b && !b.error && b.people > 0 && !b.problems.length;
+    $('roster-save').disabled = !ok;
+    const bad = b && !b.error ? b.problems.length + b.more : 0;
+    $('roster-read').textContent = !b ? '' : b.error || `${b.people} people${bad ? `, ${bad} not read` : ''}`;
+    $('roster-read').className = ok || !b ? 'dim' : 'bad';
+    const sample = $('roster-sample'), problems = $('roster-problems');
+    sample.hidden = !b || !b.sample || !b.sample.length;
+    sample.replaceChildren(...(b && b.sample ? b.sample : []).map(p => make('tr', {},
+      make('td', {textContent: p.name}), make('td', {className: 'mono', textContent: p.id}),
+      make('td', {textContent: p.email}))));
+    if (b && b.people > (b.sample || []).length) sample.append(make('tr', {}, make('td', {textContent: '…'})));
+    problems.hidden = !b || !b.problems || !b.problems.length;
+    problems.replaceChildren(...(b && b.problems ? b.problems : []).map(p => make('li', {textContent: p})));
+  }
+  text.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(preview, 250); });
   $('roster').addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
-    const r = await request('/scans/roster', {csv: await file.text()});
-    if (!r.ok) { say(r.body.error || 'failed'); return; }
+    text.value = await file.text();
+    preview();
+  });
+  $('roster-save').addEventListener('click', async () => {
+    const r = await request('/scans/roster', {text: text.value});
+    if (!r.ok) { show({error: r.body.error || 'failed'}); return; }
     location.reload();
   });
   const pick = $('src');
   if (!pick) return;
+  const shown = () => !$('split').hidden;     // the Split tab (names.js switches tabs)
 
   // --- loading and editing the plan ---
   async function load(id, keep) {
@@ -61,7 +98,8 @@
   // Keys come faster than replies: steps run one after another, each on the state the last left.
   let chain = Promise.resolve();
   const queued = fn => ctx => { chain = chain.then(() => fn(ctx)).catch(() => {}); return chain; };
-  const register = (name, spec) => Actions.register(name, {...spec, run: queued(spec.run)});
+  const register = (name, spec) => Actions.register(name, {
+    ...spec, available: ctx => shown() && (!spec.available || spec.available(ctx)), run: queued(spec.run)});
   const edit = (op, data) => send('edit', {op, ...data});
   function nextOpen(from) {
     const E = plan.entries;
@@ -169,15 +207,19 @@
     b.addEventListener('click', fn);
     return b;
   };
-  function nameCrop(e) {
-    if (main.dataset.nameOffset === undefined) return '';
-    const off = Number(main.dataset.nameOffset) + (view.cover || 0);      // cover sheets come first
-    if (e.pages.length <= off) return '';
-    const c = make('span', {className: 'crop'});
-    c.dataset.src = sheet(e.pages[off], 1000);
-    c.dataset.box = main.dataset.nameBox;
-    drawCrop(c);
-    return c;
+  // The exam's name and ID boxes, cut from the sheets as planned (cover sheets come first).
+  const idboxes = JSON.parse(main.dataset.idboxes || '[]');
+  function nameCrops(e) {
+    return idboxes.map(b => {
+      const off = b.offset + (plan.cover || 0);
+      if (e.pages.length <= off) return '';
+      const c = make('span', {className: 'crop', title: b.name});
+      c.dataset.src = sheet(e.pages[off], 1000);
+      c.dataset.box = b.box;
+      c.dataset.width = 240;
+      drawCrop(c);
+      return c;
+    });
   }
   function whoInput(e) {
     if (!e.id || e.state === 'new') return '';
@@ -216,7 +258,7 @@
           button('✕', 'drop this page', () => edit('drop', {sheet: i}))]);
         if (!n) fig.classList.add('first');
         return fig;
-      }), nameCrop(e));
+      }), ...nameCrops(e));
       const row = make('div', {className: 'srow' + (look(j) ? '' : ' look')}, head, sheets);
       return row;
     });

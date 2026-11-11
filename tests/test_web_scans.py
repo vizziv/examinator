@@ -7,7 +7,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from examinator import load_exam, synth
-from examinator.core import intake
+from examinator.core import identity, intake
 from examinator.core.runner import Runner
 from examinator.core.workspace import Workspace
 from examinator.web.app import create_app
@@ -87,9 +87,9 @@ def test_step_through_and_accept(site):
     assert client.get('/').status_code == 200 and 's0005' in client.get('/').text
     # names
     post(client, token, '/scans/roster', {'csv': (ws.root / 'roster.csv').read_text()})
-    label = intake.label(intake.people(ws)[4])
-    assert post(client, token, '/scans/who', {'sub': 's0005', 'text': label}).json()['who']['name'] == "Synthetic Student 05"
-    assert ws.store.submission('s0005').name == "Synthetic Student 05"
+    label = identity.label(identity.people(ws)[4])
+    assert post(client, token, '/scans/who', {'sub': 's0005', 'text': label}).json()['who']['name'] == "Emery Sampleton"
+    assert ws.store.submission('s0005').name == "Emery Sampleton"
     assert post(client, token, '/scans/who', {'sub': 'nobody', 'text': label}).status_code == 400
     # changing a written submission that has work: refused, then forced
     ws.store.write('s0002', 'parity', 'parse', {'B': 'odd'}, origin='manual', author='t')
@@ -111,3 +111,89 @@ def test_sheet_images(site):
     assert Image.open(BytesIO(r.content)).width == 140
     for bad in ('/sheet/{s}/99.jpg', '/sheet/{s}/0.jpg?o=40', '/sheet/{s}/0.jpg?w=17', '/sheet/nosuch/0.jpg'):
         assert client.get(bad.format(s=src)).status_code == 404
+
+
+# --- who wrote each submission ---
+
+def wait(client, job):
+    for _ in range(500):
+        state = client.get(f'/jobs/{job}').json()
+        if state['state'] != 'running':
+            return state
+        time.sleep(0.02)
+    raise AssertionError("job did not finish")
+
+
+def test_roster_paste_preview_then_save(site):
+    client, token, ws, paths = site
+    text = "Ada Lovelace, 31415926\n27182818\tAlan Turing\nGrace Hopper\n"
+    assert client.post('/scans/roster', json={'text': text, 'dry': True}).status_code == 403
+    assert post(client, 'wrong', '/scans/roster', {'text': text, 'dry': True}).status_code == 403
+    r = post(client, token, '/scans/roster', {'text': text, 'dry': True})
+    body = r.json()
+    assert r.status_code == 200 and body['people'] == 2 and body['problems'] == ["line 3: expected a name and an ID"]
+    assert body['sample'][1] == {'name': "Alan Turing", 'id': "27182818", 'email': ""}
+    assert identity.people(ws) == []                                    # a preview saves nothing
+    assert post(client, token, '/scans/roster', {'text': text}).status_code == 400      # problems: not saved
+    r = post(client, token, '/scans/roster', {'text': text.replace("Grace Hopper\n", "")})
+    assert r.status_code == 200 and [p['name'] for p in identity.people(ws)] == ["Ada Lovelace", "Alan Turing"]
+    r = client.post('/scans/roster', json={'text': text, 'dry': True},
+                    headers={'X-Token': token, 'Origin': 'http://evil.example'})
+    assert r.status_code == 403
+
+
+def test_names_read_confirm_cycle_skip(site):
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    plan = client.get(f'/scans/{src}/plan').json()
+    r = post(client, token, f'/scans/{src}/propose', {'check': True, 'rev': plan['rev']})
+    wait(client, r.json()['job'])
+    plan = client.get(f'/scans/{src}/plan').json()
+    plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'k': 4, 'rev': plan['rev']}).json()['plan']
+    post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
+    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text()})
+    view = client.get('/scans/names').json()
+    assert view['left'] == 6 and {r['doubt'] for r in view['rows']} == {'unread'}
+    assert [c['name'] for c in view['rows'][0]['crops']] == ['name', 'id']
+    # reading: a background job with the (scripted) model, refused without the token
+    assert client.post('/scans/names/read', json={}).status_code == 403
+    r = post(client, token, '/scans/names/read', {})
+    assert r.json()['n'] == 6 and wait(client, r.json()['job'])['state'] == 'done'
+    assert post(client, token, '/scans/names/read', {}).json()['n'] == 0     # nothing left to read
+    view = client.get('/scans/names').json()
+    rows = {r['sub']: r for r in view['rows']}
+    assert view['rows'][0]['sub'] == 's0004' and rows['s0004']['doubt'] == 'disagree'
+    assert rows['s0006']['doubt'] == 'nobody' and rows['s0002']['candidates'][0]['why'] == "ID 1 off, name exact"
+    # confirm the top proposal (V): by key, against the revision seen (none yet)
+    top = rows['s0001']['candidates'][0]
+    r = post(client, token, '/scans/who', {'sub': 's0001', 'text': top['key'], 'rev': None})
+    assert r.status_code == 200 and r.json()['who']['name'] == "Avery Testwell"
+    assert post(client, token, '/scans/who', {'sub': 's0001', 'text': top['key'], 'rev': None}).status_code == 409
+    # cycle to the second candidate (D), then confirm it
+    second = rows['s0004']['candidates'][1]
+    assert second['name'] == "Devon Fakely"
+    post(client, token, '/scans/who', {'sub': 's0004', 'text': second['key'], 'rev': None})
+    # skip (S) writes nothing; s0006 is not on the roster: typed free text
+    post(client, token, '/scans/who', {'sub': 's0006', 'text': "Finley Dummond", 'rev': None})
+    view = client.get('/scans/names').json()
+    assert view['left'] == 3 and [r['sub'] for r in view['rows'][-3:]] == ['s0001', 's0004', 's0006']
+    assert "Avery Testwell <90412873>" not in view['nobody'] and "Kit Absentia <90655318>" in view['nobody']
+    # the confirmed name and ID are the submission's everywhere
+    grid = client.get('/').text
+    assert 'Devon Fakely' in grid and 'data-student="93681724"' in grid
+    assert "93681724" in client.get('/s/s0004/parity').text
+
+
+def test_reading_names_needs_a_model(tmp_path):
+    exam = load_exam(TOY)
+    root = tmp_path / 'ws'
+    synth.stacks(exam, root)
+    ws = Workspace(root, exam, create=True)
+    runner = Runner(exam, ws, model=None)
+    client = TestClient(create_app(exam, ws, runner, author='tester'), base_url=BASE)
+    page = client.get('/scans').text
+    token = re.search(r'<meta name="token" content="([^"]+)"', page).group(1)
+    assert 'data-action="names-read"' not in page
+    assert post(client, token, '/scans/names/read', {}).status_code == 400
+    runner.close()
+    ws.close()

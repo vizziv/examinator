@@ -48,7 +48,8 @@ function make(tag, props, ...children) {
   return el;
 }
 
-// A crop is a window onto the cached full-page image: <span class="crop" data-src data-box="l,t,r,b">.
+// A crop is a window onto the cached full-page image: <span class="crop" data-src data-box="l,t,r,b">,
+// as wide as the grader's crop size (or its own data-width).
 function drawCrop(crop) {
   const [l, t, r, b] = crop.dataset.box.split(',').map(Number);
   let img = crop.firstElementChild;
@@ -60,7 +61,7 @@ function drawCrop(crop) {
     crop.append(img);
   }
   if (!img.naturalWidth || r <= l || b <= t) return;
-  const width = pref('cropWidth', 360);
+  const width = Number(crop.dataset.width) || pref('cropWidth', 360);
   const k = width / ((r - l) * img.naturalWidth);
   img.style.width = img.naturalWidth * k + 'px';
   img.style.marginLeft = -l * img.naturalWidth * k + 'px';

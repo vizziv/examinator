@@ -34,7 +34,7 @@
 <tbody>
 {% for r in rows %}
 <tr data-id="{{ r.sub.id }}"{% if r.hidden %} hidden{% endif %}>
-<td class="id">{{ r.sub.id }}</td><td class="name">{{ r.sub.name }}</td>
+<td class="id">{{ r.sub.id }}</td><td class="name"{% if r.sub.student %} title="{{ r.sub.student }}" data-student="{{ r.sub.student }}"{% endif %}>{{ r.sub.name }}</td>
 {% for c in r.cells %}
 {% if c.variant %}
 <td class="cell var{% if c.open %} open{% endif %}"><a href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ c.text if not c.open else 'variant unresolved' }}">{% if c.open %}?{% else %}{{ vindex[c.qid].index(c.text) if c.text in vindex[c.qid] else c.text }}{% endif %}</a></td>

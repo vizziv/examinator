@@ -1,22 +1,44 @@
 {% extends 'base.html' %}
 {% set nav = 'scans' %}
 {% block title %}Scans · {{ exam.title }}{% endblock %}
-{% block head %}<script src="{{ root }}/static/scans.js" defer></script>{% endblock %}
+{% block head %}<script src="{{ root }}/static/scans.js" defer></script>
+<script src="{{ root }}/static/names.js" defer></script>{% endblock %}
 {% block body %}
-<main class="narrow" id="scans" data-landmarks="{{ 1 if landmarks else 0 }}"
-{% if name_crop %} data-name-offset="{{ name_crop.offset }}" data-name-box="{{ name_crop.box }}"{% endif %}>
+<main class="narrow" id="scans" data-landmarks="{{ 1 if landmarks else 0 }}" data-idboxes="{{ idboxes }}">
 <div class="bar">
 <label class="btn primary" title="scanned PDFs, many exams each">Add scans <input type="file" id="up" accept="application/pdf,.pdf" multiple hidden></label>
-<label class="btn" title="CSV: Name (or First Name, Last Name), Email, Student ID">Roster <input type="file" id="roster" accept=".csv,text/csv" hidden></label>
+<button type="button" id="roster-open" aria-expanded="false" title="who sits the exam: paste or load a file">Roster</button>
 <span class="dim">{{ people|length }} people</span>
-{% if sources %}<select id="src" aria-label="scan">{% for s in sources %}<option value="{{ s.id }}">{{ s.name }} · {{ s.pages }} pages</option>{% endfor %}</select>{% endif %}
+{% if sources %}
+<span class="sep"></span>
+<span class="tabs" role="tablist">
+<button type="button" role="tab" data-tab="split" aria-selected="true">Split</button>
+<button type="button" role="tab" data-tab="names" aria-selected="false" title="who wrote each exam">Names <span id="names-left" class="dim"></span></button>
+</span>
+<select id="src" aria-label="scan">{% for s in sources %}<option value="{{ s.id }}">{{ s.name }} · {{ s.pages }} pages</option>{% endfor %}</select>
+{% endif %}
 <span id="msg" role="status"></span>
 </div>
+
+<section id="roster-box" class="panel" hidden>
+<textarea id="roster-text" rows="6" spellcheck="false" aria-label="roster"
+ placeholder="one per line: name and ID, comma or tab between, either order&#10;Ada Lovelace, 31415926&#10;or a CSV with a header: Name (or First Name, Last Name), Student ID, Email"></textarea>
+<div class="bar">
+<label class="btn" title="CSV, or plain lines of name and ID">file <input type="file" id="roster" accept=".csv,.tsv,.txt,text/csv,text/plain" hidden></label>
+<span id="roster-read" class="dim"></span>
+<span class="grow"></span>
+<button type="button" id="roster-save" class="primary" disabled>Save roster</button>
+</div>
+<table id="roster-sample" class="dim" hidden></table>
+<ul id="roster-problems" hidden></ul>
+</section>
+
 {% if not sources %}
 <p class="help">No scans yet. Add the scanned PDFs (a stack of exams each, {{ expected }} pages per exam).
 They are kept unchanged; each exam becomes its own submission when you accept the split.
 {% if handed %}This workspace also has {{ handed }} submissions handed in already split.{% endif %}</p>
 {% else %}
+<div id="split">
 <section id="srcbar" class="panel bar" hidden>
 <b id="s-name"></b> <span id="s-info" class="dim"></span>
 <span class="sep"></span>
@@ -59,6 +81,47 @@ They are kept unchanged; each exam becomes its own submission when you accept th
 <div id="rows"></div>
 <div id="loose" hidden><h2>Not in a submission</h2><div class="sheets" id="loose-sheets"></div></div>
 </section>
+</div>
+
+<div id="names" hidden>
+<section id="w-bar" class="panel bar">
+<b>Names</b> <span id="w-sum"></span>
+{% if model and fields %}<button type="button" data-action="names-read" title="read the name and ID boxes with the model (only those not read yet)">read</button>{% endif %}
+{% if not fields %}<span class="dim" title="Exam(identity=[...])">no name or ID boxes declared: pick by hand</span>{% endif %}
+<span class="grow"></span>
+<span id="w-roster" class="dim"></span>
+</section>
+
+<section id="w-step" class="panel">
+<div class="bar"><b id="w-sub"></b> <span id="w-tags"></span><span class="grow"></span><span id="w-pos" class="dim"></span></div>
+<div id="w-done" hidden><p>Every exam is named.</p></div>
+<div id="w-main">
+<div id="w-crops"></div>
+<div id="w-prop">
+<div id="w-name"></div>
+<div id="w-id" class="mono"></div>
+<div id="w-why" class="dim"></div>
+<input type="text" id="w-pick" list="people" placeholder="type a name or ID, ↵" autocomplete="off" spellcheck="false" aria-label="pick from the roster">
+</div>
+</div>
+<div class="bar">
+<button type="button" data-action="who-prev" title="previous proposal">◀</button>
+<button type="button" data-action="who-confirm" class="primary">this one ✓</button>
+<button type="button" data-action="who-next" title="next proposal">▶</button>
+<span class="sep"></span>
+<button type="button" data-action="who-back" class="quiet">back</button>
+<button type="button" data-action="who-skip" class="quiet">skip</button>
+<span class="sep"></span>
+<button type="button" data-action="who-search">type</button>
+</div>
+</section>
+
+<section class="panel">
+<div class="bar"><h2>All</h2> <span class="dim">unnamed first, most doubtful first</span></div>
+<table id="w-rows" class="wrows"></table>
+<div id="w-nobody" hidden><h2>No exam</h2> <span class="dim">on the roster, named for no exam</span><p id="w-nobody-list"></p></div>
+</section>
+</div>
 <datalist id="people">{% for p in people %}<option value="{{ p }}">{% endfor %}</datalist>
 {% endif %}
 </main>

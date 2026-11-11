@@ -16,6 +16,8 @@
     GET  /scans                     intake: sources, split plans, accept;  GET /scans/{src}/plan (JSON)
     POST /scans/upload?name=        a scanned PDF as the raw request body (streamed to disk)
     POST /scans/{src}/{action}      edit propose undo accept;  POST /scans/roster, /scans/who
+    GET  /scans/names               who wrote each submission: readings, proposals, picks (JSON)
+    POST /scans/names/read          read the name and ID boxes with the model (a job)
     GET  /sheet/{src}/{index}.jpg   one sheet of a source (?o= orientation, ?w= width)
 
 Every POST takes a JSON object (or a form), needs the page token, and answers
@@ -46,7 +48,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainT
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from ..core import batch, focus, grid, intake, overrides, split
+from ..core import batch, focus, grid, identity, intake, overrides, split
 from ..core.defs import Bool, Exam, Question, grade_kind, has_marker
 from ..core.runner import Runner
 from ..core.store import Conflict
@@ -950,7 +952,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             entries.append({'start': e['start'], 'confirmed': bool(e.get('confirmed')), 'id': sid,
                             'pages': pages[k], 'doubts': [split.DOUBTS[d] for d in doubts[k]],
                             'state': states[k], 'own': e.get('orient') is not None,
-                            'name': intake.who(ws, sid)[0] if sid in made else ''})
+                            'name': identity.who(ws, sid)['name'] if sid in made else ''})
         so = Orient.from_json(body.get('orient'))
         return {'id': src.id, 'name': src.name, 'n': n, 'rev': art.rev, 'length': body['length'],
                 'checked': bool(body.get('checked')), 'o': code(so), 'orient': so.label(),
@@ -961,15 +963,17 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'removed': intake.removed(ws, src.id), 'cursor': split.cursor(body),
                 'undo': bool(store.history(src.id, '', intake.PLAN))}
 
+    def box(layout: Layout, region) -> str:
+        return ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad))
+
     def scans_page(request: Request) -> Response:
-        name = None
-        if exam.name_region is not None:
-            box = Layout(0, ws.scan_window).box(exam.name_region, exam.crop_pad)
-            name = {'offset': exam.name_region.page - 1,
-                    'box': ','.join(f'{v:.4f}' for v in box)}
+        # where the identity boxes are on a sheet of a source (the plan adds cover sheets)
+        boxes = [{'name': f.name, 'offset': f.region.page - 1, 'box': box(Layout(0, ws.scan_window), f.region)}
+                 for f in exam.identity]
         made = store.made()
-        return page('scans.html', sources=store.sources(), people=[intake.label(p) for p in intake.people(ws)],
-                    expected=intake.expected_length(ws), landmarks=bool(exam.landmarks), name_crop=name,
+        return page('scans.html', sources=store.sources(), people=[identity.label(p) for p in identity.people(ws)],
+                    expected=intake.expected_length(ws), landmarks=bool(exam.landmarks),
+                    idboxes=json.dumps(boxes), fields=exam.identity, made=len(made),
                     handed=sum(1 for s in store.submissions() if s.id not in made))
 
     def scans_plan(request: Request) -> Response:
@@ -1049,10 +1053,17 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return {'report': report, 'plan': plan_view(src)}
 
     def scans_roster(request, data):
-        text = data.get('csv')
+        """A roster as text (a CSV file's contents or pasted lines). `dry`: only
+        say what would be read: how many people, the first few, the problems."""
+        text = data.get('text', data.get('csv'))
         if not isinstance(text, str) or len(text) > 2_000_000:
-            raise Bad("expected a CSV file")
-        return {'people': intake.set_roster(ws, text)}
+            raise Bad("expected roster text")
+        people, problems = identity.read_roster(text)
+        out = {'people': len(people), 'problems': problems[:20], 'more': max(0, len(problems) - 20),
+               'sample': [{'name': p['name'], 'id': p['id'], 'email': p['email']} for p in people[:5]]}
+        if not data.get('dry'):
+            identity.set_roster(ws, text)
+        return out
 
     def scans_who(request, data):
         sub = store.submission(str(data.get('sub')))
@@ -1061,7 +1072,39 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         text = data.get('text')
         if text is not None and not isinstance(text, str):
             raise Bad("expected text")
-        return {'who': intake.set_who(ws, sub.id, text or '', author=who(request))}
+        kw = {'expect_rev': _rev(data)} if 'rev' in data else {}
+        return {'who': identity.set_who(ws, sub.id, text or '', author=who(request), **kw)}
+
+    proposals: dict = {}        # identity.overview's cache: proposals by reading and roster
+
+    def scans_names(request: Request) -> Response:
+        with lock:
+            view = identity.overview(ws, cache=proposals)
+        for row in view['rows']:
+            layout = ws.layout(row['sub'])
+            row['crops'] = [{'name': f.name, 'index': layout.scan_index(f.region.page), 'box': box(layout, f.region)}
+                            for f in exam.identity]
+        view['nobody'] = [identity.label(p) for p in view['nobody']]
+        view['fields'] = [{'name': f.name, 'roster': f.roster} for f in exam.identity]
+        view['doubts'] = identity.DOUBTS
+        view['roster'] = len(identity.people(ws))
+        return JSONResponse(view)
+
+    def scans_names_read(request, data):
+        if not have_model():
+            raise Bad("model unavailable")
+        if not exam.identity:
+            raise Bad("the exam declares no identity boxes")
+        fresh = bool(data.get('fresh'))
+        subs = sorted(store.made())
+        if not fresh:       # only what has not been read under the boxes as declared now
+            reads = {a.submission: a.body for a in store.all(kinds=[identity.READ])}
+            subs = [s for s in subs if len(identity.readings(exam.identity, reads.get(s))) < len(exam.identity)
+                    or (reads.get(s) or {}).get('failed')]
+
+        def read(sid):
+            identity.read(ws, sid, runner.model, fresh=fresh)
+        return {'job': jobs.start_each([(s,) for s in subs], read), 'n': len(subs)}
 
     def sheet_image(request: Request) -> Response:
         """A sheet turned as asked (the page asks for the plan's orientation) and
@@ -1128,6 +1171,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         Route('/scans/upload', scans_upload, methods=['POST']),
         post('/scans/roster', scans_roster),
         post('/scans/who', scans_who),
+        Route('/scans/names', scans_names),
+        post('/scans/names/read', scans_names_read),
         Route('/scans/{src}/plan', scans_plan),
         post('/scans/{src}/edit', scans_edit),
         post('/scans/{src}/propose', scans_propose),

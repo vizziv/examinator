@@ -487,6 +487,33 @@ figure.sh figcaption { line-height: 1.2; font-size: 11px; color: var(--muted); t
 figure.sh .acts { position: absolute; top: 2px; right: 2px; display: none; gap: 2px; line-height: 1.2; }
 figure.sh:hover .acts, figure.sh:focus-within .acts { display: inline-flex; }
 figure.sh .acts button { background: var(--panel); border: 1px solid var(--line-strong); padding: 0 4px; font-size: 12px; }
+/* tabs: Split | Names */
+.tabs { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 5px; overflow: hidden; }
+.tabs button { border: 0; border-radius: 0; background: var(--panel); }
+.tabs button + button { border-left: 1px solid var(--line-strong); }
+.tabs button[aria-selected=true] { background: var(--accent-soft); color: var(--link); font-weight: 600; }
+/* the roster */
+#roster-box textarea { width: 100%; min-height: 6em; }
+#roster-read.bad, #roster-problems { color: var(--bad); }
+#roster-problems { margin: 2px 0; padding-left: 1.4em; font-size: 12.5px; }
+#roster-sample { font-size: 12.5px; border-collapse: collapse; }
+#roster-sample td { padding: 0 10px 0 0; }
+/* names: one exam at a time */
+#w-main { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-start; margin: 6px 0; }
+#w-crops { display: flex; flex-direction: column; gap: 6px; }
+#w-crops figure { margin: 0; }
+#w-crops .crop { border: 2px solid var(--accent2); background: #fff; }
+#w-crops figcaption { font-size: 13px; padding-top: 2px; }
+#w-crops figcaption .mono { font-size: 15px; }
+#w-prop { flex: 1 1 16em; display: flex; flex-direction: column; gap: 4px; padding-top: 4px; }
+#w-name { font-size: 1.6rem; font-weight: 650; line-height: 1.2; }
+#w-name.named { color: var(--good-ink); }
+#w-id { font-size: 1.15rem; }
+#w-pick { margin-top: 8px; max-width: 24em; }
+.wrows { border-collapse: collapse; width: 100%; font-size: 13px; }
+.wrows td { padding: 1px 6px; border-top: 1px solid var(--line); }
+.wrows tr.here { background: var(--accent2-soft); }
+#w-nobody-list { margin: 2px 0; }
 :root[data-theme=dark][data-invert-images=on] :is(#st-pages img, figure.sh img) {
   filter: url('#image-gamma') invert(1) hue-rotate(180deg) brightness(.9) contrast(.85);
 }
