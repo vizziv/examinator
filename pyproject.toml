@@ -1,0 +1,35 @@
+[project]
+name = "examinator"
+version = "0.1.0"
+description = "A small language for building exam graders, and the app that runs one."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "sympy>=1.13",
+    "pypdfium2>=4.30",
+    "pillow>=10.0",
+    "pyyaml>=6.0",
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+]
+
+[project.scripts]
+examinator = "examinator.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/examinator"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["live: opt-in tests against the real loopback model (blank or synthetic material only)"]

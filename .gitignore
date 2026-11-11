@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+dist/
+*.egg-info/
+.DS_Store
+
+# Workspaces hold exam data and never belong in a repository.
+workspace/
+workspaces/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
