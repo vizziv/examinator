@@ -6,10 +6,9 @@ identity (path, size, modification time), the page and the resolution; crops
 are cut from the cache.
 
 A scanned page is usually one full-page image. Such a page is not rendered: the
-embedded image is taken as it is (a JPEG is decoded once, or copied untouched)
-and shrunk by the power of two that brings it closest to the requested
-resolution, which JPEG decoding does almost for free. Its placement on the page
-is not interpreted; any other page is rasterized by PDFium.
+embedded image is taken as it is, at its own resolution (a JPEG's bytes are
+copied untouched). Its placement on the page is not interpreted. Any other page
+is rasterized by PDFium at the renderer's `dpi`.
 """
 from __future__ import annotations
 
@@ -52,8 +51,8 @@ class Renderer:
     def page_path(self, pdf: str | Path, index: int) -> Path:
         """Path of the cached image of one scanned page (0-based), making it if needed."""
         pdf = Path(pdf)
-        # 's' marks the scheme that may take scans as they are (older entries were rasterized).
-        out = self.cache_dir / self._key(pdf) / f'p{index:03d}-{self.dpi}s.jpg'
+        # 'n' marks the scheme that keeps a scan at its native resolution (older entries were not).
+        out = self.cache_dir / self._key(pdf) / f'p{index:03d}-{self.dpi}n.jpg'
         if out.exists():
             return out
         import pypdfium2
@@ -65,7 +64,7 @@ class Renderer:
                 if not 0 <= index < len(doc):
                     raise IndexError(f"page {index + 1} of {len(doc)}")
                 page = doc[index]
-                image = scan_image(page, self.dpi)
+                image = scan_image(page)
                 if image is None:
                     image = page.render(scale=self.dpi / 72).to_pil().convert('RGB')
             finally:
@@ -85,12 +84,12 @@ class Renderer:
             return im
 
 
-def scan_image(page, dpi: int) -> Image.Image | bytes | None:
-    """The page's one embedded image near `dpi`, or None if the page is not a plain scan.
+def scan_image(page) -> Image.Image | bytes | None:
+    """The page's one embedded image, or None if the page is not a plain scan.
 
     A plain scan is a page whose only object is an image covering the page, with
-    pixels shaped like the page. The result is RGB or grayscale, or the embedded
-    JPEG's bytes when they can be used unchanged.
+    pixels shaped like the page. The result is RGB or grayscale at the image's
+    own resolution, or the embedded JPEG's bytes when they can be used unchanged.
     """
     import pypdfium2.raw as pdfium_c
 
@@ -107,20 +106,10 @@ def scan_image(page, dpi: int) -> Image.Image | bytes | None:
     w, h = obj.get_px_size()
     if not w or not h or abs(math.log((w / h) / (pw / ph))) > _FIT:
         return None
-    # Halve while that brings the resolution closer to dpi; never enlarge.
-    factor = 2 ** max(0, round(math.log2(w / (pw / 72) / dpi)))
     if obj.get_filters() == ['DCTDecode']:
         data = bytes(obj.get_data())
-        image = Image.open(io.BytesIO(data))
-        if image.mode in ('RGB', 'L') and image.getexif().get(0x0112, 1) == 1:
-            if factor == 1:
+        with Image.open(io.BytesIO(data)) as probe:
+            if probe.mode in ('RGB', 'L') and probe.getexif().get(0x0112, 1) == 1:
                 return data
-            image.draft(image.mode, (-(-w // factor), -(-h // factor)))   # free DCT scaling, up to 8
-            factor = max(1, factor // round(w / image.width))
-        else:
-            image = obj.get_bitmap().to_pil()
-    else:
-        image = obj.get_bitmap().to_pil()
-    if image.mode not in ('RGB', 'L'):
-        image = image.convert('RGB')
-    return image.reduce(factor) if factor > 1 else image
+    image = obj.get_bitmap().to_pil()
+    return image if image.mode in ('RGB', 'L') else image.convert('RGB')

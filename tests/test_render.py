@@ -68,40 +68,28 @@ def taken(monkeypatch):
     seen = []
     real = render.scan_image
 
-    def spy(page, dpi):
-        out = real(page, dpi)
+    def spy(page):
+        out = real(page)
         seen.append(out is not None)
         return out
     monkeypatch.setattr(render, 'scan_image', spy)
     return seen
 
 
-def test_jpeg_scan_at_native_resolution_is_copied_untouched(tmp_path, taken):
-    data = jpeg(scan(160))
+@pytest.mark.parametrize('native', [100, 200, 300, 600])
+def test_jpeg_scan_is_copied_untouched_whatever_its_resolution(tmp_path, taken, native):
+    data = jpeg(scan(native))
     pdf = make_pdf(tmp_path / 's.pdf', [(data, FULL)])
     assert Renderer(tmp_path / 'cache', dpi=160).page_path(pdf, 0).read_bytes() == data
     assert taken == [True]
-
-
-@pytest.mark.parametrize('native, dpi, size', [(300, 160, (1275, 1650)),   # halved: 150 is closer than 300
-                                               (600, 160, (1275, 1650)),   # quartered
-                                               (200, 160, (1700, 2200)),   # 100 is further than 200
-                                               (100, 160, (850, 1100))])   # never enlarged
-def test_jpeg_scan_is_shrunk_by_a_power_of_two(tmp_path, taken, native, dpi, size):
-    src = scan(native)
-    pdf = make_pdf(tmp_path / 's.pdf', [(jpeg(src), FULL)])
-    page = Renderer(tmp_path / 'cache', dpi=dpi).page(pdf, 0)
-    assert taken == [True] and page.size == size
-    want = np.asarray(src.resize(size, Image.Resampling.BOX), dtype=float)
-    assert np.abs(np.asarray(page, dtype=float) - want).mean() < 6
 
 
 @pytest.mark.parametrize('mode', ['RGB', 'L'])
 def test_lossless_scan_pixels_are_the_source(tmp_path, taken, mode):
     src = scan(300, mode)
     pdf = make_pdf(tmp_path / 's.pdf', [(src, FULL)])
-    image = render.scan_image(pdfium.PdfDocument(str(pdf))[0], 160)
-    assert np.array_equal(np.asarray(image.convert(mode)), np.asarray(src.reduce(2)))
+    image = render.scan_image(pdfium.PdfDocument(str(pdf))[0])
+    assert np.array_equal(np.asarray(image.convert(mode)), np.asarray(src))
 
 
 @pytest.mark.parametrize('content, text', [
@@ -122,9 +110,9 @@ def test_crops_land_in_the_same_place_on_both_paths(tmp_path, monkeypatch):
     layout = Layout(window=(20, 30, 980, 970))
     box = Region(1, round(180 / 0.96), round(270 / 0.94), round(380 / 0.96), round(420 / 0.94))   # the dark box
     fast = Renderer(tmp_path / 'fast', dpi=160).page(pdf, 0)
-    monkeypatch.setattr(render, 'scan_image', lambda page, dpi: None)
+    monkeypatch.setattr(render, 'scan_image', lambda page: None)
     slow = Renderer(tmp_path / 'slow', dpi=160).page(pdf, 0)
-    assert fast.size == (1275, 1650) and slow.size == (1360, 1760)
+    assert fast.size == (2550, 3300) and slow.size == (1360, 1760)
     for region in (box, Region(1, 100, 200, 500, 600)):
         a, b = (np.asarray(layout.crop(p, region, pad=0).convert('L').resize((60, 60), Image.Resampling.BOX),
                            dtype=float) for p in (fast, slow))
@@ -135,4 +123,4 @@ def test_crops_land_in_the_same_place_on_both_paths(tmp_path, monkeypatch):
 def test_cache_names_differ_from_rasterized_ones(tmp_path):
     pdf = make_pdf(tmp_path / 's.pdf', [(jpeg(scan(100)), FULL)])
     path = Renderer(tmp_path / 'cache', dpi=160).page_path(pdf, 0)
-    assert path.name == 'p000-160s.jpg'
+    assert path.name == 'p000-160n.jpg'
