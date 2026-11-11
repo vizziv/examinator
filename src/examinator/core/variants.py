@@ -8,7 +8,12 @@ The stored body keeps the candidate set, so that constraints across questions
 can be layered on later:
 
     {'cues': {name: {'reading': str | None, 'variant': str | None}},
-     'candidates': [...], 'agree': int, 'resolved': str | None}
+     'basis': {name: str}, 'candidates': [...], 'agree': int, 'resolved': str | None}
+
+`basis` holds, per cue, a digest of what a reading was made from (the cue's region and
+question, not its `reads`). When cue definitions change, the variant is
+narrowed again from the stored readings whose basis still matches; a reading
+of a different crop or question is dropped, leaving that cue unread.
 """
 from __future__ import annotations
 
@@ -46,8 +51,26 @@ def match(cue: Cue, reading: str | None) -> str | None:
     return table.get(normalize(reading))
 
 
+def basis(cue: Cue) -> str:
+    """Digest of what a cue's reading depends on: its crop and its question."""
+    return digest({'region': cue.region, 'ask': cue.ask})
+
+
+def stored_readings(question: Question, body: Mapping | None) -> dict[str, str | None]:
+    """The readings in a stored variant body that still apply to the question's
+    current cues. A body written before readings carried a basis is trusted."""
+    out = {}
+    by_name = {c.name: c for c in question.cues}
+    made = (body or {}).get('basis') or {}
+    for name, c in ((body or {}).get('cues') or {}).items():
+        cue = by_name.get(name)
+        if cue is not None and made.get(name, basis(cue)) == basis(cue):
+            out[name] = c.get('reading')
+    return out
+
+
 def narrow(question: Question, readings: Mapping[str, str | None]) -> dict:
-    """Pure: from cue readings to the variant artifact body."""
+    """Pure: from cue readings (made under the current cues) to the variant artifact body."""
     cues, candidates, votes = {}, set(question.variants), []
     for cue in question.cues:
         reading = readings.get(cue.name)
@@ -62,7 +85,8 @@ def narrow(question: Question, readings: Mapping[str, str | None]) -> dict:
     agree = votes.count(ordered[0]) if len(ordered) == 1 else 0
     need = len(question.cues) if question.require is None else question.require
     resolved = ordered[0] if len(ordered) == 1 and agree >= max(need, 1) else None
-    return {'cues': cues, 'candidates': ordered, 'agree': agree, 'resolved': resolved}
+    return {'cues': cues, 'basis': {c.name: basis(c) for c in question.cues},
+            'candidates': ordered, 'agree': agree, 'resolved': resolved}
 
 
 def choose(question: Question, body: Mapping | None, variant: str) -> dict:
@@ -70,7 +94,10 @@ def choose(question: Question, body: Mapping | None, variant: str) -> dict:
     if variant not in question.variants:
         raise ValueError(f"unknown variant {variant!r}")
     cues = dict((body or {}).get('cues') or {})
-    return {'cues': cues, 'candidates': [variant], 'agree': 0, 'resolved': variant, 'chosen': True}
+    out = {'cues': cues, 'candidates': [variant], 'agree': 0, 'resolved': variant, 'chosen': True}
+    if (body or {}).get('basis'):
+        out['basis'] = dict(body['basis'])
+    return out
 
 
 def resolved(body: Mapping | None) -> str | None:

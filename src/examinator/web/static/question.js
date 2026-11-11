@@ -195,6 +195,21 @@
   });
   document.addEventListener('submit', e => e.preventDefault());
 
+  // --- an exam-data edit (key panel, regions): this submission is rechecked first ---
+  document.addEventListener('entry-saved', async e => {
+    const b = e.detail;
+    await refresh();
+    if (!b.job) return;
+    busy.hidden = false;
+    for (;;) {
+      const r = await request('/jobs/' + encodeURIComponent(b.job));
+      if (!r.ok || r.body.state !== 'running' || r.body.done >= b.questions.length) break;
+      await new Promise(done => setTimeout(done, 400));
+    }
+    busy.hidden = true;
+    await refresh();
+  });
+
   // --- the scan window follows this page ---
   const channel = new BroadcastChannel('examinator-scan');
   const announce = () => channel.postMessage({

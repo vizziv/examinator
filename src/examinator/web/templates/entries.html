@@ -1,0 +1,30 @@
+{# One editable value of the exam package: a form that entries.js saves to /exam/set. #}
+{% macro input(e) %}
+{% if e.kind == 'bool' %}<input type="checkbox" class="ev"{% if e.current %} checked{% endif %} aria-label="{{ e.label }}">
+{% elif e.kind in ('int', 'number') %}<input type="number" class="ev" step="{{ 1 if e.kind == 'int' else 'any' }}" value="{{ e.text }}" aria-label="{{ e.label }}"{% if e.nullable %} placeholder="none"{% endif %}>
+{% elif e.area %}<textarea class="ev" rows="{{ e.rows }}" spellcheck="false" aria-label="{{ e.label }}"
+ {%- if e.kind == 'map' %} placeholder="reading = variant"{% elif e.kind == 'choice' %} placeholder="one accepted text per line"{% endif %}>
+{{ e.text }}</textarea>
+{% else %}<input type="text" class="ev" value="{{ e.text }}" spellcheck="false" aria-label="{{ e.label }}"
+ {%- if e.kind == 'region' %} placeholder="page left top right bottom" size="20"{% elif e.kind == 'pages' %} placeholder="1, 2" size="10"{% elif e.nullable %} placeholder="none"{% endif %}>
+{% endif %}
+{% endmacro %}
+
+{% macro entry(e) %}
+<form class="entry k-{{ e.kind }}{% if e.overridden %} over{% endif %}" data-path="{{ e.path }}" data-kind="{{ e.kind }}" data-rev="{{ e.rev }}"{% if e.nullable %} data-nullable="1"{% endif %} autocomplete="off">
+{% if e.long %}
+<details><summary><span class="elabel">{{ e.label }}</span> <span class="dim">{{ e.text[:80] }}…</span></summary>
+{{ input(e) }}
+</details>
+{% else %}
+<span class="elabel">{{ e.label }}</span>
+{{ input(e) }}
+{% endif %}
+<span class="eact">
+<button type="button" data-entry="save">save</button>
+<button type="button" data-entry="clear" title="back to the package value"{% if not e.stored %} hidden{% endif %}>revert</button>
+<span class="emsg" role="status"></span>
+</span>
+<span class="ebase"{% if not e.overridden %} hidden{% endif %}>package: <code>{{ e.base_text or '—' }}</code></span>
+</form>
+{% endmacro %}

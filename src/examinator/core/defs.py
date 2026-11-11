@@ -233,7 +233,9 @@ class Exam:
         self.scan_window = tuple(scan_window)   # initial default; the workspace may override
         self.cover_pages = cover_pages          # likewise
         self.crop_pad = crop_pad                # per-mille of the printed page around every crop
-        self.questions: dict[str, Question] = {}
+        self.questions: dict[str, Question] = {}   # live: base definitions plus overrides
+        self.base: dict[str, Question] = {}        # as built by the package
+        self.overrides: dict[str, Any] = {}        # applied overrides {path: JSON value}; see `overrides`
         self.path: Path | None = None           # set by `load_exam`
         self.code_hash: str = ''
 
@@ -264,7 +266,7 @@ class Exam:
                      fields=tuple(fields), stages=tuple(stages),
                      export_pages=tuple(export_pages) or tuple(pages),
                      variants=tuple(variants), cues=tuple(cues), require=require, trust=trust)
-        self.questions[id] = q
+        self.questions[id] = self.base[id] = q
         return q
 
 
@@ -374,6 +376,8 @@ def load_exam(path: str | Path) -> Exam:
     if not path.is_dir():
         raise FileNotFoundError(f"exam package not found: {path}")
     name = path.name
+    for cached in [m for m in sys.modules if m == name or m.startswith(name + '.')]:
+        del sys.modules[cached]         # every load builds a fresh exam; nothing is shared between loads
     init = path / '__init__.py'
     spec = importlib.util.spec_from_file_location(
         name, init if init.exists() else None, submodule_search_locations=[str(path)])

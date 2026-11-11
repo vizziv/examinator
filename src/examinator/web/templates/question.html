@@ -1,10 +1,13 @@
 {% extends 'base.html' %}
 {% import 'blocks.html' as blocks %}
+{% import 'entries.html' as ed %}
 {% set here = root ~ '/s/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) %}
 {% block title %}{{ sub.id }} · {{ q.id }}{% endblock %}
 {% block head %}
 <script src="{{ root }}/static/plot.js" defer></script>
 <script src="{{ root }}/static/question.js" defer></script>
+<script src="{{ root }}/static/entries.js" defer></script>
+<script src="{{ root }}/static/regions.js" defer></script>
 {% endblock %}
 {% block nav %}
 <button type="button" data-act="prev" title="previous student">‹ <kbd>k</kbd> <kbd>⌥K</kbd></button>
@@ -22,9 +25,28 @@
 {% block body %}
 <main id="question" data-sub="{{ sub.id }}" data-q="{{ q.id }}" data-name="{{ sub.name }}" data-count="{{ count }}"
  data-pages='{{ scans|map(attribute="index")|list|tojson }}' data-ids='{{ ids|tojson }}'>
-<section id="scan">
+<section id="scan" data-regions='{{ regions|tojson }}' data-window='{{ layout.window|list|tojson }}'
+ data-cover="{{ layout.cover_pages }}" data-pad="{{ exam.crop_pad }}" data-first="{{ first_page }}" data-pages="{{ exam.pages }}">
+{% if regions %}
+<div id="rg" class="bar">
+<button type="button" id="rg-on" aria-pressed="false" title="edit field and cue regions on the scan">regions</button>
+<span id="rg-panel" class="bar" hidden>
+<select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.cue %} (cue){% endif %}</option>{% endfor %}</select>
+<label>p <input type="number" class="rg-n" min="1" max="{{ exam.pages }}" aria-label="page"></label>
+<input type="number" class="rg-n" min="0" max="1000" aria-label="left" title="left">
+<input type="number" class="rg-n" min="0" max="1000" aria-label="top" title="top">
+<input type="number" class="rg-n" min="0" max="1000" aria-label="right" title="right">
+<input type="number" class="rg-n" min="0" max="1000" aria-label="bottom" title="bottom">
+<span class="tag warn" title="an exam-wide override: the same region for every submission">all submissions</span>
+<button type="button" id="rg-save" class="primary">save</button>
+<button type="button" id="rg-undo" title="back to the saved value">undo</button>
+<button type="button" id="rg-clear" title="back to the package value">revert</button>
+<span id="rg-msg" role="status"></span>
+</span>
+</div>
+{% endif %}
 {% for s in scans %}
-<img class="scan" src="{{ root }}/page/{{ sub.id|urlencode }}/{{ s.index }}.jpg" alt="page {{ s.page }}" loading="lazy">
+<div class="sheet" data-index="{{ s.index }}"><img class="scan" src="{{ root }}/page/{{ sub.id|urlencode }}/{{ s.index }}.jpg" alt="page {{ s.page }}" loading="lazy"></div>
 {% else %}
 <p class="dim">no scan pages</p>
 {% endfor %}
@@ -59,7 +81,7 @@
 <div class="fields">
 {% for f in loose %}
 <label class="field"><span class="flabel">{{ f.label }}</span>
-<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}"></span></label>
+<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}" data-region="{{ f.crop.path }}"></span></label>
 {% endfor %}
 </div>
 {% endif %}
@@ -71,7 +93,7 @@
 <label class="field{% if f.marker %} marked{% endif %}">
 <span class="flabel">{{ f.label }}</span>
 <input type="text" data-label="{{ f.label }}" value="{{ f.value }}" spellcheck="false"{% if not parse.editable %} readonly{% endif %}>
-{% if f.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}"></span>{% endif %}
+{% if f.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}" data-region="{{ f.crop.path }}"></span>{% endif %}
 </label>
 {% endfor %}
 </div>
@@ -80,7 +102,7 @@
 <textarea spellcheck="false" rows="{{ [[parse.text.count('\n') + 2, 8]|max, 40]|min }}"{% if not parse.editable %} readonly{% endif %}>
 {{ parse.text }}</textarea>
 <div class="crops">
-{% for c in parse.crops %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ c.index }}.jpg" data-box="{{ c.box }}"></span>{% endfor %}
+{% for c in parse.crops %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ c.index }}.jpg" data-box="{{ c.box }}" data-region="{{ c.path }}"></span>{% endfor %}
 </div>
 </div>
 {% endif %}
@@ -120,7 +142,7 @@
 <div class="cues">
 {% for c in variant.cues %}
 <div class="cue">
-{% if c.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ c.crop.index }}.jpg" data-box="{{ c.crop.box }}"></span>{% endif %}
+{% if c.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ c.crop.index }}.jpg" data-box="{{ c.crop.box }}" data-region="{{ c.crop.path }}"></span>{% endif %}
 <span class="cueline"><span class="flabel" title="{{ c.ask }}">{{ c.name }}</span>
 <input type="text" value="{{ '' if c.reading is none else c.reading }}" data-cue="{{ c.name }}" size="8" aria-label="reading" spellcheck="false">
 <button type="button" data-act="cue">set</button>
@@ -139,6 +161,14 @@
 {{ blocks.render(evidence.rest, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode)) }}
 {% endif %}
 </div>
+
+{% if keys %}
+<details id="key">
+<summary>edit key{% if variant and variant.resolved %} <span class="dim">{{ variant.resolved }}</span>{% endif %}{% if keys|selectattr('overridden')|list %} <span class="tag">edited</span>{% endif %}</summary>
+<p class="dim">all submissions · <a href="{{ root }}/exam#{{ q.id }}">exam data</a></p>
+{% for e in keys %}{{ ed.entry(e) }}{% endfor %}
+</details>
+{% endif %}
 
 <div id="run" class="bar" data-live>
 <span class="plabel">run</span>

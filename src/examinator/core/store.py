@@ -40,6 +40,13 @@ create table if not exists history (
 create index if not exists history_key on history (submission, question, kind, rev);
 create table if not exists submission (id text primary key, name text, email text, pdf text);
 create table if not exists setting (key text primary key, value text not null);
+create table if not exists override (
+  path text primary key, value text, author text, updated_at text not null, rev integer not null
+);
+create table if not exists override_history (
+  path text not null, value text, author text, updated_at text not null, rev integer not null,
+  replaced_at text not null
+);
 create table if not exists memo (
   submission text not null, key text not null, value text not null,
   primary key (submission, key)
@@ -96,6 +103,17 @@ class Submission:
     name: str
     email: str
     pdf: str
+
+
+@dataclass(frozen=True)
+class Override:
+    """A value replacing one piece of an exam definition (see `core.overrides`)."""
+    path: str
+    value: Any                  # JSON
+    author: str | None
+    updated_at: str
+    rev: int
+    replaced_at: str | None = None   # set on history rows
 
 
 def _row(r) -> Artifact:
@@ -265,6 +283,49 @@ class Store:
 
     def _tx(self):
         return _Tx(self._db)
+
+    # --- definition overrides ---
+
+    def overrides(self) -> dict[str, Override]:
+        with self._lock:
+            rows = self._db.execute(
+                'select path, value, author, updated_at, rev from override order by path').fetchall()
+        return {r[0]: Override(r[0], json.loads(r[1]), *r[2:]) for r in rows}
+
+    def override_history(self, path: str) -> list[Override]:
+        """Replaced and cleared values of one path, newest first."""
+        with self._lock:
+            rows = self._db.execute(
+                'select path, value, author, updated_at, rev, replaced_at from override_history '
+                'where path=? order by rev desc', (path,)).fetchall()
+        return [Override(r[0], json.loads(r[1]), *r[2:]) for r in rows]
+
+    def _check_override(self, path: str, expect_rev) -> Override | None:
+        cur = self.overrides().get(path)
+        if expect_rev is not ANY and (cur.rev if cur else None) != expect_rev:
+            raise Conflict(f"{path} changed")
+        if cur is not None:
+            self._db.execute(
+                'insert into override_history select path, value, author, updated_at, rev, ? '
+                'from override where path=?', (_now(), path))
+        return cur
+
+    def set_override(self, path: str, value: Any, *, author: str | None,
+                     expect_rev: int | None | _Any = ANY) -> Override:
+        """Create or replace one override (`expect_rev=None`: must not exist yet);
+        the replaced row goes to history."""
+        text = json.dumps(value, ensure_ascii=False)
+        with self._lock, self._tx():
+            self._check_override(path, expect_rev)
+            self._db.execute('insert or replace into override values (?,?,?,?,?)',
+                             (path, text, author, _now(), self._next_rev()))
+            return self.overrides()[path]
+
+    def clear_override(self, path: str, *, expect_rev: int | _Any = ANY) -> None:
+        """Remove one override (back to the package's value); the row goes to history."""
+        with self._lock, self._tx():
+            if self._check_override(path, expect_rev) is not None:
+                self._db.execute('delete from override where path=?', (path,))
 
     # --- submissions, settings, memo ---
 

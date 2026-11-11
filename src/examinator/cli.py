@@ -7,7 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .core import batch
+from .core import batch, overrides
 from .core.defs import Exam, load_exam
 from .core.runner import Runner
 from .core.workflow import question_status, total
@@ -104,6 +104,8 @@ def main(argv=None) -> int:
 
     ws = Workspace(args.workspace, exam)
     ws.sync_roster()
+    for s in overrides.refresh(exam, ws.store):
+        print(f"override not applied: {s.path}: {s.reason}", file=sys.stderr)
     model = open_model(args, ws.root)
 
     if args.cmd == 'status':

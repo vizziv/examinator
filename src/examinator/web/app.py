@@ -10,6 +10,7 @@
     GET  /scan                      scan window that follows the question page
     GET  /runs                      batch runs;  POST /runs/preview|start|stop,  GET /runs/status
     GET  /settings                  workspace defaults;  POST /settings
+    GET  /exam                      exam data (overrides);  POST /exam/set|clear|variants
 
 Every POST takes a JSON object (or a form), needs the page token, and answers
 JSON: 403 bad token, 404 unknown target, 409 stale revision or plan, 400 input
@@ -37,12 +38,12 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainT
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from ..core import batch, grid
+from ..core import batch, grid, overrides
 from ..core.defs import Bool, Exam, Question, grade_kind, has_marker
 from ..core.runner import Runner
 from ..core.store import Conflict
 from ..core.variants import resolved
-from ..core.workflow import evidence_current, question_status, seen_revs, variant_trusted
+from ..core.workflow import evidence_current, question_status, seen_revs, variant_current, variant_trusted
 from ..core.workspace import Workspace
 from .jobs import Batch, Jobs
 
@@ -253,6 +254,57 @@ def find_raw(blocks: Any, path: str) -> str | None:
     return node['html']
 
 
+# --- exam data (overrides) ---------------------------------------------------------
+
+LONG_TEXT = 160      # characters: longer text entries start collapsed
+
+
+def show_value(kind: str, value: Any) -> str:
+    """An entry's JSON value as the text its input holds (see exam.js `readEntry`)."""
+    if value is None:
+        return ''
+    if kind == 'pages':
+        return ', '.join(str(p) for p in value)
+    if kind == 'map':
+        return '\n'.join(f'{k} = {v}' for k, v in value.items())
+    if kind == 'choice':
+        return '\n'.join(value)
+    if kind == 'region':
+        return ' '.join(str(v) for v in value)
+    if kind == 'number':
+        return f'{value:g}'
+    return str(value)
+
+
+def entry_view(e: overrides.Entry, revs: dict, label: str | None = None) -> dict:
+    segs = overrides.split(e.path)
+    text = show_value(e.kind, e.current)
+    return {'path': e.path, 'kind': e.kind, 'label': label or ' / '.join(segs[1:]), 'current': e.current,
+            'text': text, 'base_text': show_value(e.kind, e.base), 'overridden': e.overridden,
+            'stored': e.path in revs, 'nullable': e.nullable, 'rev': revs.get(e.path, ''),
+            'long': e.kind == 'text' and (len(text) > LONG_TEXT or text.count('\n') > 2),
+            'area': e.kind in ('map', 'choice') or (e.kind == 'text' and (len(text) > 50 or '\n' in text)),
+            'rows': min(max(text.count('\n') + 2, 2), 24)}
+
+
+def key_entries(q: Question, entries: list[overrides.Entry], revs: dict, variant: str | None) -> list[dict]:
+    """A question's key entries (stage configuration under 'key'), for one variant
+    when the key is per variant and the variant is known."""
+    out = []
+    for e in entries:
+        segs = overrides.split(e.path)[1:]
+        if len(segs) < 4 or segs[0] != 'stages' or segs[2] != 'key':
+            continue
+        rest = segs[3:]
+        if len(rest) > 1 and rest[0] in q.variants:
+            if variant is not None and rest[0] != variant:
+                continue
+            if variant is not None:
+                rest = rest[1:]
+        out.append(entry_view(e, revs, ' / '.join(rest)))
+    return out
+
+
 # --- the app -----------------------------------------------------------------------
 
 def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None = None,
@@ -264,6 +316,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                              trim_blocks=True, lstrip_blocks=True)
     env.globals.update(labels=STATE_LABELS)
     jobs = Jobs()
+    # Stored overrides apply from the start, whether or not the caller applied them.
+    with_overrides = overrides.refresh(exam, store)
     plans: OrderedDict[str, batch.Plan] = OrderedDict()
     lock = threading.Lock()
 
@@ -315,7 +369,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             try:
                 out = await run_in_threadpool(fn, request, data)
             except Conflict as e:
-                return JSONResponse({'error': str(e) or "changed elsewhere", 'conflict': True}, 409)
+                extra = getattr(e, 'current', None)
+                return JSONResponse({'error': str(e) or "changed elsewhere", 'conflict': True,
+                                     **({'current': extra} if extra is not None else {})}, 409)
             except ValueError as e:
                 return JSONResponse({'error': str(e)[:300]}, 400)
             return JSONResponse({'ok': True, **(out or {})})
@@ -361,13 +417,14 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         except Exception:
             count = 0
 
-        def crop(region):
+        def crop(region, *path):
             if region is None:
                 return None
             index = layout.scan_index(region.page)
             if not 0 <= index < count:
                 return None
-            return {'index': index, 'box': ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad))}
+            return {'index': index, 'box': ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad)),
+                    'path': overrides.join(q.id, *path)}
 
         pages, note = ws.selected_pages(sub.id, q)
         scans = [{'page': p, 'index': layout.scan_index(p)} for p in pages
@@ -391,13 +448,15 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 body = body if isinstance(body, dict) else {}
                 names = list(q.labels) + [k for k in body if k not in q.labels]
                 parse['fields'] = [{'label': n, 'value': '' if body.get(n) is None else str(body[n]),
-                                    'crop': crop(regions.get(n)), 'marker': has_marker(body.get(n))}
+                                    'crop': crop(regions.get(n), 'fields', n, 'region'),
+                                    'marker': has_marker(body.get(n))}
                                    for n in names]
             else:
                 parse['text'] = body or ''
-                parse['crops'] = [c for c in (crop(r) for r in regions.values()) if c]
+                parse['crops'] = [c for c in (crop(r, 'fields', n, 'region') for n, r in regions.items()) if c]
         # A question without a parse stage (decided by hand) still shows its answer areas.
-        loose = [] if parse else [{'label': f.label, 'crop': c} for f in q.fields if (c := crop(f.region))]
+        loose = [] if parse else [{'label': f.label, 'crop': c} for f in q.fields
+                                  if (c := crop(f.region, 'fields', f.label, 'region'))]
         transcript = editor('transcript')
         if transcript:
             transcript.update(mode='code', text=transcript['art'].body if transcript['art'] else '')
@@ -411,7 +470,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'art': art, 'rev': art.rev if art else '', 'resolved': resolved(body),
                 'candidates': body.get('candidates') or [], 'trusted': variant_trusted(q, arts),
                 'manual': art is not None and art.origin == 'manual',
-                'cues': [{'name': c.name, 'ask': c.ask, 'crop': crop(c.region), 'fixed': c.fn is not None,
+                'cues': [{'name': c.name, 'ask': c.ask, 'crop': crop(c.region, 'cues', c.name, 'region'),
+                          'fixed': c.fn is not None,
                           'reading': (cues.get(c.name) or {}).get('reading'),
                           'variant': (cues.get(c.name) or {}).get('variant')} for c in q.cues]}
 
@@ -453,12 +513,22 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         qids = list(exam.questions)
         i = qids.index(q.id)
         over = store.get(sub.id, '', 'layout')
+        revs = {p: o.rev for p, o in store.overrides().items()}
+        entries = overrides.editable(exam, q.id)
+        regions = []
+        for e in entries:
+            if e.kind == 'region':
+                segs = overrides.split(e.path)
+                regions.append({'path': e.path, 'label': segs[2], 'cue': segs[1] == 'cues', 'region': e.current,
+                                'base': e.base, 'stored': e.path in revs, 'rev': revs.get(e.path)})
+        keys = key_entries(q, entries, revs, variant['resolved'] if variant else None)
         return page(
             'question.html', sub=sub, q=q, parts=parts, scans=scans, parse=parse, loose=loose, transcript=transcript,
             variant=variant, evidence=evidence, stages=stages, history=history, count=count,
             seen=seen_revs(q, arts),
             pages=pages, note=note, pages_default=q.pages, layout=layout,
-            layout_over=over.body if over else None,
+            layout_over=over.body if over else None, regions=regions, keys=keys,
+            first_page=(q.pages or (1,))[0],
             ids=[s.id for s in store.submissions()],
             prev_q=qids[i - 1] if i else None, next_q=qids[i + 1] if i + 1 < len(qids) else None)
 
@@ -697,6 +767,113 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise Bad("scan window: expected left, top, right, bottom")
         ws.set_defaults(cover_pages=_int(data.get('cover_pages'), "cover pages", 0, 99), scan_window=window)
 
+    # --- exam data: overrides of the package's plain data, for every submission ---
+
+    def exam_page(request: Request) -> Response:
+        stored = store.overrides()
+        revs = {p: o.rev for p, o in stored.items()}
+        by_q: dict[str, list] = {}
+        for e in overrides.editable(exam):
+            by_q.setdefault(overrides.split(e.path)[0], []).append(entry_view(e, revs))
+        questions = [{'id': qid, 'title': getattr(exam.questions.get(qid), 'title', ''), 'entries': items}
+                     for qid, items in by_q.items()]
+        skipped = []
+        for path, o in stored.items():
+            if path not in exam.overrides:
+                try:
+                    overrides.validate(exam, path, o.value)
+                    reason = "not applied"
+                except ValueError as e:
+                    reason = str(e)
+                skipped.append({'path': path, 'reason': reason})
+        active = [{'path': p, 'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')}
+                  for p, o in stored.items()]
+        return page('exam.html', questions=questions, active=active, skipped=skipped,
+                    lines=overrides.describe_changes(exam, store),
+                    startup=[s.path for s in with_overrides])
+
+    def _path(data: dict) -> str:
+        path = data.get('path')
+        if not isinstance(path, str) or not path or len(path) > 500:
+            raise Bad("path is required")
+        return path
+
+    def _changed(path: str, change: overrides.Change, data: dict) -> dict:
+        """After an edit: count what it outdated and recheck it in the background,
+        the requesting page's submission first."""
+        o = store.overrides().get(path)
+        subs = [s.id for s in store.submissions()]
+        first = data.get('sub')
+        if first in subs:
+            subs.remove(first)
+            subs.insert(0, first)
+        affected = 0
+        for qid in change.questions:
+            q = exam.questions[qid]
+            for sid in subs:
+                arts = store.for_question(sid, qid)
+                if arts:
+                    status = question_status(q, arts, code_hash=exam.code_hash)
+                    affected += sum(st.state in ('outdated', 'manual_outdated') for st in status.values())
+        job = jobs.start_each([(s, qid) for s in subs for qid in change.questions], runner.recheck) \
+            if change.questions else None
+        segs = overrides.split(path)
+        cue = len(segs) == 4 and segs[1] == 'cues' and segs[3] in ('region', 'ask')
+        entry = next((e for e in overrides.editable(exam, segs[0]) if e.path == path), None)
+        return {'rev': o.rev if o else None, 'value': entry.current if entry else None,
+                'text': show_value(entry.kind, entry.current) if entry else '',
+                'overridden': o is not None, 'questions': list(change.questions), 'affected': affected,
+                'job': job, 'variants': [segs[0]] if cue and have_model() else [],
+                'skipped': [{'path': s.path, 'reason': s.reason} for s in change.skipped]}
+
+    def _conflict(e: Conflict, path: str) -> Conflict:
+        o = store.overrides().get(path)
+        e.current = {'rev': o.rev if o else None, 'value': o.value if o else None,
+                     'who': (o.author or '?') if o else None}
+        return e
+
+    def exam_set(request, data):
+        path, rev = _path(data), _rev(data)
+        try:
+            with lock:
+                change = overrides.set(exam, store, path, data.get('value'), author=who(request),
+                                       expect_rev=rev)
+        except Conflict as e:
+            raise _conflict(e, path) from None
+        return _changed(path, change, data)
+
+    def exam_clear(request, data):
+        path, rev = _path(data), _rev(data)
+        try:
+            with lock:
+                change = overrides.clear(exam, store, path, expect_rev=rev)
+        except Conflict as e:
+            raise _conflict(e, path) from None
+        return _changed(path, change, data)
+
+    def exam_variants(request, data):
+        """Read the cues again where a changed cue left the variant open."""
+        if not have_model():
+            raise Bad("model unavailable")
+        qids = _strings(data.get('questions') or [], [k for k, q in exam.questions.items() if q.variants],
+                        "questions")
+        items = []
+        for sid in (s.id for s in store.submissions()):
+            for qid in qids:
+                arts = store.for_question(sid, qid)
+                art = arts.get('variant')
+                if art is None or art.protected:
+                    continue
+                body = art.body if isinstance(art.body, dict) else {}
+                if not variant_current(exam.questions[qid], arts) or resolved(body) is None:
+                    items.append((sid, qid))
+
+        def reread(sid, qid):
+            out = runner.run_stage(sid, qid, 'variant')
+            return [out] + ([o] if out.ok and (o := runner.recheck(sid, qid)) else [])
+
+        return {'job': jobs.start_each(items, reread), 'n': len(items)}
+
     def post(path, fn):
         return Route(path, action(fn), methods=['POST'])
 
@@ -724,6 +901,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         Route('/runs/status', runs_status),
         Route('/settings', settings_page),
         post('/settings', settings_save),
+        Route('/exam', exam_page),
+        post('/exam/set', exam_set),
+        post('/exam/clear', exam_clear),
+        post('/exam/variants', exam_variants),
         Mount('/static', StaticFiles(directory=HERE / 'static'), name='static'),
     ]
     app = Starlette(routes=routes)

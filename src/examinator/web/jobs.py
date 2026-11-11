@@ -49,6 +49,36 @@ class Jobs:
         self._pool.submit(work)
         return id
 
+    def start_each(self, items: list, fn: Callable[..., Any]) -> str:
+        """One job over many items: `fn(*item)` for each, in order, with progress.
+
+        The job adds `done` and `total`; `outcomes` keeps only what did not finish
+        cleanly (with its submission), so a long loop stays small."""
+        id = secrets.token_hex(8)
+        items = list(items)
+        with self._lock:
+            self._jobs[id] = {'state': 'running', 'outcomes': [], 'done': 0, 'total': len(items)}
+
+        def work():
+            bad, failed = [], 0
+            for i, item in enumerate(items):
+                try:
+                    out = _outcomes(fn(*item))
+                    bad += [{**o, 'submission': item[0]} for o in out if o['status'] != 'done']
+                except Exception as e:      # the type only, as above
+                    failed += 1
+                    bad.append({'stage': '', 'status': 'failed', 'detail': type(e).__name__,
+                                'submission': item[0]})
+                with self._lock:
+                    self._jobs[id] = {'state': 'running', 'outcomes': bad[:200], 'done': i + 1,
+                                      'total': len(items)}
+            with self._lock:
+                self._jobs[id] = {'state': 'done', 'outcomes': bad[:200], 'done': len(items),
+                                  'total': len(items), 'failed': failed}
+
+        self._pool.submit(work)
+        return id
+
     def get(self, id: str) -> dict | None:
         with self._lock:
             job = self._jobs.get(id)

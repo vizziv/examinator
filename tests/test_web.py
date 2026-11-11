@@ -495,3 +495,196 @@ def test_block_helpers():
     assert out[1]['lines'] == [(1, 'a', False), (2, 'b', True)]
     assert find_raw(blocks, '0-0') == "<b>hi</b>"
     assert find_raw(blocks, '0') is None and find_raw(blocks, '1') is None and find_raw(blocks, '') is None
+
+
+# --- exam data: overrides ------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+from PIL import Image  # noqa: E402
+
+from examinator import load_exam  # noqa: E402
+from examinator.core.store import Submission  # noqa: E402
+from examinator.core.workspace import Workspace  # noqa: E402
+from examinator.model.fake import FakeModel  # noqa: E402
+from examinator.pdf.layout import Layout  # noqa: E402
+
+from conftest import SCRIPT  # noqa: E402
+from test_overrides import make_keyed_exam  # noqa: E402
+
+TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
+
+
+def keyed_workspace(root):
+    exam = make_keyed_exam()
+    if not (root / 'pdfs').exists():
+        (root / 'pdfs').mkdir(parents=True)
+        pages = [Image.new('RGB', (200, 260), 'white') for _ in range(2)]
+        for sid in ('s1', 's2'):
+            pages[0].save(root / 'pdfs' / f'{sid}.pdf', 'PDF', save_all=True, append_images=pages[1:])
+    ws = Workspace(root, exam)
+    ws.store.put_submissions([Submission(s, s, "", f'{s}.pdf') for s in ('s1', 's2')])
+    return exam, ws
+
+
+@pytest.fixture
+def ksite(tmp_path):
+    """The keyed exam (keys held as data), every question graded and verified."""
+    exam, ws = keyed_workspace(tmp_path / 'ws')
+    runner = Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
+    for sid in ('s1', 's2'):
+        for qid, q in exam.questions.items():
+            assert all(o.ok for o in runner.run_from(sid, qid, q.stages[0].name))
+            runner.verify(sid, qid, 'parse', author='t', expect_rev=ws.store.get(sid, qid, 'parse').rev)
+    yield Site(exam, ws, runner)
+    runner.close()
+    ws.close()
+
+
+def crop_box(html, path):
+    m = re.search(rf'data-box="([^"]+)" data-region="{re.escape(path)}"', html)
+    return m and m.group(1)
+
+
+def test_exam_page_lists_entries(site):
+    r = site.get('/exam')
+    assert r.status_code == 200
+    for path in ('a/pages', 'a/require', 'a/fields/x/region', 'a/cues/c1/region', 'a/cues/c1/reads',
+                 'a/cues/c1/ask', 'a/stages/transcript/notes', 'a/stages/transcript/prompt', 'b/pages'):
+        assert f'data-path="{path}"' in r.text, path
+    assert '1 = one\n2 = two' in r.text          # a map, one reading per line
+    assert 'href="/exam"' in site.get('/').text
+    html = r.text
+    assert '<script>' not in html and ' style="' not in html and not re.search(r'\son\w+="', html)
+
+
+def test_exam_page_of_the_toy_exam(tmp_path):
+    exam = load_exam(TOY)
+    ws = Workspace(tmp_path / 'ws', exam, create=True)
+    runner = Runner(exam, ws)
+    try:
+        r = Site(exam, ws, runner).get('/exam')
+        assert r.status_code == 200
+        assert 'data-path="areas/stages/evidence/key/green/A.2"' in r.text
+        assert 'data-path="parity/stages/evidence/key/B" data-kind="choice"' in r.text
+        assert 'even\nE\noption 1' in r.text
+        assert 'value="2 400 300 900 420"' in r.text
+    finally:
+        runner.close()
+        ws.close()
+
+
+def test_set_and_clear_round_trip(site):
+    path = 'a/cues/c1/ask'
+    r = site.post('/exam/set', {'path': path, 'value': "the first cue, printed", 'rev': None})
+    assert r.status_code == 200, r.text
+    rev = r.json()['rev']
+    assert site.exam.questions['a'].cues[0].ask == "the first cue, printed"
+    assert site.ws.store.overrides()[path].author == 'tester'
+    page = site.get('/exam').text
+    assert 'package: <code>first cue</code>' in page and f'<code>{path}</code>' in page
+    assert "a/cues/c1/ask: &#39;first cue&#39; -&gt; &#39;the first cue, printed&#39;" in page
+    r = site.post('/exam/clear', {'path': path, 'rev': rev})
+    assert r.status_code == 200 and r.json()['value'] == "first cue" and not r.json()['overridden']
+    assert site.exam.questions['a'].cues[0].ask == "first cue" and not site.ws.store.overrides()
+
+
+def test_set_validation_conflict_and_token(site):
+    path = 'a/fields/x/region'
+    r = site.post('/exam/set', {'path': path, 'value': [1, 500, 0, 100, 100], 'rev': None})
+    assert r.status_code == 400 and 'left < right' in r.json()['error']
+    assert site.post('/exam/set', {'path': 'a/stages/grade/fn', 'value': 1, 'rev': None}).status_code == 400
+    assert site.post('/exam/set', {'path': path, 'value': [1, 0, 0, 10, 10]}).status_code == 400   # no rev
+    assert site.client.post('/exam/set', json={'path': path, 'value': [1, 0, 0, 10, 10], 'rev': None}).status_code == 403
+    assert site.client.post('/exam/clear', json={'path': path, 'rev': None},
+                            headers={'X-Token': 'wrong'}).status_code == 403
+    assert not site.ws.store.overrides()
+    ok = site.post('/exam/set', {'path': path, 'value': [1, 0, 0, 10, 10], 'rev': None})
+    assert ok.status_code == 200 and ok.json()['questions'] == [] and ok.json()['job'] is None
+    stale = site.post('/exam/set', {'path': path, 'value': [1, 0, 0, 20, 20], 'rev': None})
+    assert stale.status_code == 409
+    assert stale.json()['current'] == {'rev': ok.json()['rev'], 'value': [1, 0, 0, 10, 10], 'who': 'tester'}
+    assert site.post('/exam/clear', {'path': path, 'rev': ok.json()['rev'] + 100}).status_code == 409
+    assert site.ws.store.overrides()[path].value == [1, 0, 0, 10, 10]
+
+
+def test_region_override_moves_the_crop(ksite):
+    path = 'a/fields/x/region'
+    before = crop_box(ksite.get('/s/s1/a').text, path)
+    assert before
+    r = ksite.post('/exam/set', {'path': path, 'value': [1, 100, 300, 600, 450], 'rev': None, 'sub': 's1'})
+    assert r.status_code == 200 and r.json()['affected'] == 0
+    html = ksite.get('/s/s1/a').text
+    after = crop_box(html, path)
+    layout = ksite.ws.layout('s1')
+    want = Layout(layout.cover_pages, layout.window).box(ksite.exam.questions['a'].fields[0].region, ksite.exam.crop_pad)
+    assert after != before and after == ','.join(f'{v:.4f}' for v in want)
+    assert '"path": "a/fields/x/region"' in html and '[1, 100, 300, 600, 450]' in html
+    assert ksite.state('s1', 'a', 'x').state == 'graded'
+
+
+def test_key_override_outdates_and_rechecks(ksite):
+    path = 'a/stages/evidence/key/one/x'
+    page = ksite.get('/s/s1/a').text
+    assert f'data-path="{path}"' in page and 'data-path="a/stages/evidence/key/two/x"' not in page
+    r = ksite.post('/exam/set', {'path': path, 'value': '5', 'rev': None, 'sub': 's2'})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body['questions'] == ['a'] and body['affected'] == 4 and body['variants'] == []
+    assert ksite.state('s1', 'a', 'x').state in ('outdated', 'graded')     # the recheck is under way
+    info = ksite.wait(body['job'])
+    assert info['state'] == 'done' and info['done'] == info['total'] == 2 and not info['outcomes']
+    for sid in ('s1', 's2'):
+        st = ksite.state(sid, 'a', 'x')
+        assert (st.state, st.value) == ('graded', False)
+        assert ksite.state(sid, 'b').value is True
+    r = ksite.post('/exam/clear', {'path': path, 'rev': body['rev']})
+    assert r.json()['affected'] == 4       # parts x and y of both submissions
+    ksite.wait(r.json()['job'])
+    assert (ksite.state('s1', 'a', 'x').state, ksite.state('s1', 'a', 'x').value) == ('graded', True)
+
+
+def test_choice_key_from_the_question_page(ksite):
+    path = 'b/stages/evidence/key/x'
+    assert f'data-path="{path}" data-kind="choice"' in ksite.get('/s/s1/b').text
+    r = ksite.post('/exam/set', {'path': path, 'value': ['no', 'nope'], 'rev': None, 'sub': 's1'})
+    assert r.status_code == 200 and r.json()['text'] == 'no\nnope'
+    ksite.wait(r.json()['job'])
+    assert ksite.state('s1', 'b').value is False
+    assert ksite.post('/exam/set', {'path': path, 'value': [], 'rev': r.json()['rev']}).status_code == 400
+
+
+def test_changed_cue_rereads_variants(ksite):
+    path = 'a/cues/c1/region'
+    r = ksite.post('/exam/set', {'path': path, 'value': [1, 0, 0, 1000, 250], 'rev': None})
+    body = r.json()
+    assert body['questions'] == ['a'] and body['variants'] == ['a']
+    ksite.wait(body['job'])
+    assert ksite.ws.store.get('s1', 'a', 'variant').body['resolved'] is None
+    r = ksite.post('/exam/variants', {'questions': ['a']})
+    assert r.status_code == 200 and r.json()['n'] == 2
+    info = ksite.wait(r.json()['job'])
+    assert info['state'] == 'done' and info['done'] == 2
+    for sid in ('s1', 's2'):
+        assert ksite.ws.store.get(sid, 'a', 'variant').body['resolved'] == 'one'
+        assert ksite.state(sid, 'a', 'x').value is True
+    assert ksite.post('/exam/variants', {'questions': ['b']}).status_code == 400
+
+
+def test_overrides_survive_a_new_app(tmp_path):
+    exam, ws = keyed_workspace(tmp_path / 'ws')
+    runner = Runner(exam, ws)
+    site = Site(exam, ws, runner)
+    assert site.post('/exam/set', {'path': 'a/cues/c1/ask', 'value': "again", 'rev': None}).status_code == 200
+    runner.close()
+    ws.close()
+    exam, ws = keyed_workspace(tmp_path / 'ws')      # a fresh package, nothing applied
+    assert exam.questions['a'].cues[0].ask == "first cue"
+    runner = Runner(exam, ws)
+    try:
+        site = Site(exam, ws, runner)
+        assert exam.questions['a'].cues[0].ask == "again"
+        assert 'package: <code>first cue</code>' in site.get('/exam').text
+    finally:
+        runner.close()
+        ws.close()

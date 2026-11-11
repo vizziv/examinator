@@ -196,7 +196,8 @@ class Runner:
         if stage.isolate and self.pool is not None:
             return self.pool.call(q.id, stage.name, {
                 'submission': ctx.submission, 'variant': ctx.variant, 'inputs': ctx.inputs,
-                'params': ctx.params, 'note': ctx.note}, self._timeout(stage))
+                'params': ctx.params, 'note': ctx.note, 'overrides': self.exam.overrides},
+                self._timeout(stage))
         return body_of(stage.fn(ctx))
 
     def _grade(self, submission: str, q: Question, *, deliberate: bool) -> Outcome:
@@ -241,7 +242,7 @@ class Runner:
         """Automatic recheck after a parse or variant changes or is verified.
 
         Brings the variant in line with changed cue definitions (from the stored
-        readings; no model), reruns derived stages and the check if the evidence
+        readings that still apply; no model), reruns derived stages and the check if the evidence
         is not current, and otherwise repairs automatic grades that fell behind.
         Never replaces a manual grade or anything protected."""
         q = self.exam.questions[qid]
@@ -250,7 +251,7 @@ class Runner:
         arts = self.store.for_question(submission, qid)
         va = arts.get('variant')
         if va is not None and not variant_current(q, arts) and not va.protected:
-            readings = {n: c.get('reading') for n, c in (va.body.get('cues') or {}).items()}
+            readings = variants.stored_readings(q, va.body)
             try:
                 self.store.write(submission, qid, 'variant', variants.narrow(q, readings), origin='auto',
                                  inputs={'revs': {}, 'defn': stage_hash(q, q.stage('variant'))},
@@ -352,7 +353,7 @@ class Runner:
         if variant is None:
             if cur is None:
                 return None
-            readings = {n: c.get('reading') for n, c in (cur.body.get('cues') or {}).items()}
+            readings = variants.stored_readings(q, cur.body)
             return self.store.write(submission, qid, 'variant', variants.narrow(q, readings),
                                     origin='auto', inputs=self._variant_inputs(q), expect_rev=expect_rev)
         return self.store.write(submission, qid, 'variant',
@@ -370,7 +371,7 @@ class Runner:
         if cue not in [c.name for c in q.cues]:
             raise ValueError(f"unknown cue {cue!r}")
         cur = self.store.get(submission, qid, 'variant')
-        readings = {n: c.get('reading') for n, c in ((cur.body if cur else {}).get('cues') or {}).items()}
+        readings = variants.stored_readings(q, cur.body if cur else None)
         readings[cue] = reading
         return self.store.write(submission, qid, 'variant', variants.narrow(q, readings),
                                 origin='manual', author=author, inputs=self._variant_inputs(q),

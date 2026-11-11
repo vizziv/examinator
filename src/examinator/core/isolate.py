@@ -1,6 +1,8 @@
 """Isolated stage execution: warm worker processes with a wall-clock limit.
 
 A worker imports the exam package once, then runs stage functions on request.
+Each request carries the parent's applied definition overrides; the worker
+applies them again whenever they differ from what it last applied.
 The parent kills a worker that exceeds its time limit and starts another, so
 a hung check costs one process, not the server. Requests and replies are
 length-prefixed JSON on the worker's stdin and stdout.
@@ -80,7 +82,8 @@ class Pool:
     def call(self, question: str, stage: str, payload: dict, timeout: float) -> Any:
         """Run one stage function in a worker and return its body.
 
-        `payload` holds the context fields: submission, variant, inputs, params, note.
+        `payload` holds the context fields: submission, variant, inputs, params, note,
+        and the exam's applied `overrides`.
         Raises `StageTimeout` or `StageCrash`.
         """
         with self._lock:
@@ -121,17 +124,22 @@ def _worker(exam_path: str) -> None:
     from .context import Context
     from .defs import load_exam
     from .evidence import body_of
+    from .overrides import apply
 
     out = os.fdopen(os.dup(sys.stdout.fileno()), 'wb')
     sys.stdout = sys.stderr            # stray prints must not corrupt the protocol
     inp = sys.stdin.buffer.fileno()
     exam = load_exam(exam_path)
+    applied: dict = {}
     while True:
         try:
             req = _recv(inp, None)
         except EOFError:
             return
         try:
+            if (req.get('overrides') or {}) != applied:
+                applied = req.get('overrides') or {}
+                apply(exam, applied)
             q = exam.questions[req['question']]
             ctx = Context(submission=req['submission'], question=q, stage=req['stage'],
                           variant=req.get('variant'), inputs=req.get('inputs') or {},

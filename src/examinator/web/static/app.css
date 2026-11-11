@@ -160,3 +160,47 @@ body.scanwin #pages { padding: 0; }
   #question { grid-template-columns: 1fr; }
   #scan { position: static; height: auto; max-height: 50vh; border-right: 0; width: auto; max-width: none; }
 }
+
+/* exam data: entries (exam page, key panel) */
+form.entry { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: flex-start; padding: 3px 0; border-bottom: 1px solid var(--line); }
+form.entry > details { flex: 1 1 30em; }
+form.entry > details > summary .dim { font-family: ui-monospace, monospace; font-size: 12px; }
+.elabel { font-family: ui-monospace, monospace; font-size: 12px; min-width: 14em; color: var(--dim); padding-top: 3px; }
+form.entry textarea { flex: 1 1 30em; width: 100%; min-width: 16em; }
+form.entry.k-text textarea { white-space: pre-wrap; }
+form.entry.over .elabel { color: var(--accent); }
+form.entry.dirty button[data-entry=save] { border-color: var(--warn); color: var(--warn); }
+.eact { display: inline-flex; gap: 4px; align-items: center; }
+.emsg { color: var(--dim); }
+.emsg.notice { color: var(--bad); }
+.ebase { flex-basis: 100%; color: var(--dim); padding-left: 14.5em; font-size: 12px; white-space: pre-wrap; }
+.ebase code { font-family: ui-monospace, monospace; }
+#key form.entry .elabel { min-width: 6em; }
+#key form.entry .ebase { padding-left: 0; }
+#changes { margin-bottom: 8px; position: sticky; top: 30px; z-index: 4; background: var(--bg); }
+form.entry input[type=text] { flex: 0 1 28em; min-width: 8em; }
+form.entry.k-region input[type=text], form.entry.k-pages input[type=text] { flex: 0 1 14em; }
+#exam-data .qdata h2 { border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+#lines { white-space: pre-wrap; user-select: all; }
+
+/* regions on the scan */
+#rg { position: sticky; top: 0; z-index: 3; background: var(--panel); padding: 3px 4px; border-bottom: 1px solid var(--line); }
+#rg .rg-n { width: 4.6em; }
+#rg-on[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+#rg-save.dirty { border-color: var(--warn); color: var(--warn); }
+#rg-msg { color: var(--dim); }
+#rg-msg.notice { color: var(--bad); }
+.sheet { position: relative; line-height: 0; }
+.sheet.extra { outline: 2px dashed var(--warn); outline-offset: -2px; }
+.rbox { position: absolute; border: 1.5px solid var(--accent); background: rgba(37, 99, 235, .06); cursor: pointer; touch-action: none; }
+.rbox.cue { border-color: var(--warn); background: rgba(154, 103, 0, .06); }
+.rbox.sel { border-width: 2px; cursor: move; background: rgba(37, 99, 235, .14); }
+.rbox.cue.sel { background: rgba(154, 103, 0, .16); }
+.rbox.dirty { border-style: dashed; }
+.rlabel { position: absolute; left: 0; bottom: 100%; font: 11px/1.3 ui-monospace, monospace; padding: 0 3px; white-space: nowrap;
+  background: var(--accent); color: #fff; pointer-events: none; }
+.rbox.cue .rlabel { background: var(--warn); }
+.rh { position: absolute; width: 10px; height: 10px; background: var(--bg); border: 2px solid var(--accent); }
+.rbox.cue .rh { border-color: var(--warn); }
+.rh.nw { left: -6px; top: -6px; cursor: nwse-resize; } .rh.se { right: -6px; bottom: -6px; cursor: nwse-resize; }
+.rh.ne { right: -6px; top: -6px; cursor: nesw-resize; } .rh.sw { left: -6px; bottom: -6px; cursor: nesw-resize; }
