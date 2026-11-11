@@ -43,12 +43,18 @@ def load(exam: Exam, store: Store) -> list[Row]:
         arts.setdefault((a.submission, a.question), {})[a.kind] = a
     rows = []
     for sub in store.submissions():
-        cells, by_q = {}, {}
-        for qid, q in exam.questions.items():
-            mine = arts.get((sub.id, qid), {})
-            by_q[qid] = question_status(q, mine, code_hash=exam.code_hash)
-            v = mine.get('variant')
-            cells[qid] = Cell(by_q[qid], resolved(v.body) if v else None)
-        points, complete = total(exam, by_q)
+        cells = row_cells(exam, {qid: arts.get((sub.id, qid), {}) for qid in exam.questions})
+        points, complete = total(exam, {qid: c.status for qid, c in cells.items()})
         rows.append(Row(sub, cells, points, complete))
     return rows
+
+
+def row_cells(exam: Exam, arts: Mapping[str, Mapping[str, Artifact]]) -> dict[str, Cell]:
+    """One submission's cells from its artifacts by question (bodies needed only
+    for grades and the variant)."""
+    cells = {}
+    for qid, q in exam.questions.items():
+        mine = arts.get(qid, {})
+        v = mine.get('variant')
+        cells[qid] = Cell(question_status(q, mine, code_hash=exam.code_hash), resolved(v.body) if v else None)
+    return cells

@@ -688,3 +688,57 @@ def test_overrides_survive_a_new_app(tmp_path):
     finally:
         runner.close()
         ws.close()
+
+
+# --- the focus ---------------------------------------------------------------------
+
+def test_filter_page_and_values(site):
+    site.run_all()
+    r = site.get('/filter')
+    assert r.status_code == 200 and 'id="fx-questions"' in r.text and '/static/filter.js' in r.text
+    assert "'unsafe-inline'" not in r.headers['content-security-policy'].split('style-src')[0]
+    assert '<script>' not in r.text and ' on' + 'click=' not in r.text
+    assert 'href="/filter"' in site.get('/').text                     # in the top bar
+    data = site.get('/focus/values').json()
+    assert data['subs'] == ['s1', 's2']
+    assert [q['id'] for q in data['questions']] == ['a', 'b']
+    ids = [f['id'] for f in data['questions'][0]['facets']]
+    assert ids[:5] == ['a/grade:x', 'a/state:x', 'a/grade:y', 'a/state:y', 'a/variant']
+    assert data['values']['a/state:x'] == {'s1': ['unverified'], 's2': ['not_started']}
+    assert data['values']['a/variant'] == {'s1': ['one'], 's2': ['unresolved']}
+    one = site.get('/focus/values?sub=s2').json()
+    assert one['subs'] == ['s2'] and one['values']['a/state:x'] == {'s2': ['not_started']}
+    assert site.get('/focus/values?sub=nobody').status_code == 404
+
+
+def test_grid_honours_a_focus_in_the_url(site):
+    import json
+    from urllib.parse import quote
+    site.run_all()
+
+    def shown(sel):
+        html = site.get('/?focus=' + quote(json.dumps(sel))).text
+        return [m.group(1) for m in re.finditer(r'<tr data-id="([^"]+)">', html)]
+
+    assert shown({}) == ['s1', 's2']
+    assert shown({'a/state:x': ['unverified']}) == ['s1']
+    assert shown({'a/state:x': ['unverified', 'not_started']}) == ['s1', 's2']               # OR within
+    assert shown({'a/state:x': ['unverified'], 'b/state': ['in_progress']}) == []            # AND across
+    assert shown({'a/variant': ['unresolved']}) == ['s2']
+    assert shown({'no/such': ['x']}) == ['s1', 's2']                                          # unknown: ignored
+    assert site.get('/?focus=%7Bnot json').status_code == 200
+    html = site.get('/?focus=' + quote(json.dumps({'a/variant': ['one']}))).text
+    assert 'id="focus-clear" title="clear the focus">' in html and 'id="f-state"' not in html
+
+
+def test_question_page_has_focus_slots(site):
+    r = site.get('/s/s1/a')
+    assert 'id="unfocused"' in r.text and 'id="like"' in r.text and '/static/focus.js' in r.text
+
+
+def test_focus_values_follow_decisions(site):
+    site.run_all()
+    assert site.get('/focus/values').json()['values']['b/state']['s1'] == ['not_started']
+    assert site.decide('s1', 'b', '', True).status_code == 200
+    data = site.get('/focus/values').json()['values']
+    assert data['b/state']['s1'] == ['manual'] and data['b/grade']['s1'] == ['✓']

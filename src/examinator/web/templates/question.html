@@ -12,6 +12,7 @@
 {% block nav %}
 <button type="button" data-act="prev" title="previous student">‹ <kbd>k</kbd> <kbd>⌥K</kbd></button>
 <b id="who" title="{{ sub.id }}">{{ sub.name or sub.id }}</b> <span class="dim" id="pos"></span>
+<a id="unfocused" class="tag warn" href="{{ root }}/filter" title="this submission no longer matches the focus" hidden>not in focus</a>
 <button type="button" data-act="next" title="next student"><kbd>j</kbd> <kbd>⌥J</kbd> ›</button>
 <span class="qnav">
 {% if prev_q %}<a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ prev_q|urlencode }}" id="prev-q" title="{{ prev_q }}">‹<kbd>h</kbd></a>{% endif %}
@@ -76,6 +77,7 @@
 </div>
 {% endfor %}
 </div>
+<div id="like" class="like" hidden></div>
 
 {% if loose %}
 <div class="fields">

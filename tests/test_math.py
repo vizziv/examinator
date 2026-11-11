@@ -287,15 +287,17 @@ def test_check_answers_shape():
     out = check_answers(answers, key, symbols=POS)
     assert list(out) == ['fields']
     assert list(out['fields']) == ['1', '2', '3', '4', '5', '6']
-    assert out['fields']['1'] == {'answer': 'ba', 'outcome': 'correct', 'note': ''}
-    assert out['fields']['4'] == {'answer': 'yes', 'outcome': 'correct', 'note': 'ok'}
-    assert out['fields']['5'] == {'answer': None, 'outcome': 'blank', 'note': ''}
-    assert out['fields']['6'] == {'answer': None, 'outcome': 'blank', 'note': ''}
+    assert out['fields']['1'] == {'answer': 'ba', 'outcome': 'correct', 'note': '', 'normal': 'a*b'}
+    assert out['fields']['4'] == {'answer': 'yes', 'outcome': 'correct', 'note': 'ok', 'normal': 'yes'}
+    assert out['fields']['5'] == {'answer': None, 'outcome': 'blank', 'note': '', 'normal': None}
+    assert out['fields']['6'] == {'answer': None, 'outcome': 'blank', 'note': '', 'normal': None}
+    assert out['fields']['2']['normal'] == 'b' and out['fields']['3']['normal'] == '0.25'
     assert [f['outcome'] for f in out['fields'].values()] == ['correct'] * 4 + ['blank'] * 2
     assert m.all_correct(EvidenceView({'data': out})) == 'incorrect'
 
     out = check_answers({'1': 'a b [REVIEW: b or 6]', '2': 'D'}, {'1': 'a*b', '2': Choice('B')}, symbols=POS)
-    assert out['fields']['1'] == {'answer': 'a b [REVIEW: b or 6]', 'outcome': None, 'note': 'review'}
+    assert out['fields']['1'] == {'answer': 'a b [REVIEW: b or 6]', 'outcome': None, 'note': 'review',
+                                  'normal': 'a b [review: b or 6]'}
     assert out['fields']['2']['outcome'] == 'incorrect'
 
 
@@ -376,7 +378,7 @@ def test_group_entries():
     key = {'x': 'a', ('p', 'q'): either_order}
     out = check_answers({'x': 'a', 'p': '2', 'q': '1'}, key, symbols=POS)['fields']
     assert list(out) == ['x', 'p', 'q']
-    assert out['p'] == {'answer': '2', 'outcome': 'correct', 'note': ''} and out['q']['outcome'] == 'correct'
+    assert out['p'] == {'answer': '2', 'outcome': 'correct', 'note': '', 'normal': '2'} and out['q']['outcome'] == 'correct'
     assert [f['outcome'] for f in check_answers({'p': '3', 'q': '1'}, key)['fields'].values()] == \
         ['blank', 'incorrect', 'incorrect']
 
@@ -387,8 +389,8 @@ def test_group_entries():
         return 'incorrect', "sum is wrong"
     out = check_answers({'p': '1', 'q': '  '}, {('p', 'q'): one})['fields']
     assert seen == [('1', None)]                                     # a blank arrives as None
-    assert out['p'] == {'answer': '1', 'outcome': 'incorrect', 'note': 'sum is wrong'}
-    assert out['q'] == {'answer': None, 'outcome': 'blank', 'note': ''}   # blank stays blank
+    assert out['p'] == {'answer': '1', 'outcome': 'incorrect', 'note': 'sum is wrong', 'normal': '1'}
+    assert out['q'] == {'answer': None, 'outcome': 'blank', 'note': '', 'normal': None}   # blank stays blank
 
     out = check_answers({}, {('p', 'q'): one})['fields']              # all blank: not called
     assert len(seen) == 1 and [f['outcome'] for f in out.values()] == ['blank', 'blank']

@@ -116,10 +116,13 @@ class ParsePseudocode:
 
 def parse_pseudocode(entries: Sequence[str], *, language: Any = None,
                      prompt: str = prompts.PARSE_PSEUDOCODE, notes: str = "",
-                     then: Callable[[str], str] | None = None) -> Stage:
-    """Model, text in, source in the pseudocode language out."""
+                     then: Callable[[str], str] | None = None, facets: Sequence[Any] | None = None) -> Stage:
+    """Model, text in, source in the pseudocode language out. By default the
+    parsed source's comments are a searchable facet (`pseudocode.comment_facet`)."""
+    from . import pseudocode
     return Stage('parse', ParsePseudocode(tuple(entries), language, prompt, notes, then),
-                 inputs=('transcript',), uses_model=True, editable=True, shape='code')
+                 inputs=('transcript',), uses_model=True, editable=True, shape='code',
+                 facets=tuple((pseudocode.comment_facet(),) if facets is None else facets))
 
 
 # --- check --------------------------------------------------------------------
@@ -172,9 +175,13 @@ def check_math(key: Mapping[str, Any], *, symbols: Mapping[str, str] | Sequence[
     by_variant = bool(key) and all(isinstance(v, Mapping) for v in key.values())
     if not isinstance(symbols, Mapping):
         symbols = tuple(symbols)
+    from . import math as m
+    labels: list[str] = []
+    for k in (k for sub in (key.values() if by_variant else [key]) for k in sub):
+        labels += [x for x in (k if isinstance(k, tuple) else (k,)) if x not in labels]
     return Stage('evidence', CheckMath(key, symbols, None if functions is None else tuple(functions), by_variant),
                  inputs=('parse',), isolate=True, timeout=timeout, uses_variant=by_variant,
-                 accepts_markers=True)
+                 accepts_markers=True, facets=tuple(m.answer_facet(label) for label in labels))
 
 
 def check(fn: Callable[[Context], Any], *, timeout: float | None = None,

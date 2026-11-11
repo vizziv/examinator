@@ -8,15 +8,40 @@
   const $ = id => document.getElementById(id);
   const revOf = el => (el.dataset.rev === '' ? null : Number(el.dataset.rev));
 
-  // --- next / previous student, following the grid's filter and sort ---
+  // --- next / previous student, following the grid's order (the focus, search and sort) ---
+  const ids = JSON.parse(main.dataset.ids);
   let order = session('order', null);
-  if (!Array.isArray(order) || !order.includes(sub)) order = JSON.parse(main.dataset.ids);
+  if (!Array.isArray(order)) order = ids;
   const at = order.indexOf(sub);
-  $('pos').textContent = `${at + 1}/${order.length}`;
+  $('pos').textContent = `${at < 0 ? '–' : at + 1}/${order.length}`;
   function go(step) {
-    const next = order[at + step];
+    let next = order[at + step];
+    if (at < 0) {         // not in the order: the nearest one in it, by submission id
+      const rank = new Map(ids.map((s, i) => [s, i])), me = rank.get(sub);
+      const side = order.filter(s => (step > 0 ? rank.get(s) > me : rank.get(s) < me))
+        .sort((a, b) => rank.get(a) - rank.get(b));
+      next = step > 0 ? side[0] : side[side.length - 1];
+    }
     if (next !== undefined) location.href = `${ROOT}/s/${encodeURIComponent(next)}/${encodeURIComponent(q)}`;
   }
+
+  // --- the focus: does this submission still match it; "like this" sets one ---
+  (async () => {
+    const r = await request('/focus/values?sub=' + encodeURIComponent(sub));
+    if (!r.ok) return;
+    const sel = Focus.load();
+    $('unfocused').hidden = !Focus.size(sel) || Focus.matches(r.body.values, sel, sub);
+    const like = $('like'), mine = r.body.questions.find(x => x.id === q);
+    for (const f of mine ? mine.facets : []) {
+      if (f.kind !== 'choice') continue;
+      for (const v of (r.body.values[f.id] || {})[sub] || []) {
+        const a = make('a', {href: `${ROOT}/${Focus.query({[f.id]: [v]})}`, title: `every submission with ${f.label} = ${v}`},
+          `${f.label} `, make('code', {textContent: v}));
+        like.append(a);
+      }
+    }
+    if (like.childElementCount) { like.prepend(make('span', {className: 'dim', textContent: 'like this:'})); like.hidden = false; }
+  })();
 
   // --- drafts: an editor is a <form class="draft" data-kind data-mode data-rev> ---
   const editors = () => [...document.querySelectorAll('form.draft')];

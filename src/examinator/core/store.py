@@ -169,6 +169,35 @@ class Store:
             rows = self._db.execute(sql, args).fetchall()
         return [_row(r) for r in rows]
 
+    def bodies(self, question: str, kind: str, path: str | None = None, *,
+               submission: str | None = None) -> dict[str, Any]:
+        """One kind's bodies for every submission of a question, in one query:
+        `{submission: body}`. With a JSON `path` ('$.data.fields') only that part
+        is read out of each body (SQLite's `->`), so large parts such as plot
+        blocks are never loaded; rows where the path is absent or null are left out."""
+        col = 'body' if path is None else 'body -> ?'
+        sql = f'select submission, {col} from artifact where question=? and kind=?'
+        args: tuple = ((path,) if path is not None else ()) + (question, kind)
+        if submission is not None:
+            sql += ' and submission=?'
+            args += (submission,)
+        with self._lock:
+            rows = self._db.execute(sql, args).fetchall()
+        out = {}
+        for sub, text in rows:
+            value = json.loads(text) if text is not None else None
+            if value is not None:
+                out[sub] = value
+        return out
+
+    def version(self) -> tuple:
+        """Changes whenever an artifact or override is written, deleted, verified or
+        unverified: a key for caching what is computed from stored rows."""
+        with self._lock:
+            return self._db.execute(
+                "select (select value from setting where key='rev'), count(*), total(verified_rev), "
+                "(select count(*) from override) from artifact").fetchone()
+
     def history(self, submission: str, question: str, kind: str) -> list[Artifact]:
         """Replaced versions, newest first."""
         with self._lock:

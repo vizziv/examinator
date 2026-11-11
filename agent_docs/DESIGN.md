@@ -399,9 +399,16 @@ normalization. Those are exam code.
 
 Screens for the first version:
 
-- **Grid:** one row per submission, one column per result, plus variant. Filters
-  by result and workflow state; text search; sort; totals. Previous/next
-  navigation follows the current filter and sort.
+- **Grid:** one row per submission, one column per result, plus variant. Shows
+  the focused set (below); text search; sort; totals. Previous/next
+  navigation follows the focus, search and sort.
+- **Filter page:** the focused set (`core/focus.py`). One card per question with
+  its facets: grade value, workflow state, variant (built in, from the workflow
+  rules), plus facets declared by stages (`Stage.facets`) and questions
+  (`Exam.question(..., facets=)`), e.g. the standard check's normalized answer
+  per field and the comments in parsed pseudocode. OR within a facet's values,
+  AND across facets; counts are over the other facets' selection. The focus is
+  per browser (localStorage) and shareable as `?focus=` in a link.
 - **Question page:** the parsed answer as a form (one input per field, with its
   scan crop beside it) or a code editor (with the answer areas beside it);
   verify; evidence blocks; the proposed grade with a control to decide it;
@@ -435,7 +442,7 @@ Do not build these in M1–M3. Do not block them either.
 | --- | --- |
 | Live editing of exam data (keys, regions, prompt notes) | Definitions are frozen data with a stable path to each value; `inputs` records a definition hash. An `override(path, value, author, updated_at)` table then layers on top. |
 | Live-editable logic (small rules) | Grade rules are already just functions of evidence. A restricted interpreter (the pseudocode interpreter with a rules profile, or an embedded hermetic language) can supply such a function from stored text. |
-| Filter and search facets (group by normalized answer; search comments in parsed code) | The grid reads stored rows, never rendered pages. A facet is a small function from an artifact to values, computed on write and stored in its own table. |
+| Filter and search facets (group by normalized answer; search comments in parsed code) | **Built** (`core/focus.py`). A facet is a small function from stored rows to values, computed on read (one query per question and kind, JSON paths so plot blocks are not loaded) and cached by the store's version. |
 | Static student view | Evidence blocks carry an audience mark; a question may supply `feedback(evidence, grade)`. The view is a second renderer over stored rows. |
 | PDF exports by question variant | Resolved variants are queryable per question; page selection and cover counts are stored per submission; each variant names its blank template PDF. |
 | Several exams in one process | No module-level state; exam packages loaded under distinct names. |

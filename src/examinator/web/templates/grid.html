@@ -2,13 +2,9 @@
 {% block head %}<script src="{{ root }}/static/grid.js" defer></script>{% endblock %}
 {% block nav %}
 <input type="search" id="f-text" placeholder="search" size="14" title="/">
-<select id="f-col" title="column"><option value="">any column</option>
-{% for c in columns %}<option>{{ c.name }}</option>{% endfor %}</select>
-<select id="f-state" title="state"><option value="">any state</option>
-{% for s in states %}<option value="{{ s }}">{{ labels[s] }}</option>{% endfor %}</select>
-<select id="f-value" title="value"><option value="">any value</option>
-<option value="t">✓</option><option value="f">✗</option><option value="blank">∅ blank</option><option value="none">no value</option></select>
-<button type="button" id="f-clear" title="clear filters">×</button>
+<button type="button" id="f-clear" title="clear search and sort">×</button>
+<a id="focus-sum" href="{{ root }}/filter" title="the focus: open the filter page">filter</a>
+<button type="button" id="focus-clear" title="clear the focus"{% if not focus %} hidden{% endif %}>clear focus</button>
 <span id="shown" class="dim"></span>
 {% endblock %}
 {% block body %}
@@ -23,7 +19,7 @@
 </tr></thead>
 <tbody>
 {% for r in rows %}
-<tr data-id="{{ r.sub.id }}">
+<tr data-id="{{ r.sub.id }}"{% if r.hidden %} hidden{% endif %}>
 <td class="id">{{ r.sub.id }}</td><td class="name">{{ r.sub.name }}</td>
 {% for c in r.cells %}
 {% if c.variant %}

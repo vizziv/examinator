@@ -1,6 +1,8 @@
 """The app: server-rendered pages plus a few JSON actions (DESIGN §13).
 
-    GET  /                          grid
+    GET  /                          grid (?focus=... applies a shared focus)
+    GET  /filter                    the filter page: facets of every question
+    GET  /focus/values              facet values for all submissions (?sub=: one), JSON
     GET  /s/{sub}/{q}               question page
     POST /s/{sub}/{q}/{action}      save verify decide undecide variant cue run pages restore
     POST /s/{sub}/layout            per-submission layout override
@@ -38,7 +40,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainT
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from ..core import batch, grid, overrides
+from ..core import batch, focus, grid, overrides
 from ..core.defs import Bool, Exam, Question, grade_kind, has_marker
 from ..core.runner import Runner
 from ..core.store import Conflict
@@ -178,6 +180,18 @@ def _params(text: Any) -> dict:
 
 # --- view helpers ----------------------------------------------------------------
 
+def selection(text: str | None) -> dict:
+    """A focus from a URL (`?focus=` JSON: {facet_id: [values] | "search"}); {} if malformed."""
+    try:
+        data = json.loads(text) if text and len(text) <= 20_000 else {}
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): v if isinstance(v, str) else [str(x) for x in v] for k, v in data.items()
+            if isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, (str, int, float)) for x in v))}
+
+
 def glyph(spec, st) -> str:
     """What the grade is, as one glyph. Where it is in the workflow is `st.state`."""
     if st.value is None:
@@ -200,7 +214,7 @@ def value_class(st) -> str:
 
 
 def value_key(st) -> str:
-    """The value as the grid's filter key."""
+    """The value as the grid's sort key."""
     if st.value is None:
         return ''
     if isinstance(st.value, bool):
@@ -387,6 +401,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         for q in exam.questions.values():
             for part, spec in q.result.items():
                 columns.append({'q': q, 'part': part, 'name': q.column(part), 'counts': spec.counts})
+        sel = selection(request.query_params.get('focus'))
+        table = values() if sel else {}
         rows = []
         for row in grid.load(exam, store):
             cells = []
@@ -401,9 +417,37 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                                   'glyph': glyph(spec, st), 'cls': value_class(st), 'v': value_key(st),
                                   'blank': 'blank' in st.flags, 'counts': st.counts})
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
-                         'complete': row.complete, 'sort': row.points})
+                         'complete': row.complete, 'sort': row.points,
+                         'hidden': bool(sel) and not focus.matches(table, sel, row.submission.id)})
         return page('grid.html', rows=rows, columns=columns, questions=list(exam.questions.values()),
-                    states=[s for s in STATE_LABELS])
+                    focus=focus.active(table, sel))
+
+    # --- focus ---
+
+    cached: dict[str, Any] = {}
+
+    def values() -> dict:
+        """The whole values table, recomputed only when stored rows have changed."""
+        key = store.version()
+        with lock:
+            if cached.get('key') == key:
+                return cached['table']
+        table = focus.values_table(exam, store)
+        with lock:
+            cached.update(key=key, table=table)
+        return table
+
+    def filter_page(request: Request) -> Response:
+        return page('filter.html')
+
+    def focus_values(request: Request) -> Response:
+        sid = request.query_params.get('sub')
+        if sid is not None and store.submission(sid) is None:
+            raise HTTPException(404)
+        subs = store.submissions() if sid is None else [store.submission(sid)]
+        return JSONResponse({'subs': [s.id for s in subs], 'names': [s.name for s in subs],
+                             'questions': focus.describe_facets(exam),
+                             'values': values() if sid is None else focus.values_table(exam, store, submission=sid)})
 
     # --- question page ---
 
@@ -879,6 +923,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     routes = [
         Route('/', grid_page),
+        Route('/filter', filter_page),
+        Route('/focus/values', focus_values),
         Route('/s/{sub}/{q}', question_page),
         post('/s/{sub}/layout', set_layout),
         post('/s/{sub}/{q}/save', save),

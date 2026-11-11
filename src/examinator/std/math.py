@@ -525,8 +525,78 @@ def check_answers(answers: Mapping[str, str | None], key: Mapping[str | tuple, A
             results = [check_field(group[0], entry, symbols=symbols, functions=functions)]
             labels = (labels,)
         for label, answer, (outcome, note) in zip(labels, group, results):
-            fields[label] = {'answer': None if outcome == 'blank' else answer, 'outcome': outcome, 'note': note}
+            normal = None if outcome == 'blank' else normal_form(
+                answer, symbols=symbols, functions=functions, text=isinstance(entry, Choice))
+            fields[label] = {'answer': None if outcome == 'blank' else answer, 'outcome': outcome,
+                             'note': note, 'normal': normal}
     return {'fields': fields}
+
+
+# --- normal forms and answer facets -----------------------------------------------
+
+NORMAL_OPS = 120         # larger expressions keep their text
+NORMAL_POWER = 12        # a symbolic power above this is not expanded
+NORMAL_CHARS = 120       # a longer normal form falls back to the text
+
+
+def _decimal(r: sympy.Rational) -> str | None:
+    """An exact decimal for a rational whose denominator has only 2s and 5s."""
+    q, twos, fives = int(r.q), 0, 0
+    while q % 2 == 0:
+        q, twos = q // 2, twos + 1
+    while q % 5 == 0:
+        q, fives = q // 5, fives + 1
+    if q != 1 or max(twos, fives) > 30:
+        return None
+    digits = max(twos, fives)
+    text = str(abs(int(r.p)) * 10 ** digits // int(r.q)).rjust(digits + 1, '0')
+    whole, frac = text[:len(text) - digits], text[len(text) - digits:]
+    out = f'{whole}.{frac}'.rstrip('0').rstrip('.') if digits else whole
+    return '-' + out if r.p < 0 else out
+
+
+def normal_form(answer: str | None, *, symbols: Iterable[str] | Mapping[str, Any] = (),
+                functions: Sequence[str] | None = None, text: bool = False) -> str | None:
+    """A cheap canonical string for an answer, so that equal answers usually
+    share it: the parsed expression with rational functions cancelled
+    (`2x^2`, `x*2*x` -> '2*x**2'; `0.50`, `1/2` -> '0.5'), or else the normalized
+    text (`text=True` always uses the text, as for choices). Best effort, never
+    used to grade: two equivalent answers may still differ. None when blank."""
+    if answer is None or not answer.strip():
+        return None
+    if not text and not has_marker(answer):
+        try:
+            expr = parse_expr(answer, symbols=symbols, functions=functions)
+            if expr.is_Rational:
+                shown = _decimal(expr) or str(expr)
+            elif sympy.count_ops(expr) > NORMAL_OPS or any(
+                    p.exp.is_Integer and abs(int(p.exp)) > NORMAL_POWER and not p.base.is_number
+                    for p in expr.atoms(sympy.Pow)):
+                shown = str(expr)
+            else:
+                shown = str(sympy.cancel(expr))
+            if len(shown) <= NORMAL_CHARS:
+                return shown
+        except (Unsupported, *_FAILURES):
+            pass
+    return normalize_text(answer)
+
+
+def answer_facet(label: str, *, kind: str = 'evidence'):
+    """A facet over one field's stored normal form (`fields[label]['normal']`
+    in evidence data, as `check_answers` writes it). A blank field has the
+    value `focus.BLANK`; evidence from before normal forms existed has none."""
+    from ..core.focus import BLANK, Facet
+
+    def values(bodies):
+        f = (bodies.get(kind) or {}).get(label)
+        if not isinstance(f, Mapping):
+            return []
+        if f.get('outcome') == 'blank':
+            return [BLANK]
+        return [f['normal']] if f.get('normal') is not None else []
+
+    return Facet(f'answer/{label}', label, values, reads={kind: '$.data.fields'}, group='answer')
 
 
 def all_correct(evidence) -> str | None:

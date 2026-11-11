@@ -189,6 +189,9 @@ class Stage:
     uses_variant: bool = False      # result depends on the resolved variant
     accepts_markers: bool = False   # consume inputs that still carry [REVIEW: ...]
     shape: str = 'text'             # how the body is edited: 'text' | 'fields' ({label: answer}) | 'code'
+    # Facets over what this stage writes (`core.focus.Facet`): display, not definition,
+    # so they are left out of `describe` and never change the stage's hash.
+    facets: tuple[Any, ...] = field(default=(), metadata={'describe': False})
 
 
 @dataclass(frozen=True)
@@ -204,6 +207,7 @@ class Question:
     cues: tuple[Cue, ...] = ()
     require: int | None = None             # cues that must agree to resolve; None = all
     trust: int = 2                         # agreeing cues needed to count without review
+    facets: tuple[Any, ...] = field(default=(), metadata={'describe': False})   # question-level facets
     _hashes: dict = field(init=False, default_factory=dict, compare=False, repr=False)
 
     def stage(self, name: str) -> Stage | None:
@@ -244,7 +248,7 @@ class Exam:
                  fields: Sequence[Field] = (), stages: Sequence[Stage],
                  export_pages: Sequence[int] = (), variants: Sequence[str] = (),
                  cues: Sequence[Cue] = (), require: int | None = None,
-                 trust: int = 2) -> Question:
+                 trust: int = 2, facets: Sequence[Any] = ()) -> Question:
         if id in self.questions:
             raise ValueError(f"duplicate question {id!r}")
         if not isinstance(result, Mapping):
@@ -265,7 +269,10 @@ class Exam:
         q = Question(id=id, title=title or id, pages=tuple(pages), result=dict(result),
                      fields=tuple(fields), stages=tuple(stages),
                      export_pages=tuple(export_pages) or tuple(pages),
-                     variants=tuple(variants), cues=tuple(cues), require=require, trust=trust)
+                     variants=tuple(variants), cues=tuple(cues), require=require, trust=trust,
+                     facets=tuple(facets))
+        from .focus import facets as all_facets
+        all_facets(q)                    # checks names: built-in, stage and question facets together
         self.questions[id] = self.base[id] = q
         return q
 
@@ -301,7 +308,8 @@ def describe(x: Any, _seen: frozenset = frozenset()) -> Any:
     if x is None or isinstance(x, (bool, int, float, str)):
         return x
     if dataclasses.is_dataclass(x) and not isinstance(x, type):
-        d = {f.name: describe(getattr(x, f.name), _seen) for f in dataclasses.fields(x) if f.init}
+        d = {f.name: describe(getattr(x, f.name), _seen) for f in dataclasses.fields(x)
+             if f.init and f.metadata.get('describe') is not False}
         d['__type__'] = type(x).__qualname__
         return d
     if isinstance(x, Mapping):

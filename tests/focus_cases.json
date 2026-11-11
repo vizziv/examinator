@@ -1,0 +1,25 @@
+{
+  "subs": ["s1", "s2", "s3", "s4"],
+  "table": {
+    "a/grade": {"s1": ["✓"], "s2": ["✗"], "s3": ["✓"], "s4": ["undecided"]},
+    "a/answer/x": {"s1": ["4"], "s2": ["5"], "s3": ["4"]},
+    "b/grade": {"s1": ["✗"], "s2": ["✗"], "s3": ["✓"], "s4": ["✗"]},
+    "b/comments": {"s2": ["Loop Twice\nfor i in r:\n    # loop twice"], "s3": ["skip\nx = 1  # skip"]}
+  },
+  "cases": [
+    {"sel": {}, "focused": ["s1", "s2", "s3", "s4"],
+     "counts": {"a/grade": {"✓": 2, "✗": 1, "undecided": 1}}},
+    {"sel": {"a/grade": ["✓", "✗"]}, "focused": ["s1", "s2", "s3"],
+     "counts": {"a/grade": {"✓": 2, "✗": 1, "undecided": 1}, "b/grade": {"✗": 2, "✓": 1}}},
+    {"sel": {"a/grade": ["✓"], "b/grade": ["✗"]}, "focused": ["s1"],
+     "counts": {"a/grade": {"✓": 1, "✗": 1, "undecided": 1}, "b/grade": {"✗": 1, "✓": 1}}},
+    {"sel": {"a/answer/x": ["4"], "a/grade": []}, "focused": ["s1", "s3"],
+     "counts": {"a/answer/x": {"4": 2, "5": 1}}},
+    {"sel": {"b/comments": "  LOOP "}, "focused": ["s2"],
+     "counts": {"a/grade": {"✗": 1}}},
+    {"sel": {"b/comments": "for i"}, "focused": [], "counts": {}},
+    {"sel": {"b/comments": "   "}, "focused": ["s1", "s2", "s3", "s4"], "counts": {}},
+    {"sel": {"gone/facet": ["x"], "a/answer/x": ["5"]}, "focused": ["s2"], "counts": {}},
+    {"sel": {"a/answer/x": ["nothing"]}, "focused": [], "counts": {"a/answer/x": {"4": 2, "5": 1}}}
+  ]
+}

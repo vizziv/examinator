@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}Filter · {{ exam.title }}{% endblock %}
+{% block head %}<script src="{{ root }}/static/filter.js" defer></script>{% endblock %}
+{% block body %}
+<main class="narrow" id="filter">
+<div class="bar">
+<a id="fx-count" href="{{ root }}/" title="open the grid on these submissions">… submissions</a>
+<button type="button" id="fx-clear">Clear</button>
+<a id="fx-link" href="" title="this filter as a link, to share">link</a>
+<span id="fx-msg" class="dim" role="status">loading…</span>
+</div>
+<div id="fx-questions"></div>
+</main>
+{% endblock %}

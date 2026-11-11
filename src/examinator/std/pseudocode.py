@@ -2320,3 +2320,63 @@ COLLECTION_FUNCTIONS = MappingProxyType({
 
 BASE = Language(builtins=MATH)                        # no randomness: add a course's own
 WITH_COLLECTIONS = Language(collections=True, builtins={**MATH, **COLLECTION_FUNCTIONS})
+
+
+# --- comments --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Comment:
+    """One comment in source: its 1-based line, its text (without '#'), and the
+    source lines around it (the comment's own line included)."""
+    line: int
+    text: str
+    context: tuple[str, ...]
+
+
+MAX_COMMENT_LINES = 3000
+
+
+def comments(source: str, *, context: int = 2) -> list[Comment]:
+    """The comments in source, found with `tokenize` (never executed). Tolerates
+    incomplete source: after a tokenizing error it resumes on the next line, so
+    an unclosed bracket or string loses at most the lines it swallowed."""
+    import io
+    import tokenize
+
+    if not isinstance(source, str):
+        return []
+    lines = source.splitlines()[:MAX_COMMENT_LINES]
+    found: dict[int, str] = {}
+    start, restarts = 0, 0
+    while start < len(lines) and restarts < 100:
+        restarts += 1
+        text = '\n'.join(lines[start:]) + '\n'
+        last = 0
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+                last = tok.start[0]
+                if tok.type == tokenize.COMMENT:
+                    found.setdefault(start + tok.start[0], tok.string[1:].strip())
+            break
+        except (tokenize.TokenError, SyntaxError) as e:
+            at = getattr(e, 'lineno', None) or (e.args[1][0] if len(e.args) > 1 and e.args[1] else last)
+            start += max(int(at or 1), 1)
+    out = []
+    for n in sorted(found):
+        if not found[n]:
+            continue
+        lo, hi = max(n - 1 - context, 0), min(n + context, len(lines))
+        out.append(Comment(n, found[n], tuple(lines[lo:hi])))
+    return out
+
+
+def comment_facet(kind: str = 'parse', *, name: str = 'comments', label: str = "comments",
+                  context: int = 2):
+    """A 'text' facet: the comments in source stored as `kind`, each value its
+    text followed by its lines of context, for searching across submissions."""
+    from ..core.focus import Facet
+
+    def values(bodies):
+        return ['\n'.join((c.text, *c.context)) for c in comments(bodies.get(kind), context=context)]
+
+    return Facet(name, label, values, reads=(kind,), kind='text', group='code')

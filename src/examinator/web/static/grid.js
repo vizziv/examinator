@@ -1,32 +1,16 @@
 'use strict';
-// The grid is rendered once; filtering, search and sorting happen here. The visible
-// ids, in order, go to sessionStorage so the question page's next/previous follows them.
+// The grid is rendered once; the focus (focus.js, set on the filter page), search and
+// sorting happen here. The visible ids, in order, go to sessionStorage so the question
+// page's next/previous and the Runs page follow them.
 (() => {
   const body = document.querySelector('#grid tbody');
   const rows = [...body.rows];
-  const f = {text: document.getElementById('f-text'), col: document.getElementById('f-col'),
-             state: document.getElementById('f-state'), value: document.getElementById('f-value')};
-  let sort = null;      // {index, dir}
-
-  // Numeric values present in the data join the value filter.
-  const numbers = new Set();
-  for (const td of body.querySelectorAll('td.c')) {
-    if (td.dataset.v && !'tf'.includes(td.dataset.v)) numbers.add(td.dataset.v);
-  }
-  for (const v of [...numbers].sort((a, b) => a - b)) f.value.append(make('option', {value: v, textContent: v}));
-
+  const text = document.getElementById('f-text');
+  const sum = document.getElementById('focus-sum'), clearFocus = document.getElementById('focus-clear');
   const saved = session('grid', {});
-  for (const k of Object.keys(f)) if (saved[k]) f[k].value = saved[k];
-  sort = saved.sort || null;
-
-  function cellMatches(td) {
-    if (f.state.value && td.dataset.s !== f.state.value) return false;
-    const v = f.value.value;
-    if (!v) return true;
-    if (v === 'blank') return !!td.dataset.b;
-    if (v === 'none') return td.dataset.v === '';
-    return td.dataset.v === v && !td.dataset.b;
-  }
+  let sort = saved.sort || null;      // {index, dir}
+  let sel = {}, data = null;
+  text.value = saved.text || '';
 
   function key(row, index, kind) {
     const td = row.cells[index];
@@ -38,17 +22,25 @@
     return td.textContent.trim().toLowerCase();
   }
 
+  function summary() {
+    const n = Focus.size(sel);
+    clearFocus.hidden = !n;
+    if (!n) { sum.textContent = 'filter'; sum.title = 'the focus: open the filter page'; return; }
+    const labels = {};
+    for (const q of (data ? data.questions : [])) for (const f of q.facets) labels[f.id] = `${q.id} ${f.label}`;
+    const parts = Object.entries(sel).map(([fid, want]) =>
+      `${labels[fid] || fid}: ${Array.isArray(want) ? want.join(' | ') : `“${want}”`}`);
+    sum.textContent = `focus (${n}): ${parts.join(' · ')}`;
+    sum.title = parts.join('\n');
+  }
+
   function apply() {
-    const text = f.text.value.trim().toLowerCase();
-    const cellFilter = f.state.value || f.value.value;
+    const q = text.value.trim().toLowerCase();
+    const inFocus = data && Focus.size(sel) ? new Set(Focus.focused(data.values, sel, data.subs)) : null;
     const visible = [];
     for (const row of rows) {
-      let show = !text || row.cells[0].textContent.toLowerCase().includes(text) ||
-                 row.cells[1].textContent.toLowerCase().includes(text);
-      if (show && cellFilter) {
-        show = [...row.querySelectorAll('td.c')].some(
-          td => (!f.col.value || td.dataset.col === f.col.value) && cellMatches(td));
-      }
+      const show = (!inFocus || inFocus.has(row.dataset.id)) &&
+        (!q || row.cells[0].textContent.toLowerCase().includes(q) || row.cells[1].textContent.toLowerCase().includes(q));
       row.hidden = !show;
       if (show) visible.push(row);
     }
@@ -70,20 +62,21 @@
       const n = visible.filter(r => r.querySelector(`td.c[data-col="${CSS.escape(cell.dataset.col)}"][data-c]`)).length;
       cell.textContent = n;
     }
+    summary();
     try {
       sessionStorage.setItem('order', JSON.stringify(visible.map(r => r.dataset.id)));
-      sessionStorage.setItem('grid', JSON.stringify(
-        {text: f.text.value, col: f.col.value, state: f.state.value, value: f.value.value, sort}));
+      sessionStorage.setItem('grid', JSON.stringify({text: text.value, sort}));
     } catch (e) { /* private mode */ }
   }
 
-  for (const el of Object.values(f)) el.addEventListener('input', apply);
+  text.addEventListener('input', apply);
   document.getElementById('f-clear').addEventListener('click', () => {
-    for (const el of Object.values(f)) el.value = '';
+    text.value = '';
     sort = null;
     body.append(...rows);
     apply();
   });
+  clearFocus.addEventListener('click', () => { sel = {}; Focus.save(sel); apply(); });
   document.querySelector('#grid thead').addEventListener('click', e => {
     const th = e.target.closest('th');
     if (!th) return;
@@ -93,8 +86,20 @@
     apply();
   });
   document.addEventListener('keydown', e => {
-    if (e.key === '/' && !e.target.matches('input, select, textarea')) { e.preventDefault(); f.text.focus(); }
-    else if (e.key === 'Escape' && e.target === f.text) f.text.blur();
+    if (e.key === '/' && !e.target.matches('input, select, textarea')) { e.preventDefault(); text.focus(); }
+    else if (e.key === 'Escape' && e.target === text) text.blur();
   });
-  apply();
+  // Follow the focus set elsewhere (another tab, or the filter page and back).
+  async function refresh() {
+    sel = Focus.load();
+    if (Focus.size(sel) && !data) {
+      // Until the values arrive, the server's rendering (if a link carried the focus) stands.
+      const r = await request('/focus/values');
+      if (r.ok) data = r.body; else flash('focus: ' + (r.body.error || 'failed to load'));
+    }
+    apply();
+  }
+  addEventListener('storage', e => { if (e.key === 'focus') refresh(); });
+  addEventListener('pageshow', e => { if (e.persisted) refresh(); });
+  refresh().then(() => { if (location.search) history.replaceState(null, '', location.pathname); });
 })();
