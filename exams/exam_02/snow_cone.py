@@ -10,8 +10,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from examinator.std import pseudocode, sampling
 from examinator.std.blocks import Plot
+from examinator_kits.stochastic import checks
+from examinator_kits.stochastic import fit as sampling
 
 from . import samplers
 
@@ -59,34 +60,30 @@ def points(samples) -> np.ndarray | None:
     return np.asarray(samples, dtype=float) if ok else None
 
 
-def check(ctx):
-    source = ctx.input('parse')
-    region = REGIONS[ctx.variant]
-    try:
-        program, lines = samplers.prepare(source)
-    except pseudocode.Unsupported as e:
-        return samplers.unparsed(LABEL, source, e)
+def judge(program, region: Region) -> checks.Part:
+    part = checks.Part(LABEL)
     if program.is_blank(LABEL):
-        return samplers.evidence(LABEL, 'blank', "", source)
+        return part.settle('blank')
     try:
-        samples = samplers.draw(program, lines, LABEL, n=N, seconds=SECONDS)
-    except samplers.Stop as stop:
-        return samplers.evidence(LABEL, stop.outcome, stop.note, source)
+        samples = samplers.draw(program, LABEL, n=N, seconds=SECONDS)
+    except checks.Stop as stop:
+        return samplers.stopped(part, "snow_cone()", stop)
+    part.dumps.append(["snow_cone()", checks.preview(samples)])
     xy = points(samples)
     if xy is None:
-        return samplers.evidence(LABEL, 'incorrect', "a sample is not a point [x, y]", source, samples=samples)
+        return part.settle('incorrect', "a sample is not a point [x, y]")
     scatter = Plot.scatter(xy[:, 0], xy[:, 1], title="snow_cone()", xlabel="x", ylabel="y")
-    off = ~(np.isfinite(xy).all(axis=1) & region.inside(xy[:, 0], xy[:, 1]))
-    if off.any():
-        x, y = xy[off][0]
-        support = sampling.Fit('incorrect', None, None,
-                               f"{int(off.sum())} of {len(xy)} outside the region, e.g. [{x:.4g}, {y:.4g}]", scatter)
-        return samplers.evidence(LABEL, 'incorrect', support.note, source, fits=[support],
-                                 tests=[samplers.fit_row("support", support)], samples=samples)
-    support = sampling.Fit('correct', None, None, f"support ok (n = {len(xy)})", scatter)
-    fit = sampling.projected_ks(xy, region.reference(REFERENCE), title="snow_cone() against a uniform reference")
-    tests = [samplers.fit_row("support", support), samplers.fit_row("uniform", fit)]
-    outcome, note = fit.outcome, "" if fit.outcome == 'correct' else fit.note
-    if outcome == 'correct' and (samplers.loops(source) or program.references(LABEL, LABEL)):
-        outcome, note = None, "passes, but loops: accept-reject?"
-    return samplers.evidence(LABEL, outcome, note, source, fits=[support, fit], tests=tests, samples=samples)
+    on = np.isfinite(xy).all(axis=1) & region.inside(xy[:, 0], xy[:, 1])
+    support = part.add("support", checks.inside(on, xy, scatter))
+    if support.outcome != 'correct':
+        return part.settle('incorrect', support.note)
+    fit = part.add("uniform", sampling.projected_ks(xy, region.reference(REFERENCE),
+                                                    title="snow_cone() against a uniform reference"))
+    part.settle(fit.outcome, "" if fit.outcome == 'correct' else fit.note)
+    if part.outcome == 'correct' and checks.accept_reject(program, LABEL):
+        part.settle(None, "passes, but loops: accept-reject?")
+    return part
+
+
+def check(ctx):
+    return samplers.check(ctx.input('parse'), LABEL, lambda program: judge(program, REGIONS[ctx.variant]))

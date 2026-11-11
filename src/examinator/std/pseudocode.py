@@ -8,10 +8,15 @@ Student-derived text is untrusted and is never executed as host Python. The
 source is parsed with `ast` (parsing only), every node is validated against a
 whitelist, and the validated tree is compiled into Python closures that this
 module interprets itself: names resolve to list slots or to values supplied by
-the caller, never to host namespaces. Work is bounded by step, draw, depth,
-size and time budgets.
+the caller, never to host namespaces. Work is bounded by step, depth, size
+and time budgets.
 
-    program = parse(source)                       # Unsupported
+The core language is syntax and values. Every function and constant a program
+may call beyond its own is a builtin of its `Language`, written as a
+`Primitive` or `Constant`, like a course's own primitives:
+
+    language = BASE.with_builtins(coin=Primitive(coin, "`coin(p)` ...", random=True))
+    program = parse(source, language)             # Unsupported
     program.sample('f', (2, 4), n=1000, seed=1)   # Failure, Budget
 
 Not thread-safe while sampling: `sample` raises the host recursion limit for
@@ -20,12 +25,17 @@ its duration and restores it afterwards.
 from __future__ import annotations
 
 import ast
+import dataclasses
+import inspect
 import math
 import operator
+import re
 import sys
 import time
 import warnings
-from dataclasses import dataclass, field
+import zlib
+from collections.abc import Callable, Mapping
+from dataclasses import KW_ONLY, dataclass, field
 from types import MappingProxyType
 
 import numpy as np
@@ -40,16 +50,15 @@ MAX_DEPTH = 200            # nested calls of student functions
 
 _CHUNK = 4096              # steps between deadline checks
 _SMALL = 1 << 62           # integers below this need no size check
-_EXACT = 1 << 53           # largest n for die(n): floats are exact up to here
 _INF = math.inf
 
-# Names the language itself provides. A caller checking that everything a
-# program needs is supplied subtracts these from `Program.free_names`.
-BUILTINS = frozenset({
-    'unif', 'coin', 'die', 'log', 'ln', 'exp', 'sqrt', 'sin', 'cos', 'tan', 'floor', 'ceil',
-    'abs', 'int', 'float', 'round', 'min', 'max', 'range', 'pi', 'e', 'inf',
-})
-COLLECTION_BUILTINS = frozenset({'len', 'sum', 'sorted', 'list', 'set'})   # added by WITH_COLLECTIONS
+# Names the interpreter itself implements, as syntax: `range` (in a for loop;
+# under collections also as a list) and, under collections, the constructors
+# `sorted`, `list` and `set`, which allocate collections and so need the size
+# budget and the set type. Every other function or constant is a builtin of the
+# `Language` (see MATH, COLLECTION_FUNCTIONS) or a caller's primitive.
+CORE_NAMES = frozenset({'range'})
+CORE_COLLECTION_NAMES = frozenset({'sorted', 'list', 'set'})
 
 _UNSET = object()
 _BREAK = object()
@@ -72,7 +81,9 @@ class Failure(Exception):
     `kind` says why: 'undefined' (a name or function that is not defined),
     'arity' (wrong number of arguments), 'domain' (a math-domain error or an
     invalid probability), 'type' (an operation on the wrong kind of value),
-    or 'other'.
+    'unsupported' (an instructor primitive raised `Limitation` or
+    `Unsupported`: a limit of the checker, not the student's mistake), or
+    'other' (including any other exception from a primitive).
     """
 
     def __init__(self, message: str, line: int | None = None, expr: str | None = None,
@@ -91,47 +102,264 @@ class Failure(Exception):
 
 
 class Budget(Exception):
-    """A budget ran out. `kind` is 'steps', 'draws', 'depth', 'size' or 'time'."""
+    """A budget ran out. `kind` is 'steps', 'depth', 'size' or 'time'.
+
+    A primitive or the sample's generator (see `Program.sample(rng=...)`) may
+    raise it too, with a kind of its own (for example 'draws'); it passes through.
+    """
 
     def __init__(self, kind: str, message: str | None = None):
         super().__init__(message or f"{kind} budget exhausted")
         self.kind = kind
 
 
+class Limitation(Exception):
+    """Raised by an instructor primitive: "this is not the student's fault".
+
+    For a case the primitive (or the course's checker) does not handle, such
+    as a point of an unexpected size. The interpreter turns it, or an
+    `Unsupported` raised by a primitive, into a Failure of kind 'unsupported'
+    with the line and expression of the call. The sample's generator may
+    raise it too (from a random primitive's call of it).
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.detail = message
+
+
+@dataclass(frozen=True)
+class Primitive:
+    """A trusted function a program may call: a builtin of a `Language`, or
+    supplied to `Program.sample`.
+
+    - `fn(*args)`, or `fn(rng, *args)` when `random` is true: `rng` is the
+      sample's generator (see `Program.sample`).
+    - `doc`: one line for the language's description, e.g.
+      "`coin(p)` is True with probability p". Docs of one `group` (such as
+      'Math' or 'Randomness') share a line; a doc without a group gets its own.
+    - `arity`: (least, most) arguments, an int, or (least, None) for no
+      upper bound. When None it is read from `fn`'s signature where possible.
+      A call with another number of arguments is a Failure of kind 'arity'.
+    - `numeric`: `fn` computes on numbers and returns plain numbers (or one of
+      its arguments). An OverflowError is retried with integers too large for
+      a float as infinities; then a TypeError is a Failure "name of args" of
+      kind 'type' and a ValueError or ArithmeticError one of kind 'domain'.
+
+    Errors: `fn` may raise `Failure(message, kind=...)` (the call's line and
+    expression are attached), `Budget`, or `Limitation` (kind 'unsupported':
+    not the student's fault). Anything else is a Failure of kind 'other'.
+    """
+    fn: Callable
+    doc: str
+    _: KW_ONLY
+    group: str | None = None
+    random: bool = False
+    numeric: bool = False
+    arity: tuple | int | None = None
+
+    def __post_init__(self):
+        if not callable(self.fn):
+            raise TypeError("a primitive needs a callable fn")
+        _check_doc(self.doc, self.group)
+        arity = self.arity
+        if arity is None:
+            arity = _signature_arity(self.fn, self.random)
+        elif type(arity) is int:
+            arity = (arity, arity)
+        if arity is not None:
+            lo, hi = arity
+            if type(lo) is not int or lo < 0 or not (hi is None or (type(hi) is int and hi >= lo)):
+                raise ValueError("arity must be (least, most) with 0 <= least <= most, or an int")
+            arity = (lo, hi)
+        object.__setattr__(self, 'arity', arity)
+
+
+@dataclass(frozen=True)
+class Constant:
+    """A named number a language provides, with one line for its description."""
+    value: int | float
+    doc: str
+    _: KW_ONLY
+    group: str | None = None
+
+    def __post_init__(self):
+        if type(self.value) not in (int, float):
+            raise TypeError("a constant is an int or a float")
+        _check_doc(self.doc, self.group)
+
+
+def _check_doc(doc, group):
+    if not isinstance(doc, str) or not doc.strip() or "\n" in doc.strip():
+        raise ValueError("a doc is one non-empty line")
+    if group is not None and (not isinstance(group, str) or not group.strip() or "\n" in group):
+        raise ValueError("a group is a short non-empty name")
+
+
+def _signature_arity(fn, random):
+    try:
+        params = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        return None
+    if random:
+        if not params or params[0].kind not in (params[0].POSITIONAL_ONLY, params[0].POSITIONAL_OR_KEYWORD):
+            raise TypeError("a random primitive takes the generator first: fn(rng, *args)")
+        params = params[1:]
+    lo, hi = 0, 0
+    for p in params:
+        if p.kind is p.VAR_POSITIONAL:
+            return (lo, None)
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+            hi += 1
+            if p.default is p.empty:
+                lo = hi
+        elif p.default is p.empty:           # a required keyword-only argument: never callable
+            return (lo, hi)
+    return (lo, hi)
+
+
+# Host names that are never part of the language, whatever a caller registers.
+# Nothing depends on this list for safety (names are only ever looked up in the
+# interpreter's own tables); it turns a confusing run-time error into Unsupported.
+_RESERVED = frozenset({
+    'eval', 'exec', 'compile', 'open', 'input', 'print', 'getattr', 'setattr', 'delattr',
+    'globals', 'locals', 'vars', 'dir', 'type', 'breakpoint', 'exit', 'quit', 'help',
+})
+
+
 # --------------------------------------------------------------------------
 # The language, as a value
 # --------------------------------------------------------------------------
 
-_HEAD = """\
+_INTRO = """\
 The language is a small subset of Python. A program is a sequence of function definitions and nothing else.
+"""
+_DEFINITIONS = "- Definitions: `def name(a, b):` with plain positional parameters. No defaults, decorators, annotations, nested functions, classes, imports or top-level statements. A docstring is allowed."
+_STATEMENTS = "- Statements: assignment (`x = ...`, `x, y = ...`), augmented assignment (`+=` and so on), `if`/`elif`/`else`, `while`, `for i in range(...)`, `return`, `break`, `continue`, `pass`, and a function call on its own line."
+_EXPRESSIONS = "- Expressions: `+ - * / // % **`, unary `+` and `-`, comparisons (may be chained), `is None`, `and`/`or`/`not`, `a if c else b`, and function calls with positional arguments."
+_CALLS = "- Functions may call each other and themselves. Any other name is available only if the task says so."
 
-- Definitions: `def name(a, b):` with plain positional parameters. No defaults, decorators, annotations, nested functions, classes, imports or top-level statements. A docstring is allowed.
-- Statements: assignment (`x = ...`, `x, y = ...`), augmented assignment (`+=` and so on), `if`/`elif`/`else`, `while`, `for i in range(...)`, `return`, `break`, `continue`, `pass`, and a function call on its own line.
-- Expressions: `+ - * / // % **`, unary `+` and `-`, comparisons (may be chained), `is None`, `and`/`or`/`not`, `a if c else b`, and function calls with positional arguments.
-- Randomness: `unif()` is uniform on [0, 1); `unif(a, b)` is uniform on [a, b); `coin(p)` is True with probability p; `die(n)` is a uniform whole number from 1 to n.
-- Math: `log` (natural; also `ln`), `exp`, `sqrt`, `abs`, `min`, `max`, `floor`, `ceil`, `round`, `sin`, `cos`, `tan`, `int`, `float`; constants `pi`, `e`, `inf`.
-- Functions may call each other and themselves. Any other name is available only if the task says so."""
+_BASE_VALUES = "- Values: integers of any size, floats, `True`, `False`, `None`, and tuples used only to return or assign several values at once (`return a, b`)."
+_BASE_MISSING = "- Not available: strings, lists, sets, dictionaries, indexing, `in`, comprehensions, attributes and methods, lambda, keyword or starred arguments, `print`, `try`, `with`, `global`, `assert`, `del`."
 
-_BASE_TAIL = """
-- Values: integers of any size, floats, `True`, `False`, `None`, and tuples used only to return or assign several values at once (`return a, b`).
-- Not available: strings, lists, sets, dictionaries, indexing, `in`, comprehensions, attributes and methods, lambda, keyword or starred arguments, `print`, `try`, `with`, `global`, `assert`, `del`."""
+_COLLECTION_VALUES = "- Values: integers of any size, floats, `True`, `False`, `None`, tuples, lists and sets."
+_COLLECTIONS = "- Collections: list and set literals (`[]`, `[a, b]`, `{a, b}`), `set()`, `list()`, `list(xs)`, `set(xs)`, `sorted(xs)`; list and set comprehensions with `for ... in ...` clauses and `if` filters; `for x in xs`; `x in xs`, `x not in xs`; indexing and slicing of lists (`xs[i]`, `xs[a:b]`) and `xs[i] = v`; <joining>`|` for the union of sets; `range(...)` as a list."
+_JOINING = "`+` to concatenate and `*` to repeat lists; "
+_VECTORS = "- Vectors: a list of numbers is also a point or vector (a tuple of numbers works too). `p + q`, `p - q`, `p * q` and `p / q` work element by element on two of the same length; `c * p`, `p * c` and `p / c` scale by a number `c`; `-p` negates; `p += q` and the like do the same. `+` does not join lists and `*` does not repeat them: build a list with `xs.append(v)` and `xs.extend(ys)`."
+_METHODS_LINE = "- Methods, and no others: `xs.append(v)`, `xs.extend(ys)`, `xs.pop()`, `s.add(v)`."
+_COLLECTION_MISSING = "- Not available: strings, dictionaries, other attributes and methods, lambda, keyword or starred arguments, `print`, `try`, `with`, `global`, `assert`, `del`."
 
-_COLLECTIONS_TAIL = """
-- Values: integers of any size, floats, `True`, `False`, `None`, tuples, lists and sets.
-- Collections: list and set literals (`[]`, `[a, b]`, `{a, b}`), `set()`, `list()`, `list(xs)`, `set(xs)`; list and set comprehensions with `for ... in ...` clauses and `if` filters; `for x in xs`; `len`, `sum`, `sorted`, `min`, `max`; `x in xs`, `x not in xs`; indexing and slicing of lists (`xs[i]`, `xs[a:b]`) and `xs[i] = v`; `+` to concatenate and `*` to repeat lists; `|` for the union of sets; `range(...)` as a list.
-- Methods, and no others: `xs.append(v)`, `xs.extend(ys)`, `xs.pop()`, `s.add(v)`.
-- Not available: strings, dictionaries, other attributes and methods, lambda, keyword or starred arguments, `print`, `try`, `with`, `global`, `assert`, `del`."""
+# A name `Language` derives from its options; `dataclasses.replace` re-derives it.
+_DERIVED_NAME = r'(?:base|collections)(?:\+[A-Za-z0-9_,-]+)*'
 
 
 @dataclass(frozen=True)
 class Language:
-    name: str
-    description: str          # handed to the parse model in a prompt
+    """The language a program is written in, as a value.
+
+    The core is syntax and values only: statements, operators, literals,
+    `range` and (under `collections`) the collection syntax, methods and
+    `sorted`, `list`, `set`. Every other name a program may use is one of
+    `builtins`, {name: Primitive or Constant}; compose them from MATH,
+    COLLECTION_FUNCTIONS and a course's own (the core ships no randomness).
+    `description` (handed to the parse model) is generated from the options
+    and the builtins' docs, so prompt and runtime always agree.
+
+    - `collections`: lists, sets, comprehensions, indexing and methods.
+    - `vectors` (needs `collections`): a list of numbers is a vector: `+ - * /`
+      act element by element, `*` and `/` by a number scale, `-p` negates.
+      `+` no longer concatenates and `*` no longer repeats.
+    - `builtins`: frozen into a read-only mapping (order kept: it orders the
+      description). A student function of the same name takes precedence.
+    - `extra`: text appended to the description on its own line.
+
+    `name` defaults to one derived from the flags and the builtin names;
+    `dataclasses.replace` (or `with_builtins`) re-derives a derived name and
+    keeps a name of your own.
+    """
+    name: str | None = None
+    _: KW_ONLY
     collections: bool = False
+    vectors: bool = False
+    builtins: Mapping = field(default_factory=dict, hash=False)
+    extra: str = ""
 
+    def __post_init__(self):
+        for key in ('collections', 'vectors'):
+            if type(getattr(self, key)) is not bool:
+                raise TypeError(f"{key} must be True or False")
+        if not isinstance(self.extra, str):
+            raise TypeError("extra must be a string")
+        if self.vectors and not self.collections:
+            raise ValueError("vectors needs collections")
+        builtins = dict(self.builtins)
+        for key, value in builtins.items():
+            if not isinstance(key, str) or not key.isidentifier() or key.startswith('__') \
+                    or key in _RESERVED or key in CORE_NAMES or key in CORE_COLLECTION_NAMES:
+                raise ValueError(f"{key!r} cannot name a builtin")
+            if not isinstance(value, (Primitive, Constant)):
+                raise TypeError(f"builtin {key!r} must be a Primitive or a Constant")
+        object.__setattr__(self, 'builtins', MappingProxyType(builtins))
+        if self.name is None or re.fullmatch(_DERIVED_NAME, self.name):
+            object.__setattr__(self, 'name', self._derive_name())
 
-BASE = Language('base', _HEAD + _BASE_TAIL)
-WITH_COLLECTIONS = Language('collections', _HEAD + _COLLECTIONS_TAIL, collections=True)
+    def _derive_name(self) -> str:
+        parts = ['collections' if self.collections else 'base']
+        if self.vectors:
+            parts.append('vectors')
+        names = set(self.builtins)
+        standard = set(MATH) | (set(COLLECTION_FUNCTIONS) if self.collections else set())
+        if standard <= names:
+            if names - standard:
+                parts.append('with-' + ','.join(sorted(names - standard)))
+        else:
+            parts.append(f"names-{zlib.crc32(','.join(sorted(names)).encode()):08x}")
+        if self.extra:
+            parts.append(f"extra-{zlib.crc32(self.extra.encode()):08x}")
+        return '+'.join(parts)
+
+    def with_builtins(self, **more) -> 'Language':
+        """This language with more builtins (a later one replaces an earlier one of the same name)."""
+        return dataclasses.replace(self, builtins={**self.builtins, **more})
+
+    @property
+    def names(self) -> frozenset:
+        """Every name the language provides: core names and builtins.
+
+        `program.free_names(entry) - program.language.names` is what a caller
+        must supply as `primitives` or `constants`.
+        """
+        core = CORE_NAMES | (CORE_COLLECTION_NAMES if self.collections else frozenset())
+        return core | frozenset(self.builtins)
+
+    @property
+    def description(self) -> str:
+        """The language as prose, generated from the options; handed to the parse model."""
+        lines = [_INTRO, _DEFINITIONS, _STATEMENTS, _EXPRESSIONS]
+        groups = {}
+        for value in self.builtins.values():
+            doc = value.doc.strip()
+            if value.group is None:
+                lines.append(f"- {doc}{'' if doc.endswith('.') else '.'}")
+            elif value.group in groups:
+                groups[value.group].append(doc)
+            else:
+                groups[value.group] = [doc]
+                lines.append((value.group,))       # the group's line, filled below
+        lines = [f"- {line[0]}: {'; '.join(groups[line[0]])}." if type(line) is tuple else line
+                 for line in lines]
+        lines.append(_CALLS)
+        if self.collections:
+            lines += [_COLLECTION_VALUES, _COLLECTIONS.replace('<joining>', "" if self.vectors else _JOINING)]
+            if self.vectors:
+                lines.append(_VECTORS)
+            lines += [_METHODS_LINE, _COLLECTION_MISSING]
+        else:
+            lines += [_BASE_VALUES, _BASE_MISSING]
+        text = "\n".join(lines)
+        if self.extra:
+            text += self.extra if self.extra.startswith("\n") else "\n" + self.extra
+        return text
 
 
 # --------------------------------------------------------------------------
@@ -148,13 +376,6 @@ _CMPOPS = MappingProxyType({
 })
 _METHODS = MappingProxyType({'append': (1, 1), 'add': (1, 1), 'extend': (1, 1), 'pop': (0, 1)})
 
-# Host names that are never part of the language, whatever a caller registers.
-# Nothing depends on this list for safety (names are only ever looked up in the
-# interpreter's own tables); it turns a confusing run-time error into Unsupported.
-_RESERVED = frozenset({
-    'eval', 'exec', 'compile', 'open', 'input', 'print', 'getattr', 'setattr', 'delattr',
-    'globals', 'locals', 'vars', 'dir', 'type', 'breakpoint', 'exit', 'quit', 'help',
-})
 
 _KINDS = MappingProxyType({
     'Import': "import", 'ImportFrom': "import", 'Attribute': "attribute access",
@@ -453,8 +674,13 @@ def _is_range(node) -> bool:
     return type(node) is ast.Call and type(node.func) is ast.Name and node.func.id == 'range'
 
 
-def parse(source: str, language: Language = BASE) -> 'Program':
-    """Parse and validate `source`. Raises Unsupported; never runs anything."""
+def parse(source: str, language: Language | None = None) -> 'Program':
+    """Parse and validate `source` (in BASE unless `language` is given).
+
+    Raises Unsupported; never runs anything.
+    """
+    if language is None:
+        language = BASE
     if not isinstance(source, str):
         raise TypeError("source must be a string")
     if len(source) > MAX_SOURCE:
@@ -525,8 +751,9 @@ class Program:
 
         The free names (called functions, primitives, constants) of `entry`
         and of the student functions it reaches, less the functions the
-        program defines. Built-ins of the language are included: subtract
-        `BUILTINS` (and `COLLECTION_BUILTINS`) to get what must be supplied.
+        program defines. Names the language provides are included: subtract
+        `program.language.names` (core names and the language's builtins) to
+        get what must be supplied.
         Empty for a missing entry.
         """
         found = set()
@@ -534,19 +761,71 @@ class Program:
             found |= self._defs[fn].free
         return frozenset(found - set(self._defs))
 
+    def _calls(self, name: str) -> list:
+        return [c for c in self._defs[name].free if c in self._defs]
+
+    def has_loop(self, entry: str, kinds=('while',)) -> bool:
+        """Does `entry`, or a student function it reaches, contain a loop of one of `kinds`?
+
+        `kinds` holds 'while' and/or 'for' ('for' includes comprehensions).
+        False for a missing entry.
+        """
+        kinds = frozenset((kinds,) if isinstance(kinds, str) else kinds)
+        if not kinds <= {'while', 'for'}:
+            raise ValueError("kinds may hold only 'while' and 'for'")
+        types = (() if 'while' not in kinds else (ast.While,)) + \
+            (() if 'for' not in kinds else (ast.For, ast.ListComp, ast.SetComp, ast.GeneratorExp))
+        return any(isinstance(node, types) for fn in self._reach(entry)
+                   for node in ast.walk(self._defs[fn].node))
+
+    def is_recursive(self, entry: str) -> bool:
+        """Is there a cycle of calls among `entry` and the student functions it reaches?"""
+        state = {}                       # name -> 1 while on the current path, 2 when done
+        for root in self._reach(entry):
+            if root in state:
+                continue
+            state[root] = 1
+            stack = [(root, iter(self._calls(root)))]
+            while stack:
+                name, todo = stack[-1]
+                nxt = next(todo, None)
+                if nxt is None:
+                    state[name] = 2
+                    stack.pop()
+                elif state.get(nxt) == 1:
+                    return True
+                elif nxt not in state:
+                    state[nxt] = 1
+                    stack.append((nxt, iter(self._calls(nxt))))
+        return False
+
     def sample(self, entry: str, args=(), *, n: int, seed: int = 0, primitives=None, constants=None,
-               max_steps: int | None = 2_000_000, max_draws: int | None = None,
-               deadline: float | None = None, max_depth: int = MAX_DEPTH) -> list:
+               max_steps: int | None = 2_000_000, deadline: float | None = None,
+               max_depth: int = MAX_DEPTH, rng: Callable | None = None) -> list:
         """Call `entry(*args)` n times and return the n results as plain Python values.
 
-        Sample i has its own numpy Generator, seeded by
-        `SeedSequence(seed, spawn_key=(i,))`: results are reproducible and do
-        not depend on n. `primitives` maps names to trusted `fn(rng, *args)`
-        and overrides student functions of the same name; `constants` maps
-        names to numbers. Budgets are per sample except `deadline`, a
+        Randomness: `rng(seed, i)` makes the generator of sample i, an object
+        with `.random()` (a float in [0, 1)) that is
+        handed to every random primitive. By default it is a numpy Generator
+        seeded by `SeedSequence(seed, spawn_key=(i,))`: results are
+        reproducible and do not depend on n. A caller counting or capping
+        draws wraps the generator; its methods may raise `Budget` (passes
+        through) or `Limitation` (a Failure of kind 'unsupported' at the call).
+
+        The language's builtins are available; a student function of the same
+        name takes precedence over one. `primitives` maps more names to
+        trusted functions, each `fn(rng, *args)` or a `Primitive`; they take
+        precedence over student functions and builtins. `constants` maps names
+        to numbers. Budgets are per sample except `deadline`, a
         `time.monotonic()` value. Raises Failure or Budget.
         """
-        primitives = dict(primitives or {})
+        merged = {}
+        for key, fn in (primitives or {}).items():
+            if not isinstance(fn, Primitive):
+                if not callable(fn):
+                    raise TypeError(f"primitive {key!r} must be callable")
+                fn = Primitive(fn, "supplied by the caller", random=True)
+            merged[key] = fn
         consts = {}
         for key, value in (constants or {}).items():
             value = _adopt(value)
@@ -554,15 +833,19 @@ class Program:
                 raise TypeError(f"constant {key!r} must be a number")
             consts[key] = value
         args = tuple(_adopt(a) for a in args)
-        rt = _Run(max_steps, max_draws, deadline, max_depth)
-        call = _Compiler(self, rt, primitives, consts).entry(entry, len(args))
-        ss, pcg, gen = np.random.SeedSequence, np.random.PCG64, np.random.Generator
+        rt = _Run(max_steps, deadline, max_depth)
+        call = _Compiler(self, rt, merged, consts).entry(entry, len(args))
+        if rng is None:
+            ss, pcg, gen = np.random.SeedSequence, np.random.PCG64, np.random.Generator
+
+            def rng(seed, i):
+                return gen(pcg(ss(seed, spawn_key=(i,))))
         out = []
         old = sys.getrecursionlimit()
         sys.setrecursionlimit(max(old, min(max_depth, 1000) * (MAX_NESTING + 20) + 2000))
         try:
             for i in range(n):
-                rt.start(gen(pcg(ss(seed, spawn_key=(i,)))))
+                rt.start(rng(seed, i))
                 try:
                     out.append(_export(call([_fresh(a) for a in args])))
                 except (Failure, Budget, Unsupported):
@@ -677,23 +960,22 @@ def _is_seq(t) -> bool:
 # --------------------------------------------------------------------------
 
 class _Run:
-    __slots__ = ('left', 'reserve', 'max_steps', 'deadline', 'dl', 'max_draws', 'depth',
-                 'max_depth', 'cells', 'rng', 'random')
+    __slots__ = ('left', 'reserve', 'max_steps', 'deadline', 'depth',
+                 'max_depth', 'cells', 'rng')
 
-    def __init__(self, max_steps, max_draws, deadline, max_depth):
+    def __init__(self, max_steps, deadline, max_depth):
         self.max_steps = sys.maxsize if max_steps is None else max_steps
-        self.max_draws = sys.maxsize if max_draws is None else max_draws
         self.deadline = deadline
         self.max_depth = max_depth
 
     def start(self, rng):
         self.left = 0
         self.reserve = self.max_steps
-        self.dl = self.max_draws
         self.depth = 0
         self.cells = MAX_CELLS
+        if type(rng) is not np.random.Generator and not callable(getattr(rng, 'random', None)):
+            raise TypeError("the sample's generator needs a random() method")
         self.rng = rng
-        self.random = rng.random
 
     def refill(self):
         """Called when the current chunk of steps is used up."""
@@ -720,9 +1002,6 @@ class _Run:
         if self.cells < 0:
             raise Budget('size', "too much collection data")
 
-    def draws_out(self):
-        return Budget('draws', f"more than {self.max_draws} random draws")
-
 
 class _Fn:
     __slots__ = ('name', 'nparams', 'proto', 'body', 'line')
@@ -741,11 +1020,14 @@ class _Fn:
 class _Compiler:
     def __init__(self, program: Program, rt: _Run, primitives: dict, constants: dict):
         self.program = program
-        self.collections = program.language.collections
+        language = program.language
+        self.collections = language.collections
+        self.vectors = language.vectors
         self.rt = rt
         self.primitives = primitives
         self.constants = constants
-        self.builtins, self.values = self.make_builtins()
+        self.builtins = language.builtins
+        self.core = self.make_core()
         self.fns = {}
         self.queue = []
         self.slots = {}
@@ -797,19 +1079,27 @@ class _Compiler:
     def entry(self, name, nargs):
         """`call(args) -> value` for the entry point; problems surface as Failure when called."""
         rt = self.rt
-        if name in self.primitives:
-            prim = self.primitives[name]
+        prim = self.primitives.get(name)
+        if prim is None and name not in self.program._defs and isinstance(self.builtins.get(name), Primitive):
+            prim = self.builtins[name]
+        if prim is not None:
+            wrong = _arity_problem(name, prim, nargs)
+            if wrong is not None:
+                def call(args):
+                    raise Failure(wrong, kind='arity')
+                return call
+            invoke = self.invoker(prim)
+            failed = self.prim_failed
+            numeric = prim.numeric
 
             def call(args):
-                rt.dl -= 1
-                if rt.dl < 0:
-                    raise rt.draws_out()
                 try:
-                    return _adopt(prim(rt.rng, *args))
-                except (Failure, Budget):
-                    raise
+                    v = invoke(args)
+                    if not numeric:
+                        v = _adopt(v)
                 except Exception as ex:
-                    raise Failure(f"{name}({_shows(args)}) raised {type(ex).__name__}: {ex}") from ex
+                    return failed(None, name, prim, args, ex)
+                return v if type(v) is float else _settle(v)
             return call
         d = self.program._defs.get(name)
         problem = None
@@ -1159,13 +1449,12 @@ class _Compiler:
         if name in self.constants:
             v = self.constants[name]
             return lambda f: v
-        if name in self.primitives or name in self.program._defs or name in self.builtins or name == 'range':
-            if name in self.values and name not in self.primitives and name not in self.program._defs:
-                v = self.values[name]
-                return lambda f: v
+        b = self.builtins.get(name)
+        if name in self.primitives or name in self.program._defs or name in self.core or name == 'range' \
+                or type(b) is Primitive:
             return self.raiser(node, f"'{name}' is a function, not a value", 'type')
-        if name in self.values:
-            v = self.values[name]
+        if type(b) is Constant:
+            v = b.value
             return lambda f: v
         return self.raiser(node, f"name '{name}' is not defined", 'undefined')
 
@@ -1178,6 +1467,18 @@ class _Compiler:
         if kind is ast.Not:
             return lambda f: not x(f)
         if kind is ast.USub:
+            if self.vectors:
+                negate = self.negate
+
+                def run(f):
+                    v = x(f)
+                    if type(v) is float or _is_num(type(v)):
+                        return -v
+                    if type(v) is list or type(v) is tuple:
+                        return negate(node, v)
+                    raise fail(node, f"cannot negate {_show(v)}", 'type')
+                return run
+
             def run(f):
                 v = x(f)
                 if type(v) is float:
@@ -1289,6 +1590,8 @@ class _Compiler:
                 raise Budget('size', "integer is too large")
             return v
         sa, sb = _is_seq(ta), _is_seq(tb)
+        if self.vectors and (sa or sb) and sym in _VECTOR_OPS:
+            return self.vector(node, sym, a, b)
         if sym in ('+', '|') and sa and sb and (ta is tuple) == (tb is tuple) \
                 and (sym == '+' or (ta is _Bag and tb is _Bag)):
             if ta is tuple:
@@ -1310,6 +1613,36 @@ class _Compiler:
             self.rt.charge(len(seq) * k)
             return type(seq)(list(seq) * k)
         raise self.fail(node, f"cannot compute {_show(a)} {sym} {_show(b)}", 'type')
+
+    def vector(self, node, sym, a, b):
+        """`a sym b` with `vectors` on and at least one collection operand."""
+        va = type(a) is list or type(a) is tuple
+        vb = type(b) is list or type(b) is tuple
+        if va and vb:
+            if len(a) != len(b):
+                raise self.fail(node, f"vectors of different lengths ({len(a)} and {len(b)}): "
+                                      f"{_show(a)} {sym} {_show(b)}", 'type')
+            pairs = zip(a, b)
+        elif va and _is_num(type(b)) and sym in ('*', '/'):
+            pairs = ((x, b) for x in a)
+        elif vb and _is_num(type(a)) and sym == '*':
+            pairs = ((a, y) for y in b)
+        else:
+            raise self.fail(node, f"cannot compute {_show(a)} {sym} {_show(b)}", 'type')
+        self.rt.charge(len(a) if va else len(b))
+        out = []
+        slow = self.slow_binop
+        for x, y in pairs:
+            if not (_is_num(type(x)) and _is_num(type(y))):
+                raise self.fail(node, f"vectors must hold numbers: {_show(a)} {sym} {_show(b)}", 'type')
+            out.append(slow(node, sym, x, y))
+        return out
+
+    def negate(self, node, v):
+        if not all(_is_num(type(x)) for x in v):
+            raise self.fail(node, f"vectors must hold numbers: -{_show(v)}", 'type')
+        self.rt.charge(len(v))
+        return [-x for x in v]
 
     def power(self, node, a, b):
         ta, tb = type(a), type(b)
@@ -1493,7 +1826,6 @@ class _Compiler:
                 return v
             return run
         idx = self.expr(node.slice)
-
         def run(f):
             o = obj(f)
             i = idx(f)
@@ -1567,7 +1899,7 @@ class _Compiler:
         if name in self.slots:
             return self.raiser(node, f"'{name}' is a variable, not a function", 'type')
         if name in self.primitives:
-            return self.call_primitive(node, name)
+            return self.call_primitive(node, name, self.primitives[name])
         if name in self.constants:
             return self.raiser(node, f"'{name}' is a number, not a function", 'type')
         d = self.program._defs.get(name)
@@ -1577,32 +1909,19 @@ class _Compiler:
             if len(d.params) != nargs:
                 return self.raiser(node, f"{name}() takes {len(d.params)} arguments, got {nargs}", 'arity')
             return self.call_student(node, self.fn(name))
-        spec = self.builtins.get(name)
+        spec = self.core.get(name)
         if spec is None:
+            b = self.builtins.get(name)
+            if type(b) is Primitive:
+                return self.call_primitive(node, name, b)
+            if type(b) is Constant:
+                return self.raiser(node, f"'{name}' is a number, not a function", 'type')
             return self.raiser(node, f"function '{name}' is not defined", 'undefined')
-        impl, lo, hi, fast = spec
+        impl, lo, hi = spec
         if not lo <= nargs <= hi:
-            takes = str(lo) if lo == hi else f"{lo} to {hi}" if hi < 99 else f"at least {lo}"
-            return self.raiser(node, f"{name}() takes {takes} arguments, got {nargs}", 'arity')
+            return self.raiser(node, f"{name}() takes {_takes(lo, hi)} arguments, got {nargs}", 'arity')
         argc = tuple(self.expr(a) for a in node.args)
-        if fast is not None:
-            made = fast(node, argc)
-            if made is not None:
-                return made
-        failed = self.builtin_failed
-
-        if nargs == 1:
-            a0 = argc[0]
-
-            def run(f):
-                x = a0(f)
-                try:
-                    return impl(x)
-                except (Failure, Budget):
-                    raise
-                except Exception as ex:
-                    return failed(node, name, impl, (x,), ex)
-            return run
+        fail = self.fail
 
         def run(f):
             args = [a(f) for a in argc]
@@ -1611,26 +1930,43 @@ class _Compiler:
             except (Failure, Budget):
                 raise
             except Exception as ex:
-                return failed(node, name, impl, args, ex)
+                shown = _show(args[0]) if len(args) == 1 else f"({_shows(args)})"
+                raise fail(node, f"{name} of {shown}", 'type' if isinstance(ex, TypeError) else 'domain') from None
         return run
 
-    def builtin_failed(self, node, name, impl, args, ex):
-        if isinstance(ex, OverflowError):
-            # an integer too large for a float, or a result too large: use infinities
-            try:
-                return impl(*[_sat(a) for a in args])
-            except OverflowError:
-                if name == 'exp':
-                    return _INF
-            except (Failure, Budget):
-                raise
-            except Exception:
-                pass
-        if isinstance(ex, _Oops):
-            raise self.fail(node, *ex.args) from None
-        shown = _show(args[0]) if len(args) == 1 else f"({_shows(args)})"
-        kind = 'type' if isinstance(ex, TypeError) else 'domain'
-        raise self.fail(node, f"{name} of {shown}", kind) from None
+    # ---- primitives ------------------------------------------------------
+
+    def invoker(self, prim):
+        """`invoke(args) -> raw result` for a primitive, outside any error handling."""
+        fn, rt = prim.fn, self.rt
+        if prim.random:
+            return lambda args: fn(rt.rng, *args)
+        return lambda args: fn(*args)
+
+    def prim_failed(self, node, name, prim, args, ex):
+        """Turn an exception raised by a primitive into a value (a numeric overflow) or a Failure."""
+        if isinstance(ex, (Budget, RecursionError, MemoryError)):
+            raise ex
+        if isinstance(ex, Failure):
+            if ex.line is None and node is not None:
+                raise self.fail(node, ex.detail, ex.kind) from ex
+            raise ex
+        if isinstance(ex, (Limitation, Unsupported)):
+            raise self.fail(node, ex.detail, 'unsupported') from ex
+        if prim.numeric:
+            if isinstance(ex, OverflowError):
+                # an integer too large for a float: retry with infinities
+                try:
+                    return _settle(self.invoker(prim)([_sat(a) for a in args]))
+                except (Failure, Budget, Limitation, Unsupported, RecursionError, MemoryError) as again:
+                    return self.prim_failed(node, name, prim, args, again)
+                except Exception:
+                    pass
+            if isinstance(ex, (TypeError, ValueError, ArithmeticError)):
+                shown = _show(args[0]) if len(args) == 1 else f"({_shows(args)})"
+                raise self.fail(node, f"{name} of {shown}",
+                                'type' if isinstance(ex, TypeError) else 'domain') from None
+        raise self.fail(node, f"{name}({_shows(args)}) raised {type(ex).__name__}: {ex}") from ex
 
     def call_student(self, node, fn):
         rt = self.rt
@@ -1708,26 +2044,69 @@ class _Compiler:
                 return nf[0]
         return run
 
-    def call_primitive(self, node, name):
+    def call_primitive(self, node, name, prim):
+        """A call of a builtin or a caller's primitive, resolved to its function now."""
+        nargs = len(node.args)
+        wrong = _arity_problem(name, prim, nargs)
+        if wrong is not None:
+            return self.raiser(node, wrong, 'arity')
         rt = self.rt
-        fail = self.fail
-        prim = self.primitives[name]
+        fn = prim.fn
+        failed = self.prim_failed
         argc = tuple(self.expr(a) for a in node.args)
+        settle = _settle
+        if prim.numeric and not prim.random and nargs == 1:     # math: the hot case
+            a0 = argc[0]
+
+            def run(f):
+                x = a0(f)
+                try:
+                    v = fn(x)
+                except Exception as ex:
+                    return failed(node, name, prim, (x,), ex)
+                return v if type(v) is float else settle(v)
+            return run
+        if prim.numeric and prim.random and nargs == 0:      # unif()
+            def run(f):
+                try:
+                    v = fn(rt.rng)
+                except Exception as ex:
+                    return failed(node, name, prim, (), ex)
+                return v if type(v) is float else settle(v)
+            return run
+        if prim.numeric:
+            invoke = self.invoker(prim)
+
+            def run(f):
+                args = [a(f) for a in argc]
+                try:
+                    v = invoke(args)
+                except Exception as ex:
+                    return failed(node, name, prim, args, ex)
+                return v if type(v) is float else settle(v)
+            return run
+        if prim.random and nargs == 0:
+
+            def run(f):
+                try:
+                    v = fn(rt.rng)
+                    if type(v) is not float:
+                        v = _adopt(v)
+                except Exception as ex:
+                    return failed(node, name, prim, (), ex)
+                return v
+            return run
+        invoke = self.invoker(prim)
 
         def run(f):
             args = [a(f) for a in argc]
-            rt.dl -= 1
-            if rt.dl < 0:
-                raise rt.draws_out()
             try:
-                v = prim(rt.rng, *args)
-                if type(v) is float:
-                    return v
-                return _adopt(v)
-            except (Failure, Budget):
-                raise
+                v = invoke(args)
+                if type(v) is not float:
+                    v = _adopt(v)
             except Exception as ex:
-                raise fail(node, f"{name}({_shows(args)}) raised {type(ex).__name__}: {ex}") from ex
+                return failed(node, name, prim, args, ex)
+            return v
         return run
 
     def method(self, node):
@@ -1782,171 +2161,63 @@ class _Compiler:
 
     # ---- built-ins -------------------------------------------------------
 
-    def make_builtins(self):
-        """({name: (impl, min args, max args, fast-path factory or None)}, {name: value})."""
+    def make_core(self):
+        """{name: (impl, least args, most args)} for the collection constructors."""
+        if not self.collections:
+            return {}
         rt = self.rt
-        fail = self.fail
-        failed = self.builtin_failed
 
-        def math1(name, fn):
-            def factory(node, argc):
-                a0 = argc[0]
-
-                def run(f):
-                    x = a0(f)
-                    try:
-                        return fn(x)
-                    except Exception as ex:
-                        return failed(node, name, fn, (x,), ex)
-                return run
-            return factory
-
-        def unif_fast(node, argc):
-            if argc:
-                return None
-
-            def run(f):
-                rt.dl -= 1
-                if rt.dl < 0:
-                    raise rt.draws_out()
-                return rt.random()
-            return run
-
-        def unif(a, b):
-            if not (_is_num(type(a)) and _is_num(type(b))):
-                raise _Oops(f"unif needs two numbers, got ({_shows((a, b))})", 'type')
-            rt.dl -= 1
-            if rt.dl < 0:
-                raise rt.draws_out()
-            return a + (b - a) * rt.random()
-
-        def coin_fast(node, argc):
-            p0 = argc[0]
-
-            def run(f):
-                p = p0(f)
-                try:
-                    ok = 0.0 <= p <= 1.0
-                except Exception:
-                    ok = False
-                if not ok or not _is_num(type(p)):
-                    raise fail(node, f"probability {_show(p)} not in [0, 1]",
-                               'domain' if _is_num(type(p)) else 'type')
-                rt.dl -= 1
-                if rt.dl < 0:
-                    raise rt.draws_out()
-                return rt.random() < p
-            return run
-
-        def die_fast(node, argc):
-            n0 = argc[0]
-
-            def run(f):
-                n = n0(f)
-                t = type(n)
-                if t is float and n - n == 0.0 and n == int(n):
-                    n = int(n)           # a whole-number float counts as a whole number
-                elif t is not int:
-                    raise fail(node, f"die needs a positive whole number, got {_show(n)}",
-                               'domain' if t is float else 'type')
-                if not 1 <= n <= _EXACT:
-                    raise fail(node, f"die needs a positive whole number, got {_show(n)}", 'domain')
-                rt.dl -= 1
-                if rt.dl < 0:
-                    raise rt.draws_out()
-                return 1 + int(rt.random() * n)
-            return run
-
-        def round_(x, digits=None):
-            if not _is_num(type(x)):
+        def seq(x):
+            if not _is_seq(type(x)):
                 raise TypeError
-            if digits is None:
-                return round(x)
-            if type(digits) is not int or not -400 <= digits <= 400:
-                raise _Oops(f"cannot round to {_show(digits)} digits", 'type')
-            return round(x, digits)
+            return x
 
-        def number(fn):
-            def impl(x):
-                if not _is_num(type(x)):
-                    raise TypeError
-                return fn(x)
-            return impl
+        def sorted_(x):
+            rt.charge(len(seq(x)))
+            return sorted(x)
 
-        def extreme(fn):
-            def impl(*args):
-                if len(args) == 1 and not _is_seq(type(args[0])):
-                    raise TypeError
-                return fn(*args)
-            return impl
+        def list_(x=()):
+            rt.charge(len(seq(x)))
+            return list(x)
 
-        table = {
-            'unif': (unif, 0, 2, unif_fast),
-            'coin': (None, 1, 1, coin_fast),
-            'die': (None, 1, 1, die_fast),
-            'log': (math.log, 1, 1, math1('log', math.log)),
-            'ln': (math.log, 1, 1, math1('ln', math.log)),
-            'exp': (math.exp, 1, 1, math1('exp', math.exp)),
-            'sqrt': (math.sqrt, 1, 1, math1('sqrt', math.sqrt)),
-            'sin': (math.sin, 1, 1, None),
-            'cos': (math.cos, 1, 1, None),
-            'tan': (math.tan, 1, 1, None),
-            'floor': (math.floor, 1, 1, None),
-            'ceil': (math.ceil, 1, 1, None),
-            'abs': (number(abs), 1, 1, None),
-            'int': (number(int), 1, 1, None),
-            'float': (number(float), 1, 1, None),
-            'round': (round_, 1, 2, None),
-            'min': (extreme(min), 1, 99, None),
-            'max': (extreme(max), 1, 99, None),
-        }
-        if self.collections:
-            def seq(x):
-                if not _is_seq(type(x)):
-                    raise TypeError
-                return x
+        def set_(x=()):
+            rt.charge(len(seq(x)))
+            return _Bag(x)
 
-            def len_(x):
-                return len(seq(x))
+        def range_(*args):
+            r = self.make_range(None, args)
+            try:
+                n = len(r)
+            except OverflowError:
+                n = MAX_ITEMS + 1
+            rt.charge(n)
+            return list(r)
 
-            def sum_(x):
-                v = sum(seq(x))
-                if type(v) is int and v.bit_length() > MAX_INT_BITS:
-                    raise Budget('size', "integer is too large")
-                return v
-
-            def sorted_(x):
-                rt.charge(len(seq(x)))
-                return sorted(x)
-
-            def list_(x=()):
-                rt.charge(len(seq(x)))
-                return list(x)
-
-            def set_(x=()):
-                rt.charge(len(seq(x)))
-                return _Bag(x)
-
-            def range_(*args):
-                r = self.make_range(None, args)
-                try:
-                    n = len(r)
-                except OverflowError:
-                    n = MAX_ITEMS + 1
-                rt.charge(n)
-                return list(r)
-
-            table.update({
-                'len': (len_, 1, 1, None), 'sum': (sum_, 1, 1, None), 'sorted': (sorted_, 1, 1, None),
-                'list': (list_, 0, 1, None), 'set': (set_, 0, 1, None), 'range': (range_, 1, 3, None),
-            })
-        return table, {'pi': math.pi, 'e': math.e, 'inf': _INF}
+        return {'sorted': (sorted_, 1, 1), 'list': (list_, 0, 1), 'set': (set_, 0, 1), 'range': (range_, 1, 3)}
 
 
-class _Oops(Exception):
-    """A built-in's own error (message, kind), turned into a Failure at the call site."""
+def _takes(lo, hi) -> str:
+    return str(lo) if lo == hi else f"at least {lo}" if hi is None else f"{lo} to {hi}"
 
 
+def _arity_problem(name, prim, nargs):
+    """The message for a call of `prim` with the wrong number of arguments, or None."""
+    if prim.arity is None:
+        return None
+    lo, hi = prim.arity
+    if lo <= nargs and (hi is None or nargs <= hi):
+        return None
+    return f"{name}() takes {_takes(lo, hi)} arguments, got {nargs}"
+
+
+def _settle(v):
+    """A numeric primitive's result: numpy scalars become plain numbers."""
+    if isinstance(v, np.generic):
+        return _adopt(v)
+    return v
+
+
+_VECTOR_OPS = frozenset({'+', '-', '*', '/'})
 _OPERATORS = MappingProxyType({
     '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
     '//': operator.floordiv, '%': operator.mod,
@@ -1962,3 +2233,90 @@ def _contains(collection, item) -> bool:
     if not _is_seq(type(collection)):
         raise TypeError
     return item in collection
+
+
+# --------------------------------------------------------------------------
+# The standard builtins, written with the same mechanism as a course's own
+# --------------------------------------------------------------------------
+
+def _number(fn):
+    def impl(x):
+        if not _is_num(type(x)):
+            raise TypeError
+        return fn(x)
+    return impl
+
+
+def _extreme(fn):
+    def impl(*args):
+        if len(args) == 1 and not _is_seq(type(args[0])):
+            raise TypeError
+        return fn(*args)
+    return impl
+
+
+def _exp(x):
+    try:
+        return math.exp(x)
+    except OverflowError:
+        return _INF if x > 0 else 0.0
+
+
+def _round(x, digits=None):
+    if not _is_num(type(x)):
+        raise TypeError
+    if digits is None:
+        return round(x)
+    if type(digits) is not int or not -400 <= digits <= 400:
+        raise Failure(f"cannot round to {_show(digits)} digits", kind='type')
+    return round(x, digits)
+
+
+def _seq(x):
+    if not _is_seq(type(x)):
+        raise TypeError
+    return x
+
+
+def _len(x):
+    return len(_seq(x))
+
+
+def _sum(x):
+    v = sum(_seq(x))
+    if type(v) is int and v.bit_length() > MAX_INT_BITS:
+        raise Budget('size', "integer is too large")
+    return v
+
+
+def _math(fn, doc, arity=1):
+    return Primitive(fn, doc, group='Math', numeric=True, arity=arity)
+
+
+MATH = MappingProxyType({
+    'log': _math(math.log, "`log` (natural)"),
+    'ln': _math(math.log, "`ln` (the same as `log`)"),
+    'exp': _math(_exp, "`exp`"),
+    'sqrt': _math(math.sqrt, "`sqrt`"),
+    'abs': _math(_number(abs), "`abs`"),
+    'min': _math(_extreme(min), "`min`", (1, None)),
+    'max': _math(_extreme(max), "`max`", (1, None)),
+    'floor': _math(math.floor, "`floor`"),
+    'ceil': _math(math.ceil, "`ceil`"),
+    'round': _math(_round, "`round`", (1, 2)),
+    'sin': _math(math.sin, "`sin`"),
+    'cos': _math(math.cos, "`cos`"),
+    'tan': _math(math.tan, "`tan`"),
+    'int': _math(_number(int), "`int`"),
+    'float': _math(_number(float), "`float`"),
+    'pi': Constant(math.pi, "`pi`", group='Constants'),
+    'e': Constant(math.e, "`e`", group='Constants'),
+    'inf': Constant(_INF, "`inf`", group='Constants'),
+})
+COLLECTION_FUNCTIONS = MappingProxyType({
+    'len': Primitive(_len, "`len(xs)`", group='Collection functions', numeric=True, arity=1),
+    'sum': Primitive(_sum, "`sum(xs)`", group='Collection functions', numeric=True, arity=1),
+})
+
+BASE = Language(builtins=MATH)                        # no randomness: add a course's own
+WITH_COLLECTIONS = Language(collections=True, builtins={**MATH, **COLLECTION_FUNCTIONS})

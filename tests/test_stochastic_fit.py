@@ -1,12 +1,12 @@
-"""std.sampling: seeded synthetic samples only."""
+"""examinator_kits.stochastic.fit (formerly std.sampling): seeded synthetic samples only."""
 import json
 
 import numpy as np
 import pytest
 from scipy import stats
 
-from examinator.std import sampling
-from examinator.std.sampling import ALPHA, Fit, chi_square, combine, ks, projected_ks, support
+from examinator_kits.stochastic import fit as sampling
+from examinator_kits.stochastic.fit import ALPHA, Fit, chi_square, combine, ks, projected_ks, support
 
 
 def rng(seed=1):

@@ -4,9 +4,11 @@ import time
 
 import numpy as np
 
-from examinator.std import pseudocode, sampling
+from examinator.std import pseudocode
+from examinator_kits.stochastic import checks
+from examinator_kits.stochastic import fit as sampling
 
-from . import parts
+from .language import SCALAR, draw
 
 LABEL = '1'
 ENTRY = 'exponential'
@@ -24,16 +26,16 @@ def cdf(meaning: str, m: float):
     return F
 
 
-def check_program(program: pseudocode.Program, meaning: str) -> parts.Part:
-    part = parts.Part(LABEL)
+def check_program(program: pseudocode.Program, meaning: str) -> checks.Part:
+    part = checks.Part(LABEL)
     if program.is_blank(ENTRY):
         return part.settle('blank')
     deadline = time.monotonic() + ATTEMPT
     for m in SETTINGS:
         name = f"exponential({m:g})"
         try:
-            xs = parts.draw(program, ENTRY, (m,), n=N, deadline=deadline)
-        except parts.Stop as stop:
+            xs = draw(program, ENTRY, (m,), n=N, deadline=deadline)
+        except checks.Stop as stop:
             return part.stop(name, stop)
         fit = sampling.support(xs, lo=0, title=name)
         if fit.outcome == 'correct':
@@ -43,9 +45,5 @@ def check_program(program: pseudocode.Program, meaning: str) -> parts.Part:
 
 
 def check(ctx):
-    source = ctx.input('parse')
-    try:
-        program = pseudocode.parse(source)
-    except pseudocode.Unsupported as e:
-        return parts.unparsed(LABEL, source, e)
-    return parts.evidence(check_program(program, MEANING[ctx.variant]), source)
+    meaning = MEANING[ctx.variant]
+    return checks.check_source(ctx.input('parse'), SCALAR, LABEL, lambda program: check_program(program, meaning))

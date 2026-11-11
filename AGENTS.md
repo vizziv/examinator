@@ -30,10 +30,13 @@ src/examinator/
   core/     definitions, store, workflow rules, runner, batch, workspace
   pdf/      page rendering and scan layout
   model/    loopback model client, scripted fake model
-  std/      standard library: stages, prompts, math, pseudocode, sampling, blocks
+  std/      standard library: stages, prompts, math, pseudocode, blocks
   web/      server and browser interface
   synth.py  synthetic-workspace generator
-exams/      example exam packages (toy exam, Exam 3); never imported by the library
+src/examinator_kits/
+  stochastic/  optional kit for sampler questions: random primitives, fit tests,
+               check scaffolding; uses the core, which never imports it
+exams/      example exam packages (toy exam, Exams 1-3); never imported by the library
 tests/
 ```
 

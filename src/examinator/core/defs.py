@@ -223,7 +223,8 @@ class Exam:
 
     def __init__(self, id: str, *, title: str = "", pages: int,
                  front: Sequence[int] = (), extra: Sequence[int] = (),
-                 scan_window: Sequence[int] = (0, 0, 1000, 1000), cover_pages: int = 0):
+                 scan_window: Sequence[int] = (0, 0, 1000, 1000), cover_pages: int = 0,
+                 crop_pad: int = 12):
         self.id = id
         self.title = title or id
         self.pages = pages
@@ -231,6 +232,7 @@ class Exam:
         self.extra = tuple(extra)
         self.scan_window = tuple(scan_window)   # initial default; the workspace may override
         self.cover_pages = cover_pages          # likewise
+        self.crop_pad = crop_pad                # per-mille of the printed page around every crop
         self.questions: dict[str, Question] = {}
         self.path: Path | None = None           # set by `load_exam`
         self.code_hash: str = ''

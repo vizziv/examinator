@@ -126,7 +126,7 @@ def parse_pseudocode(entries: Sequence[str], *, language: Any = None,
 
 @dataclass(frozen=True)
 class CheckMath:
-    key: Mapping[str, Any]               # {label: entry}, or {variant: {label: entry}}
+    key: Mapping[Any, Any]               # {label or (label, ...): entry}, or {variant: {...}}
     symbols: Mapping[str, str] | tuple[str, ...] = ()
     functions: tuple[str, ...] | None = None
     by_variant: bool = False
@@ -137,7 +137,8 @@ class CheckMath:
         data = math.check_answers(ctx.input('parse'), key, symbols=self.symbols, functions=self.functions)
         rows = [[label, f.get('answer') or "", f.get('outcome') or "?", f.get('note') or ""]
                 for label, f in data['fields'].items()]
-        shown = [[label, show_entry(entry)] for label, entry in key.items()]
+        shown = [[label if isinstance(label, str) else ", ".join(label), show_entry(entry)]
+                 for label, entry in key.items()]
         return Evidence(data, [Table(['', "answer", "", ""], rows),
                                Details("Key", Table(['', "key"], shown), audience='grader')])
 
@@ -162,7 +163,8 @@ def check_math(key: Mapping[str, Any], *, symbols: Mapping[str, str] | Sequence[
     """Compare parsed answers with a key, field by field.
 
     A key entry is an expression string, a `math.Choice`, or a function
-    `answer -> outcome`. If every value of `key` is itself a mapping, the key is
+    `answer -> outcome`. A tuple of labels maps to a function over those
+    fields' answers (`math.check_group`). If every value of `key` is itself a mapping, the key is
     per variant. `symbols` maps names to assumptions (`{'a': 'positive'}`), or
     lists names. `functions=[]` means no function calls, so juxtaposition is
     multiplication. A field carrying a review marker is undecided.

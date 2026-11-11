@@ -14,7 +14,6 @@ printed region shows the whole printing, so they declare the cues of every bit
 they depend on (which vote for nothing there) plus two computed cues, each
 combining one reading per bit into the question's variant name.
 """
-import json
 import os
 from dataclasses import dataclass
 from itertools import product
@@ -23,7 +22,6 @@ from typing import Mapping
 
 from examinator import Cue, Region
 from examinator.core import variants
-from examinator.core.defs import digest
 
 ORIGINAL, ALTERNATE = 'original', 'alternate'
 STATES = (ORIGINAL, ALTERNATE)
@@ -95,23 +93,18 @@ class Combine:
     """A computed cue: one reading per bit, combined into a variant name.
 
     The readings are the ones the standard variant stage has just made for the
-    question's own declared cues, taken from the per-submission memo."""
+    question's own declared cues (shared per submission)."""
     cues: tuple
     names: Mapping          # {'original,alternate': variant}
 
     def __call__(self, ctx):
         states = []
         for c in self.cues:
-            raw = ctx.remember(f'cue:{c.name}:{digest(c)}', _unread)
-            state = variants.match(c, json.loads(raw))
+            state = variants.vote(ctx, c)
             if state is None:
                 return None
             states.append(state)
         return self.names[','.join(states)]
-
-
-def _unread():
-    raise LookupError("a combined cue ran before the cues it combines")
 
 
 def printing(qid) -> dict:

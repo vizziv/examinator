@@ -1,4 +1,5 @@
 """std.pseudocode: the bounded interpreter. Synthetic, instructor-written programs only."""
+import dataclasses
 import math
 import statistics
 import sys
@@ -8,8 +9,51 @@ import numpy as np
 import pytest
 
 from examinator.std import pseudocode
-from examinator.std.pseudocode import (BASE, WITH_COLLECTIONS, Budget, Failure, Language, Program,
-                                       Unsupported, parse)
+from examinator.std.pseudocode import (BASE, WITH_COLLECTIONS, Budget, Constant, Failure, Language, Primitive,
+                                       Program, Unsupported)
+
+
+# A course's random primitives: the core language has none, not even `unif`.
+
+def coin_fn(rng, p):
+    if type(p) not in (int, float, bool) or not 0 <= p <= 1:
+        raise ValueError(f"probability {p!r} not in [0, 1]")
+    return rng.random() < p
+
+
+def die_fn(rng, n):
+    if type(n) is float and n == int(n):
+        n = int(n)
+    if type(n) is not int or n < 1:
+        raise ValueError(f"die needs a positive whole number, got {n!r}")
+    return 1 + int(rng.random() * n)
+
+
+def unif_fn(rng, *bounds):
+    u = rng.random()
+    if not bounds:
+        return u
+    if len(bounds) != 2:
+        raise Failure(f"unif() takes 0 or 2 arguments, got {len(bounds)}", kind='arity')
+    a, b = bounds
+    if not all(type(v) in (int, float, bool) for v in bounds):
+        raise TypeError
+    return a + (b - a) * u
+
+
+UNIF = {'unif': Primitive(unif_fn, "`unif()` is uniform on [0, 1); `unif(a, b)` is uniform on [a, b)",
+                          group='Randomness', random=True, numeric=True, arity=(0, 2))}
+COIN = Primitive(coin_fn, "`coin(p)` is True with probability p", group='Randomness', random=True)
+DIE = Primitive(die_fn, "`die(n)` is a uniform whole number from 1 to n", group='Randomness', random=True)
+COURSE = {**UNIF, 'coin': COIN, 'die': DIE}
+TBASE = BASE.with_builtins(**COURSE)
+TCOLL = WITH_COLLECTIONS.with_builtins(**COURSE)
+
+
+def parse(source, language=None):
+    """The test course's language unless another is given."""
+    return pseudocode.parse(source, TBASE if language is None else language)
+
 
 SCALAR = '''\
 def weibull(a, b):
@@ -47,7 +91,7 @@ def reference_weibull(rng, a, b):
     return (rng.exponential() / b) ** (1 / a)
 
 
-def run(source, entry='f', args=(), language=BASE, **kw):
+def run(source, entry='f', args=(), language=TBASE, **kw):
     kw.setdefault('n', 1)
     return parse(source, language).sample(entry, args, **kw)
 
@@ -57,24 +101,24 @@ def one(source, *args, **kw):
 
 
 def coll(source, *args, **kw):
-    return one(source, *args, language=WITH_COLLECTIONS, **kw)
+    return one(source, *args, language=TCOLL, **kw)
 
 
 # ---- the four fixture functions ------------------------------------------
 
 def test_fixtures_parse():
-    program = parse(SCALAR)
+    program = parse(SCALAR, TBASE)
     assert isinstance(program, Program)
     assert program.names == ('weibull', 'weibullish', 'poisson_dist')
     assert program.source == SCALAR
     with pytest.raises(Unsupported):
-        parse(SCALAR + PROCESS)            # lists and methods need WITH_COLLECTIONS
-    both = parse(SCALAR + PROCESS, WITH_COLLECTIONS)
+        parse(SCALAR + PROCESS)            # lists and methods need TCOLL
+    both = parse(SCALAR + PROCESS, TCOLL)
     assert both.names[-1] == 'poisson_process'
 
 
 def test_scalar_samplers_have_the_right_means():
-    program = parse(SCALAR)
+    program = parse(SCALAR, TBASE)
     xs = program.sample('weibull', (1, 0.5), n=4000, seed=1)
     assert all(type(x) is float and x >= 0 and math.isfinite(x) for x in xs)
     assert abs(statistics.mean(xs) - 2) < 0.15
@@ -85,7 +129,7 @@ def test_scalar_samplers_have_the_right_means():
 
 
 def test_collection_sampler():
-    program = parse(SCALAR + PROCESS, WITH_COLLECTIONS)
+    program = parse(SCALAR + PROCESS, TCOLL)
     runs = program.sample('poisson_process', n=600, seed=3)
     assert all(type(events) is list for events in runs)
     assert abs(statistics.mean(len(events) for events in runs) - 25) < 1
@@ -96,7 +140,7 @@ def test_collection_sampler():
 
 
 def test_invalid_acceptance_probability_is_a_failure():
-    program = parse(SCALAR)
+    program = parse(SCALAR, TBASE)
     with pytest.raises(Failure) as info:
         program.sample('weibullish', n=200, constants={'huge_constant': 1})
     message = str(info.value)
@@ -107,7 +151,7 @@ def test_invalid_acceptance_probability_is_a_failure():
 
 
 def test_rejection_sampler_speed():
-    program = parse(SCALAR)
+    program = parse(SCALAR, TBASE)
     start = time.perf_counter()
     xs = program.sample('weibullish', n=1200, seed=4, constants={'huge_constant': 10},
                         primitives={'weibull': reference_weibull})
@@ -163,7 +207,7 @@ def c(x):
 
 
 def test_references():
-    program = parse(SCALAR)
+    program = parse(SCALAR, TBASE)
     assert program.references('weibullish', 'huge_constant')
     assert program.references('weibullish', 'weibull')
     assert program.references('weibullish', 'coin')
@@ -208,7 +252,7 @@ def e():
 # ---- reproducibility --------------------------------------------------------
 
 def test_reproducible_and_independent_of_n():
-    program = parse(SCALAR)
+    program = parse(SCALAR, TBASE)
     a = program.sample('weibull', (2, 4), n=50, seed=7)
     assert a == program.sample('weibull', (2, 4), n=50, seed=7)
     assert a[:10] == program.sample('weibull', (2, 4), n=10, seed=7)
@@ -246,16 +290,51 @@ def test_step_budget():
     assert info.value.kind == 'steps'
 
 
-def test_draw_budget():
-    source = "def f():\n    s = 0\n    for i in range(10):\n        s += unif()\n    return s\n"
-    assert len(run(source, max_draws=10, n=3)) == 3            # per sample
-    with pytest.raises(Budget) as info:
-        run(source, max_draws=9)
+class Counting:
+    """A test's own draw counter: wraps the sample's generator and caps its draws."""
+
+    def __init__(self, cap, error=None):
+        self.cap, self.error, self.counts = cap, error, []
+
+    def __call__(self, seed, i):
+        rng = np.random.Generator(np.random.PCG64(np.random.SeedSequence(seed, spawn_key=(i,))))
+        self.counts.append(0)
+        outer = self
+
+        class Wrapped:
+            def random(self):
+                outer.counts[-1] += 1
+                if outer.counts[-1] > outer.cap:
+                    raise outer.error or Budget('draws', f"more than {outer.cap} draws")
+                return rng.random()
+        return Wrapped()
+
+
+def test_rng_factory_counts_and_caps_draws():
+    source = ("def f():\n    n = 0\n    while not coin(0.4):\n        n += 1\n"
+              "    return n + 0 * unif(2, 3) + 0 * unif()\n")
+    counter = Counting(cap=10**6)
+    values = run(source, n=100, seed=3, rng=counter)
+    assert values == run(source, n=100, seed=3)             # the same generator underneath
+    assert counter.counts == [v + 1 + 2 for v in values]     # coins, then two unif
+    assert len(set(counter.counts)) > 3                      # per sample
+    with pytest.raises(Budget) as info:                      # a cap raised by the generator passes through
+        run(source, n=100, seed=3, rng=Counting(cap=max(counter.counts) - 1))
     assert info.value.kind == 'draws'
-    with pytest.raises(Budget) as info:
-        run("def f():\n    return coin(0.5) or coin(0.5) or p() or p()\n", max_draws=1,
-            primitives={'p': lambda rng: True}, n=50)
-    assert info.value.kind == 'draws'
+    for draw, line in (("unif()", 2), ("unif(0, 1)", 2)):
+        prog = f"def f():\n    return {draw}\n"
+        with pytest.raises(Failure) as info:                 # a limitation, at the unif call
+            run(prog, rng=Counting(0, pseudocode.Limitation("out of draws for this check")))
+        assert info.value.kind == 'unsupported' and info.value.line == line and info.value.expr == draw
+        assert "out of draws" in str(info.value)
+        with pytest.raises(Failure) as info:                 # anything else is 'other'
+            run(prog, rng=Counting(0, RuntimeError("generator broke")))
+        assert info.value.kind == 'other' and info.value.line == line and "RuntimeError" in str(info.value)
+    # numpy scalars from a custom generator are plain floats inside the program
+    assert run("def f():\n    return unif() * 2\n", n=2,
+               rng=lambda seed, i: type('G', (), {'random': lambda self: np.float64(0.25)})()) == [0.5, 0.5]
+    with pytest.raises(TypeError):
+        run("def f():\n    return 1\n", rng=lambda seed, i: object())
 
 
 def test_depth_budget():
@@ -420,7 +499,7 @@ UNSUPPORTED_WITH_COLLECTIONS = [
 @pytest.mark.parametrize('source', UNSUPPORTED_WITH_COLLECTIONS)
 def test_unsupported_with_collections(source):
     with pytest.raises(Unsupported):
-        parse(source, WITH_COLLECTIONS)
+        parse(source, TCOLL)
 
 
 def test_unsupported_reports_the_line():
@@ -484,8 +563,11 @@ def test_entry_arity_and_primitive_errors_are_failures():
     with pytest.raises(Failure) as info:
         program.sample('f', (1,), n=1, primitives={'helper': lambda rng, a, b: a / b})
     assert 'helper(1, 0)' in str(info.value) and 'ZeroDivisionError' in str(info.value)
-    with pytest.raises(Failure, match="TypeError"):
+    with pytest.raises(Failure, match=r"helper\(\) takes 1 arguments, got 2") as info:     # arity from the signature
         program.sample('f', (1,), n=1, primitives={'helper': lambda rng, a: a})
+    assert info.value.kind == 'arity' and info.value.line == 2
+    with pytest.raises(Failure, match="IndexError"):                  # what the signature cannot say
+        program.sample('f', (1,), n=1, primitives={'helper': Primitive(lambda rng, *a: a[2], "x", random=True)})
     with pytest.raises(Failure, match="unsupported value"):
         program.sample('f', (1,), n=1, primitives={'helper': lambda rng, a, b: 'text'})
 
@@ -563,7 +645,7 @@ def test_names_resolve_in_order():
 
 
 def test_arguments_are_fresh_for_every_sample():
-    program = parse("def f(xs):\n    xs.append(len(xs))\n    return xs\n", WITH_COLLECTIONS)
+    program = parse("def f(xs):\n    xs.append(len(xs))\n    return xs\n", TCOLL)
     mine = [1]
     assert program.sample('f', (mine,), n=3) == [[1, 1]] * 3
     assert mine == [1]
@@ -639,7 +721,7 @@ COLLECTION_FAILURES = [
 @pytest.mark.parametrize('source,args,needles', COLLECTION_FAILURES)
 def test_collection_failures(source, args, needles):
     with pytest.raises(Failure) as info:
-        run(source, args=args, language=WITH_COLLECTIONS)
+        run(source, args=args, language=TCOLL)
     for needle in needles:
         assert needle in str(info.value)
 
@@ -736,11 +818,11 @@ ODD_COLLECTIONS = [
 ]
 
 
-@pytest.mark.parametrize('language', [BASE, WITH_COLLECTIONS])
+@pytest.mark.parametrize('language', [TBASE, TCOLL])
 @pytest.mark.parametrize('source', ODD + ODD_COLLECTIONS)
 def test_only_our_exceptions_escape(source, language):
     try:
-        results = parse(source, language).sample('f', n=3, max_steps=200_000, max_draws=10_000)
+        results = parse(source, language).sample('f', n=3, max_steps=200_000)
     except (Failure, Budget, Unsupported) as ex:
         assert str(ex)
     else:
@@ -767,11 +849,15 @@ def test_odd_programs_do_what_they_should():
 def test_language_descriptions():
     assert isinstance(BASE, Language) and not BASE.collections and WITH_COLLECTIONS.collections
     assert BASE.name != WITH_COLLECTIONS.name
-    for language in (BASE, WITH_COLLECTIONS):
+    for language in (BASE, WITH_COLLECTIONS, TBASE, TCOLL):
         text = language.description
-        for word in ('def name', 'unif()', 'coin(p)', 'log', 'sqrt', 'range', 'while', 'pi'):
+        for word in ('def name', 'log', 'sqrt', 'range', 'while', 'pi'):
             assert word in text
         assert len(text) < 3000
+    for language in (BASE, WITH_COLLECTIONS):                 # no randomness unless a course adds it
+        assert 'unif' not in language.description and 'coin' not in language.description
+    for language in (TBASE, TCOLL):
+        assert 'unif()' in language.description and 'coin(p)' in language.description
     assert 'append' in WITH_COLLECTIONS.description and 'append' not in BASE.description
     with pytest.raises(Exception):
         BASE.name = 'other'
@@ -794,29 +880,19 @@ def test_student_source_is_never_handed_to_the_host():
 
 # ---- die, Failure.kind, free names ------------------------------------------------
 
-def test_die():
-    rolls = run("def f():\n    return die(6)\n", n=3000, seed=5)
-    assert all(type(r) is int for r in rolls) and set(rolls) == {1, 2, 3, 4, 5, 6}
-    assert all(abs(rolls.count(k) / 3000 - 1 / 6) < 0.03 for k in range(1, 7))
-    assert run("def f():\n    return die(1), die(1.0)\n", n=5) == [(1, 1)] * 5
-    assert 1 <= one("def f():\n    return die(2**53)\n") <= 2**53
-    assert rolls[:7] == run("def f():\n    return die(6)\n", n=7, seed=5)
-    assert len(run("def f():\n    return die(6) + die(6)\n", max_draws=2, n=4)) == 4
-    with pytest.raises(Budget) as info:      # one draw each
-        run("def f():\n    return die(6) + die(6)\n", max_draws=1)
-    assert info.value.kind == 'draws'
-    for arg, shown, kind in ((0, '0', 'domain'), (-3, '-3', 'domain'), (2.5, '2.5', 'domain'),
-                             (math.inf, 'inf', 'domain'), (math.nan, 'nan', 'domain'),
-                             (10**30, '(about 1e30)', 'domain'), (None, 'None', 'type'), (True, 'True', 'type')):
+def test_die_and_coin_are_not_built_in():
+    for name in ('die(6)', 'coin(0.5)'):
         with pytest.raises(Failure) as info:
-            run("def f(n):\n    return die(n)\n", args=(arg,))
-        assert str(info.value) == f"line 2: die(n): die needs a positive whole number, got {shown}"
-        assert info.value.kind == kind
-    with pytest.raises(Failure) as info:
-        run("def f():\n    return die()\n")
-    assert info.value.kind == 'arity'
-    for language in (BASE, WITH_COLLECTIONS):
-        assert '`die(n)`' in language.description
+            run(f"def f():\n    return {name}\n", language=BASE)
+        assert info.value.kind == 'undefined'
+    rolls = run("def f():\n    return die(6)\n", n=3000, seed=5)         # the test course's die
+    assert set(rolls) == {1, 2, 3, 4, 5, 6} and all(type(r) is int for r in rolls)
+    assert rolls[:7] == run("def f():\n    return die(6)\n", n=7, seed=5)
+    zero = Primitive(lambda rng, n: die_fn(rng, n) - 1, "`die(n)` is a uniform whole number from 0 to n - 1",
+                     random=True)
+    course = BASE.with_builtins(**UNIF, die=zero)
+    assert [r + 1 for r in run("def f():\n    return die(6)\n", n=3000, seed=5, language=course)] == rolls
+    assert "from 0 to n - 1" in course.description and "from 1 to n" not in course.description
 
 
 KINDS = [
@@ -836,10 +912,10 @@ KINDS = [
     ("def f(x):\n    return 0 ** x\n", (-1,), 'domain'),
     ("def f(x):\n    return floor(x)\n", (math.inf,), 'domain'),
     ("def f(x):\n    return sin(x)\n", (math.inf,), 'domain'),
-    ("def f(x):\n    return coin(x)\n", (1.7,), 'domain'),
-    ("def f(x):\n    return coin(x)\n", (math.nan,), 'domain'),
+    ("def f(x):\n    return coin(x)\n", (1.7,), 'other'),
+    ("def f(x):\n    return coin(x)\n", (math.nan,), 'other'),
     ("def f(x):\n    for i in range(1, 5, x):\n        pass\n", (0,), 'domain'),
-    ("def f(x):\n    return coin(x)\n", (None,), 'type'),
+    ("def f(x):\n    return coin(x)\n", (None,), 'other'),
     ("def f(x):\n    return log(x)\n", (None,), 'type'),
     ("def f(x):\n    return 1 + x\n", (None,), 'type'),
     ("def f(x):\n    return -x\n", (None,), 'type'),
@@ -887,15 +963,16 @@ def test_failure_kind_for_entry_and_collections():
 
 
 def test_free_names():
-    program = parse(SCALAR)
+    program = parse(SCALAR, TBASE)
     assert program.free_names('weibull') == {'log', 'unif'}
     assert program.free_names('weibullish') == {'coin', 'huge_constant', 'log', 'unif'}   # helper included
     assert program.free_names('poisson_dist') == {'log', 'unif'}
     assert program.free_names('missing') == frozenset()
     assert isinstance(program.free_names('weibull'), frozenset)
-    needed = program.free_names('weibullish') - pseudocode.BUILTINS
+    needed = program.free_names('weibullish') - program.language.names
     assert needed == {'huge_constant'}
-    both = parse(SCALAR + PROCESS, WITH_COLLECTIONS)
+    assert program.free_names('weibullish') - BASE.names == {'coin', 'unif', 'huge_constant'}   # no randomness in BASE
+    both = parse(SCALAR + PROCESS, TCOLL)
     assert both.free_names('poisson_process') == {'range', 'unif', 'sqrt', 'log'}
     source = '''\
 def f(a):
@@ -913,32 +990,306 @@ def unused():
 '''
     program = parse(source)
     assert program.free_names('f') == {'offset', 'range', 'helper', 'pi', 'lookup'}
-    assert program.free_names('f') - pseudocode.BUILTINS == {'offset', 'helper', 'lookup'}
+    assert program.free_names('f') - program.language.names == {'offset', 'helper', 'lookup'}
     assert program.free_names('other') == {'lookup'}
     assert program.free_names('unused') == {'never_needed'}
     assert program.select('f').free_names('f') == program.free_names('f')
-    lists = parse("def f(xs):\n    return sorted([x for x in xs if x > cut]) + [len(xs)]\n", WITH_COLLECTIONS)
+    lists = parse("def f(xs):\n    return sorted([x for x in xs if x > cut]) + [len(xs)]\n", TCOLL)
     assert lists.free_names('f') == {'sorted', 'len', 'cut'}
-    assert lists.free_names('f') - pseudocode.BUILTINS - pseudocode.COLLECTION_BUILTINS == {'cut'}
+    assert lists.free_names('f') - lists.language.names == {'cut'}
 
 
-def test_builtin_name_sets_match_the_interpreter():
-    assert isinstance(pseudocode.BUILTINS, frozenset) and isinstance(pseudocode.COLLECTION_BUILTINS, frozenset)
-    assert not pseudocode.BUILTINS & pseudocode.COLLECTION_BUILTINS
-    assert {'unif', 'coin', 'die', 'log', 'ln', 'range', 'pi', 'e', 'inf'} <= pseudocode.BUILTINS
-    for names, language in ((pseudocode.BUILTINS, BASE),
-                            (pseudocode.BUILTINS | pseudocode.COLLECTION_BUILTINS, WITH_COLLECTIONS)):
-        for name in names - {'range'}:
-            call = name not in ('pi', 'e', 'inf')
+def test_standard_builtins_match_the_interpreter():
+    math_names = {'log', 'ln', 'exp', 'sqrt', 'abs', 'min', 'max', 'floor', 'ceil', 'round', 'sin', 'cos', 'tan',
+                  'int', 'float', 'pi', 'e', 'inf'}
+    assert set(pseudocode.MATH) == math_names
+    assert set(pseudocode.COLLECTION_FUNCTIONS) == {'len', 'sum'} and not hasattr(pseudocode, 'UNIF')
+    assert pseudocode.CORE_NAMES == {'range'} and pseudocode.CORE_COLLECTION_NAMES == {'sorted', 'list', 'set'}
+    assert not hasattr(pseudocode, 'BUILTINS')
+    for language in (BASE, WITH_COLLECTIONS, TBASE, TCOLL):
+        for name in language.names - {'range'}:
+            call = type(language.builtins.get(name)) is not Constant
             source = f"def f():\n    return {name}(1, 2, 3, 4, 5)\n" if call else f"def f():\n    return {name}\n"
             try:                 # defined: whatever happens, it is not "undefined"
                 parse(source, language).sample('f', n=1)
             except Failure as failure:
                 assert failure.kind != 'undefined', name
-    for name in pseudocode.COLLECTION_BUILTINS:      # and not defined in the scalar language
+    for name in ('len', 'sum', 'sorted', 'list', 'set', 'unif', 'coin'):    # not in the scalar base language
         with pytest.raises(Failure) as info:
-            run(f"def f():\n    return {name}(1)\n")
+            run(f"def f():\n    return {name}(1)\n", language=BASE)
+        assert info.value.kind == 'undefined'
+    for name in ('log', 'pi'):                                              # nothing at all in a bare language
+        with pytest.raises(Failure) as info:
+            run(f"def f():\n    return {name}\n", language=Language())
         assert info.value.kind == 'undefined'
     with pytest.raises(Failure) as info:
         run("def f():\n    return dice(6)\n")
     assert info.value.kind == 'undefined'
+
+
+# ---- language options ---------------------------------------------------------------
+
+VEC = dataclasses.replace(TCOLL, vectors=True)
+
+
+def vec(source, *args, language=VEC, **kw):
+    return one(source, *args, language=language, **kw)
+
+
+def test_language_options_and_names():
+    assert BASE.name == 'base' and WITH_COLLECTIONS.name == 'collections'
+    assert (BASE.collections, BASE.vectors, BASE.extra) == (False, False, "")
+    assert dict(BASE.builtins) == dict(pseudocode.MATH)
+    assert dict(WITH_COLLECTIONS.builtins) == {**pseudocode.MATH, **pseudocode.COLLECTION_FUNCTIONS}
+    vec = dataclasses.replace(WITH_COLLECTIONS, vectors=True)
+    assert vec.name == 'collections+vectors'
+    assert dataclasses.replace(vec, vectors=False).name == 'collections'             # re-derived
+    mine = dataclasses.replace(vec, name='course')
+    assert mine.name == 'course' and dataclasses.replace(mine, vectors=False).name == 'course'   # kept
+    assert dataclasses.replace(BASE, extra="- More.").name.startswith('base+extra-')
+    assert TCOLL.name == 'collections+with-coin,die,unif' and TBASE.name == 'base+with-coin,die,unif'
+    assert Language().name.startswith('base+names-')                                  # no builtins at all
+    # deterministic: names and equality do not depend on function identity or order
+    other = {'die': Primitive(lambda rng, n: 1, "rolls", random=True),
+             'coin': Primitive(lambda rng, p: 0, "flips", random=True), 'unif': COIN}
+    assert WITH_COLLECTIONS.with_builtins(**other).name == TCOLL.name
+    assert WITH_COLLECTIONS.with_builtins(die=DIE, coin=COIN, **UNIF) == TCOLL
+    assert list(TCOLL.builtins)[-3:] == ['unif', 'coin', 'die']                       # order kept
+    assert Language(collections=True, builtins=WITH_COLLECTIONS.builtins) == WITH_COLLECTIONS
+    assert hash(TCOLL) == hash(dataclasses.replace(TCOLL))
+    for bad in (dict(vectors=True), dict(extra=3), dict(builtins={'coin': coin_fn}), dict(builtins={'pi': 3.14}),
+                dict(builtins={'range': COIN}), dict(builtins={'sorted': COIN}), dict(builtins={'print': COIN}),
+                dict(builtins={'two words': COIN}), dict(builtins={'__x': COIN})):
+        with pytest.raises((ValueError, TypeError)):
+            Language(**bad)
+    for args, kw in (((3, "doc"), {}), ((coin_fn, ""), {}), ((coin_fn, "two\nlines"), {}),
+                     ((math.sqrt, "x"), {'arity': (2, 1)}), ((lambda: 1, "x"), {'random': True}),
+                     ((coin_fn, "x"), {'group': ""})):
+        with pytest.raises((ValueError, TypeError)):
+            Primitive(*args, **kw)
+    with pytest.raises(TypeError):
+        Constant("3", "three")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        vec.vectors = False
+    with pytest.raises(TypeError):
+        TCOLL.builtins['coin'] = DIE                     # frozen
+    assert TBASE.names == {'range'} | set(pseudocode.MATH) | {'unif', 'coin', 'die'}
+    assert TCOLL.names == TBASE.names | {'sorted', 'list', 'set', 'len', 'sum'}
+    assert pseudocode.parse("def f():\n    return 1\n").language is BASE              # the default
+
+
+def test_primitive_arity():
+    assert COIN.arity == (1, 1) and DIE.arity == (1, 1)
+    assert Primitive(lambda a, b=1: a, "x").arity == (1, 2)
+    assert Primitive(lambda rng, *xs: 0, "x", random=True).arity == (0, None)
+    assert Primitive(math.sqrt, "x", arity=1).arity == (1, 1)
+    assert UNIF['unif'].arity == (0, 2) and pseudocode.MATH['max'].arity == (1, None)
+    course = BASE.with_builtins(two=Primitive(lambda a, b: a + b, "`two(a, b)` adds"))
+    assert one("def f():\n    return two(1, 2)\n", language=course) == 3
+    for call, message in (("two(1)", "two() takes 2 arguments, got 1"),
+                          ("max()", "max() takes at least 1 arguments, got 0"),
+                          ("round(1, 2, 3)", "round() takes 1 to 2 arguments, got 3")):
+        with pytest.raises(Failure) as info:
+            one(f"def f():\n    return {call}\n", language=course)
+        assert info.value.kind == 'arity' and message in str(info.value) and info.value.line == 2
+    with pytest.raises(Failure) as info:                 # the entry point too
+        parse("def g():\n    return 1\n", course).sample('two', (1,), n=1)
+    assert info.value.kind == 'arity'
+
+
+def test_descriptions_follow_the_options():
+    plain = WITH_COLLECTIONS.description
+    assert "`+` to concatenate" in plain and "`*` to repeat" in plain and "Vectors" not in plain
+    assert "`xs[a:b]`" in plain
+    v = VEC.description
+    assert "Vectors:" in v and "`p + q`" in v and "`c * p`" in v and "`-p`" in v
+    assert "`+` to concatenate" not in v and "`+` does not join lists" in v and "`xs.extend(ys)`" in v
+    extra = "- Course: `turn(p, a)` turns a point."
+    assert dataclasses.replace(VEC, extra=extra).description == v + "\n" + extra
+    assert dataclasses.replace(VEC, extra="\n" + extra).description == v + "\n" + extra
+    assert len(v) < 3000
+    bare = Language().description                        # syntax only
+    for word in ('unif', 'log', 'Math', 'pi', 'Randomness'):
+        assert word not in bare
+    assert "- Math: `log` (natural); `ln`" in BASE.description and "- Constants: `pi`; `e`; `inf`." in BASE.description
+    assert "unif" not in BASE.description and "Collection functions" not in BASE.description
+    assert "- Collection functions: `len(xs)`; `sum(xs)`." in WITH_COLLECTIONS.description
+
+
+def test_language_builtins_are_described_and_callable():
+    text = TBASE.description
+    assert ("- Randomness: `unif()` is uniform on [0, 1); `unif(a, b)` is uniform on [a, b); "
+            "`coin(p)` is True with probability p; `die(n)` is a uniform whole number from 1 to n.\n") in text
+    assert text.index("- Math") < text.index("- Randomness") < text.index("- Functions may call")
+    alone = BASE.with_builtins(turn=Primitive(lambda p: p, "`turn(p)` turns p a quarter"),
+                               k=Constant(7, "`k` is seven"))
+    assert "\n- `turn(p)` turns p a quarter.\n- `k` is seven.\n" in alone.description    # ungrouped: own lines
+    assert one("def f():\n    return turn(k) + k\n", language=alone) == 14
+    flips = run("def f():\n    return coin(0.25)\n", n=2000)
+    assert abs(sum(flips) / 2000 - 0.25) < 0.04
+    program = parse("def f():\n    return coin(1), die(1)\n")
+    assert program.sample('f', n=2) == [(True, 1), (True, 1)]
+    assert program.free_names('f') - program.language.names == frozenset()
+    for name in ('k', 'pi'):                                 # constants are values, not functions
+        with pytest.raises(Failure) as info:
+            one(f"def f():\n    return {name}(1)\n", language=alone)
+        assert info.value.kind == 'type'
+    with pytest.raises(Failure) as info:
+        one("def f():\n    return turn + 1\n", language=alone)
+    assert info.value.kind == 'type'
+
+
+def test_builtin_override_order():
+    two = Primitive(lambda: 2, "`two()` is 2")
+    course = BASE.with_builtins(two=two)
+    program = parse("def two():\n    return 0\n\ndef f():\n    return two()\n", course)
+    assert program.sample('f', n=1) == [0]                                   # the student's beats the language's
+    assert parse("def f():\n    return two()\n", course).sample('f', n=1) == [2]
+    assert program.sample('f', n=1, primitives={'two': lambda rng: 3}) == [3]          # the call's beats both
+    assert program.sample('f', n=1, primitives={'two': Primitive(lambda: 4, "x")}) == [4]
+    assert parse("def g():\n    return 1\n", course).sample('two', n=1) == [2]       # a builtin as the entry
+    assert program.sample('f', n=1, primitives={'other': lambda rng: 9}) == [0]        # adds, keeps the rest
+    assert parse("def log(x):\n    return 5\n\ndef f():\n    return log(1)\n").sample('f', n=1) == [5]
+    with pytest.raises(TypeError):
+        program.sample('f', n=1, primitives={'two': 5})
+
+
+def test_primitive_errors_keep_the_call_site():
+    def strict(x):
+        if x < 0:
+            raise Failure("needs a nonnegative number", kind='domain')
+        if x > 10:
+            raise ValueError("too big")
+        return x
+    course = BASE.with_builtins(strict=Primitive(strict, "`strict(x)`"),
+                                safe=Primitive(strict, "`safe(x)`", numeric=True))
+    with pytest.raises(Failure) as info:
+        one("def f():\n    y = 1\n    return strict(-y)\n", language=course)
+    assert (info.value.kind, info.value.line, info.value.expr) == ('domain', 3, 'strict(-y)')
+    assert str(info.value) == "line 3: strict(-y): needs a nonnegative number"
+    with pytest.raises(Failure) as info:
+        one("def f():\n    return strict(11)\n", language=course)
+    assert info.value.kind == 'other' and "strict(11) raised ValueError: too big" in str(info.value)
+    with pytest.raises(Failure) as info:                 # numeric: the math wording
+        one("def f():\n    return safe(11)\n", language=course)
+    assert info.value.kind == 'domain' and str(info.value) == "line 2: safe(11): safe of 11"
+
+
+def test_vector_arithmetic():
+    assert vec("def f():\n    return [1, 2] + [3, 4.5]\n") == [4, 6.5]
+    assert vec("def f():\n    return [1, 2] - [3, 4]\n") == [-2, -2]
+    assert vec("def f():\n    return [1, 2] * [3, 4]\n") == [3, 8]
+    assert vec("def f():\n    return [1, 2] / [4, 8]\n") == [0.25, 0.25]
+    assert vec("def f():\n    return 2 * [1, 2], [1, 2] * 3, [1, 2] / 2\n") == ([2, 4], [3, 6], [0.5, 1.0])
+    assert vec("def f():\n    p = [1, 2]\n    return -p, p\n") == ([-1, -2], [1, 2])
+    assert vec("def f():\n    p = [1, 2]\n    q = p\n    p += [10, 10]\n    p *= 2\n    return p, q\n") \
+        == ([22, 24], [1, 2])
+    assert vec("def f():\n    xs = [[0, 0], [1, 1]]\n    xs[1] += [1, 2]\n    return xs\n") == [[0, 0], [2, 3]]
+    assert vec("def f():\n    a, b = 1, 2\n    return [a, b] + (3, 4)\n") == [4, 6]       # a tuple of numbers too
+    assert vec("def f():\n    xs = [1]\n    xs.extend([2, 3])\n    xs.append(4)\n    return xs\n") == [1, 2, 3, 4]
+    assert vec("def f():\n    return 2 + 3 * 4 - 6 / 3\n") == 12.0          # numbers as before
+    assert vec("def f():\n    return [1, 2] == [1, 2]\n") is True
+    xs = parse("def f():\n    return [unif(), unif()] * 2 - [1, 1]\n", VEC).sample('f', n=50)
+    assert all(-1 <= x < 1 for p in xs for x in p)
+
+
+@pytest.mark.parametrize('source, needle', [
+    ("def f():\n    return [1, 2] + [1, 2, 3]\n", "different lengths (2 and 3)"),
+    ("def f():\n    return [1, 2] - []\n", "different lengths"),
+    ("def f():\n    return [1, [2]] + [1, 2]\n", "vectors must hold numbers"),
+    ("def f():\n    return -[1, None]\n", "vectors must hold numbers"),
+    ("def f():\n    return [1, 2] + 1\n", "cannot compute"),
+    ("def f():\n    return 1 - [1, 2]\n", "cannot compute"),
+    ("def f():\n    return 1 / [1, 2]\n", "cannot compute"),
+    ("def f():\n    return [1, 2] // 2\n", "cannot compute"),
+    ("def f():\n    return [1, 2] ** 2\n", "cannot compute"),
+    ("def f():\n    return {1, 2} + {3, 4}\n", "cannot compute"),
+])
+def test_vector_mismatches_are_type_failures(source, needle):
+    with pytest.raises(Failure) as info:
+        vec(source)
+    assert info.value.kind == 'type' and needle in str(info.value) and info.value.line == 2
+
+
+def test_vectors_turn_off_concatenation_and_repetition():
+    assert coll("def f():\n    return [1, 2] + [3], [0] * 3\n") == ([1, 2, 3], [0, 0, 0])
+    with pytest.raises(Failure) as info:
+        vec("def f():\n    return [1, 2] + [3]\n")
+    assert info.value.kind == 'type'
+    assert vec("def f():\n    return [0] * 3\n") == [0]           # scales instead of repeating
+    with pytest.raises(Failure) as info:
+        vec("def f():\n    return [1, 2] / [1, 0]\n")
+    assert info.value.kind == 'domain'
+
+
+# ---- primitives: limitations ---------------------------------------------------------
+
+@pytest.mark.parametrize('error', [pseudocode.Limitation("points must be 2-D"), Unsupported("points must be 2-D")])
+def test_primitive_limitation_is_unsupported_with_line(error):
+    def turn(rng, p):
+        raise error
+    source = "def f():\n    p = [1, 2, 3]\n    return turn(p)\n"
+    for prim in (turn, Primitive(turn, "`turn(p)` turns p", random=True)):
+        with pytest.raises(Failure) as info:
+            parse(source, TCOLL).sample('f', n=1, primitives={'turn': prim})
+        assert info.value.kind == 'unsupported' and info.value.line == 3
+        assert info.value.expr == 'turn(p)' and "points must be 2-D" in str(info.value)
+    with pytest.raises(Failure) as info:                 # the entry point itself
+        parse(source, TCOLL).sample('turn', ([1],), n=1, primitives={'turn': turn})
+    assert info.value.kind == 'unsupported'
+
+    def broken(rng, p):
+        raise ValueError("bad")
+    with pytest.raises(Failure) as info:                 # anything else stays 'other'
+        parse(source, TCOLL).sample('f', n=1, primitives={'turn': broken})
+    assert info.value.kind == 'other' and info.value.line == 3
+
+
+# ---- program structure ----------------------------------------------------------------
+
+STRUCTURE = '''\
+def accept():
+    while True:
+        x = unif()
+        if coin(x):
+            return x
+
+def counted(n):
+    total = 0
+    for i in range(n):
+        total += unif()
+    return total
+
+def via_helper():
+    return accept() + 1
+
+def plain():
+    return counted(3)
+
+def ping(n):
+    return 0 if n == 0 else pong(n - 1)
+
+def pong(n):
+    return ping(n)
+
+def bounce():
+    return ping(4) + plain()
+
+def fact(n):
+    return 1 if n < 2 else n * fact(n - 1)
+'''
+
+
+def test_has_loop_and_is_recursive():
+    program = parse(STRUCTURE)
+    assert program.has_loop('accept') and program.has_loop('via_helper')
+    assert not program.has_loop('plain') and not program.has_loop('counted')
+    assert program.has_loop('plain', kinds=('while', 'for')) and program.has_loop('counted', kinds=('for',))
+    assert not program.has_loop('via_helper', kinds=('for',)) and program.has_loop('via_helper', 'while')
+    assert not program.has_loop('missing')
+    with pytest.raises(ValueError):
+        program.has_loop('accept', kinds=('until',))
+    assert parse("def f(xs):\n    return [x for x in xs]\n", TCOLL).has_loop('f', ('for',))
+    assert program.is_recursive('fact') and program.is_recursive('ping') and program.is_recursive('bounce')
+    assert not any(program.is_recursive(name) for name in ('accept', 'counted', 'via_helper', 'plain', 'missing'))
+    assert not parse("def g():\n    return 1\n\ndef f():\n    return g() + g()\n").is_recursive('f')

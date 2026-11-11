@@ -1,22 +1,17 @@
-"""Key entries and a field check that also takes entries spanning several fields.
+"""Key entries for the standard math check, with this exam's notation.
 
-A single-field entry is what the standard math key accepts: an expression
-string, a `math.Choice`, or a callable `answer -> (outcome, note)`. A joint
-entry sits under a tuple of labels and is a callable
-`(answers) -> [(outcome, note), ...]`, one result per label, where a blank
-answer arrives as `None`:
+A single-field entry is a callable `answer -> (outcome, note)`. A joint entry
+sits under a tuple of labels and is a callable `(answers) -> [(outcome, note), ...]`,
+one result per label, where a blank answer arrives as `None`:
 
     {'??_5': '1/2', ('??_6', '??_7'): EitherOrder(point('-2', '1'), point('2', '1'))}
 """
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 import sympy
 
-from examinator import Evidence, Stage
-from examinator.core.defs import has_marker
 from examinator.std import math, stages
-from examinator.std.blocks import Details, Table
 
 FUNCTIONS = ('sqrt',)       # answers are numbers: arithmetic, sqrt and pi
 
@@ -199,62 +194,3 @@ class Interval:
         if all(outcome == 'correct' for outcome, _ in out) and abs(got[1] - got[0] - w) > eps:
             out = [('incorrect', f"b - a is not {self.width}")] * 2
         return out
-
-
-# --- the check -------------------------------------------------------------------------
-
-def check_fields(answers: Mapping[str, str | None], key: Mapping, *, symbols=(), functions=FUNCTIONS) -> dict:
-    """`{'fields': {label: {'answer', 'outcome', 'note'}}}` in key order, as `math.check_answers`
-    gives, with joint entries applied to their groups of fields."""
-    fields = {}
-    for labels, entry in key.items():
-        if isinstance(labels, str):
-            outcome, note = math.check_field(answers.get(labels), entry, symbols=symbols, functions=functions)
-            fields[labels] = {'answer': answers.get(labels), 'outcome': outcome, 'note': note}
-            continue
-        given = [a if a is not None and a.strip() else None for a in (answers.get(label) for label in labels)]
-        if any(a is not None and has_marker(a) for a in given):
-            results = [('blank', "") if a is None else (None, "review") for a in given]
-        else:
-            try:
-                results = [r if isinstance(r, tuple) else (r, "") for r in entry(tuple(given))]
-            except math.Unsupported as e:
-                results = [('blank', "") if a is None else (None, str(e)) for a in given]
-        for label, answer, (outcome, note) in zip(labels, given, results):
-            fields[label] = {'answer': answer, 'outcome': 'blank' if answer is None else outcome, 'note': note}
-    for f in fields.values():
-        if f['outcome'] == 'blank':
-            f['answer'] = None
-    return {'fields': fields}
-
-
-@dataclass(frozen=True)
-class Check:
-    key: Mapping
-    symbols: tuple[str, ...] = ()
-    by_variant: bool = False
-
-    def __call__(self, ctx) -> Evidence:
-        key = self.key[ctx.variant] if self.by_variant else self.key
-        data = check_fields(ctx.input('parse'), key, symbols=self.symbols)
-        rows = [[label, f['answer'] or "", f['outcome'] or "?", f['note']] for label, f in data['fields'].items()]
-        shown = [[labels if isinstance(labels, str) else ", ".join(labels), stages.show_entry(entry)]
-                 for labels, entry in key.items()]
-        return Evidence(data, [Table(['', "answer", "", ""], rows),
-                               Details("Key", Table(['', "key"], shown), audience='grader')])
-
-
-def check(key: Mapping, *, symbols=(), timeout: float | None = None) -> Stage:
-    """Like `stages.check_math`, with joint entries. A key whose values are all
-    mappings is per variant."""
-    by_variant = all(isinstance(v, Mapping) for v in key.values())
-    return stages.check(Check(key, tuple(symbols), by_variant), timeout=timeout,
-                        uses_variant=by_variant, accepts_markers=True)
-
-
-def bundle(key: Mapping, *, grade_rule, symbols=(), notes: str = "", timeout: float | None = None) -> list[Stage]:
-    """Like `stages.math`, with this module's check."""
-    return [stages.transcribe(notes=notes),
-            stages.parse_math(symbols=list(symbols), functions=FUNCTIONS, notes=notes),
-            check(key, symbols=symbols, timeout=timeout),
-            stages.grade(grade_rule)]

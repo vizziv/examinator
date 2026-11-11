@@ -160,5 +160,6 @@ class Workspace:
         index = self.layout(submission).scan_index(printed_page)
         return self.renderer.page(self.pdf_path(submission), index)
 
-    def crop(self, submission: str, region: Region, pad: int = DEFAULT_PAD) -> Image.Image:
+    def crop(self, submission: str, region: Region, pad: int | None = None) -> Image.Image:
+        pad = self.exam.crop_pad if pad is None else pad
         return self.layout(submission).crop(self.page_image(submission, region.page), region, pad)

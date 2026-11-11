@@ -326,3 +326,103 @@ def test_all_correct(outcomes, expected):
 
 def test_all_correct_on_a_check_that_did_not_run():
     assert m.all_correct(EvidenceView({'data': {'undecided': "timeout"}})) is None
+
+
+# --- indexed symbols ----------------------------------------------------------
+
+IDX = {'s': 'positive indexed', 'w': 'indexed', 'i': 'positive', 'n': 'positive integer'}
+
+
+def test_indexed_symbols_parse_and_compare():
+    term = parse_expr('s[i-1]', symbols=IDX)
+    assert isinstance(term, sympy.Indexed) and term.is_positive
+    assert str(parse_expr('s[n] w[n+1]', symbols=IDX)) == 's[n]*w[n + 1]'
+    assert eq('s[i-1] + w[i]', 'w[i] + s[i - 1]', IDX) is True
+    assert eq('s[i-1]', 's[-1+i]', IDX) is True                    # the same index, written differently
+    assert eq('s[i]', 's[i-1]', IDX) is False                      # distinct indices are distinct unknowns
+    assert eq('s[i]', 'w[i]', IDX) is False
+    assert eq('(s[i] - s[i-1]) / s[n]', 's[i]/s[n] - s[i-1]/s[n]', IDX) is True
+    assert eq('2 s[i] w[i]', '2*w[i]*s[i]', IDX) is True          # juxtaposition multiplies
+    assert eq('i s[i]', 'i*s[i]', IDX) is True
+    assert eq('s[i] + i', 's[i] + n', IDX) is False                # plain symbols still sampled
+    assert m._numeric(parse_expr('s[i]', symbols=IDX), parse_expr('s[i] + 1/1000000', symbols=IDX)) is False
+
+
+@pytest.mark.parametrize('text', ['s', 's + 1', 's(i)', 's[i', 's[]', 's[i]]', 'i[1]', 's_i', 's[j]',
+                                  '2^s[i]w[i]'])
+def test_indexed_symbols_rejected(text):
+    with pytest.raises(Unsupported):
+        parse_expr(text, symbols=IDX, functions=())
+
+
+def test_indexed_symbol_declaration():
+    with pytest.raises(ValueError):
+        parse_expr('s[1]', symbols={'s': 'indexed sideways'})
+    assert check_field('s[i]', 's[i]', symbols=IDX) == ('correct', "")
+    assert check_field('s[i]', 's[i-1]', symbols=IDX) == ('incorrect', "")
+    assert check_field('s', 's[i]', symbols=IDX)[0] is None
+
+
+# --- entries spanning several fields --------------------------------------------
+
+def either_order(answers):
+    """The two fields hold 1 and 2, in either order: per-field results."""
+    if set(answers) == {'1', '2'}:
+        return ['correct', 'correct']
+    return ['incorrect' if a is not None else 'blank' for a in answers]
+
+
+def test_group_entries():
+    key = {'x': 'a', ('p', 'q'): either_order}
+    out = check_answers({'x': 'a', 'p': '2', 'q': '1'}, key, symbols=POS)['fields']
+    assert list(out) == ['x', 'p', 'q']
+    assert out['p'] == {'answer': '2', 'outcome': 'correct', 'note': ''} and out['q']['outcome'] == 'correct'
+    assert [f['outcome'] for f in check_answers({'p': '3', 'q': '1'}, key)['fields'].values()] == \
+        ['blank', 'incorrect', 'incorrect']
+
+    seen = []
+
+    def one(answers):                   # one result for every field, with a note
+        seen.append(answers)
+        return 'incorrect', "sum is wrong"
+    out = check_answers({'p': '1', 'q': '  '}, {('p', 'q'): one})['fields']
+    assert seen == [('1', None)]                                     # a blank arrives as None
+    assert out['p'] == {'answer': '1', 'outcome': 'incorrect', 'note': 'sum is wrong'}
+    assert out['q'] == {'answer': None, 'outcome': 'blank', 'note': ''}   # blank stays blank
+
+    out = check_answers({}, {('p', 'q'): one})['fields']              # all blank: not called
+    assert len(seen) == 1 and [f['outcome'] for f in out.values()] == ['blank', 'blank']
+
+    out = check_answers({'p': '1 [REVIEW: 1 or 7]', 'q': '2'}, {('p', 'q'): one})['fields']
+    assert len(seen) == 1 and [(f['outcome'], f['note']) for f in out.values()] == [(None, 'review')] * 2
+    out = check_answers({'p': '1 [REVIEW: 1 or 7]'}, {('p', 'q'): one})['fields']
+    assert [f['outcome'] for f in out.values()] == [None, 'blank']
+
+    def unreadable(answers):
+        raise Unsupported("unknown symbol: z")
+    out = check_answers({'p': 'z'}, {('p', 'q'): unreadable})['fields']
+    assert [(f['outcome'], f['note']) for f in out.values()] == [(None, "unknown symbol: z"), ('blank', "")]
+
+    for bad in (lambda a: 'maybe', lambda a: ['correct'], lambda a: ['correct', 'nope']):
+        with pytest.raises(ValueError):
+            check_answers({'p': '1', 'q': '2'}, {('p', 'q'): bad})
+    with pytest.raises(TypeError):
+        check_answers({'p': '1'}, {('p', 'q'): 'a'})
+
+
+def test_group_entries_through_the_stage():
+    from examinator import Context
+    from examinator.core.evidence import body_of
+    from examinator.std import stages
+
+    def both(answers):
+        return ['correct', ('incorrect', "no")]
+    both.label = "1 then 2"
+    stage = stages.check_math({'x': 'a', ('p', 'q'): both}, symbols=POS)
+    body = body_of(stage.fn(Context(submission='s', question=None, stage='evidence',
+                                    inputs={'parse': {'x': 'a', 'p': '1', 'q': '3'}})))
+    assert {k: f['outcome'] for k, f in body['data']['fields'].items()} == \
+        {'x': 'correct', 'p': 'correct', 'q': 'incorrect'}
+    text = str(body['blocks'])
+    assert "p, q" in text and "1 then 2" in text
+    assert stages.check_math({'v1': {('p', 'q'): both}, 'v2': {'p': 'a'}}).uses_variant

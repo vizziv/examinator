@@ -55,6 +55,14 @@
 {% endfor %}
 </div>
 
+{% if loose %}
+<div class="fields">
+{% for f in loose %}
+<label class="field"><span class="flabel">{{ f.label }}</span>
+<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}"></span></label>
+{% endfor %}
+</div>
+{% endif %}
 {% if parse %}
 <form class="draft" id="ed-parse" data-kind="parse" data-mode="{{ parse.mode }}" data-rev="{{ parse.rev }}" autocomplete="off">
 {% if parse.mode == 'form' %}

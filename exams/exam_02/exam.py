@@ -82,15 +82,15 @@ exam.question(
     'q2', title="That's no mouse—it's a marsupial!", pages=[5], export_pages=[4, 5], result=Bool(),
     **printing('q2'),
     fields=boxes(5, placeholders(8), [89, 193, 296, 400, 504, 608, 711, 815]),
-    stages=keys.bundle(notes=notes.PLACEHOLDERS, grade_rule=rules.at_least(7),
+    stages=stages.math(functions=keys.FUNCTIONS, notes=notes.PLACEHOLDERS, grade_rule=rules.at_least(7),
                        key={'original': discs('3/2', (point('-2', '1'), point('2', '1'))),
                             'alternate': discs('5/3', (point('-1', '2'), point('1', '2')))}))
 
 exam.question(
     'q3', title="CooL", pages=[7], export_pages=[6, 7], result=Bool(), **printing('q3'),
     fields=boxes(7, placeholders(6), [89, 193, 296, 400, 504, 608]),
-    stages=keys.bundle(per_variant('q3', lshape.key), symbols=['u', 'v', 'x'], notes=notes.EXPRESSIONS,
-                       grade_rule=rules.at_least(5)))
+    stages=stages.math(per_variant('q3', lshape.key), symbols=['u', 'v', 'x'], functions=keys.FUNCTIONS,
+                       notes=notes.EXPRESSIONS, grade_rule=rules.at_least(5)))
 
 Q4 = ['4.1', '4.2', '4.3', '4.4', '4.5']
 exam.question(
@@ -119,7 +119,7 @@ def narrowest(first, second):
 exam.question(
     'q6', title="Blocky GPS", pages=[13], export_pages=[12, 13], result=Bool(), **printing('q6'),
     fields=boxes(13, ['6.1 a', '6.1 b', '6.2 a', '6.2 b'], [94, 198, 514, 618]),
-    stages=keys.bundle(notes=notes.BOXED, grade_rule=math.all_correct, key={
+    stages=stages.math(functions=keys.FUNCTIONS, notes=notes.BOXED, grade_rule=math.all_correct, key={
         'falling/third': narrowest(('2/3', '0', '1/3'), ('2', '0', '0')),
         'rising/third':  narrowest(('2/3', '2', '7/3'), ('2', '1', '1')),
         'falling/half':  narrowest(('1', '0', '0'), ('3/2', '0', '0')),

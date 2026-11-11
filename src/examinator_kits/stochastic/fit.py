@@ -1,4 +1,4 @@
-"""Testing a sampler by distribution.
+"""Testing a sampler by distribution: closeness tests used by graders.
 
 Draw samples from the function under test, check the support, then run a
 goodness-of-fit test against the target. Each helper returns a `Fit`: an
@@ -17,7 +17,7 @@ from typing import Callable
 import numpy as np
 from scipy import stats
 
-from .blocks import MAX_POINTS, Note, Plot, Series
+from examinator.std.blocks import MAX_POINTS, Note, Plot, Series
 
 ALPHA = 1e-4          # default per-test cutoff, no multiple-testing correction
 

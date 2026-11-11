@@ -367,7 +367,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             index = layout.scan_index(region.page)
             if not 0 <= index < count:
                 return None
-            return {'index': index, 'box': ','.join(f'{v:.4f}' for v in layout.box(region))}
+            return {'index': index, 'box': ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad))}
 
         pages, note = ws.selected_pages(sub.id, q)
         scans = [{'page': p, 'index': layout.scan_index(p)} for p in pages
@@ -396,6 +396,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             else:
                 parse['text'] = body or ''
                 parse['crops'] = [c for c in (crop(r) for r in regions.values()) if c]
+        # A question without a parse stage (decided by hand) still shows its answer areas.
+        loose = [] if parse else [{'label': f.label, 'crop': c} for f in q.fields if (c := crop(f.region))]
         transcript = editor('transcript')
         if transcript:
             transcript.update(mode='code', text=transcript['art'].body if transcript['art'] else '')
@@ -452,7 +454,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         i = qids.index(q.id)
         over = store.get(sub.id, '', 'layout')
         return page(
-            'question.html', sub=sub, q=q, parts=parts, scans=scans, parse=parse, transcript=transcript,
+            'question.html', sub=sub, q=q, parts=parts, scans=scans, parse=parse, loose=loose, transcript=transcript,
             variant=variant, evidence=evidence, stages=stages, history=history, count=count,
             seen=seen_revs(q, arts),
             pages=pages, note=note, pages_default=q.pages, layout=layout,

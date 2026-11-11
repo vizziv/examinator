@@ -9,6 +9,8 @@ with local deterministic code, and proposes a grade. Graders review all of this
 in a browser beside the scan, fix what the model misread, and decide.
 
 - **The library** (`src/examinator`) knows nothing about any particular exam.
+- **Kits** (`src/examinator_kits`) are optional batteries for a kind of course,
+  outside the lean core: `examinator_kits.stochastic` grades pseudocode samplers.
 - **An exam** is a small Python package built with the library. See
   [`exams/toy_exam/exam.py`](exams/toy_exam/exam.py) for a complete one.
 

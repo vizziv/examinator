@@ -77,6 +77,36 @@ def resolved(body: Mapping | None) -> str | None:
     return (body or {}).get('resolved')
 
 
+def reading(ctx: Context, cue: Cue) -> str | None:
+    """What a cue reads for this submission. A model reading is made once per
+    submission and shared by every question that uses the same cue (a rerun of
+    the variant stage reads again). Public so that a computed cue (`Cue.fn`) can
+    build on other cues' readings."""
+    if cue.fn is not None:
+        return cue.fn(ctx)
+    return json.loads(ctx.remember(f'cue:{cue.name}:{digest(cue)}',
+                                   lambda: _ask(ctx, cue), refresh=ctx.rerun))
+
+
+def vote(ctx: Context, cue: Cue) -> str | None:
+    """The value a cue's reading maps to (for a map cue, through `reads`), or `None`."""
+    return match(cue, reading(ctx, cue))
+
+
+def _ask(ctx: Context, cue: Cue, prompt: str = CUE_PROMPT) -> str:
+    prompt = prompt.format(ask=cue.ask)
+    if cue.reads:       # readings identify the printing; they are not answer keys
+        prompt += "\nThe value is expected to be one of: " + " | ".join(cue.reads) + "."
+    out = ctx.model(prompt, images=[ctx.crop(cue.region)], expect='json')
+    try:
+        value: Any = json.loads(out).get('value')
+    except (ValueError, AttributeError):
+        value = None
+    if value is not None and not isinstance(value, str):
+        value = json.dumps(value)
+    return json.dumps(value)
+
+
 @dataclass(frozen=True)
 class ReadVariant:
     """The standard variant stage: read each cue, then narrow."""
@@ -87,24 +117,11 @@ class ReadVariant:
         for cue in ctx.question.cues:
             if cue.fn is not None:
                 readings[cue.name] = cue.fn(ctx)
-                continue
-            raw = ctx.remember(f'cue:{cue.name}:{digest(cue)}',
-                               lambda cue=cue: self._read(ctx, cue), refresh=ctx.rerun)
-            readings[cue.name] = json.loads(raw)
+            else:
+                readings[cue.name] = json.loads(ctx.remember(
+                    f'cue:{cue.name}:{digest(cue)}',
+                    lambda cue=cue: _ask(ctx, cue, self.prompt), refresh=ctx.rerun))
         return narrow(ctx.question, readings)
-
-    def _read(self, ctx: Context, cue: Cue) -> str:
-        prompt = self.prompt.format(ask=cue.ask)
-        if cue.reads:       # readings identify the printing; they are not answer keys
-            prompt += "\nThe value is expected to be one of: " + " | ".join(cue.reads) + "."
-        out = ctx.model(prompt, images=[ctx.crop(cue.region)], expect='json')
-        try:
-            value: Any = json.loads(out).get('value')
-        except (ValueError, AttributeError):
-            value = None
-        if value is not None and not isinstance(value, str):
-            value = json.dumps(value)
-        return json.dumps(value)
 
 
 def read_variant(prompt: str = CUE_PROMPT) -> Stage:

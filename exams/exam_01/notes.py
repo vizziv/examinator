@@ -12,12 +12,12 @@ subscript k is x[k], and x with subscript k+1 is x[k+1]. Write a fraction as \
 its name and any parameters as written, in the form Name(a, b)."""
 
 POINTS = """\
-Points are lists of coordinates: write [x, y] or [x, y, z]. In this course's \
-pseudocode, arithmetic on points is elementwise (`p + q`, `p * q`, `c * p`, `p / c`) \
-and arrays are indexed from 1. Keep such arithmetic and every index exactly as \
-written: never expand it into coordinates, shift an index, or turn `+` into a \
-different operation. `rotate(p, angle, center)`, `weighted_die(w)` and `die(n)` are \
-available and are kept as calls. Write `x^y` as `x**y`."""
+Points are lists of coordinates: write [x, y] or [x, y, z]. Keep arithmetic on \
+points exactly as written: never expand it into coordinates or turn `+` into a \
+different operation. Keep calls to `rotate`, `weighted_die` and `die`. In this \
+course arrays are indexed from 1, but here indexing is from 0: write every index \
+one less than the student did (x[1] becomes x[0], x[k] becomes x[k - 1]). Write \
+`x^y` as `x**y`."""
 
 SCALAR = "Write `x^y` as `x**y`."
 

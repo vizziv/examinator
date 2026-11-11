@@ -6,12 +6,12 @@ from itertools import combinations
 import numpy as np
 from scipy import stats
 
-from examinator.std import pseudocode, sampling
+from examinator.std import pseudocode
 from examinator.std.blocks import Plot
+from examinator_kits.stochastic import checks
+from examinator_kits.stochastic import fit as sampling
 
-from . import parts
-
-LANGUAGE = pseudocode.WITH_COLLECTIONS
+from .language import COLLECTIONS as LANGUAGE, draw
 
 MEANS = (0.5, 3, 10)            # m for 7.2
 N_DIST = 2000
@@ -42,19 +42,18 @@ def trusted_poisson(rng, m):
     return int(rng.poisson(m))
 
 
-def check_dist(program: pseudocode.Program) -> parts.Part:
-    part = parts.Part('7.2')
+def check_dist(program: pseudocode.Program) -> checks.Part:
+    part = checks.Part('7.2', shown=12)
     if program.is_blank('poisson_dist'):
         return part.settle('blank')
     deadline = time.monotonic() + ATTEMPT
     for m in MEANS:
         name = f"poisson_dist({m:g})"
         try:
-            xs = parts.draw(program, 'poisson_dist', (m,), n=N_DIST, deadline=deadline)
-        except parts.Stop as stop:
-            part.stop(name, stop)
-            return part.settle(stop.outcome)
-        part.add(name, parts.fit_pmf(xs, stats.poisson(m).pmf, title=name), xs)
+            xs = draw(program, 'poisson_dist', (m,), n=N_DIST, deadline=deadline)
+        except checks.Stop as stop:
+            return part.stop(name, stop)
+        part.add(name, checks.fit_pmf(xs, stats.poisson(m).pmf, title=name), xs)
     return part.combine()
 
 
@@ -62,11 +61,11 @@ def invalid(realizations: list) -> str:
     """Why the output is not a set of distinct points in [-5, 5]; "" if it is."""
     odd = [r for r in realizations if not isinstance(r, (list, tuple))]
     if odd:
-        return f"{len(odd)} of {len(realizations)} results are not collections, e.g. {parts.preview(odd, 1)}"
+        return f"{len(odd)} of {len(realizations)} results are not collections, e.g. {checks.preview(odd, 1)}"
     events = [x for r in realizations for x in r]
     bad = [x for x in events if isinstance(x, bool) or not isinstance(x, (int, float))]
     if bad:
-        return f"{len(bad)} events are not numbers, e.g. {parts.preview(bad, 1)}"
+        return f"{len(bad)} events are not numbers, e.g. {checks.preview(bad, 1)}"
     repeats = sum(len(set(r)) < len(r) for r in realizations)
     if repeats:
         return f"repeated events in {repeats} of {len(realizations)} realizations"
@@ -94,27 +93,26 @@ def interval_name(i: int) -> str:
     return f"[{EDGES[i]:.3g}, {EDGES[i + 1]:.3g}]"
 
 
-def check_process(program: pseudocode.Program) -> parts.Part:
-    part = parts.Part('7.1')
+def check_process(program: pseudocode.Program) -> checks.Part:
+    part = checks.Part('7.1', shown=12)
     if program.is_blank('poisson_process'):
         return part.settle('blank')
     deadline = time.monotonic() + ATTEMPT
     realizations = []
     for seed in SEEDS:
         try:
-            realizations += parts.draw(program, 'poisson_process', n=REALIZATIONS, seed=seed,
+            realizations += draw(program, 'poisson_process', n=REALIZATIONS, seed=seed,
                                        deadline=deadline, primitives={'poisson_dist': trusted_poisson})
-        except parts.Stop as stop:
-            part.stop("poisson_process()", stop)
-            return part.settle(stop.outcome)
-    part.dumps.append(["poisson_process()", parts.preview(realizations, 3)])
+        except checks.Stop as stop:
+            return part.stop("poisson_process()", stop)
+    part.dumps.append(["poisson_process()", checks.preview(realizations, 3)])
     problem = invalid(realizations)
     if problem:
         part.tests.append(["events", 'incorrect', problem])
         return part.settle('incorrect')
 
     counts = np.array([len(r) for r in realizations])
-    events = [parts.numeric(r) for r in realizations]
+    events = [np.asarray(r, dtype=float) for r in realizations]
     pooled = np.concatenate(events) if events else np.zeros(0)
     total = stats.poisson(TOTAL)
 
@@ -149,9 +147,5 @@ def check_process(program: pseudocode.Program) -> parts.Part:
 
 
 def check(ctx):
-    source = ctx.input('parse')
-    try:
-        program = pseudocode.parse(source, LANGUAGE)
-    except pseudocode.Unsupported as e:
-        return parts.unparsed(['7.1', '7.2'], source, e)
-    return parts.evidence([check_process(program), check_dist(program)], source)
+    return checks.check_source(ctx.input('parse'), LANGUAGE, ['7.1', '7.2'],
+                               lambda program: [check_process(program), check_dist(program)])

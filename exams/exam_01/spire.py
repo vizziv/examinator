@@ -12,9 +12,11 @@ from functools import cached_property
 
 import numpy as np
 
-from examinator.std import pseudocode, sampling
+from examinator.std import pseudocode
+from examinator_kits.stochastic import checks
+from examinator_kits.stochastic import fit as sampling
 
-from . import parts
+from .language import COLLECTIONS, draw
 
 LABEL = '6'
 ENTRY = 'spire'
@@ -66,32 +68,28 @@ DENSITIES = {'original': Density(a=3, w=40, p=1 / 5, hi=2), 'alternate': Density
 
 def given_f(density: Density):
     """The printed `f(x)`, trusted: it replaces whatever copy the parse carries."""
-    def f(rng, x):
+    def f(x):
         return density(float(x))
-    return f
+    return pseudocode.Primitive(f, "`f(x)`")
 
 
-def check_program(program: pseudocode.Program, density: Density) -> parts.Part:
-    part = parts.Part(LABEL)
+def check_program(program: pseudocode.Program, density: Density) -> checks.Part:
+    part = checks.Part(LABEL)
     if program.is_blank(ENTRY):
         return part.settle('blank')
     try:
-        xs = parts.draw(program, ENTRY, n=N, deadline=time.monotonic() + ATTEMPT, max_steps=MAX_STEPS,
+        xs = draw(program, ENTRY, n=N, deadline=time.monotonic() + ATTEMPT, max_steps=MAX_STEPS,
                         primitives={'f': given_f(density)})
-    except parts.Stop as stop:
+    except checks.Stop as stop:
         return part.stop("spire()", stop)
     if part.add("support", sampling.support(xs, lo=0, hi=density.hi, title="spire()"), xs).outcome != 'correct':
         return part.combine()
     part.add("CDF", sampling.ks(xs, density.cdf, title="spire()"))
     part.add("position within a period", sampling.chi_square(
-        density.phase(xs), parts.table_pmf(density.phase_pmf), title="spire(): slice of the sine's period"))
+        density.phase(xs), checks.table_pmf(density.phase_pmf), title="spire(): slice of the sine's period"))
     return part.combine()
 
 
 def check(ctx):
-    source = ctx.input('parse')
-    try:
-        program = pseudocode.parse(source, pseudocode.WITH_COLLECTIONS)
-    except pseudocode.Unsupported as e:
-        return parts.unparsed(LABEL, source, e)
-    return parts.evidence(check_program(program, DENSITIES[ctx.variant]), source)
+    density = DENSITIES[ctx.variant]
+    return checks.check_source(ctx.input('parse'), COLLECTIONS, LABEL, lambda program: check_program(program, density))

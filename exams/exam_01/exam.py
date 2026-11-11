@@ -6,9 +6,9 @@ under a "k of n" credit criterion. The printings differ in every question
 except 3; each varied question reads two printed cues, which must agree.
 """
 from examinator import Bool, Cue, Exam, Field, Region
-from examinator.std import prompts, pseudocode, stages
+from examinator.std import prompts, stages
 
-from . import blanks, cone, exponential, ice_cream, notes, points, rules, spire
+from . import blanks, cone, exponential, ice_cream, language, notes, rules, spire
 
 exam = Exam('exam_01', title="Exam 1", pages=16, front=[1], extra=[14, 15, 16],
             scan_window=[60, 55, 920, 825], cover_pages=1)
@@ -33,7 +33,7 @@ def variants(*cues):
     return dict(variants=['original', 'alternate'], cues=list(cues))
 
 
-def sampler(module, entries, *, language=None, parse_notes="", timeout=60):
+def sampler(module, entries, *, language, parse_notes="", timeout=60):
     """A pseudocode question with one answer, whose check depends on the printing."""
     return [stages.transcribe(prompts.TRANSCRIBE_PSEUDOCODE, notes=parse_notes),
             stages.parse_pseudocode(entries, language=language, notes=parse_notes),
@@ -72,7 +72,7 @@ exam.question(
     'q1', title="Exponential sampling", pages=[3], export_pages=[2, 3], result=Bool(),
     **variants(MEAN_OR_RATE, SMALLEST_OR_LARGEST),
     fields=[Field('1', region=band(3, 90, 930))],
-    stages=sampler(exponential, ['exponential'], parse_notes=notes.SCALAR))
+    stages=sampler(exponential, ['exponential'], language=language.SCALAR, parse_notes=notes.SCALAR))
 
 Q2 = [f'2.{part}.{name}' for part in (1, 2, 3) for name in 'mc']
 exam.question(
@@ -100,18 +100,18 @@ exam.question(
     'q4', title="For which we all scream", pages=[9], export_pages=[8, 9], result=Bool(),
     **variants(TOP_OF_FIGURE, CONE_NAME),
     fields=[Field('4', region=band(9, 90, 930))],
-    stages=sampler(ice_cream, ['ice_cream'], language=points.LANGUAGE, parse_notes=notes.POINTS))
+    stages=sampler(ice_cream, ['ice_cream'], language=language.POINTS, parse_notes=notes.POINTS))
 
 exam.question(
     'q5', title="Radical acceptance... in space!", pages=[11], export_pages=[10, 11], result=SHINY,
     **variants(CONE_NAME, SINE_FREQUENCY),
     fields=[Field('5', region=band(11, 90, 930))],
-    stages=sampler(cone, list(cone.ENTRIES.values()), language=points.LANGUAGE,
+    stages=sampler(cone, list(cone.ENTRIES.values()), language=language.POINTS,
                    parse_notes=notes.POINTS))
 
 exam.question(
     'q6', title="Sample the spire", pages=[13], export_pages=[12, 13], result=SHINY,
     **variants(SINE_FREQUENCY, CONE_NAME),
     fields=[Field('6', region=band(13, 90, 930))],
-    stages=sampler(spire, ['spire'], language=pseudocode.WITH_COLLECTIONS,
+    stages=sampler(spire, ['spire'], language=language.COLLECTIONS,
                    parse_notes=notes.SCALAR + " " + notes.GIVEN_F, timeout=90))

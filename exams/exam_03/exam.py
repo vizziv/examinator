@@ -7,7 +7,7 @@ same two printed cues, which must agree.
 from examinator import Bool, Cue, Exam, Field, Region
 from examinator.std import math, stages
 
-from . import huge_constants, notes, point_process, rectangles, weibullish
+from . import huge_constants, language, notes, point_process, rectangles, weibullish
 
 exam = Exam('exam_03', title="Exam 3", pages=22, front=[1], extra=[20, 21, 22],
             scan_window=[60, 55, 920, 825], cover_pages=1)
@@ -103,7 +103,8 @@ exam.question(
 exam.question(
     'q2', title="Feeling Weibullish", pages=[4, 5], result=TWO_MARKS,
     fields=[Field('2.1', region=band(4, 290, 930)), Field('2.2', region=band(5, 300, 930))],
-    stages=stages.pseudocode(['weibull', 'weibullish'], weibullish.check, notes=notes.KEEP_CONSTANTS,
+    stages=stages.pseudocode(['weibull', 'weibullish'], weibullish.check, language=language.SCALAR,
+                             notes=notes.KEEP_CONSTANTS,
                              then=huge_constants.rewrite, grade_rule=marks(check='2.1', shiny='2.2'),
                              timeout=100))
 

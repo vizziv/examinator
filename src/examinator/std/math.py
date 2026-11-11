@@ -4,7 +4,8 @@ Student-derived text is data. `parse_expr` reads a small arithmetic grammar with
 its own tokenizer and builds SymPy objects explicitly; nothing is evaluated as
 Python and SymPy never sees raw text. `equal` compares two expressions under the
 assumptions their symbols carry. `check_answers` compares parsed answers with a
-key, field by field, and is what the standard `check_math` stage calls.
+key, field by field (or a group of fields at once), and is what the standard
+`check_math` stage calls.
 
 Outcomes are 'correct', 'incorrect', 'blank' or None. None means "could not
 decide" (unsupported notation, an unknown symbol, an inconclusive comparison, a
@@ -29,6 +30,7 @@ MAX_BITS = 70_000        # largest integer a literal power may produce (10**2000
 
 ASSUMPTIONS = ('positive', 'negative', 'nonnegative', 'nonpositive', 'nonzero',
                'real', 'integer', 'rational')
+INDEXED = 'indexed'      # declares `name[expr]`: one unknown per distinct index
 
 
 class Unsupported(ValueError):
@@ -83,12 +85,13 @@ _FUNCTIONS: Mapping[str, tuple[Callable, int, int | None]] = {
 }
 _CONSTANTS = {'pi': sympy.pi, 'e': sympy.E}
 _NAME = re.compile(r'[A-Za-z_][A-Za-z_0-9]*\Z')
-_TOKEN = re.compile(r'\s*(?:(\d+(?:\.\d+)?|\.\d+)|([A-Za-z_][A-Za-z_0-9]*)|(\*\*|[-+*/^(),]))')
+_TOKEN = re.compile(r'\s*(?:(\d+(?:\.\d+)?|\.\d+)|([A-Za-z_][A-Za-z_0-9]*)|(\*\*|[-+*/^(),\[\]]))')
 _TYPOGRAPHY = str.maketrans({'×': '*', '·': '*', '⋅': '*', '−': '-', '–': '-', '÷': '/', 'π': ' pi '})
 
 
-def _symbol_table(symbols) -> dict[str, sympy.Symbol]:
-    """Declared names as SymPy symbols carrying their assumptions."""
+def _symbol_table(symbols) -> dict[str, sympy.Symbol | sympy.IndexedBase]:
+    """Declared names as SymPy symbols carrying their assumptions; an
+    'indexed' name is an `IndexedBase` with the other assumptions."""
     if isinstance(symbols, str):
         symbols = symbols.replace(',', ' ').split()
     items = symbols.items() if isinstance(symbols, Mapping) else ((name, None) for name in symbols)
@@ -97,10 +100,11 @@ def _symbol_table(symbols) -> dict[str, sympy.Symbol]:
         if not isinstance(name, str) or not _NAME.match(name):
             raise ValueError(f"bad symbol name: {name!r}")
         words = assumption.replace(',', ' ').split() if isinstance(assumption, str) else list(assumption or ())
-        unknown = [w for w in words if w not in ASSUMPTIONS]
+        unknown = [w for w in words if w not in ASSUMPTIONS and w != INDEXED]
         if unknown:
             raise ValueError(f"unknown assumption for {name}: {unknown[0]!r}")
-        table[name] = sympy.Symbol(name, **{w: True for w in words})
+        flags = {w: True for w in words if w != INDEXED}
+        table[name] = sympy.IndexedBase(name, **flags) if INDEXED in words else sympy.Symbol(name, **flags)
     return table
 
 
@@ -118,10 +122,10 @@ def _short(text: str) -> str:
 
 
 def _tokens(text: str, table: Mapping[str, sympy.Symbol], allowed: Sequence[str]) -> list[tuple[str, Any]]:
-    """Split text into ('num' | 'val' | 'func' | 'op', value) tokens, resolving names.
+    """Split text into ('num' | 'val' | 'idx' | 'func' | 'op', value) tokens, resolving names.
 
     A word that is not a name on its own becomes a product of single-letter
-    symbols when every letter is declared.
+    symbols when every letter is declared. An indexed name must be followed by `[`.
     """
     raw, pos, depth = [], 0, 0
     end = len(text.rstrip())
@@ -131,11 +135,11 @@ def _tokens(text: str, table: Mapping[str, sympy.Symbol], allowed: Sequence[str]
             raise Unsupported(f"unsupported character: {text[pos:].lstrip()[:1]!r}")
         pos = m.end()
         raw.append(('num', m[1]) if m[1] else ('name', m[2]) if m[2] else ('op', m[3]))
-        if m[3] == '(':
+        if m[3] in ('(', '['):
             depth += 1
             if depth > MAX_DEPTH:
                 raise Unsupported("nested too deeply")
-        elif m[3] == ')':
+        elif m[3] in (')', ']'):
             depth -= 1
     out: list[tuple[str, Any]] = []
     for i, (kind, word) in enumerate(raw):
@@ -143,21 +147,30 @@ def _tokens(text: str, table: Mapping[str, sympy.Symbol], allowed: Sequence[str]
             out.append((kind, word))
             continue
         called = i + 1 < len(raw) and raw[i + 1] == ('op', '(')
+        subscripted = i + 1 < len(raw) and raw[i + 1] == ('op', '[')
         if word in allowed and called:
             out.append(('func', word))
         elif word in table:
-            out.append(('val', table[word]))
+            out.append(_resolved(word, table[word], subscripted))
         elif word in _CONSTANTS:
             out.append(('val', _CONSTANTS[word]))
         elif word in allowed:
             raise Unsupported(f"function without arguments: {word}")
         elif all(c in table for c in word):
-            out.extend(('val', table[c]) for c in word)
+            out.extend(_resolved(c, table[c], subscripted and j == len(word) - 1) for j, c in enumerate(word))
         elif word in _FUNCTIONS:
             raise Unsupported(f"function not allowed: {word}")
         else:
             raise Unsupported(f"unknown symbol: {_short(word)}")
     return out
+
+
+def _resolved(word: str, value, subscripted: bool) -> tuple[str, Any]:
+    if isinstance(value, sympy.IndexedBase):
+        if not subscripted:
+            raise Unsupported(f"needs an index: {word}[...]")
+        return ('idx', value)
+    return ('val', value)
 
 
 def _power(base: sympy.Expr, exponent: sympy.Expr) -> sympy.Expr:
@@ -178,7 +191,8 @@ class _Parser:
         term   := factor (('*' | '/') factor | factor)*      juxtaposition multiplies
         factor := ('+' | '-')* power
         power  := atom (('**' | '^') factor)?                 right associative
-        atom   := number | symbol | constant | func '(' expr (',' expr)* ')' | '(' expr ')'
+        atom   := number | symbol | constant | indexed '[' expr ']'
+                | func '(' expr (',' expr)* ')' | '(' expr ')'
     """
 
     def __init__(self, tokens: list[tuple[str, Any]]):
@@ -230,12 +244,13 @@ class _Parser:
             kind, tok = self.peek()
             if kind == 'num':
                 raise Unsupported("missing operator")
-            if kind not in ('val', 'func') and (kind, tok) != ('op', '('):
+            if kind not in ('val', 'idx', 'func') and (kind, tok) != ('op', '('):
                 return value
             # Juxtaposition. `a/2b` and `2^ab` have two common readings: do not guess.
             if divided:
                 raise Unsupported("ambiguous product after '/'")
-            if self.exponent_end == self.pos and self.tokens[self.pos - 1][0] == 'val':
+            if self.exponent_end == self.pos and (self.tokens[self.pos - 1][0] == 'val'
+                                                  or self.tokens[self.pos - 1] == ('op', ']')):
                 raise Unsupported("ambiguous product after exponent")
             value = value * self.factor()
 
@@ -265,6 +280,11 @@ class _Parser:
             return sympy.Rational(int((whole + frac) or '0'), 10 ** len(frac))
         if kind == 'val':
             return tok
+        if kind == 'idx':
+            self.expect('[')
+            index = self.expr()
+            self.expect(']')
+            return tok[index]
         if kind == 'func':
             build, fewest, most = _FUNCTIONS[tok]
             self.expect('(')
@@ -287,7 +307,9 @@ def parse_expr(text: str, *, symbols: Iterable[str] | Mapping[str, Any] = (),
     """Parse an arithmetic expression into SymPy; raise `Unsupported` for anything else.
 
     `symbols` lists the allowed names, or maps each to an assumption
-    (`{'a': 'positive'}`). `functions=None` allows a default set of calls, a list
+    (`{'a': 'positive'}`). A name declared 'indexed' (`{'s': 'positive indexed'}`)
+    is written `s[expr]` only: each distinct index is its own unknown, carrying
+    the other assumptions. `functions=None` allows a default set of calls, a list
     allows only those, and `[]` allows none, so `a(1-b)` is a product. Decimals
     are exact. Juxtaposition multiplies where it has one reading.
     """
@@ -345,7 +367,13 @@ def _value(expr: sympy.Expr, point: Mapping) -> sympy.Float | None:
 
 
 def _numeric(a: sympy.Expr, b: sympy.Expr) -> bool | None:
-    """False on a clear difference at some point, True if all points agree, None if none evaluates."""
+    """False on a clear difference at some point, True if all points agree, None if none evaluates.
+
+    Each distinct indexed term (`s[i - 1]`) is an unknown of its own."""
+    terms = a.atoms(sympy.Indexed) | b.atoms(sympy.Indexed)
+    if terms:
+        swap = {t: sympy.Symbol(str(t), **t.base.assumptions0) for t in terms}
+        a, b = a.xreplace(swap), b.xreplace(swap)
     symbols = sorted(a.free_symbols | b.free_symbols, key=lambda s: s.name)
     rng = random.Random(_SEED)
     seen = False
@@ -433,25 +461,71 @@ def check_field(answer: str | None, entry: Any, *, symbols: Iterable[str] | Mapp
             same = equal(parse_expr(answer, symbols=symbols, functions=functions), expected)
             return {True: ('correct', ""), False: ('incorrect', ""), None: (None, "cannot decide")}[same]
         if callable(entry):
-            result = entry(answer)
-            outcome, note = result if isinstance(result, tuple) else (result, "")
-            if outcome not in OUTCOMES:
-                raise ValueError(f"key function returned {outcome!r}, not an outcome")
-            return outcome, str(note or "")
+            return _result(entry(answer))
     except Unsupported as e:
         return None, str(e)
     raise TypeError(f"unsupported key entry: {type(entry).__name__}")
 
 
-def check_answers(answers: Mapping[str, str | None], key: Mapping[str, Any], *,
+def _result(result) -> tuple[str | None, str]:
+    outcome, note = result if isinstance(result, tuple) else (result, "")
+    if outcome not in OUTCOMES:
+        raise ValueError(f"key function returned {outcome!r}, not an outcome")
+    return outcome, str(note or "")
+
+
+def check_group(answers: Sequence[str | None], entry: Callable) -> list[tuple[str | None, str]]:
+    """`(outcome, note)` per field for a key entry spanning several fields.
+
+    `entry(answers)` gets the fields' answers as a tuple, a blank one as None,
+    and returns one result for all of them (an outcome or `(outcome, note)`),
+    or a list with one result per field. A blank field stays blank whatever
+    `entry` says; all blank skips `entry`, and a review marker in any field
+    leaves the others undecided, as a single-field entry would. Notation
+    `entry` cannot read (`Unsupported`) leaves the answered fields undecided.
+    """
+    given = tuple(None if a is None or not a.strip() else a for a in answers)
+    if all(a is None for a in given):
+        return [('blank', "")] * len(given)
+    if any(a is not None and has_marker(a) for a in given):
+        results = [(None, "review")] * len(given)
+    else:
+        try:
+            got = entry(given)
+        except Unsupported as e:
+            got = (None, str(e))
+        if isinstance(got, list):
+            if len(got) != len(given):
+                raise ValueError(f"key function returned {len(got)} results for {len(given)} fields")
+            results = [_result(r) for r in got]
+        else:
+            results = [_result(got)] * len(given)
+    return [('blank', "") if a is None else r for a, r in zip(given, results)]
+
+
+def check_answers(answers: Mapping[str, str | None], key: Mapping[str | tuple, Any], *,
                   symbols: Iterable[str] | Mapping[str, Any] = (),
                   functions: Sequence[str] | None = None) -> dict:
-    """Compare parsed answers with a key, in key order. A missing label is blank."""
+    """Compare parsed answers with a key, in key order. A missing label is blank.
+
+    A key maps a label to an entry (see `check_field`), or a tuple of labels to
+    a callable over those fields' answers (see `check_group`):
+
+        {'a': '1/2', ('b', 'c'): either_order}
+    """
     fields = {}
-    for label, entry in key.items():
-        answer = answers.get(label)
-        outcome, note = check_field(answer, entry, symbols=symbols, functions=functions)
-        fields[label] = {'answer': None if outcome == 'blank' else answer, 'outcome': outcome, 'note': note}
+    for labels, entry in key.items():
+        if isinstance(labels, tuple):
+            if not callable(entry):
+                raise TypeError(f"the entry for {labels} must be callable")
+            group = [answers.get(label) for label in labels]
+            results = check_group(group, entry)
+        else:
+            group = [answers.get(labels)]
+            results = [check_field(group[0], entry, symbols=symbols, functions=functions)]
+            labels = (labels,)
+        for label, answer, (outcome, note) in zip(labels, group, results):
+            fields[label] = {'answer': None if outcome == 'blank' else answer, 'outcome': outcome, 'note': note}
     return {'fields': fields}
 
 

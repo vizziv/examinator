@@ -198,7 +198,7 @@ def test_credit_rules(pkg):
 
 def test_subscripted_expressions(pkg):
     blanks = pkg('blanks')
-    assert blanks.name('s', 'i-1') == blanks.name('S', '-1 + i') != blanks.name('s', 'i')
+    assert blanks.read('s[i-1]') == blanks.read('S_{-1 + i}') != blanks.read('s_i')
     key = blanks.indexed('(s[i] - s[i-1]) / s[n]', 'w[i] / s[n]')
     for same in ('(s_i - s_{i-1})/s_n', 's[i]/s[n] - s[i-1]/s[n]', '(s[i]-s[-1+i])/s[n]', '(S_i − S_(i−1)) / S_n',
                  '\\frac{1}{s_n} * (s_i - s_{i-1})'.replace('\\frac{1}{s_n}', '(1/s_n)')):
@@ -245,14 +245,14 @@ def test_q3_credit_and_review(exam, pkg):
 # --- points: this course's pseudocode conventions ---------------------------------------
 
 def run(pkg, source, entry='f', n=1):
-    points = pkg('points')
-    draws = points.Draws()
-    program = pseudocode.parse(points.rewrite(source), points.LANGUAGE)
-    return program.sample(entry, n=n, seed=1, primitives=draws.primitives()), draws
+    language = pkg('language')
+    draws = language.Draws()
+    program = pseudocode.parse(source, language.POINTS)
+    return program.sample(entry, n=n, seed=1, rng=draws), draws
 
 
-def test_point_arithmetic_and_one_based_indexing(pkg):
-    points = pkg('points')
+def test_point_arithmetic_and_zero_based_indexing(pkg):
+    language = pkg('language')
     out, _ = run(pkg, """
 def f():
     p = [1, 2]
@@ -261,27 +261,29 @@ def f():
     q = q * [1, 3] / 2
     q += [0.5, 0]
     xs = [[5, 6], [7, 8]]
-    xs[1] = -xs[2]
-    return [q, xs[1][2], rotate([1, 0], pi/2, [0, 0]), rotate([2, 1], pi, [1, 1]), 3 - 1 + 2 * 5]
+    xs[0] = -xs[1]
+    return [q, xs[0][1], rotate([1, 0], pi/2, [0, 0]), rotate([2, 1], pi, [1, 1]), 3 - 1 + 2 * 5]
 """)
     q, last, quarter, half, scalar = out[0]
     assert q == [11.0, 64.5] and last == -8 and scalar == 12
     assert quarter == pytest.approx([0, 1]) and half == pytest.approx([0, 1])
-    # Arithmetic that is certainly scalar is left to the interpreter.
-    assert 'vec_' not in points.rewrite("def f():\n    return 2 * pi * unif() + sqrt(3) / 2\n")
-    assert points.rewrite("def f(:\n") == "def f(:\n"                     # left for the interpreter to refuse
-    for source, kind in [("def f():\n    return [1, 2] + [1, 2, 3]\n", 'unsupported'),
-                         ("def f():\n    return [1, 2] + 1\n", 'unsupported'),
-                         ("def f():\n    return 1 / [1, 2]\n", 'unsupported'),
-                         ("def f():\n    p = [1, 2]\n    return p[0]\n", 'unsupported'),
-                         ("def f():\n    p = [1, 2]\n    return p[3]\n", 'other')]:
+    # Point arithmetic the checker cannot do proves nothing; other failures are mistakes.
+    for source, undecided in [("def f():\n    return [1, 2] + [1, 2, 3]\n", True),
+                              ("def f():\n    return [1, 2] + 1\n", True),
+                              ("def f():\n    return 1 / [1, 2]\n", True),
+                              ("def f():\n    return rotate([1, 2, 3], 1, [0, 0])\n", True),
+                              ("def f():\n    return None + 1\n", False),
+                              ("def f():\n    p = [1, 2]\n    return p[2]\n", False)]:
         with pytest.raises(pseudocode.Failure) as e:
             run(pkg, source)
-        assert e.value.kind == kind, source
+        assert language.undecided(e.value) is undecided, source
+    description = language.POINTS.description
+    assert "Vectors:" in description and "`weighted_die(w)`" in description and "`rotate(" in description
+    assert "from 1 to n" in description and "from 1 to n" in language.SCALAR.description
 
 
 def test_random_calls_are_counted_per_sample(pkg):
-    points = pkg('points')
+    language = pkg('language')
     source = """
 def f():
     k = weighted_die([0, 3, 1])
@@ -297,15 +299,19 @@ def f():
     over = "def f():\n    for i in range(1001):\n        unif()\n    return 1\n"
     with pytest.raises(pseudocode.Failure) as e:
         run(pkg, over)
-    assert e.value.kind == 'limit' and str(points.LIMIT) in str(e.value)
+    assert e.value.kind == 'limit' and str(language.LIMIT) in str(e.value)
     assert run(pkg, over.replace('1001', '1000'))[1].most == 1000
+    # The counting generator draws the same numbers as the default one.
+    plain = pseudocode.parse("def f():\n    return unif()\n", language.POINTS)
+    assert plain.sample('f', n=5, seed=1) == plain.sample('f', n=5, seed=1, rng=language.Draws())
 
 
 def test_loops_that_may_hide_accept_reject(pkg):
-    points = pkg('points')
+    language = pkg('language')
+    checks = importlib.import_module('examinator_kits.stochastic.checks')
 
     def why(source, entry='f'):
-        return points.loops(pseudocode.parse(source, points.LANGUAGE), entry)
+        return checks.accept_reject(pseudocode.parse(source, language.POINTS), entry)
 
     assert why("def f():\n    for i in range(3):\n        unif()\n    return g()\ndef g():\n    return 1\n") == ""
     assert why("def f():\n    return g()\ndef g():\n    while unif() < 0.5:\n        pass\n    return 1\n") == "while loop"
@@ -389,7 +395,7 @@ def test_undecided_is_not_incorrect(exam, pkg):
     for qid, source, needle in [
             ('q1', "def exponential(m):\n    return m * mystery()\n", 'not defined'),
             ('q1', "def exponential(m):\n    return m * [1, 2]\n", 'list'),                       # outside the base language
-            ('q4', "def ice_cream():\n    p = [3, 4]\n    return [p[0], p[1]]\n", 'index 0'),
+            ('q4', "def ice_cream():\n    p = [3, 4]\n    return p + [0, 1, 2]\n", 'different lengths'),
             ('q4', f.REVIEW['q4'], 'accept-reject'),
             ('q5', f.REVIEW['q5'], 'accept-reject'),
             ('q6', "def spire():\n    import random\n", 'import')]:

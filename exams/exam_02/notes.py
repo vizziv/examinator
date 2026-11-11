@@ -22,9 +22,8 @@ BOXED = "Only the boxed final answers are answers. Work elsewhere on the page is
 
 SNOW_CONE = """\
 Points are lists [x, y]. Keep arithmetic on points exactly as written, such as \
-adding two lists or scaling one. `rotate(point, angle, center)` and `die(n)` \
-(a whole number from 0 to n - 1) are provided helpers: keep calls to them."""
+adding two lists or scaling one, and keep calls to `rotate` and `die`."""
 
 NORMAL = """\
 The printed helper `g(t)` may be called. Keep the student's constants exactly as \
-written. `die(n)` is a whole number from 0 to n - 1."""
+written."""

@@ -401,8 +401,19 @@ def test_choice_questions(exam, pkg):
 
 # --- pseudocode -------------------------------------------------------------------------
 
-def test_prepare_rewrites_point_arithmetic(pkg):
+def test_point_arithmetic_powers_and_die(pkg):
     samplers = pkg('samplers')
+    checks = importlib.import_module('examinator_kits.stochastic.checks')
+
+    def run(source, n=1):
+        program = pseudocode.parse(samplers.powers(source), samplers.LANGUAGE)
+        return samplers.draw(program, 'f', n=n, seconds=5)
+
+    def stopped(source):
+        with pytest.raises(checks.Stop) as stop:
+            run(source)
+        return stop.value
+
     source = """\
 def f():
     # points are lists
@@ -413,43 +424,33 @@ def f():
     k += 1
     return [q, -1/2 * k^2, die(3)]
 """
-    program, lines = samplers.prepare(source)
-    assert 'vec_add([1, 2], [10, 20])' in program.source and 'p = vec_sub(p, [1, 1])' in program.source
-    assert '3 + 2 ** 2 * 2' in program.source and 'k += 1' in program.source     # plain numbers are left alone
-    (q, k, d), = samplers.draw(program, lines, 'f', n=1, seconds=5)
+    assert samplers.powers(source).count('\n') == source.count('\n')      # line numbers are the student's own
+    (q, k, d), = run(source)
     assert (q, k) == ([5.0, 10.5], -72.0) and d in (0, 1, 2)
-    dice = {v[2] for v in samplers.draw(program, lines, 'f', n=200, seconds=5)}
-    assert dice == {0, 1, 2}                                # die(n) is 0 .. n-1 on this exam
-    assert not samplers.loops(source) and samplers.loops("def f():\n    while True:\n        return 1\n")
+    assert {v[2] for v in run(source, n=200)} == {0, 1, 2}                 # die(n) is 0 .. n-1 on this exam
 
     # Points times points and negated points work coordinate by coordinate, as on Exam 1.
-    vectors = "def f():\n    p = [1, 2]\n    return [p * [3, 4], -p, [6, 8] / p, -(2 * p)]\n"
-    assert samplers.draw(*samplers.prepare(vectors), 'f', n=1, seconds=5) == [[[3, 8], [-1, -2], [6, 4], [-2, -4]]]
+    assert run("def f():\n    p = [1, 2]\n    return [p * [3, 4], -p, [6, 8] / p, -(2 * p)]\n") == \
+        [[[3, 8], [-1, -2], [6, 4], [-2, -4]]]
     # Failures are reported at the line of the source as written.
-    bad = "def f():\n    # a comment\n\n    x = [1, 2]\n    return log(x[0] - 1)\n"
-    program, lines = samplers.prepare(bad)
-    with pytest.raises(samplers.Stop) as stop:
-        samplers.draw(program, lines, 'f', n=1, seconds=5)
-    assert stop.value.outcome == 'incorrect' and stop.value.note.startswith("line 5: ")
-    # Point arithmetic the rewrite cannot do proves nothing about the student: undecided.
+    stop = stopped("def f():\n    # a comment\n\n    x = [1, 2]\n    return log(x[0] - 1)\n")
+    assert stop.outcome == 'incorrect' and stop.note.startswith("line 5: ")
+    # Point arithmetic the checker cannot do proves nothing about the student: undecided.
     for body in ("x = [1, 2]\n    return x + 1", "return [1, 2] + [1, 2, 3]"):
-        with pytest.raises(samplers.Stop) as stop:
-            samplers.draw(*samplers.prepare(f"def f():\n    {body}\n"), 'f', n=1, seconds=5)
-        assert stop.value.outcome is None and "vec_add(" in stop.value.note
-    with pytest.raises(samplers.Stop) as stop:              # a helper the exam does not provide: undecided
-        samplers.draw(*samplers.prepare("def f():\n\n    return polar(1, 2)\n"), 'f', n=1, seconds=5)
-    assert stop.value.outcome is None and stop.value.note == "line 3: function 'polar' is not defined"
+        stop = stopped(f"def f():\n    {body}\n")
+        assert stop.outcome is None and stop.error.kind == 'type'
+    stop = stopped("def f():\n\n    return polar(1, 2)\n")         # a helper the exam does not provide: undecided
+    assert stop.outcome is None and stop.note == "line 3: polar(1, 2): function 'polar' is not defined"
+    assert stopped("def f():\n    return None + 1\n").outcome == 'incorrect'     # not point arithmetic
     with pytest.raises(pseudocode.Unsupported) as err:
-        samplers.prepare("def f():\n\n\n    import os\n")
+        pseudocode.parse("def f():\n\n\n    import os\n", samplers.LANGUAGE)
     assert err.value.line == 4
-    for name in ('vec_add', 'vec_neg'):
-        with pytest.raises(pseudocode.Unsupported):
-            samplers.prepare(f"def f():\n    return {name}(1, 2)\n")
-    with pytest.raises(pseudocode.Unsupported):
-        samplers.prepare("def f(:\n")
-    assert "0 to n - 1" in samplers.LANGUAGE.description and "from 1 to n" not in samplers.LANGUAGE.description
-    assert samplers.rotate(None, [1, 0], np.pi / 2, [0, 0]) == pytest.approx([0, 1])
-    assert samplers.rotate(None, [2, 1], np.pi, [1, 1]) == pytest.approx([0, 1])
+    description = samplers.LANGUAGE.description
+    assert "from 0 to n - 1" in description and "from 1 to n" not in description
+    assert "`rotate(point, angle, center)`" in description and "Vectors:" in description
+    assert samplers.rotate([1, 0], np.pi / 2, [0, 0]) == pytest.approx([0, 1])
+    assert samplers.rotate([2, 1], np.pi, [1, 1]) == pytest.approx([0, 1])
+    assert run("def f():\n    return rotate([1, 0], pi, [0, 0])\n")[0] == pytest.approx([-1, 0])
 
 
 def test_snow_cone_regions(pkg):

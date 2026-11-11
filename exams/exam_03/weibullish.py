@@ -5,8 +5,10 @@ import time
 import numpy as np
 
 from examinator.std import pseudocode
+from examinator_kits.stochastic import checks
 
-from . import huge_constants, parts
+from . import huge_constants
+from .language import SCALAR, draw
 
 SETTINGS = ((0.5, 2), (1, 0.5), (2, 4))     # (a, b) for 2.1
 N_WEIBULL = 2000
@@ -37,19 +39,18 @@ def reference_weibull(rng, a, b):
     return (rng.standard_exponential() / b) ** (1 / a)
 
 
-def check_weibull(program: pseudocode.Program) -> parts.Part:
-    part = parts.Part('2.1')
+def check_weibull(program: pseudocode.Program) -> checks.Part:
+    part = checks.Part('2.1', shown=12)
     if program.is_blank('weibull'):
         return part.settle('blank')
     deadline = time.monotonic() + ATTEMPT
     for a, b in SETTINGS:
         name = f"weibull({a:g}, {b:g})"
         try:
-            xs = parts.draw(program, 'weibull', (a, b), n=N_WEIBULL, deadline=deadline)
-        except parts.Stop as stop:
-            part.stop(name, stop)
-            return part.settle(stop.outcome)
-        part.add(name, parts.fit_cdf(xs, weibull_cdf(a, b), lo=0, title=name), xs)
+            xs = draw(program, 'weibull', (a, b), n=N_WEIBULL, deadline=deadline)
+        except checks.Stop as stop:
+            return part.stop(name, stop)
+        part.add(name, checks.fit_cdf(xs, weibull_cdf(a, b), lo=0, title=name), xs)
     return part.combine()
 
 
@@ -67,8 +68,8 @@ def custom_value(params) -> tuple[float | None, str]:
     return value, ""
 
 
-def check_weibullish(program: pseudocode.Program, params) -> parts.Part:
-    part = parts.Part('2.2')
+def check_weibullish(program: pseudocode.Program, params) -> checks.Part:
+    part = checks.Part('2.2', shown=12)
     if program.is_blank('weibullish'):
         return part.settle('blank')
     custom, problem = custom_value(params)
@@ -80,14 +81,14 @@ def check_weibullish(program: pseudocode.Program, params) -> parts.Part:
     for value in values:
         name = "as written" if value is None else f"{PARAM} = {value:g}"
         try:
-            xs = parts.draw(program, 'weibullish', n=N_WEIBULLISH, deadline=time.monotonic() + ATTEMPT,
+            xs = draw(program, 'weibullish', n=N_WEIBULLISH, deadline=time.monotonic() + ATTEMPT,
                             primitives={'weibull': reference_weibull}, max_steps=MAX_STEPS,
                             constants=None if value is None else {PARAM: value})
-        except parts.Stop as stop:
+        except checks.Stop as stop:
             part.stop(name, stop)
             outcome = stop.outcome
             continue
-        outcome = part.add(name, parts.fit_cdf(xs, weibullish_cdf, lo=1, title=f"weibullish(), {name}"), xs).outcome
+        outcome = part.add(name, checks.fit_cdf(xs, weibullish_cdf, lo=1, title=f"weibullish(), {name}"), xs).outcome
         if outcome == 'correct':
             return part.settle('correct', name if value is not None else "")
     if idealized:
@@ -97,9 +98,5 @@ def check_weibullish(program: pseudocode.Program, params) -> parts.Part:
 
 
 def check(ctx):
-    source = ctx.input('parse')
-    try:
-        program = pseudocode.parse(source)
-    except pseudocode.Unsupported as e:
-        return parts.unparsed(['2.1', '2.2'], source, e)
-    return parts.evidence([check_weibull(program), check_weibullish(program, ctx.params)], source)
+    return checks.check_source(ctx.input('parse'), SCALAR, ['2.1', '2.2'],
+                               lambda program: [check_weibull(program), check_weibullish(program, ctx.params)])

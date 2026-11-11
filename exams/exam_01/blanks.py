@@ -1,10 +1,10 @@
 """Key entries for question 3: expressions in subscripted quantities, and a
 distribution's name.
 
-Both are callables `answer -> (outcome, note)`. A subscripted quantity such as
-`s[i-1]` (also `s_{i-1}`, `s_(i-1)`, `s_i`) becomes one symbol per distinct
-subscript, so `s[i-1]` and `s[i]` are unrelated unknowns and the standard
-expression comparison applies.
+Both are callables `answer -> (outcome, note)`. `s` and `w` are indexed symbols
+of the expression parser: `s[i-1]` and `s[i]` are unrelated unknowns, and the
+standard expression comparison applies. The other subscript notations
+(`s_{i-1}`, `s_(i-1)`, `s_i`) are rewritten to brackets first.
 """
 import re
 from dataclasses import dataclass
@@ -13,21 +13,10 @@ import sympy
 
 from examinator.std import math
 
-LETTERS = 'sw'                          # the subscripted quantities
-INDEX = ('i', 'n', 'k', 'j')            # names a subscript may use
-PLAIN = ('i', 'n', 'k', 'u')            # names that may also appear on their own
+SYMBOLS = {'s': 'positive indexed', 'w': 'positive indexed',
+           **{name: 'positive' for name in ('i', 'n', 'k', 'j', 'u')}}
 
-_SUB = re.compile(r'(?<![A-Za-z0-9_])([sw])\s*(?:_?\s*\[([^\[\]]*)\]|_?\s*\{([^{}]*)\}|_?\s*\(([^()]*)\)|_([A-Za-z0-9]+))',
-                  re.I)
-
-
-def name(letter: str, subscript: str) -> str:
-    """The symbol for one subscripted quantity; equal subscripts give equal names."""
-    index = sympy.expand(math.parse_expr(subscript.lower(), symbols=INDEX, functions=()))
-    slug = str(index).replace(' - ', '_minus_').replace(' + ', '_plus_').replace('-', 'minus_')
-    return f"{letter.lower()}_{re.sub(r'[^A-Za-z0-9_]', '_', slug)}"
-
-
+_SUB = re.compile(r'(?<![A-Za-z0-9_])([sw])\s*(?:_?\s*\{([^{}]*)\}|_?\s*\(([^()]*)\)|_([A-Za-z0-9]+))', re.I)
 _LOOSE = re.compile(r'(?<![A-Za-z0-9_])[sw]_[A-Za-z0-9]+\s*[-+]\s*\d', re.I)
 
 
@@ -35,16 +24,9 @@ def read(text: str) -> sympy.Expr:
     """An answer as an expression. Raises `math.Unsupported` for other notation."""
     if _LOOSE.search(text):
         raise math.Unsupported("subscript unclear: write s[i-1]")
-    names = set()
-
-    def symbol(m: re.Match) -> str:
-        found = name(m[1], next(g for g in m.groups()[1:] if g is not None))
-        names.add(found)
-        return f' {found} '
-
-    plain = _SUB.sub(symbol, text.replace('\\', ''))
-    symbols = {n: 'positive' for n in (*names, *PLAIN)}
-    return math.parse_expr(plain.lower(), symbols=symbols, functions=())
+    brackets = _SUB.sub(lambda m: f"{m[1]}[{next(g for g in m.groups()[1:] if g is not None)}]",
+                        text.replace('\\', ''))
+    return math.parse_expr(brackets.lower(), symbols=SYMBOLS, functions=())
 
 
 @dataclass(frozen=True)

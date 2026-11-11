@@ -6,10 +6,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from examinator.std import pseudocode, sampling
+from examinator.std import pseudocode
 from examinator.std.blocks import Plot
+from examinator_kits.stochastic import checks
+from examinator_kits.stochastic import fit as sampling
 
-from . import parts, points
+from .language import POINTS, SEED, Draws, draw, settle_direct
 
 LABEL = '4'
 ENTRY = 'ice_cream'
@@ -82,37 +84,33 @@ REGIONS = {
 }
 
 
-def check_program(program: pseudocode.Program, runnable: pseudocode.Program, region: Region) -> parts.Part:
-    part = parts.Part(LABEL)
+def check_program(program: pseudocode.Program, region: Region) -> checks.Part:
+    part = checks.Part(LABEL)
     if program.is_blank(ENTRY):
         return part.settle('blank')
-    draws = points.Draws()
+    draws = Draws()
     try:
-        raw = parts.draw(runnable, ENTRY, n=N, deadline=time.monotonic() + ATTEMPT, primitives=draws.primitives())
-        p = parts.matrix(raw, 2)
-    except parts.Stop as stop:
+        raw = draw(program, ENTRY, n=N, deadline=time.monotonic() + ATTEMPT, rng=draws)
+        p = checks.matrix(raw, 2)
+    except checks.Stop as stop:
         return part.stop("ice_cream()", stop)
     piece = region.piece(p)
     scatter = Plot.scatter(p[:, 0], p[:, 1], title="ice_cream()", xlabel="x", ylabel="y")
-    if part.add("region", parts.inside(piece >= 0, p, scatter), raw).outcome != 'correct':
+    if part.add("region", checks.inside(piece >= 0, p, scatter), raw).outcome != 'correct':
         return part.combine()
     share = region.areas / region.areas.sum()
-    part.add("pieces by area", sampling.chi_square(piece, parts.table_pmf(share), title="piece chosen"), plot=False)
-    reference = region.sample(REFERENCE, parts.SEED)
-    part.add("uniform", sampling.projected_ks(p, reference, seed=parts.SEED, title="ice_cream() against the region"),
+    part.add("pieces by area", sampling.chi_square(piece, checks.table_pmf(share), title="piece chosen"), plot=False)
+    reference = region.sample(REFERENCE, SEED)
+    part.add("uniform", sampling.projected_ks(p, reference, seed=SEED, title="ice_cream() against the region"),
              plot=False)
     ref_piece = region.piece(reference)
     for i, name in enumerate(region.names):
         if (piece == i).sum() >= MIN_PIECE:
             part.add(f"uniform on the {name}", sampling.projected_ks(
-                p[piece == i], reference[ref_piece == i], seed=parts.SEED, title=name), plot=False)
-    return points.settle_direct(part, program, ENTRY, draws)
+                p[piece == i], reference[ref_piece == i], seed=SEED, title=name), plot=False)
+    return settle_direct(part, program, ENTRY, draws)
 
 
 def check(ctx):
-    source = ctx.input('parse')
-    try:
-        program, runnable = points.prepare(source)
-    except pseudocode.Unsupported as e:
-        return parts.unparsed(LABEL, source, e)
-    return parts.evidence(check_program(program, runnable, REGIONS[ctx.variant]), source, runnable.source)
+    region = REGIONS[ctx.variant]
+    return checks.check_source(ctx.input('parse'), POINTS, LABEL, lambda program: check_program(program, region))

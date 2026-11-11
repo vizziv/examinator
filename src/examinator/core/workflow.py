@@ -11,7 +11,8 @@ and neither is derived from evidence contents.
 | 'unverified'     | a current proposed grade; `waiting` says what a       | no     |
 |                  | person must still confirm ('parse', 'variant')        |        |
 | 'graded'         | parse verified, evidence current, grade decided       | yes    |
-| 'needs_review'   | parse verified, evidence current, grade undecided     | no     |
+| 'needs_review'   | parse verified, evidence current, grade undecided;    | no     |
+|                  | or a question with no grade rule, not yet decided     |        |
 | 'outdated'       | evidence or grade computed from an older parse,       | no     |
 |                  | variant or definition; old value still shown          |        |
 | 'manual'         | a grader decided; parse unchanged since               | yes    |
@@ -171,6 +172,8 @@ def part_status(question: Question, part: str, arts: Mapping[str, Artifact],
         return Status('manual' if same else 'manual_outdated', g.body.get('value'),
                       tuple(g.body.get('flags') or ()), g.body.get('reason'), author=g.author)
 
+    if question.stage('grade') is None:        # decided by hand only: always a grader's to do
+        return Status('needs_review', reason="by hand")
     if not started(arts):
         return Status('not_started')
     if g is None:

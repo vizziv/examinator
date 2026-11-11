@@ -5,9 +5,11 @@ import time
 
 import numpy as np
 
-from examinator.std import pseudocode, sampling
+from examinator.std import pseudocode
+from examinator_kits.stochastic import checks
+from examinator_kits.stochastic import fit as sampling
 
-from . import parts, points
+from .language import POINTS, SEED, Draws, draw, settle_direct
 
 LABEL = '5'
 ENTRIES = {'original': 'unit_cone', 'alternate': 'twonit_cone'}
@@ -30,23 +32,23 @@ def uniform01(u):
     return np.clip(u, 0.0, 1.0)
 
 
-def check_program(program: pseudocode.Program, runnable: pseudocode.Program, variant: str) -> parts.Part:
-    part = parts.Part(LABEL)
+def check_program(program: pseudocode.Program, variant: str) -> checks.Part:
+    part = checks.Part(LABEL)
     entry, h = ENTRIES[variant], HEIGHTS[variant]
     if program.is_blank(entry):
         other = next((e for e in ENTRIES.values() if e != entry and not program.is_blank(e)), None)
         return part.settle(None, f"defines {other}, not {entry}: check the printing") if other else part.settle('blank')
-    draws = points.Draws()
+    draws = Draws()
     name = f"{entry}()"
     try:
-        raw = parts.draw(runnable, entry, n=N, deadline=time.monotonic() + ATTEMPT, primitives=draws.primitives())
-        p = parts.matrix(raw, 3)
-    except parts.Stop as stop:
+        raw = draw(program, entry, n=N, deadline=time.monotonic() + ATTEMPT, rng=draws)
+        p = checks.matrix(raw, 3)
+    except checks.Stop as stop:
         return part.stop(name, stop)
     x, y, z = p.T
     rr = x * x + y * y
     ok = (z > -EPS) & (z < h + EPS) & (rr <= z * z + EPS)
-    if part.add("cone", parts.inside(ok, p), raw).outcome != 'correct':
+    if part.add("cone", checks.inside(ok, p), raw).outcome != 'correct':
         return part.combine()
     part.add("height", sampling.ks(z, lambda v: uniform01(np.asarray(v) / h) ** 3, title=f"{name}: z"))
     with np.errstate(all='ignore'):
@@ -54,15 +56,10 @@ def check_program(program: pseudocode.Program, runnable: pseudocode.Program, var
                                                      title=f"{name}: (x^2 + y^2) / z^2"))
     part.add("angle", sampling.ks(np.arctan2(y, x) / (2 * math.pi) + 0.5, uniform01,
                                   title=f"{name}: angle / 2 pi"), plot=False)
-    part.add("joint", sampling.projected_ks(p, reference(h, REFERENCE, parts.SEED), seed=parts.SEED,
+    part.add("joint", sampling.projected_ks(p, reference(h, REFERENCE, SEED), seed=SEED,
                                             title=f"{name} against the cone"), plot=False)
-    return points.settle_direct(part, program, entry, draws)
+    return settle_direct(part, program, entry, draws)
 
 
 def check(ctx):
-    source = ctx.input('parse')
-    try:
-        program, runnable = points.prepare(source)
-    except pseudocode.Unsupported as e:
-        return parts.unparsed(LABEL, source, e)
-    return parts.evidence(check_program(program, runnable, ctx.variant), source, runnable.source)
+    return checks.check_source(ctx.input('parse'), POINTS, LABEL, lambda program: check_program(program, ctx.variant))

@@ -127,7 +127,7 @@ def exponential(m):
 """,
     'q2': dict(zip(Q2, ['1.0', '1.5', '12', '2 + 2', '0.25', '4.0'])),
     'q3': dict(zip(Q3, ['s_{i-1}', 's_i', 's_(i-1)/s_n', '(s_i)/(s_n)', 's[i]/s[n] - s[i-1]/s[n]', 'U(0,1)'])),
-    # coordinates written out, arrays indexed from 1, a number times a point
+    # coordinates written out, indices shifted to 0-based by the parse, a number times a point
     'q4': """\
 def ice_cream():
     centers = [[3, 4], [3, 2]]
@@ -140,8 +140,8 @@ def ice_cream():
     T = 2 * pi * unif()
     P = [R * cos(T), R * sin(T)]
     if K == 2:
-        P[2] = abs(P[2])
-    return centers[K] + P
+        P[1] = abs(P[1])
+    return centers[K - 1] + P
 """,
     'q5': """\
 def unit_cone():
