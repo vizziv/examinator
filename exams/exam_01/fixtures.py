@@ -209,6 +209,16 @@ def unit_cone():
 """,
 }
 
+# Code that runs and fails: proposed incorrect, for a grader to verify or to repair.
+ERRORS = {
+    # A 3-D offset on a 2-D point: points of different lengths.
+    'q4': ANSWERS['original']['q4'].replace('scoop() + [3, 4]', 'scoop() + [3, 4, 0]')
+                                   .replace('half_scoop() + [3, 2]', 'half_scoop() + [3, 2, 0]')
+                                   .replace('+ [3, -1]', '+ [3, -1, 0]'),
+    # The height added to the disc point as if it were a third coordinate.
+    'q5': ANSWERS['original']['q5'].replace('return [X, Y, Z]', 'return [X, Y] + [0, 0, Z]'),
+}
+
 BLANK_CODE = {
     'q1': "def exponential(m):\n    pass\n", 'q4': "def ice_cream():\n    pass\n",
     'q5': "def unit_cone():\n    pass\n", 'q6': "def spire():\n    pass\n",
@@ -236,6 +246,7 @@ def cases():
         Case('wrong', **original, answers=WRONG, expect={q: False for q in ALL}),
         Case('five-of-six', **original, answers=FIVE_OF_SIX, expect={'q2': True, 'q3': True}),
         Case('review', **original, answers=REVIEW, expect={'q3': None, 'q4': None, 'q5': None}),
+        Case('errors', **original, answers=ERRORS, expect={'q4': False, 'q5': False}),
         # The alternate printing with the original printing's answers. Question 3 is printed the
         # same; question 5 defines the other printing's function, which a person must look at.
         Case('crossed', **alternate, answers=canonical(0),

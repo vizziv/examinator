@@ -405,6 +405,9 @@ def test_undecided_is_not_incorrect(exam, pkg):
     assert outcome == 'incorrect' and 'not defined' in note
     outcome, note = verdict(exam, 'q4', "def ice_cream():\n    p = [3, 4]\n    return p + [0, 1, 2]\n")
     assert outcome == 'incorrect' and 'different lengths' in note
+    for qid, source in f.ERRORS.items():                    # the same failure in whole answers
+        outcome, note = verdict(exam, qid, source)
+        assert outcome == 'incorrect' and 'different lengths (2 and 3)' in note, (qid, note)
     # Over the exam's limit on random calls is a demonstrated mistake, not an exhausted budget.
     slow = "def ice_cream():\n    for i in range(1001):\n        unif()\n    return [3, 4]\n"
     outcome, note = verdict(exam, 'q4', slow)

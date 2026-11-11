@@ -492,6 +492,8 @@ def test_question_10(exam, pkg):
     assert q10(exam, "def snow_cone():\n    return unif()\n") == ('incorrect', "a sample is not a point [x, y]")
     assert q10(exam, "def snow_cone():\n    return [2, 1] + polar(1)\n") == \
         ('incorrect', "line 2: function 'polar' is not defined")
+    outcome, note = q10(exam, f.Q10_LENGTHS)                # fails on one branch only: still incorrect
+    assert outcome == 'incorrect' and "different lengths (1 and 2)" in note
     assert q10(exam, "def snow_cone():\n    return [2, 1 +\n")[0] is None
     assert q10(exam, "def snow_cone():\n    pass\n") == ('blank', "") == q10(exam, "")
     tuples = f.Q10['original'].replace('return [2, 0] + [X, Y]', 'return 2 + X, Y')

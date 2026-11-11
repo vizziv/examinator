@@ -108,6 +108,7 @@ def snow_cone():
 Q10 = {'original': SNOW_CONE.format(radius='sqrt(2)', fraction='(1/4)', center='[2, 2]', overlap='1'),
        'alternate': SNOW_CONE.format(radius='2', fraction='(1/6)', center='[2, 3 - sqrt(3)]', overlap='sqrt(3)')}
 Q10_HALF = Q10['original'].replace('sector_area / (sector_area + vee_area)', '1/2')    # wrong weights
+Q10_LENGTHS = Q10['original'].replace('return [2, 0] + [X, Y]', 'return [2] + [X, Y]')     # runs and fails
 Q10_LOOP = """\
 def snow_cone():
     while True:
@@ -164,6 +165,7 @@ def cases():
               'q7.answer': False, 'q7.check': False, 'q8.check': True, 'q8.shiny': False,
               'q9.answer': False, 'q9.check': False, 'q12.answer': False, 'q12.shiny': False}),
         case('slips', 0, SLIPS, {'q1': True, 'q2': True, 'q3': True}),
+        case('errors', 0, {'q10': Q10_LENGTHS}, {'q10': False}),   # points of different lengths: incorrect
         # Another printing with printing alt0's answers: the other keys apply.
         case('crossed', 7, {**{q: ANSWERS[q][VERSIONS[0][q]] for q in FIELDS}, 'q10': Q10['original']},
              {'q1': True, 'q2': False, 'q3': False, 'q4': False, 'q5': False, 'q6': False,
