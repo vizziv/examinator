@@ -6,7 +6,7 @@
   const body = document.querySelector('#grid tbody');
   const rows = [...body.rows];
   const text = document.getElementById('f-text');
-  const sum = document.getElementById('focus-sum'), clearFocus = document.getElementById('focus-clear');
+  const sum = document.getElementById('focus-sum'), clearFocus = document.querySelector('[data-action=clear-focus]');
   const saved = session('grid', {});
   let sort = saved.sort || null;      // {index, dir}
   let sel = {}, data = null;
@@ -25,6 +25,7 @@
   function summary() {
     const n = Focus.size(sel);
     clearFocus.hidden = !n;
+    sum.classList.toggle('on', !!n);
     if (!n) { sum.textContent = 'filter'; sum.title = 'the focus: open the filter page'; return; }
     const labels = {};
     for (const q of (data ? data.questions : [])) for (const f of q.facets) labels[f.id] = `${q.id} ${f.label}`;
@@ -70,13 +71,14 @@
   }
 
   text.addEventListener('input', apply);
-  document.getElementById('f-clear').addEventListener('click', () => {
+  Actions.register('clear-search', {run: () => {
     text.value = '';
     sort = null;
     body.append(...rows);
     apply();
-  });
-  clearFocus.addEventListener('click', () => { sel = {}; Focus.save(sel); apply(); });
+  }});
+  Actions.register('clear-focus', {available: () => Focus.size(sel) > 0, run: () => { sel = {}; Focus.save(sel); apply(); }});
+  Actions.register('search', {run: () => { text.focus(); text.select(); }});
   document.querySelector('#grid thead').addEventListener('click', e => {
     const th = e.target.closest('th');
     if (!th) return;
@@ -84,10 +86,6 @@
     sort = sort && sort.index === index ? (sort.dir === 'asc' ? {index, dir: 'desc'} : null) : {index, dir: 'asc'};
     if (!sort) body.append(...rows);
     apply();
-  });
-  document.addEventListener('keydown', e => {
-    if (e.key === '/' && !e.target.matches('input, select, textarea')) { e.preventDefault(); text.focus(); }
-    else if (e.key === 'Escape' && e.target === text) text.blur();
   });
   // Follow the focus set elsewhere (another tab, or the filter page and back).
   async function refresh() {
@@ -99,6 +97,9 @@
     }
     apply();
   }
+  // The legend closes on a click elsewhere.
+  const legend = document.querySelector('details.legend');
+  document.addEventListener('click', e => { if (legend?.open && !legend.contains(e.target)) legend.open = false; });
   addEventListener('storage', e => { if (e.key === 'focus') refresh(); });
   addEventListener('pageshow', e => { if (e.persisted) refresh(); });
   refresh().then(() => { if (location.search) history.replaceState(null, '', location.pathname); });

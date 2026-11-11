@@ -56,7 +56,7 @@
     form.dataset.rev = b.rev ?? '';
     form.classList.toggle('over', b.overridden);
     form.classList.remove('dirty');
-    form.querySelector('[data-entry=clear]').hidden = !b.overridden;
+    form.querySelector('[data-action=entry-revert]').hidden = !b.overridden;
     form.querySelector('.ebase').hidden = !b.overridden;
     if (clear) {
       const el = form.querySelector('.ev');
@@ -66,26 +66,21 @@
     document.dispatchEvent(new CustomEvent('entry-saved', {detail: b}));
   }
 
-  document.addEventListener('click', e => {
-    const el = e.target.closest('[data-entry]');
-    if (!el) return;
-    e.preventDefault();
-    const form = el.closest('form.entry');
-    if (el.dataset.entry === 'clear' && !confirm("Back to the package value, for all submissions?")) return;
-    send(form, el.dataset.entry === 'clear');
-  });
+  window.Entries = {send};
+  Actions.register('entry-save', {run: ({el}) => send(el.closest('form.entry'), false)});
+  Actions.register('entry-revert', {run: ({el}) => {
+    if (confirm("Back to the package value, for all submissions?")) send(el.closest('form.entry'), true);
+  }});
+  // Cmd+S / Cmd+Enter save the entry being edited (the question page has its own save,
+  // which defers to this one inside an entry).
+  const inEntry = ctx => ctx.target?.closest?.('form.entry');
+  for (const name of ['save', 'verify']) {
+    if (!Actions.has(name)) Actions.register(name, {available: ctx => !!inEntry(ctx), run: ctx => send(inEntry(ctx), false)});
+  }
   document.addEventListener('input', e => {
     const form = e.target.closest('form.entry');
     if (form) { form.classList.add('dirty'); say(form, ''); }
   });
-  document.addEventListener('keydown', e => {
-    const form = e.target.closest?.('form.entry');
-    if (form && (e.ctrlKey || e.metaKey) && (e.key === 'Enter' || e.key.toLowerCase() === 's')) {
-      e.preventDefault();
-      e.stopPropagation();
-      send(form, false);
-    }
-  }, true);
   document.addEventListener('submit', e => { if (e.target.matches('form.entry')) e.preventDefault(); });
   addEventListener('beforeunload', e => { if (document.querySelector('form.entry.dirty')) e.preventDefault(); });
 
@@ -126,15 +121,15 @@
     $('ch-text').textContent = `${b.affected} answers outdated (${b.questions.join(', ')}); rechecking`;
     await follow(b.job, `${b.affected} outdated · rechecked`);
   });
-  $('ch-reread').addEventListener('click', async () => {
+  Actions.register('reread-cues', {run: async () => {
     if (!confirm("Read the changed cues again with the model, for every submission whose variant is open?")) return;
     $('ch-variants').hidden = true;
     const r = await request('/exam/variants', {questions: variants});
     if (!r.ok) { $('ch-fail').textContent = r.body.error || "failed"; return; }
     await follow(r.body.job, `cues reread`);
-  });
-  $('copy-lines')?.addEventListener('click', async () => {
+  }});
+  Actions.register('copy-lines', {available: () => !!$('lines'), run: async () => {
     try { await navigator.clipboard.writeText($('lines').textContent); flash("copied"); }
     catch (err) { getSelection().selectAllChildren($('lines')); }
-  });
+  }});
 })();

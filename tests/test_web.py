@@ -83,7 +83,7 @@ def test_question_page_before_and_after_stages(site):
     r = site.get('/s/s1/a')
     assert r.status_code == 200
     assert 'data-label="x" value="1"' in r.text
-    assert 's-unverified' in r.text
+    assert 'pill st st-unverified' in r.text
     assert 'data-cue="c1"' in r.text and '/page/s1/0.jpg' in r.text
     assert site.get('/s/s1/b').status_code == 200
     for path in ('/runs', '/settings', '/scan'):
@@ -98,6 +98,33 @@ def test_security_headers(site):
         assert r.headers['x-content-type-options'] == 'nosniff'
     html = site.get('/s/s1/a').text
     assert '<script>' not in html and ' style="' not in html and not re.search(r'\son\w+="', html)
+
+
+def test_theme_and_actions_are_static_and_controls_declare_actions(site):
+    # theme.js runs before the stylesheet (no flash); the action registry loads on every page.
+    for path in ('/', '/s/s1/a', '/filter', '/runs', '/exam', '/settings'):
+        html = site.get(path).text
+        assert html.index('/static/theme.js"></script>') < html.index('/static/app.css')
+        assert '/static/actions.js' in html
+        assert '<script>' not in html and ' style="' not in html and not re.search(r'\son\w+="', html)
+    assert '/static/theme.js' in site.get('/scan').text
+    for name in ('theme.js', 'actions.js'):
+        r = site.get('/static/' + name)
+        assert r.status_code == 200 and 'javascript' in r.headers['content-type']
+        assert "script-src 'self'" in r.headers['content-security-policy']
+    site.run_all()
+    html = site.get('/s/s1/a').text
+    for action in ('prev-student', 'next-student', 'scan', 'verify', 'save', 'edit', 'decide', 'decide-blank', 'run'):
+        assert f'data-action="{action}"' in html, action
+    assert 'data-act=' not in html and '<kbd>' not in html      # hints come from the key map
+    assert 'pill g-' in html and 'pill st st-' in html          # grade and state: two pills
+    assert 'data-action="clear-search"' in site.get('/').text
+    assert 'data-action="clear-filter"' in site.get('/filter').text
+    runs = site.get('/runs').text
+    assert all(f'data-action="{a}"' in runs for a in ('run-preview', 'run-start', 'run-stop'))
+    settings = site.get('/settings').text
+    assert all(f'id="{i}"' in settings for i in ('theme', 'accent', 'accent2', 'k-single', 'k-preset', 'keymap'))
+    assert 'aria-current="page"' in settings
 
 
 def test_page_image(site):
@@ -200,7 +227,7 @@ def test_save_and_verify_rechecks_and_grades(site):
     assert (x.state, x.value) == ('graded', False)
     assert (y.state, y.value) == ('graded', True)
     html = site.get('/s/s1/a').text
-    assert 's-graded' in html and 'verified · tester' in html
+    assert 'st-graded' in html and 'g-f' in html and 'verified · tester' in html
     assert 'restore' in html      # the replaced parse is in the history
 
 
@@ -249,7 +276,7 @@ def test_decide_and_undecide(site):
     assert (st.state, st.value, st.author) == ('manual', False, 'tester')
     assert site.state('s1', 'a', 'y').state == 'unverified'      # parts are decided independently
     html = site.get('/s/s1/a').text
-    assert 's-manual' in html and 'tester' in html and 'data-act="undecide"' in html
+    assert 'st-manual' in html and 'tester' in html and 'data-action="undecide"' in html
     assert site.decide('s1', 'a', 'nope', True, rev=None).status_code == 400
     assert site.decide('s1', 'a', 'x', 3).status_code == 400
     r = site.decide('s1', 'a', 'y', blank=True)
@@ -728,7 +755,7 @@ def test_grid_honours_a_focus_in_the_url(site):
     assert shown({'no/such': ['x']}) == ['s1', 's2']                                          # unknown: ignored
     assert site.get('/?focus=%7Bnot json').status_code == 200
     html = site.get('/?focus=' + quote(json.dumps({'a/variant': ['one']}))).text
-    assert 'id="focus-clear" title="clear the focus">' in html and 'id="f-state"' not in html
+    assert 'data-action="clear-focus" class="quiet" title="clear the focus">' in html and 'id="f-state"' not in html
 
 
 def test_question_page_has_focus_slots(site):

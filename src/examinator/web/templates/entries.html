@@ -21,8 +21,8 @@
 {{ input(e) }}
 {% endif %}
 <span class="eact">
-<button type="button" data-entry="save">save</button>
-<button type="button" data-entry="clear" title="back to the package value"{% if not e.stored %} hidden{% endif %}>revert</button>
+<button type="button" data-action="entry-save">save</button>
+<button type="button" data-action="entry-revert" class="danger" title="back to the package value"{% if not e.stored %} hidden{% endif %}>revert</button>
 <span class="emsg" role="status"></span>
 </span>
 <span class="ebase"{% if not e.overridden %} hidden{% endif %}>package: <code>{{ e.base_text or '—' }}</code></span>

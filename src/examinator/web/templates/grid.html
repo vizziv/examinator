@@ -1,13 +1,28 @@
 {% extends 'base.html' %}
 {% block head %}<script src="{{ root }}/static/grid.js" defer></script>{% endblock %}
 {% block nav %}
-<input type="search" id="f-text" placeholder="search" size="14" title="/">
-<button type="button" id="f-clear" title="clear search and sort">×</button>
+<input type="search" id="f-text" placeholder="search" aria-label="search">
+<button type="button" data-action="clear-search" title="clear search and sort">×</button>
 <a id="focus-sum" href="{{ root }}/filter" title="the focus: open the filter page">filter</a>
-<button type="button" id="focus-clear" title="clear the focus"{% if not focus %} hidden{% endif %}>clear focus</button>
+<button type="button" data-action="clear-focus" class="quiet" title="clear the focus"{% if not focus %} hidden{% endif %}>clear focus</button>
 <span id="shown" class="dim"></span>
+<details class="legend">
+<summary title="what the cells mean">legend</summary>
+<div class="legend-body">
+<h3>grade</h3><h3>state</h3>
+<span><span class="sw v-t">✓</span>correct</span><span><span class="sw">✓</span>graded</span>
+<span><span class="sw v-f">✗</span>incorrect</span><span><span class="sw s-unverified"><a class="v-t">✓</a></span>unverified</span>
+<span><span class="sw v-b">∅</span>blank</span><span><span class="sw s-needs_review">?</span>needs review</span>
+<span><span class="sw v-num">2</span>points</span><span><span class="sw s-outdated"><a class="v-f">✗</a></span>outdated</span>
+<span><span class="sw v-n">?</span>undecided</span><span><span class="sw s-manual">✓</span>manual</span>
+<span><span class="sw v-n">·</span>in progress</span><span><span class="sw s-manual_outdated"><a class="v-t">✓</a></span>manual, outdated</span>
+<h3>variant</h3><span></span>
+<span><span class="sw dim">a</span>resolved</span><span><span class="sw v-f">?</span>open</span>
+</div>
+</details>
 {% endblock %}
 {% block body %}
+<div id="grid-wrap">
 <table id="grid">
 <thead><tr>
 <th data-sort="text">id</th><th data-sort="text">name</th>
@@ -41,4 +56,5 @@
 <td></td>
 </tr></tfoot>
 </table>
+</div>
 {% endblock %}

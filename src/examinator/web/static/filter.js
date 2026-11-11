@@ -137,11 +137,17 @@
     try { sessionStorage.setItem('order', JSON.stringify(shown)); } catch (e) { /* private mode */ }
   }
 
-  document.getElementById('fx-clear').addEventListener('click', () => {
+  Actions.register('clear-filter', {available: () => !!data, run: () => {
     sel = {};
     for (const t of texts) t.input.value = '';
     changed();
-  });
+  }});
+  // The first search box in view: a text facet, or a long list's "find".
+  Actions.register('search', {run: () => {
+    const boxes = [...host.querySelectorAll('input[type=search]')].filter(i => i.offsetParent);
+    const top = boxes.find(i => i.getBoundingClientRect().bottom > 40) || boxes[0];
+    if (top) top.focus(); else flash("no search here: open a question");
+  }});
 
   (async () => {
     const r = await request('/focus/values');

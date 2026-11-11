@@ -21,13 +21,13 @@
 
   function stale() { token = null; start.disabled = true; }
   form.addEventListener('input', stale);
-  document.getElementById('q-toggle').addEventListener('click', () => {
+  Actions.register('toggle-questions', {run: () => {
     const boxes = [...form.querySelectorAll('[name=question]')], on = boxes.some(b => !b.checked);
     boxes.forEach(b => { b.checked = on; });
     stale();
-  });
+  }});
 
-  document.getElementById('preview').addEventListener('click', async () => {
+  Actions.register('run-preview', {run: async () => {
     msg.textContent = '';
     const r = await request('/runs/preview', {
       submissions: form.scope.value === 'grid' ? order : null,
@@ -51,16 +51,15 @@
     }
     document.getElementById('plan').hidden = false;
     start.disabled = r.body.counts.run === 0;
-  });
+  }});
 
-  start.addEventListener('click', async () => {
-    if (!token) return;
+  Actions.register('run-start', {available: () => !!token && !start.disabled, run: async () => {
     const r = await request('/runs/start', {plan: token, parallel: Number(form.parallel.value), reasoning: flag('reasoning')});
     if (!r.ok) { msg.textContent = r.body.error || "failed"; stale(); return; }
     stale();
     poll();
-  });
-  stop.addEventListener('click', () => request('/runs/stop', {}));
+  }});
+  Actions.register('run-stop', {available: () => !stop.disabled, run: () => request('/runs/stop', {})});
 
   async function poll() {
     clearTimeout(timer);

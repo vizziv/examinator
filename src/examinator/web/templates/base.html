@@ -6,8 +6,10 @@
 <meta name="token" content="{{ token }}">
 <meta name="root" content="{{ root }}">
 <title>{% block title %}{{ exam.title }}{% endblock %}</title>
+<script src="{{ root }}/static/theme.js"></script>
 <link rel="stylesheet" href="{{ root }}/static/app.css">
 <script src="{{ root }}/static/common.js" defer></script>
+<script src="{{ root }}/static/actions.js" defer></script>
 <script src="{{ root }}/static/focus.js" defer></script>
 {% block head %}{% endblock %}
 </head>
@@ -18,10 +20,10 @@
 <span class="grow"></span>
 <span id="flash" role="status"></span>
 {% if not model %}<span class="tag warn">no model</span>{% endif %}
-<a href="{{ root }}/filter" title="the focused set: filter by grade, state, answers…">Filter</a>
-<a href="{{ root }}/runs">Runs</a>
-<a href="{{ root }}/exam" title="exam data: regions, keys, prompts">Exam</a>
-<a href="{{ root }}/settings">Settings</a>
+<a class="nav" href="{{ root }}/filter" title="the focused set: filter by grade, state, answers…"{% if nav == 'filter' %} aria-current="page"{% endif %}>Filter</a>
+<a class="nav" href="{{ root }}/runs"{% if nav == 'runs' %} aria-current="page"{% endif %}>Runs</a>
+<a class="nav" href="{{ root }}/exam" title="exam data: regions, keys, prompts"{% if nav == 'exam' %} aria-current="page"{% endif %}>Exam</a>
+<a class="nav" href="{{ root }}/settings"{% if nav == 'settings' %} aria-current="page"{% endif %}>Settings</a>
 </nav>
 {% block body %}{% endblock %}
 </body>

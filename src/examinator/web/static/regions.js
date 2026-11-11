@@ -133,27 +133,26 @@
     document.dispatchEvent(new CustomEvent('entry-saved', {detail: res.body}));
   }
 
-  on.addEventListener('click', () => {
+  Actions.register('regions', {run: () => {
     const editing = scan.classList.toggle('editing');
     on.setAttribute('aria-pressed', editing);
     $('rg-panel').hidden = !editing;
     if (editing && !sel) select(pick.value); else draw();
-  });
+  }});
   pick.addEventListener('change', () => select(pick.value, true));
   nums.forEach((n, i) => n.addEventListener('input', () => {
     if (!sel || n.value === '' || !sel.draft) return;
     sel.draft[i] = i === 0 ? Math.max(1, Math.round(Number(n.value))) : clamp(Number(n.value));
     draw();
   }));
-  $('rg-save').addEventListener('click', () => save(false));
-  $('rg-clear').addEventListener('click', () => save(true));
-  $('rg-undo').addEventListener('click', () => {
-    if (!sel) return;
+  Actions.register('region-save', {available: () => !!sel, run: () => save(false)});
+  Actions.register('region-revert', {available: () => !!sel, run: () => save(true)});
+  Actions.register('region-undo', {available: () => !!sel, run: () => {
     sel.draft = sel.region && [...sel.region];
     say('');
     inputs();
     draw();
-  });
+  }});
 
   // --- dragging: the body moves the region, a corner handle resizes it ---
   scan.addEventListener('pointerdown', e => {

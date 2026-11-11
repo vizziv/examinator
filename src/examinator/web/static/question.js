@@ -1,5 +1,5 @@
 'use strict';
-// The question page: drafts, actions, live refresh, keyboard, and the scan window.
+// The question page: drafts, actions (buttons and keys, see actions.js), live refresh, and the scan window.
 (() => {
   const main = document.getElementById('question');
   const sub = main.dataset.sub, q = main.dataset.q;
@@ -23,6 +23,11 @@
       next = step > 0 ? side[0] : side[side.length - 1];
     }
     if (next !== undefined) location.href = `${ROOT}/s/${encodeURIComponent(next)}/${encodeURIComponent(q)}`;
+  }
+  function canGo(step) {
+    if (at >= 0) return order[at + step] !== undefined;
+    const rank = new Map(ids.map((s, i) => [s, i])), me = rank.get(sub);
+    return order.some(s => (step > 0 ? rank.get(s) > me : rank.get(s) < me));
   }
 
   // --- the focus: does this submission still match it; "like this" sets one ---
@@ -108,6 +113,7 @@
       old.replaceWith(node);
       drawCrops(node);
       window.drawPlots(node);
+      Actions.hints(node);
     }
     for (const fresh of doc.querySelectorAll('form.draft')) {
       const old = $(fresh.id);
@@ -117,6 +123,7 @@
       old.replaceWith(node);
       node.dataset.orig = JSON.stringify(read(node));
       drawCrops(node);
+      Actions.hints(node);
     }
   }
 
@@ -157,7 +164,6 @@
   }
 
   const parseEd = () => $('ed-parse');
-  const editorFor = el => el.closest('form.draft') || parseEd();
   const decide = (el, extra) => {
     const box = el.closest('.decide');
     // What the decision is made against: the revisions on screen, not the newest ones.
@@ -170,54 +176,69 @@
   };
   const variantRev = () => revOf($('variant'));
 
+  // --- actions: buttons (data-action) and keys trigger the same ones ---
+  const entryOf = ctx => ctx.target?.closest?.('form.entry');
+  const editorOf = ctx => (ctx.el || ctx.target)?.closest?.('form.draft') || parseEd();
+  const editable = ed => !!ed && !!ed.querySelector('input:not([readonly]), textarea:not([readonly])');
+  const link = name => document.querySelector(`a[data-action="${name}"]`);
+  const follow = name => ({available: () => !!link(name), run: () => link(name).click()});
   const actions = {
-    prev: () => go(-1),
-    next: () => go(1),
-    save: el => save(editorFor(el), false),
-    verify: el => save(editorFor(el), true),
-    unverify: el => act('verify', {kind: el.dataset.kind, rev: revOf(el), verified: false}),
-    discard: el => {
+    'prev-student': {available: () => canGo(-1), run: () => go(-1)},
+    'next-student': {available: () => canGo(1), run: () => go(1)},
+    'prev-question': follow('prev-question'),
+    'next-question': follow('next-question'),
+    scan: follow('scan'),
+    // Cmd+S and Cmd+Enter in an exam-data entry (the key panel) save that entry.
+    save: {available: ctx => !!entryOf(ctx) || editable(editorOf(ctx)),
+           run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx)) : save(editorOf(ctx), false))},
+    verify: {available: ctx => !!entryOf(ctx) || editable(editorOf(ctx)),
+             run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx)) : save(editorOf(ctx), true))},
+    edit: {available: () => editable(parseEd()),
+           run: () => parseEd().querySelector('input:not([readonly]), textarea:not([readonly])').focus()},
+    unverify: {run: ({el}) => act('verify', {kind: el.dataset.kind, rev: revOf(el), verified: false})},
+    discard: {run: ({el}) => {
       const ed = el.closest('form.draft');
       try { sessionStorage.removeItem(draftKey(ed)); } catch (e) { /* private mode */ }
       ed.dataset.orig = JSON.stringify(read(ed));
       location.reload();
-    },
-    decide: el => decide(el, {value: el.dataset.value === 'true'}),
-    'decide-number': el => {
+    }},
+    decide: {run: ({el}) => decide(el, {value: el.dataset.value === 'true'})},
+    'decide-number': {run: ({el}) => {
       const input = el.closest('.decide').querySelector('input');
       if (input.value.trim() === '') return input.focus();
       return decide(el, {value: Number(input.value)});
-    },
-    'decide-blank': el => decide(el, {blank: true}),
-    undecide: el => {
+    }},
+    'decide-blank': {run: ({el}) => decide(el, {blank: true})},
+    undecide: {run: ({el}) => {
       const box = el.closest('.decide');
       return act('undecide', {part: box.dataset.part, rev: revOf(box)});
-    },
-    'variant-choose': () => {
+    }},
+    'variant-choose': {run: () => {
       const v = $('variant-pick').value;
       return v ? act('variant', {variant: v, rev: variantRev()}) : $('variant-pick').focus();
-    },
-    'variant-clear': () => act('variant', {variant: null, rev: variantRev()}),
-    'variant-verify': () => act('verify', {kind: 'variant', rev: variantRev()}),
-    cue: el => {
+    }},
+    'variant-clear': {run: () => act('variant', {variant: null, rev: variantRev()})},
+    'variant-verify': {run: () => act('verify', {kind: 'variant', rev: variantRev()})},
+    cue: {run: ({el}) => {
       const input = el.closest('.cue').querySelector('input');
       return act('cue', {cue: input.dataset.cue, reading: input.value, rev: variantRev()});
-    },
-    run: el => (el.dataset.confirm && !confirm(`Replace ${el.dataset.confirm}?`)) ? null : act('run', {stage: el.dataset.stage, onward: !!el.dataset.onward,
-                           reasoning: !!el.dataset.model && !!$('run-reasoning')?.checked,
-                           params: $('run-params').value}),
-    pages: async () => { if (await act('pages', {pages: $('pg-list').value, note: $('pg-note').value})) location.reload(); },
-    layout: async () => {
+    }},
+    run: {run: ({el}) => ((el.dataset.confirm && !confirm(`Replace ${el.dataset.confirm}?`)) ? null
+      : act('run', {stage: el.dataset.stage, onward: !!el.dataset.onward,
+                    reasoning: !!el.dataset.model && !!$('run-reasoning')?.checked, params: $('run-params').value}))},
+    pages: {run: async () => { if (await act('pages', {pages: $('pg-list').value, note: $('pg-note').value})) location.reload(); }},
+    layout: {run: async () => {
       const r = await request(`/s/${encodeURIComponent(sub)}/layout`,
                               {cover_pages: $('lo-cover').value, scan_window: $('lo-window').value});
       if (r.ok) location.reload(); else flash(r.body.error || "failed");
-    },
-    restore: el => act('restore', {rev: Number(el.dataset.rev), expect: revOf(parseEd())}),
+    }},
+    restore: {run: ({el}) => act('restore', {rev: Number(el.dataset.rev), expect: revOf(parseEd())})},
   };
-  document.addEventListener('click', e => {
-    const el = e.target.closest('[data-act]');
-    if (el && actions[el.dataset.act]) { e.preventDefault(); actions[el.dataset.act](el); }
-  });
+  for (const [name, spec] of Object.entries(actions)) Actions.register(name, spec);
+  for (const [name, step] of [['prev-student', -1], ['next-student', 1]]) {
+    const b = document.querySelector(`button[data-action="${name}"]`);
+    if (b) b.disabled = !canGo(step);
+  }
   document.addEventListener('submit', e => e.preventDefault());
 
   // --- an exam-data edit (key panel, regions): this submission is rechecked first ---
@@ -241,25 +262,4 @@
     sub, q, name: main.dataset.name, pages: JSON.parse(main.dataset.pages), count: Number(main.dataset.count)});
   channel.addEventListener('message', e => { if (e.data && e.data.hello) announce(); });
   announce();
-
-  // --- keyboard ---
-  document.addEventListener('keydown', e => {
-    const typing = e.target.matches('input, textarea, select');
-    const mod = e.ctrlKey || e.metaKey;
-    const done = fn => { e.preventDefault(); fn(); };
-    if (e.altKey && !mod && e.code === 'KeyJ') return done(() => go(1));
-    if (e.altKey && !mod && e.code === 'KeyK') return done(() => go(-1));
-    if (mod && e.key === 'Enter') return done(() => save(editorFor(e.target), true));
-    if (mod && e.key.toLowerCase() === 's') return done(() => save(editorFor(e.target), false));
-    if (e.key === 'Escape' && typing) return e.target.blur();
-    if (typing || mod || e.altKey) return;
-    const keys = {
-      j: () => go(1), ']': () => go(1), k: () => go(-1), '[': () => go(-1),
-      h: () => $('prev-q')?.click(), l: () => $('next-q')?.click(),
-      v: () => save(parseEd(), true), s: () => save(parseEd(), false),
-      e: () => parseEd()?.querySelector('input:not([readonly]), textarea:not([readonly])')?.focus(),
-      p: () => $('scan-link').click(), u: () => $('home').click(),
-    };
-    if (keys[e.key]) done(keys[e.key]);
-  });
 })();
