@@ -25,19 +25,31 @@ const Actions = (() => {
     ['verify', "verify (saves edits)"], ['edit', "edit: first field"], ['save', "save"],
     ['grid', "grid"], ['scan', "scan window"], ['regions', "regions on/off"],
     ['search', "search"], ['leave-field', "leave field"], ['run-preview', "runs: preview"],
+    // The scans page has its own group: the same keys mean "earlier / later / confirm" there.
+    ['split-confirm', "scans: confirm first page, next", 'scans'], ['split-earlier', "scans: a page earlier", 'scans'],
+    ['split-later', "scans: a page later", 'scans'], ['split-back', "scans: previous boundary", 'scans'],
+    ['split-next', "scans: next boundary", 'scans'], ['split-drop', "scans: drop this page", 'scans'],
+    ['split-turn', "scans: turn this exam 180°", 'scans'], ['split-turn-source', "scans: turn whole scan 90°", 'scans'],
   ];
   const LEFT = {
     'prev-student': ['a', 'ArrowLeft'], 'next-student': ['d', 'ArrowRight'],
     'prev-question': ['w'], 'next-question': ['s'],
     verify: ['v', 'Mod+Enter'], edit: ['e'], save: ['Mod+s'],
     grid: ['q'], scan: ['f'], search: ['/'], 'leave-field': ['Escape'],
+    'split-confirm': ['v'], 'split-earlier': ['a', 'ArrowLeft'], 'split-later': ['d', 'ArrowRight'],
+    'split-back': ['w'], 'split-next': ['s'], 'split-drop': ['x'],
+    'split-turn': ['r'], 'split-turn-source': ['Shift+r'],
   };
   // The same shapes for the right hand: students and questions on I J K L as on W A S D;
   // grid on the outer top key (P for Q), edit on the inner top key (U for E), scan on the
-  // inner stretch (H for F), verify below the index finger (N for V).
-  const MIRROR = {a: 'j', d: 'l', w: 'i', s: 'k', q: 'p', e: 'u', f: 'h', v: 'n'};
+  // inner stretch (H for F), verify below the index finger (N for V); on the scans page
+  // drop is M (for X) and turning is U (for R).
+  const MIRROR = {a: 'j', d: 'l', w: 'i', s: 'k', q: 'p', e: 'u', f: 'h', v: 'n', x: 'm', r: 'u'};
+  const mirror = c => MIRROR[c] || (c.startsWith('Shift+') && MIRROR[c.slice(6)] ? 'Shift+' + MIRROR[c.slice(6)] : c);
   const RIGHT = Object.fromEntries(Object.entries(LEFT).map(
-    ([name, combos]) => [name, combos.map(c => MIRROR[c] || c)]));
+    ([name, combos]) => [name, combos.map(mirror)]));
+  // Actions in different groups never share a page, so they may share keys.
+  const group = name => (CATALOG.find(c => c[0] === name) || [])[2] || '';
   const PRESETS = {left: LEFT, right: RIGHT};
 
   const registry = new Map();
@@ -59,19 +71,27 @@ const Actions = (() => {
     const own = s.custom[name];
     return Array.isArray(own) ? own.map(String) : (PRESETS[s.preset][name] || []);
   }
+  // combo -> the actions bound to it (at most one per group)
   function keymap(s) {
     s = s || settings();
     const map = {};
     for (const name of new Set([...Object.keys(PRESETS[s.preset]), ...Object.keys(s.custom)])) {
-      for (const c of bindings(name, s)) if (!(c in map)) map[c] = name;
+      for (const c of bindings(name, s)) {
+        const names = map[c] || (map[c] = []);
+        if (!names.some(n => group(n) === group(name))) names.push(name);
+      }
     }
     return map;
   }
-  // Bind one combo to an action, taking it away from whatever had it.
+  // Bind one combo to an action, taking it away from whatever had it in the same group.
   function rebind(name, combo) {
     const s = settings();
-    for (const [other, act] of Object.entries(keymap(s))) {
-      if (other === combo && act !== name) s.custom[act] = bindings(act, s).filter(c => c !== combo);
+    for (const [other, acts] of Object.entries(keymap(s))) {
+      for (const act of acts) {
+        if (other === combo && act !== name && group(act) === group(name)) {
+          s.custom[act] = bindings(act, s).filter(c => c !== combo);
+        }
+      }
     }
     s.custom[name] = combo ? [combo] : [];
     saveSettings(s);
@@ -120,14 +140,14 @@ const Actions = (() => {
     if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
     const combo = comboOf(e);
     if (!combo) return;
-    const s = settings(), name = keymap(s)[combo];
-    if (!name || !registry.has(name)) return;
+    const s = settings();
+    const ctx = {source: 'key', el: null, event: e, target: e.target};
+    const name = (keymap(s)[combo] || []).find(n => registry.has(n) && (!registry.get(n).available || registry.get(n).available(ctx)));
+    if (!name) return;
     if (isSingle(combo) && combo !== 'Escape') {
       if (!s.single || e.repeat || typing(e.target)) return;
     }
-    const ctx = {source: 'key', el: null, event: e, target: e.target};
     const a = registry.get(name);
-    if (a.available && !a.available(ctx)) return;
     e.preventDefault();
     a.run(ctx);
   });

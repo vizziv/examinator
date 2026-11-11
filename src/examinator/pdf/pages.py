@@ -2,10 +2,11 @@
 
 An upright sheet is copied as it is (PDFium imports the page; its embedded scan
 image is not touched). A sheet that must be turned or mirrored is baked: its
-image (the embedded scan at native resolution, or a rasterization when the
-page is not a plain scan) is transposed and written as a new page holding
-exactly one full-page JPEG, sized to match. Either way the result is a plain
-scan, so the renderer's fast path applies to every page written here.
+image (the renderer's `scan_image`, at native resolution, or a rasterization
+when the page is not a plain scan) is transposed and written as a new page
+holding exactly one full-page JPEG (quality 95), the page shaped like the image.
+Either way the result is a plain scan, so the renderer's fast path applies to
+every page written here, and nothing after intake needs to know about turning.
 """
 from __future__ import annotations
 
@@ -76,6 +77,9 @@ def write(src: str | Path, sheets: Sequence[tuple[int, Orient]], out: str | Path
                     image = image.convert('RGB')
                 if orient.swaps:
                     w, h = h, w
+                # The page takes the image's shape (a scan may sit on a page of another size):
+                # the same width, the height that keeps the pixels square.
+                h = w * image.height / image.width
                 buf = io.BytesIO()
                 image.save(buf, 'JPEG', quality=BAKE_QUALITY)
                 new = dst.new_page(w, h, index=pos)

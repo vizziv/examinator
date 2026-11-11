@@ -1,4 +1,4 @@
-"""Command line: `examinator synth | selftest | run | status | serve | compare`."""
+"""Command line: `examinator synth | selftest | intake | run | status | serve | compare`."""
 from __future__ import annotations
 
 import argparse
@@ -76,6 +76,42 @@ def compare_models(args, exam: Exam, ws: Workspace) -> int:
     return 0
 
 
+def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
+    from .core import intake, split
+    if args.roster:
+        print(f"roster: {intake.set_roster(ws, Path(args.roster).read_text(encoding='utf-8'))} people")
+    added = []
+    for name in args.pdf:
+        src, new = intake.add_source(ws, Path(name))
+        print(f"{'added' if new else 'already here'}: {name} -> {src.id} ({src.pages} pages)")
+        added.append(src)
+    model = None if args.no_check else open_model(args, ws.root)
+    if not args.no_check and model is None:
+        print("model unavailable: proposals are every N pages, unchecked", file=sys.stderr)
+    targets = added or ws.store.sources()
+    for src in targets:
+        art = intake.propose(ws, src.id, model=model, length=args.length)
+        doubts = split.doubts(art.body, src.pages)
+        parts = split.pages(art.body, src.pages)
+        flagged = [(k, p, d) for k, (p, d) in enumerate(zip(parts, doubts)) if d]
+        print(f"{src.id} {src.name}: {len(parts)} submissions of {art.body['length']} pages"
+              f"{', checked' if art.body['checked'] else ''}; {len(flagged)} to look at")
+        for k, p, d in flagged:
+            span = f"{p[0] + 1}-{p[-1] + 1}" if p else "-"
+            print(f"  #{k + 1} pages {span}: {', '.join(split.DOUBTS[x] for x in d)}")
+        if args.accept:
+            try:
+                r = intake.accept(ws, src.id, author=getpass.getuser())
+            except intake.Busy as e:
+                print(f"  not accepted: {e}", file=sys.stderr)
+                continue
+            print(f"  accepted: {len(r['new'])} new, {len(r['rewritten'])} rewritten, "
+                  f"{len(r['removed'])} removed, {r['unchanged']} unchanged")
+    if not args.accept:
+        print(f"review and accept: examinator serve {args.exam} -w {args.workspace}   (Scans page)")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog='examinator')
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -91,6 +127,16 @@ def main(argv=None) -> int:
     p = sub.add_parser('synth', help="create a synthetic workspace from the exam's fixtures")
     p.add_argument('exam')
     p.add_argument('workspace')
+    p.add_argument('--stacks', action='store_true',
+                   help="instead: synthetic stacks of scans to feed to `intake` (WORKSPACE/incoming/)")
+
+    p = sub.add_parser('intake', help="add scanned PDFs holding many submissions, and split them")
+    common(p)
+    p.add_argument('pdf', nargs='*', help="scanned PDFs to add (kept unchanged under WORKSPACE/sources/)")
+    p.add_argument('--roster', help="a CSV of students: Name (or First/Last Name), Email, Student ID")
+    p.add_argument('--length', type=int, help="sheets per submission (default: cover pages + exam pages)")
+    p.add_argument('--no-check', action='store_true', help="do not read landmarks with the model")
+    p.add_argument('--accept', action='store_true', help="write the submissions into pdfs/ as proposed")
 
     p = sub.add_parser('selftest', help="run the exam's fixtures end to end with the scripted model")
     p.add_argument('exam')
@@ -136,6 +182,12 @@ def main(argv=None) -> int:
 
     if args.cmd == 'synth':
         from . import synth
+        if args.stacks:
+            paths = synth.stacks(exam, args.workspace)
+            print("synthetic stacks:", *paths, sep="\n  ")
+            print(f"next: examinator intake {args.exam} -w {args.workspace} --fake "
+                  f"--roster {Path(args.workspace) / 'roster.csv'} {' '.join(map(str, paths))}")
+            return 0
         root = synth.generate(exam, args.workspace, synth.load_cases(exam))
         print(f"synthetic workspace: {root}")
         return 0
@@ -150,7 +202,12 @@ def main(argv=None) -> int:
         print("ok" if not problems else f"{len(problems)} mismatches")
         return 1 if problems else 0
 
-    ws = Workspace(args.workspace, exam)
+    ws = Workspace(args.workspace, exam, create=args.cmd == 'intake')
+    if args.cmd == 'intake':
+        try:
+            return intake_cmd(args, exam, ws)
+        finally:
+            ws.close()
     ws.sync_roster()
     for s in overrides.refresh(exam, ws.store):
         print(f"override not applied: {s.path}: {s.reason}", file=sys.stderr)

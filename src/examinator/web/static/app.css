@@ -452,3 +452,41 @@ details.fx-q > summary .tag { font-weight: 600; color: var(--accent2-text); back
 #focus-sum { max-width: 40em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #focus-sum.on { color: var(--accent2-text); background: var(--accent2-soft); padding: 1px 7px; border-radius: 9px; font-weight: 600; }
 body.scanwin #pages > p { margin: 0; padding: 8px 10px; }
+
+/* --- scans: intake --- */
+label.btn { display: inline-block; font: inherit; border: 1px solid var(--line-strong); border-radius: 4px; padding: 2px 8px;
+  background: var(--panel); cursor: pointer; line-height: 1.35; white-space: nowrap; }
+label.btn:hover { background: var(--accent-soft); border-color: var(--accent-line); }
+label.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+#scans .sep { width: 1px; align-self: stretch; margin: 2px 2px; background: var(--line); }
+#srcbar { position: sticky; top: calc(var(--head) + 2px); z-index: 4; }
+#s-length { width: 4.5em; }
+#scans #msg { color: var(--muted); }
+#s-sum { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+#st-pages { display: flex; gap: 8px; align-items: flex-start; justify-content: center; margin: 6px 0; }
+#st-pages figure { margin: 0; text-align: center; }
+#st-pages img { display: block; border: 1px solid var(--line-strong); background: #fff; height: auto; }
+#st-pages .ctx img { height: calc((100vh - var(--head) - 190px) * .55); max-width: 22vw; width: auto; opacity: .8; }
+#st-pages .main img { height: calc(100vh - var(--head) - 190px); min-height: 260px; max-width: 52vw; width: auto; border: 2px solid var(--accent2); }
+#st-pages figure[hidden] { display: block !important; visibility: hidden; }
+#st-pages figcaption { display: flex; gap: 4px; justify-content: center; align-items: baseline; font-size: 12px; color: var(--muted); padding-top: 2px; }
+#st-prev.warn { color: var(--bad); }
+.srow { border-top: 1px solid var(--line); padding: 4px 0; }
+.srow.look { background: color-mix(in oklch, var(--bad) 4%, var(--panel)); }
+.rhead { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.rhead code { font-size: 12px; }
+.rhead input.who { width: 18em; }
+.rhead input.who.saved { border-color: var(--good); }
+.sheets { display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start; margin-top: 3px; }
+.sheets .crop { align-self: center; margin-right: 6px; }
+figure.sh { position: relative; margin: 0; line-height: 0; }
+figure.sh img { display: block; border: 1px solid var(--line); background: #fff; width: 64px; height: auto; }
+figure.sh.first img { width: 120px; }
+.srow .crop { margin: 2px 0 0; }
+figure.sh figcaption { line-height: 1.2; font-size: 11px; color: var(--muted); text-align: center; }
+figure.sh .acts { position: absolute; top: 2px; right: 2px; display: none; gap: 2px; line-height: 1.2; }
+figure.sh:hover .acts, figure.sh:focus-within .acts { display: inline-flex; }
+figure.sh .acts button { background: var(--panel); border: 1px solid var(--line-strong); padding: 0 4px; font-size: 12px; }
+:root[data-theme=dark][data-invert-images=on] :is(#st-pages img, figure.sh img) {
+  filter: url('#image-gamma') invert(1) hue-rotate(180deg) brightness(.9) contrast(.85);
+}

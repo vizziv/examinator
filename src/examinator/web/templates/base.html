@@ -25,6 +25,7 @@
 <span class="grow"></span>
 <span id="flash" role="status"></span>
 {% if not model %}<span class="tag warn">no model</span>{% endif %}
+<a class="nav" href="{{ root }}/scans" title="scans in: split stacks into submissions"{% if nav == 'scans' %} aria-current="page"{% endif %}>Scans</a>
 <a class="nav" href="{{ root }}/filter" title="the focused set: filter by grade, state, answers…"{% if nav == 'filter' %} aria-current="page"{% endif %}>Filter</a>
 <a class="nav" href="{{ root }}/runs"{% if nav == 'runs' %} aria-current="page"{% endif %}>Runs</a>
 <a class="nav" href="{{ root }}/exam" title="exam data: regions, keys, prompts"{% if nav == 'exam' %} aria-current="page"{% endif %}>Exam</a>
