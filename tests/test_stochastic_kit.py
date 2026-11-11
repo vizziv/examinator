@@ -14,7 +14,6 @@ from examinator_kits.stochastic.fit import Fit
 ROOT = Path(__file__).resolve().parents[1]
 RANDOM = {**primitives.UNIF, 'coin': primitives.COIN, 'die': primitives.die()}
 LANGUAGE = pseudocode.WITH_COLLECTIONS.with_builtins(**RANDOM)
-VECTORS = dataclasses.replace(pseudocode.WITH_COLLECTIONS, vectors=True).with_builtins(**RANDOM)
 
 
 def sample(source, n=1, language=LANGUAGE, **kw):
@@ -61,15 +60,12 @@ def test_draw_policy():
     assert stop.value.outcome == 'incorrect' and "'g' is not defined" in stop.value.note
     assert isinstance(stop.value.error, pseudocode.Failure)
     with pytest.raises(checks.Stop) as stop:
-        checks.draw(prog, 'f', (1,), n=1, seconds=5, undecided=())
-    assert stop.value.outcome == 'incorrect'
-    with pytest.raises(checks.Stop) as stop:
-        checks.draw(prog, 'f', (1,), n=1, seconds=5, undecided=('undefined',))     # an exam's own policy
+        checks.draw(prog, 'f', (1,), n=1, seconds=5, undecided=lambda e: e.kind == 'undefined')  # an exam's own
     assert stop.value.outcome is None
     loop = pseudocode.parse("def f():\n    while True:\n        pass\n", LANGUAGE)
     with pytest.raises(checks.Stop) as stop:
         checks.draw(loop, 'f', n=1, max_steps=1000)
-    assert stop.value.outcome == 'incorrect' and isinstance(stop.value.error, pseudocode.Budget)
+    assert stop.value.outcome is None and isinstance(stop.value.error, pseudocode.Budget)
     with pytest.raises(checks.Stop) as stop:
         checks.draw(loop, 'f', n=1, max_steps=None, seconds=0.05)             # wall clock: undecided
     assert stop.value.outcome is None and stop.value.error.kind == 'time'
@@ -77,12 +73,7 @@ def test_draw_policy():
     assert checks.draw(unif, 'f', n=4, seed=7) == unif.sample('f', n=4, seed=7)     # seeded as `sample` is
 
 
-def test_vector_arithmetic_and_accept_reject():
-    for body, expected in (("[1, 2] + [1, 2, 3]", True), ("[1, 2] + 1", True), ("1 / [1, 2]", True),
-                           ("-[None]", True), ("None + 1", False), ("log(-1)", False)):
-        with pytest.raises(pseudocode.Failure) as e:
-            sample(f"def f():\n    return {body}\n", language=VECTORS)
-        assert checks.vector_arithmetic(e.value) is expected, body
+def test_accept_reject():
     prog = pseudocode.parse("def f():\n    return g()\ndef g():\n    while coin(0.5):\n        pass\n    return 1\n"
                             "def h():\n    return h() if coin(0.5) else 1\n", LANGUAGE)
     assert checks.accept_reject(prog, 'f') == "while loop" and checks.accept_reject(prog, 'h') == "recursion"

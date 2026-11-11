@@ -435,10 +435,10 @@ def f():
     # Failures are reported at the line of the source as written.
     stop = stopped("def f():\n    # a comment\n\n    x = [1, 2]\n    return log(x[0] - 1)\n")
     assert stop.outcome == 'incorrect' and stop.note.startswith("line 5: ")
-    # Point arithmetic the checker cannot do proves nothing about the student: undecided.
+    # Point arithmetic that fails is a failure like any other: incorrect.
     for body in ("x = [1, 2]\n    return x + 1", "return [1, 2] + [1, 2, 3]"):
         stop = stopped(f"def f():\n    {body}\n")
-        assert stop.outcome is None and stop.error.kind == 'type'
+        assert stop.outcome == 'incorrect' and stop.error.kind == 'type'
     stop = stopped("def f():\n\n    return polar(1, 2)\n")         # a helper the exam does not provide: incorrect
     assert stop.outcome == 'incorrect' and stop.note == "line 3: polar(1, 2): function 'polar' is not defined"
     assert stopped("def f():\n    return None + 1\n").outcome == 'incorrect'     # not point arithmetic
@@ -515,7 +515,7 @@ def test_question_11(exam, pkg):
     box_muller = "def standard_normal():\n    return sqrt(-2 * log(1 - unif())) * cos(2 * pi * unif())\n"
     assert q11(exam, box_muller) == ('correct', "")
     assert q11(exam, "def standard_normal():\n    return [unif(), unif()]\n")[0] == 'incorrect'
-    assert q11(exam, "def standard_normal():\n    while True:\n        X = unif()\n")[0] == 'incorrect'    # never returns
+    assert q11(exam, "def standard_normal():\n    while True:\n        X = unif()\n")[0] is None    # never returns
     assert q11(exam, f.Q11_BLANK) == ('blank', "")
 
 

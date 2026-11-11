@@ -15,21 +15,19 @@
         part.add("f(2)", checks.fit_cdf(xs, cdf, lo=0, title="f(2)"), xs)
         return part.combine()
 
-What a run-time failure proves is policy: by default a program that does not
-run properly is incorrect (a grader reviews every proposed grade and may
-override). `draw` maps a `Failure` or `Budget` to undecided when its kind is in
-`undecided` (default `UNDECIDED`: 'unsupported', a limit of the checker or of a
-primitive, and 'time', a wall-clock deadline that depends on the machine), or
-when `undecided(error)` is true; any other kind ('undefined', 'arity',
-'domain', 'type', 'other'; 'steps', 'depth', 'size') is incorrect. A
-`Limitation` or an `Unsupported` at run time is always undecided, and so is
-source outside the language (`check_source`).
+What a stopped run proposes (a grader reviews every proposed grade and may override):
+1. It ran and failed: incorrect. Every `Failure`, whatever its kind (an
+   'unsupported' one from a primitive included), and a `Limitation`.
+2. It ran out of budget: undecided. Every `Budget` ('steps', 'depth', 'size',
+   'time', or an exam's own): a grader may want to run it longer.
+3. It could not be run: undecided. Source outside the language (`Unsupported`
+   from `parse` in `check_source`, or from the interpreter while running).
+An exam may pass `draw(undecided=...)`, a predicate over the error, instead.
 """
 from __future__ import annotations
 
-import re
 import time
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -41,7 +39,10 @@ from examinator.std.blocks import Code, Details, Note, Table
 from . import fit as fits
 from .fit import Fit
 
-UNDECIDED = ('unsupported', 'time')     # default: a limit of the checker, a wall-clock deadline
+
+def undecided_by_default(error: Exception) -> bool:
+    """Out of budget, or not runnable: undecided. Any other failure: incorrect."""
+    return isinstance(error, (pseudocode.Budget, pseudocode.Unsupported))
 
 
 class Stop(Exception):
@@ -56,30 +57,17 @@ class Stop(Exception):
 def draw(program: pseudocode.Program, entry: str, args=(), *, n: int, deadline: float | None = None,
          seconds: float | None = None, seed: int = 0, primitives=None, constants=None,
          max_steps: int | None = 2_000_000, rng=None,
-         undecided: Collection[str] | Callable[[pseudocode.Failure | pseudocode.Budget], bool] = UNDECIDED,
-         ) -> list:
+         undecided: Callable[[Exception], bool] = undecided_by_default) -> list:
     """`n` results of `entry(*args)`, or `Stop`. `deadline` is a `time.monotonic()`
     value; `seconds` sets one from now. `rng` is passed to `Program.sample`.
-    `undecided` decides which failures and budgets are undecided (module docstring)."""
+    `undecided(error)` says whether a stop is undecided (module docstring)."""
     if seconds is not None:
         deadline = time.monotonic() + seconds
     try:
         return program.sample(entry, args, n=n, seed=seed, deadline=deadline, max_steps=max_steps,
                               primitives=primitives, constants=constants, rng=rng)
-    except (pseudocode.Unsupported, pseudocode.Limitation) as e:
-        raise Stop(None, str(e), e) from None
-    except (pseudocode.Failure, pseudocode.Budget) as e:
-        open_ = undecided(e) if callable(undecided) else e.kind in undecided
-        raise Stop(None if open_ else 'incorrect', str(e), e) from None
-
-
-_VECTOR_FAILURE = re.compile(r'vectors |cannot compute .*[\[(]')
-
-
-def vector_arithmetic(failure: pseudocode.Failure) -> bool:
-    """A type failure of arithmetic involving a list or tuple (with `vectors` on:
-    points of different sizes, a point plus a number, ...)."""
-    return failure.kind == 'type' and bool(_VECTOR_FAILURE.match(failure.detail))
+    except (pseudocode.Failure, pseudocode.Limitation, pseudocode.Budget, pseudocode.Unsupported) as e:
+        raise Stop(None if undecided(e) else 'incorrect', str(e), e) from None
 
 
 def accept_reject(program: pseudocode.Program, entry: str) -> str:

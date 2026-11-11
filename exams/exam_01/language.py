@@ -9,9 +9,7 @@
   counted exactly by the generator (`Draws`); a sampler that passes with a
   `while` loop or recursion goes to a person (`settle_direct`).
 
-A run-time failure is undecided for a limit of the checker or the time limit
-(the kit's default) and for point arithmetic the checker cannot do; any other
-failure is a mistake.
+Run-time failures and budgets follow the kit's default (`checks.draw`).
 """
 import dataclasses
 import math
@@ -58,11 +56,7 @@ POINTS = dataclasses.replace(pseudocode.WITH_COLLECTIONS, vectors=True).with_bui
                                 "radians about center"))
 
 
-def undecided(error: pseudocode.Failure | pseudocode.Budget) -> bool:
-    return error.kind in checks.UNDECIDED or checks.vector_arithmetic(error)
-
-
-draw = partial(checks.draw, seed=SEED, undecided=undecided)
+draw = partial(checks.draw, seed=SEED)
 
 
 class Draws:

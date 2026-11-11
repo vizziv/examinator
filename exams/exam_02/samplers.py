@@ -5,9 +5,7 @@
 - `die(n)` is uniform on {0, ..., n-1}; `rotate(point, angle, center)` is provided.
 - `^` is a power: replaced by `**` before running (as text, so line numbers hold).
 
-A run-time failure is undecided for a limit of the checker or the time limit
-(the kit's default) and for point arithmetic the checker cannot do; any other
-failure is a mistake.
+Run-time failures and budgets follow the kit's default (`checks.draw`).
 """
 import dataclasses
 import math
@@ -44,11 +42,7 @@ def powers(source: str) -> str:
     return source.replace('^', '**')
 
 
-def undecided(error: pseudocode.Failure | pseudocode.Budget) -> bool:
-    return error.kind in checks.UNDECIDED or checks.vector_arithmetic(error)
-
-
-draw = partial(checks.draw, seed=SEED, undecided=undecided)
+draw = partial(checks.draw, seed=SEED)
 
 
 def check(source: str, label: str, judge):

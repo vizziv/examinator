@@ -17,6 +17,7 @@ from examinator.core.evidence import EvidenceView, body_of
 from examinator.core.runner import Runner
 from examinator.core.workspace import Workspace
 from examinator.std import pseudocode
+from examinator_kits.stochastic import checks
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAM = ROOT / 'exams' / 'exam_01'
@@ -267,16 +268,16 @@ def f():
     q, last, quarter, half, scalar = out[0]
     assert q == [11.0, 64.5] and last == -8 and scalar == 12
     assert quarter == pytest.approx([0, 1]) and half == pytest.approx([0, 1])
-    # Point arithmetic the checker cannot do proves nothing; other failures are mistakes.
-    for source, undecided in [("def f():\n    return [1, 2] + [1, 2, 3]\n", True),
-                              ("def f():\n    return [1, 2] + 1\n", True),
-                              ("def f():\n    return 1 / [1, 2]\n", True),
-                              ("def f():\n    return rotate([1, 2, 3], 1, [0, 0])\n", True),
+    # Every run-time failure, point arithmetic and a primitive's limit included, is a mistake.
+    for source, undecided in [("def f():\n    return [1, 2] + [1, 2, 3]\n", False),
+                              ("def f():\n    return [1, 2] + 1\n", False),
+                              ("def f():\n    return 1 / [1, 2]\n", False),
+                              ("def f():\n    return rotate([1, 2, 3], 1, [0, 0])\n", False),
                               ("def f():\n    return None + 1\n", False),
                               ("def f():\n    p = [1, 2]\n    return p[2]\n", False)]:
         with pytest.raises(pseudocode.Failure) as e:
             run(pkg, source)
-        assert language.undecided(e.value) is undecided, source
+        assert checks.undecided_by_default(e.value) is undecided, source
     description = language.POINTS.description
     assert "Vectors:" in description and "`weighted_die(w)`" in description and "`rotate(" in description
     assert "from 1 to n" in description and "from 1 to n" in language.SCALAR.description
@@ -394,7 +395,6 @@ def test_undecided_is_not_incorrect(exam, pkg):
     f = pkg('fixtures')
     for qid, source, needle in [
             ('q1', "def exponential(m):\n    return m * [1, 2]\n", 'list'),                       # outside the base language
-            ('q4', "def ice_cream():\n    p = [3, 4]\n    return p + [0, 1, 2]\n", 'different lengths'),
             ('q4', f.REVIEW['q4'], 'accept-reject'),
             ('q5', f.REVIEW['q5'], 'accept-reject'),
             ('q6', "def spire():\n    import random\n", 'import')]:
@@ -403,6 +403,8 @@ def test_undecided_is_not_incorrect(exam, pkg):
     # A name nobody provides: the program does not run, so incorrect (a grader may override).
     outcome, note = verdict(exam, 'q1', "def exponential(m):\n    return m * mystery()\n")
     assert outcome == 'incorrect' and 'not defined' in note
+    outcome, note = verdict(exam, 'q4', "def ice_cream():\n    p = [3, 4]\n    return p + [0, 1, 2]\n")
+    assert outcome == 'incorrect' and 'different lengths' in note
     # Over the exam's limit on random calls is a demonstrated mistake, not an exhausted budget.
     slow = "def ice_cream():\n    for i in range(1001):\n        unif()\n    return [3, 4]\n"
     outcome, note = verdict(exam, 'q4', slow)
