@@ -76,12 +76,20 @@ function drawCrops(root) {
 function sizeHeader() { document.documentElement.style.setProperty('--vw', document.documentElement.clientWidth + 'px'); }
 addEventListener('resize', sizeHeader);
 if (window.ResizeObserver) new ResizeObserver(sizeHeader).observe(document.documentElement);
+// A range's filled part (WebKit has no progress pseudo-element): --fill on the input.
+function fillRange(el) {
+  const min = Number(el.min || 0), max = Number(el.max || 100);
+  el.style.setProperty('--fill', ((Number(el.value) - min) / (max - min || 1)) * 100 + '%');
+}
+document.addEventListener('input', e => { if (e.target.matches?.('input[type=range]')) fillRange(e.target); });
 document.addEventListener('DOMContentLoaded', () => {
   sizeHeader();
+  document.querySelectorAll('input[type=range]').forEach(fillRange);
   drawCrops();
   const size = document.getElementById('crop-size');
   if (size) {
     size.value = pref('cropWidth', 360);
+    fillRange(size);
     size.addEventListener('input', () => { setPref('cropWidth', Number(size.value)); drawCrops(); });
   }
 });

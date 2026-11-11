@@ -64,7 +64,7 @@
 {% if parts|length > 1 %}<span class="pname">{{ p.part }}</span>{% endif %}
 {% set g = p.cls[2:] %}
 {% set ask = p.st.state in ('unverified', 'needs_review') %}
-<span class="pill g-{{ g }}{% if g == 'n' and not ask %} idle{% endif %}">{% if g == 'num' %}<b>{{ p.glyph }}</b>{% if p.max is not none %} / {{ '%g'|format(p.max) }}{% endif %}{% else %}{% if g != 'n' %}<b>{{ p.glyph }}</b> {% elif ask %}<b>?</b> {% endif %}{{ {'t': "correct", 'f': "incorrect", 'b': "blank", 'n': "undecided" if ask else "no grade"}[g] }}{% endif %}</span>
+<span class="pill g-{{ g }}{% if g == 'n' and not ask %} idle{% endif %}">{% if g == 'num' %}<b>{{ p.glyph }}</b>{% if p.max is not none %} / {{ '%g'|format(p.max) }}{% endif %}{% else %}{% if g != 'n' %}<b>{{ p.glyph }}</b> {% elif ask %}<b class="qm">?</b> {% endif %}{{ {'t': "correct", 'f': "incorrect", 'b': "blank", 'n': "undecided" if ask else "no grade"}[g] }}{% endif %}</span>
 <span class="pill st st-{{ p.st.state }}">{{ labels[p.st.state] }}{% if p.st.author %} · {{ p.st.author }}{% endif %}</span>
 {% if p.st.waiting == ('input',) %}<span class="dim">decide</span>{% elif p.st.waiting %}<span class="dim">verify {{ p.st.waiting|reject('equalto', 'input')|join(', ') }}</span>{% endif %}
 {% if p.st.reason and p.st.value is none %}<span class="reason">{{ p.st.reason }}</span>{% endif %}
@@ -139,7 +139,7 @@
 <div id="variant" data-live data-rev="{{ variant.rev }}" class="panel{% if not variant.resolved %} attention{% endif %}">
 <div class="bar">
 <span class="plabel">variant</span>
-{% if variant.resolved %}<b>{{ variant.resolved }}</b>{% else %}<span class="tag ask">? unresolved</span>{% if variant.candidates %}<span class="dim">{{ variant.candidates|join(' / ') }}</span>{% endif %}{% endif %}
+{% if variant.resolved %}<b>{{ variant.resolved }}</b>{% else %}<span class="tag ask"><b class="qm">?</b> unresolved</span>{% if variant.candidates %}<span class="dim">{{ variant.candidates|join(' / ') }}</span>{% endif %}{% endif %}
 {% if variant.manual %}<span class="tag">manual · {{ variant.art.author }}</span>{% endif %}
 {% if variant.art and variant.art.verified %}<span class="tag good">verified · {{ variant.art.verified_by }}</span>
 {% elif variant.resolved and not variant.trusted %}<span class="tag warn">unverified</span>{% endif %}
