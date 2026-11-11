@@ -134,7 +134,7 @@ def main(argv=None) -> int:
     common(p)
     p.add_argument('pdf', nargs='*', help="scanned PDFs to add (kept unchanged under WORKSPACE/sources/)")
     p.add_argument('--roster', help="a CSV of students: Name (or First/Last Name), Email, Student ID")
-    p.add_argument('--length', type=int, help="sheets per submission (default: cover pages + exam pages)")
+    p.add_argument('--length', type=int, help="sheets per submission (default: the exam's pages; more means cover sheets come first)")
     p.add_argument('--no-check', action='store_true', help="do not read landmarks with the model")
     p.add_argument('--accept', action='store_true', help="write the submissions into pdfs/ as proposed")
 

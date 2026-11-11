@@ -43,7 +43,7 @@ from .variants import CUE_PROMPT, normalize
 
 PLAN = 'split'
 WHO = 'who'
-NO_WORK = (WHO,)       # kinds that are not grading work
+NO_WORK = (WHO, 'layout')       # kinds that are not grading work
 
 
 class Busy(Conflict):
@@ -125,15 +125,23 @@ def source(ws, id: str) -> Source:
 # --- the plan ---------------------------------------------------------------------
 
 def expected_length(ws) -> int:
-    return ws.cover_pages + ws.exam.pages
+    """Sheets per submission unless the plan says otherwise: the exam's pages. A raw
+    stack has no cover sheets; the scanning services that add them also split."""
+    return ws.exam.pages
 
 
-def anchor(ws) -> int:
+def cover(ws, body: Mapping | None = None) -> int:
+    """Leading sheets of each submission that are not exam pages: whatever the
+    plan's length has beyond the exam's pages."""
+    return max(0, int(body['length']) - ws.exam.pages) if body else 0
+
+
+def anchor(ws, cover: int = 0) -> int:
     """The first position in a submission that carries a landmark."""
     first = []
     for lm in ws.exam.landmarks:
         first += list(lm.reads.values()) if lm.reads else [lm.region.page]
-    return ws.cover_pages + (min(first) if first else 1) - 1
+    return cover + (min(first) if first else 1) - 1
 
 
 def plan(ws, id: str) -> Artifact | None:
@@ -194,7 +202,7 @@ def reader(ws, src: Source, body: Mapping, model) -> split.Reader | None:
     if model is None or not exam.landmarks:
         return None
     layout = Layout(0, ws.scan_window)
-    cover = ws.cover_pages
+    lead = cover(ws, body)
 
     def read(i: int) -> int | None:
         o = sheet_orient(body, i)
@@ -214,7 +222,7 @@ def reader(ws, src: Source, body: Mapping, model) -> split.Reader | None:
                 ws.store.set_memo(src.id, key, hit)
             p = page_of(lm, json.loads(hit))
             if p is not None:
-                return cover + p - 1
+                return lead + p - 1
         return None
     return read
 
@@ -235,7 +243,7 @@ def propose(ws, id: str, *, model=None, length: int | None = None, fresh: bool =
         if length != body['length']:
             body['readings'] = {}
         body['length'] = int(length)
-    body['anchor'] = anchor(ws)
+    body['anchor'] = anchor(ws, cover(ws, body))
     read = reader(ws, src, body, model)
     if read is not None:
         body['readings'] = {}       # read again (cheap: the model's answers are memoised)
@@ -400,6 +408,10 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
             name, email = who(ws, sid)
             ws.store.put_submissions([Submission(sid, name, email, f'{sid}.pdf')])
             ws.store.clear_memo(sid)        # readings of the old pages
+            # The written PDF starts with as many cover sheets as the plan has, whatever the workspace's default.
+            kept = ws.store.get(sid, '', 'layout')
+            ws.set_layout(sid, cover_pages=cover(ws, body), author=author,
+                          scan_window=(kept.body or {}).get('scan_window') if kept else None)
         for sid in gone:
             ws.store.delete_made(sid)
             ws.store.delete_submission(sid)

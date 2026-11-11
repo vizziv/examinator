@@ -941,7 +941,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def plan_view(src) -> dict:
         art = intake.plan(ws, src.id)
-        body, n, cover = art.body, src.pages, ws.cover_pages
+        body, n, cover = art.body, src.pages, intake.cover(ws, art.body)
         pages, doubts, states = split.pages(body, n), split.doubts(body, n), intake.state(ws, src.id)
         made = store.made()
         entries = []
@@ -955,7 +955,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return {'id': src.id, 'name': src.name, 'n': n, 'rev': art.rev, 'length': body['length'],
                 'checked': bool(body.get('checked')), 'o': code(so), 'orient': so.label(),
                 'sheet_o': [code(intake.sheet_orient(body, i)) for i in range(n)],
-                'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
+                'cover': cover, 'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
                 'readings': {i: (None if r is None else 'cover' if r < cover else f'p.{r - cover + 1}')
                              for i, r in split.readings(body).items()},
                 'removed': intake.removed(ws, src.id), 'cursor': split.cursor(body),
@@ -965,7 +965,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         name = None
         if exam.name_region is not None:
             box = Layout(0, ws.scan_window).box(exam.name_region, exam.crop_pad)
-            name = {'offset': ws.cover_pages + exam.name_region.page - 1,
+            name = {'offset': exam.name_region.page - 1,
                     'box': ','.join(f'{v:.4f}' for v in box)}
         made = store.made()
         return page('scans.html', sources=store.sources(), people=[intake.label(p) for p in intake.people(ws)],

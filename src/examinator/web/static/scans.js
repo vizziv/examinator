@@ -170,10 +170,11 @@
     return b;
   };
   function nameCrop(e) {
-    const off = main.dataset.nameOffset;
-    if (off === undefined || e.pages.length <= Number(off)) return '';
+    if (main.dataset.nameOffset === undefined) return '';
+    const off = Number(main.dataset.nameOffset) + (view.cover || 0);      // cover sheets come first
+    if (e.pages.length <= off) return '';
     const c = make('span', {className: 'crop'});
-    c.dataset.src = sheet(e.pages[Number(off)], 1000);
+    c.dataset.src = sheet(e.pages[off], 1000);
     c.dataset.box = main.dataset.nameBox;
     drawCrop(c);
     return c;

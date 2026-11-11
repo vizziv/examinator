@@ -58,7 +58,7 @@ def test_adding_the_same_scan_twice_is_recognised(stacked):
     b, again = intake.add_source(ws, paths[0])
     assert new and not again and a == b and len(ws.store.sources()) == 1
     assert (ws.root / 'sources' / a.file).read_bytes() == paths[0].read_bytes()
-    assert starts(intake.plan(ws, a.id)) == [0, 5, 10, 15, 20, 25]       # every N, no model
+    assert starts(intake.plan(ws, a.id)) == [0, 4, 8, 12, 16, 20]        # every N, no model
     assert not intake.plan(ws, a.id).body['checked']
 
 
@@ -76,7 +76,7 @@ def test_check_with_landmarks_flags_the_awkward_cases(stacked):
     ws, paths, model = stacked
     one, _ = intake.add_source(ws, paths[0])
     art = intake.propose(ws, one.id, model=model)
-    assert starts(art) == [0, 5, 9, 15, 20, 25]
+    assert starts(art) == [0, 4, 7, 12, 16, 20]
     assert split.doubts(art.body, one.pages) == [[], ['short'], ['long', 'number'], [], ['start'], []]
     calls = len(model.calls)
     intake.propose(ws, one.id, model=model)
@@ -92,20 +92,20 @@ def test_orientation_source_and_submission(stacked):
         art = intake.edit(ws, two.id, 'turn_source', expect_rev=art.rev, author='t')
     assert Orient.from_json(art.body['orient']) == HALF and art.body['readings'] == {}
     art = intake.propose(ws, two.id, model=model)
-    assert starts(art) == [0, 5, 10, 15]
+    assert starts(art) == [0, 4, 8, 12]
     assert split.doubts(art.body, two.pages) == [[], [], [], ['short']]
 
     one, _ = intake.add_source(ws, paths[0])
     art = intake.propose(ws, one.id, model=model)
     art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')   # one exam upside down
-    assert intake.sheet_orient(art.body, 21) == HALF and intake.sheet_orient(art.body, 26) == Orient()
+    assert intake.sheet_orient(art.body, 17) == HALF and intake.sheet_orient(art.body, 21) == Orient()
     art = intake.propose(ws, one.id, model=model)
     assert split.doubts(art.body, one.pages)[4] == []
     # the submission's own orientation wins over the source's
     art = intake.edit(ws, one.id, 'turn_source', expect_rev=art.rev, author='t')
-    assert intake.sheet_orient(art.body, 21) == HALF and intake.sheet_orient(art.body, 26) == QUARTER
+    assert intake.sheet_orient(art.body, 17) == HALF and intake.sheet_orient(art.body, 21) == QUARTER
     art = intake.edit(ws, one.id, 'upright', k=4, expect_rev=art.rev, author='t')
-    assert intake.sheet_orient(art.body, 21) == QUARTER
+    assert intake.sheet_orient(art.body, 17) == QUARTER
 
 
 def test_landmark_crops_come_from_the_oriented_page(tmp_path):
@@ -139,7 +139,7 @@ def test_accept_copies_pages_untouched_and_the_fast_path_applies(stacked, monkey
     src_images = images(paths[0])
     for k, sid in enumerate(report['new']):
         made = ws.store.made()[sid]
-        assert made.pages == tuple(range(5 * k, 5 * k + 5))
+        assert made.pages == tuple(range(4 * k, 4 * k + 4))
         assert images(ws.pdfs / f'{sid}.pdf') == [src_images[i] for i in made.pages]
     taken = []
     real = render.scan_image
@@ -150,6 +150,18 @@ def test_accept_copies_pages_untouched_and_the_fast_path_applies(stacked, monkey
     assert [s.id for s in ws.store.submissions()] == report['new']
     assert ws.sync_roster() == 6
     assert intake.state(ws, one.id) == ['made'] * 6
+    # no cover sheets in a raw stack: each written submission says so, whatever the workspace default
+    ws.set_defaults(cover_pages=1)
+    assert ws.layout('s0002').cover_pages == 0 and intake.cover(ws, intake.plan(ws, one.id).body) == 0
+
+
+def test_a_longer_plan_means_cover_sheets(stacked):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    art = intake.propose(ws, one.id, length=ws.exam.pages + 1)
+    assert intake.cover(ws, art.body) == 1 and art.body['anchor'] == 1
+    intake.accept(ws, one.id)
+    assert ws.layout('s0001').cover_pages == 1
 
 
 def test_baked_pages_are_upright_plain_scans(tmp_path):
@@ -185,13 +197,13 @@ def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     # grading work on the third submission (the one with the stray sheet)
     ws.store.write('s0003', 'parity', 'parse', {'B': 'even'}, origin='manual', author='t')
     art = intake.plan(ws, one.id)
-    art = intake.edit(ws, one.id, 'drop', sheet=12, expect_rev=art.rev, author='t')
+    art = intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=art.rev, author='t')
     with pytest.raises(intake.Busy) as e:
         intake.accept(ws, one.id)
     assert e.value.submissions == ['s0003']
     assert (ws.pdfs / 's0003.pdf').stat().st_mtime_ns == before['s0003']
     # orientation change of a submission without work: rewritten; nothing else touched
-    art = intake.edit(ws, one.id, 'restore', sheet=12, expect_rev=art.rev, author='t')
+    art = intake.edit(ws, one.id, 'restore', sheet=9, expect_rev=art.rev, author='t')
     art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')
     assert intake.state(ws, one.id) == ['made', 'made', 'made', 'made', 'changed', 'made']
     report = intake.accept(ws, one.id)
@@ -199,9 +211,9 @@ def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     after = {s: (ws.pdfs / f'{s}.pdf').stat().st_mtime_ns for s in ws.store.made()}
     assert [s for s in after if after[s] != before[s]] == ['s0005']
     # forced: the change goes through and the work stays where it was
-    art = intake.edit(ws, one.id, 'drop', sheet=12, expect_rev=intake.plan(ws, one.id).rev, author='t')
+    art = intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
     report = intake.accept(ws, one.id, force=True)
-    assert report['rewritten'] == ['s0003'] and ws.store.made()['s0003'].pages == (9, 10, 11, 13, 14)
+    assert report['rewritten'] == ['s0003'] and ws.store.made()['s0003'].pages == (7, 8, 10, 11)
     assert ws.store.get('s0003', 'parity', 'parse') is not None
     # joining away a submission with no work removes it
     art = intake.edit(ws, one.id, 'join', k=0, expect_rev=intake.plan(ws, one.id).rev, author='t')

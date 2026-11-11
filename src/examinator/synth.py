@@ -280,8 +280,8 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
         printed = _printed_pages(exam, case, renderer)
         _draw_answers(exam, case, printed)
         _draw_name(exam, printed, names[k])
-        sheets = _scan(exam, printed)
-        return [(im, p - exam.cover_pages if p > exam.cover_pages else None) for p, im in enumerate(sheets, 1)]
+        sheets = _scan(exam, printed)[exam.cover_pages:]       # a raw stack has no cover sheets
+        return list(zip(sheets, range(1, len(sheets) + 1)))
 
     def without(sheets, printed_page):
         return [x for x in sheets if x[1] != printed_page]

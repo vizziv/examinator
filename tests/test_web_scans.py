@@ -47,7 +47,7 @@ def test_upload_needs_the_token_and_a_pdf(site):
     assert r.status_code == 400 and ws.store.sources() == []
     assert upload(client, token, paths[0], Origin='http://evil.example').status_code == 403
     r = upload(client, token, paths[0], name='../../etc/stack-1.pdf')
-    assert r.status_code == 200 and r.json()['new'] and r.json()['pages'] == 30
+    assert r.status_code == 200 and r.json()['new'] and r.json()['pages'] == 24
     assert ws.store.sources()[0].name == 'stack-1.pdf'
     assert not upload(client, token, paths[0]).json()['new']           # the same scan again
     assert not list((ws.root / 'sources').glob('.upload-*'))           # no temporary files left
@@ -58,18 +58,18 @@ def test_step_through_and_accept(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
     plan = client.get(f'/scans/{src}/plan').json()
-    assert [e['start'] for e in plan['entries']] == [0, 5, 10, 15, 20, 25] and plan['cursor'] == 0
+    assert [e['start'] for e in plan['entries']] == [0, 4, 8, 12, 16, 20] and plan['cursor'] == 0
     # stale revision: refused
     assert post(client, token, f'/scans/{src}/edit', {'op': 'confirm', 'k': 0, 'rev': plan['rev'] - 1}).status_code == 409
     r = post(client, token, f'/scans/{src}/edit', {'op': 'confirm', 'k': 0, 'rev': plan['rev']})
     plan = r.json()['plan']
     r = post(client, token, f'/scans/{src}/edit', {'op': 'move', 'k': 1, 'delta': -1, 'rev': plan['rev']})
     plan = r.json()['plan']
-    assert [e['start'] for e in plan['entries']][:3] == [0, 4, 9]
+    assert [e['start'] for e in plan['entries']][:3] == [0, 3, 7]
     assert post(client, token, f'/scans/{src}/edit', {'op': 'move', 'k': 1, 'delta': 5, 'rev': plan['rev']}).status_code == 400
     assert post(client, token, f'/scans/{src}/edit', {'op': 'nope', 'rev': plan['rev']}).status_code == 400
     plan = post(client, token, f'/scans/{src}/undo', {'rev': plan['rev']}).json()['plan']
-    assert [e['start'] for e in plan['entries']][:2] == [0, 5]
+    assert [e['start'] for e in plan['entries']][:2] == [0, 4]
     # check with the (scripted) model in the background
     r = post(client, token, f'/scans/{src}/propose', {'check': True, 'rev': plan['rev']})
     for _ in range(300):
@@ -77,10 +77,10 @@ def test_step_through_and_accept(site):
             break
         time.sleep(0.02)
     plan = client.get(f'/scans/{src}/plan').json()
-    assert plan['checked'] and [e['start'] for e in plan['entries']] == [0, 5, 9, 15, 20, 25]
-    assert plan['entries'][0]['confirmed'] and plan['readings']['6'] == 'p.1'
+    assert plan['checked'] and [e['start'] for e in plan['entries']] == [0, 4, 7, 12, 16, 20]
+    assert plan['entries'][0]['confirmed'] and plan['readings']['4'] == 'p.1'
     plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'k': 4, 'rev': plan['rev']}).json()['plan']
-    assert plan['sheet_o'][21] == '20' and plan['entries'][4]['own']
+    assert plan['sheet_o'][17] == '20' and plan['entries'][4]['own']
     r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
     assert r.status_code == 200 and len(r.json()['report']['new']) == 6
     assert len(list(ws.pdfs.glob('*.pdf'))) == 6
@@ -94,7 +94,7 @@ def test_step_through_and_accept(site):
     # changing a written submission that has work: refused, then forced
     ws.store.write('s0002', 'parity', 'parse', {'B': 'odd'}, origin='manual', author='t')
     plan = client.get(f'/scans/{src}/plan').json()
-    plan = post(client, token, f'/scans/{src}/edit', {'op': 'drop', 'sheet': 8, 'rev': plan['rev']}).json()['plan']
+    plan = post(client, token, f'/scans/{src}/edit', {'op': 'drop', 'sheet': 6, 'rev': plan['rev']}).json()['plan']
     r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
     assert r.status_code == 409 and r.json()['current']['busy'] == ['s0002']
     r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev'], 'force': True})

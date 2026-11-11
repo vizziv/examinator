@@ -35,7 +35,7 @@ uv run examinator serve path/to/my_exam -w WORKSPACE      # then the Scans page
 
 (or add the PDFs with **Add scans** on the Scans page). Each PDF is kept
 unchanged under `WORKSPACE/sources/`; adding the same file twice is noticed.
-Examinator proposes a split, every N pages (N = cover pages + exam pages), and
+Examinator proposes a split, every N pages (N = the exam's pages: a raw stack has no cover sheets; set a larger N on the page if yours does), and
 if the exam declares landmarks (`Exam(landmarks=[...])`: a printed title on
 page 1, a page-number footer) and the model is up, **check** reads them only
 at the expected boundaries and their neighbours, moving each boundary to where
