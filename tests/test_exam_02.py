@@ -439,8 +439,8 @@ def f():
     for body in ("x = [1, 2]\n    return x + 1", "return [1, 2] + [1, 2, 3]"):
         stop = stopped(f"def f():\n    {body}\n")
         assert stop.outcome is None and stop.error.kind == 'type'
-    stop = stopped("def f():\n\n    return polar(1, 2)\n")         # a helper the exam does not provide: undecided
-    assert stop.outcome is None and stop.note == "line 3: polar(1, 2): function 'polar' is not defined"
+    stop = stopped("def f():\n\n    return polar(1, 2)\n")         # a helper the exam does not provide: incorrect
+    assert stop.outcome == 'incorrect' and stop.note == "line 3: polar(1, 2): function 'polar' is not defined"
     assert stopped("def f():\n    return None + 1\n").outcome == 'incorrect'     # not point arithmetic
     with pytest.raises(pseudocode.Unsupported) as err:
         pseudocode.parse("def f():\n\n\n    import os\n", samplers.LANGUAGE)
@@ -491,7 +491,7 @@ def test_question_10(exam, pkg):
     assert q10(exam, recursive)[0] == 'incorrect'           # the triangle alone: wrong whatever the method
     assert q10(exam, "def snow_cone():\n    return unif()\n") == ('incorrect', "a sample is not a point [x, y]")
     assert q10(exam, "def snow_cone():\n    return [2, 1] + polar(1)\n") == \
-        (None, "line 2: function 'polar' is not defined")
+        ('incorrect', "line 2: function 'polar' is not defined")
     assert q10(exam, "def snow_cone():\n    return [2, 1 +\n")[0] is None
     assert q10(exam, "def snow_cone():\n    pass\n") == ('blank', "") == q10(exam, "")
     tuples = f.Q10['original'].replace('return [2, 0] + [X, Y]', 'return 2 + X, Y')
@@ -515,7 +515,7 @@ def test_question_11(exam, pkg):
     box_muller = "def standard_normal():\n    return sqrt(-2 * log(1 - unif())) * cos(2 * pi * unif())\n"
     assert q11(exam, box_muller) == ('correct', "")
     assert q11(exam, "def standard_normal():\n    return [unif(), unif()]\n")[0] == 'incorrect'
-    assert q11(exam, "def standard_normal():\n    while True:\n        X = unif()\n")[0] is None    # never returns
+    assert q11(exam, "def standard_normal():\n    while True:\n        X = unif()\n")[0] == 'incorrect'    # never returns
     assert q11(exam, f.Q11_BLANK) == ('blank', "")
 
 

@@ -36,6 +36,11 @@ background for judgment, not a specification.
    exhausted budget or an inconclusive symbolic comparison leaves the answer
    for a person. Only a demonstrated mismatch is "incorrect". Blank is a third
    thing, worth its own badge and filter.
+   *(Revised 2026-11-11 for Examinator: verification is its own axis, so when a
+   student's pseudocode fails while running or never finishes within its step
+   budget, the proposed grade is "incorrect" by default and a grader can
+   override. Wall-clock timeouts, interpreter limits and a crashed check stay
+   undecided.)*
 7. **Manual work is sacred.** Batch runs never overwrite something a person
    wrote or verified unless explicitly told to, and the old content is kept.
 8. **Preview before bulk work.** Show exactly what will run, what is skipped and

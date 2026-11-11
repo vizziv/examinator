@@ -244,9 +244,9 @@ def test_q2_undecided_versus_incorrect(exam, pkg):
     assert q2(exam, pkg, LOOP.format(accept='coin(t**2 / 20)').replace('t >= 1 and ', ''))[0]['2.2'] == 'incorrect'
     # A literal run-time failure in code without huge_constant is incorrect...
     assert q2(exam, pkg, LOOP.format(accept='coin(t**2)'))[0]['2.2'] == 'incorrect'
-    # ...but an exhausted budget, an unknown name and unsupported syntax are undecided.
-    assert q2(exam, pkg, "def weibullish():\n    while True:\n        t = 1\n")[0]['2.2'] is None
-    assert q2(exam, pkg, "def weibullish():\n    return 1 + helper()\n")[0]['2.2'] is None
+    # ...and so are an exhausted step budget and an unknown name; unsupported syntax is undecided.
+    assert q2(exam, pkg, "def weibullish():\n    while True:\n        t = 1\n")[0]['2.2'] == 'incorrect'
+    assert q2(exam, pkg, "def weibullish():\n    return 1 + helper()\n")[0]['2.2'] == 'incorrect'
     assert q2(exam, pkg, "import numpy\n")[0] == {'2.1': None, '2.2': None}
     # die(n) is part of the language: this runs, and is a demonstrated mismatch.
     assert q2(exam, pkg, "def weibullish():\n    return die(6)\n")[0]['2.2'] == 'incorrect'
@@ -380,7 +380,7 @@ def test_q7_uses_a_trusted_poisson_dist(exam, pkg):
     """A wrong, a looping and a missing 7.2 leave 7.1 alone."""
     f = pkg('fixtures')
     looping = "def poisson_dist(m):\n    while True:\n        m += 1\n"
-    assert outcomes(exam, 'q7', looping + "\n" + f.POISSON_PROCESS)[0] == {'7.1': 'correct', '7.2': None}
+    assert outcomes(exam, 'q7', looping + "\n" + f.POISSON_PROCESS)[0] == {'7.1': 'correct', '7.2': 'incorrect'}
     failure, body = outcomes(exam, 'q7', f.Q7.replace('events.append(sqrt(50*u - 25))', 'events.append(sqrt(25 - 50*u))'))
     assert failure == {'7.1': 'incorrect', '7.2': 'correct'}
     assert 'sqrt' in body['data']['fields']['7.1']['note']

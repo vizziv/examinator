@@ -1,7 +1,7 @@
 """The course's pseudocode, and how this exam runs it.
 
 Randomness is `unif`, `coin(p)` and `die(n)` (from 1 to n); question 7 adds
-collections. A failure is undecided only for a name nobody provides.
+collections. Run-time failures follow the kit's default (`checks.draw`).
 """
 from functools import partial
 
@@ -13,4 +13,4 @@ SCALAR = pseudocode.BASE.with_builtins(**RANDOM)
 COLLECTIONS = pseudocode.WITH_COLLECTIONS.with_builtins(**RANDOM)
 
 SEED = 4580
-draw = partial(checks.draw, seed=SEED, undecided=('undefined',))
+draw = partial(checks.draw, seed=SEED)

@@ -58,14 +58,21 @@ def test_draw_policy():
     prog = pseudocode.parse("def f(x):\n    return g(x)\n", LANGUAGE)
     with pytest.raises(checks.Stop) as stop:
         checks.draw(prog, 'f', (1,), n=1, seconds=5)
-    assert stop.value.outcome is None and "'g' is not defined" in stop.value.note
+    assert stop.value.outcome == 'incorrect' and "'g' is not defined" in stop.value.note
     assert isinstance(stop.value.error, pseudocode.Failure)
     with pytest.raises(checks.Stop) as stop:
         checks.draw(prog, 'f', (1,), n=1, seconds=5, undecided=())
     assert stop.value.outcome == 'incorrect'
     with pytest.raises(checks.Stop) as stop:
-        checks.draw(pseudocode.parse("def f():\n    while True:\n        pass\n", LANGUAGE), 'f', n=1, max_steps=1000)
-    assert stop.value.outcome is None and isinstance(stop.value.error, pseudocode.Budget)
+        checks.draw(prog, 'f', (1,), n=1, seconds=5, undecided=('undefined',))     # an exam's own policy
+    assert stop.value.outcome is None
+    loop = pseudocode.parse("def f():\n    while True:\n        pass\n", LANGUAGE)
+    with pytest.raises(checks.Stop) as stop:
+        checks.draw(loop, 'f', n=1, max_steps=1000)
+    assert stop.value.outcome == 'incorrect' and isinstance(stop.value.error, pseudocode.Budget)
+    with pytest.raises(checks.Stop) as stop:
+        checks.draw(loop, 'f', n=1, max_steps=None, seconds=0.05)             # wall clock: undecided
+    assert stop.value.outcome is None and stop.value.error.kind == 'time'
     unif = pseudocode.parse("def f():\n    return unif()\n", LANGUAGE)
     assert checks.draw(unif, 'f', n=4, seed=7) == unif.sample('f', n=4, seed=7)     # seeded as `sample` is
 

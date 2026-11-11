@@ -15,10 +15,15 @@
         part.add("f(2)", checks.fit_cdf(xs, cdf, lo=0, title="f(2)"), xs)
         return part.combine()
 
-What a run-time failure proves is policy, and the exam's: `draw` treats an
-exhausted budget and syntax outside the language as undecided always, and a
-`Failure` as undecided when its kind is in `undecided` (or `undecided(failure)`
-is true); any other failure is a demonstrated mistake.
+What a run-time failure proves is policy: by default a program that does not
+run properly is incorrect (a grader reviews every proposed grade and may
+override). `draw` maps a `Failure` or `Budget` to undecided when its kind is in
+`undecided` (default `UNDECIDED`: 'unsupported', a limit of the checker or of a
+primitive, and 'time', a wall-clock deadline that depends on the machine), or
+when `undecided(error)` is true; any other kind ('undefined', 'arity',
+'domain', 'type', 'other'; 'steps', 'depth', 'size') is incorrect. A
+`Limitation` or an `Unsupported` at run time is always undecided, and so is
+source outside the language (`check_source`).
 """
 from __future__ import annotations
 
@@ -36,7 +41,7 @@ from examinator.std.blocks import Code, Details, Note, Table
 from . import fit as fits
 from .fit import Fit
 
-UNDECIDED = ('undefined', 'unsupported')    # default: a name nobody provides, a limit of the checker
+UNDECIDED = ('unsupported', 'time')     # default: a limit of the checker, a wall-clock deadline
 
 
 class Stop(Exception):
@@ -51,17 +56,19 @@ class Stop(Exception):
 def draw(program: pseudocode.Program, entry: str, args=(), *, n: int, deadline: float | None = None,
          seconds: float | None = None, seed: int = 0, primitives=None, constants=None,
          max_steps: int | None = 2_000_000, rng=None,
-         undecided: Collection[str] | Callable[[pseudocode.Failure], bool] = UNDECIDED) -> list:
+         undecided: Collection[str] | Callable[[pseudocode.Failure | pseudocode.Budget], bool] = UNDECIDED,
+         ) -> list:
     """`n` results of `entry(*args)`, or `Stop`. `deadline` is a `time.monotonic()`
-    value; `seconds` sets one from now. `rng` is passed to `Program.sample`."""
+    value; `seconds` sets one from now. `rng` is passed to `Program.sample`.
+    `undecided` decides which failures and budgets are undecided (module docstring)."""
     if seconds is not None:
         deadline = time.monotonic() + seconds
     try:
         return program.sample(entry, args, n=n, seed=seed, deadline=deadline, max_steps=max_steps,
                               primitives=primitives, constants=constants, rng=rng)
-    except (pseudocode.Budget, pseudocode.Unsupported) as e:
+    except (pseudocode.Unsupported, pseudocode.Limitation) as e:
         raise Stop(None, str(e), e) from None
-    except pseudocode.Failure as e:
+    except (pseudocode.Failure, pseudocode.Budget) as e:
         open_ = undecided(e) if callable(undecided) else e.kind in undecided
         raise Stop(None if open_ else 'incorrect', str(e), e) from None
 

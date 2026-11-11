@@ -393,7 +393,6 @@ def test_q6_the_envelope_alone_passes_ks_but_not_the_phase_test(exam, pkg):
 def test_undecided_is_not_incorrect(exam, pkg):
     f = pkg('fixtures')
     for qid, source, needle in [
-            ('q1', "def exponential(m):\n    return m * mystery()\n", 'not defined'),
             ('q1', "def exponential(m):\n    return m * [1, 2]\n", 'list'),                       # outside the base language
             ('q4', "def ice_cream():\n    p = [3, 4]\n    return p + [0, 1, 2]\n", 'different lengths'),
             ('q4', f.REVIEW['q4'], 'accept-reject'),
@@ -401,6 +400,9 @@ def test_undecided_is_not_incorrect(exam, pkg):
             ('q6', "def spire():\n    import random\n", 'import')]:
         outcome, note = verdict(exam, qid, source)
         assert outcome is None and needle in note, (qid, note)
+    # A name nobody provides: the program does not run, so incorrect (a grader may override).
+    outcome, note = verdict(exam, 'q1', "def exponential(m):\n    return m * mystery()\n")
+    assert outcome == 'incorrect' and 'not defined' in note
     # Over the exam's limit on random calls is a demonstrated mistake, not an exhausted budget.
     slow = "def ice_cream():\n    for i in range(1001):\n        unif()\n    return [3, 4]\n"
     outcome, note = verdict(exam, 'q4', slow)
