@@ -156,7 +156,7 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
    The glyph is the grade: ✓ correct, ✗ incorrect (pastel green and red), ∅ blank (grey, faded),
    a number for points, ? not determined (light blue, heavy: the first thing the eye finds).
    The background is the grading status: yellow = needs verification, grey = verified and
-   counting, blue = decided by hand; none = not started or in progress. Outdated keeps its
+   counting (by the checker and verified, or decided by hand); none = not started or in progress. Outdated keeps its
    status colour and adds a corner mark. One font for every status glyph. */
 .glyph, .cell > a, .pill b, .qm, .decide button.v-t, .decide button.v-f, .decide button.v-b {
   font-family: var(--glyph-font); font-variant-emoji: text; }
@@ -192,7 +192,7 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 /* background: the grading status */
 .cell.s-unverified, .cell.s-outdated { --tint: var(--unv-bg); }
 .cell.s-graded, .cell.s-needs_review { --tint: var(--done-bg); }
-.cell.s-manual, .cell.s-manual_outdated { --tint: var(--man-bg); }
+.cell.s-manual, .cell.s-manual_outdated { --tint: var(--done-bg); }    /* by hand counts like verified; the question page says which */
 /* mark: outdated (does not count until rechecked) */
 .cell.s-outdated > a, .cell.s-manual_outdated > a { text-decoration: line-through; text-decoration-thickness: 1px; }
 .cell.s-outdated::after, .cell.s-manual_outdated::after { content: ''; position: absolute; top: 0; right: 0;
