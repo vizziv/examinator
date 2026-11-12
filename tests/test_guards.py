@@ -108,3 +108,92 @@ def test_no_browser_function_is_declared_twice():
         seen = [m.groups() for m in declared.finditer(f.read_text())]
         twice = sorted({name for depth, name in seen if seen.count((depth, name)) > 1})
         assert not twice, f"{f.name}: {', '.join(twice)}"
+
+
+# --- the browser's actions and keys, checked by reading (nothing runs the browser code here) ---
+
+STATIC = ROOT / 'src' / 'examinator' / 'web' / 'static'
+TEMPLATES = ROOT / 'src' / 'examinator' / 'web' / 'templates'
+
+
+def _actions_js() -> str:
+    return (STATIC / 'actions.js').read_text()
+
+
+def _catalog() -> dict[str, str]:
+    """CATALOG in actions.js: action name -> its group ('' for the default group)."""
+    js = _actions_js()
+    body = js[js.index('const CATALOG = ['):js.index('];', js.index('const CATALOG = ['))]
+    return {m[1]: m[2] or '' for m in re.finditer(r"\['([\w-]+)',\s*\"[^\"]*\"(?:,\s*'(\w+)')?\]", body)}
+
+
+def _left() -> dict[str, list[str]]:
+    """The left-hand preset: action name -> combos."""
+    js = _actions_js()
+    start = js.index('const LEFT = {')
+    body = js[start:js.index('};', start)]
+    return {m[1]: re.findall(r"'([^']*)'", m[2]) for m in re.finditer(r"'?([\w-]+)'?\s*:\s*\[([^\]]*)\]", body)}
+
+
+def _mirror():
+    """The right-hand preset's mapping of one combo, as actions.js computes it."""
+    js = _actions_js()
+    table = dict(re.findall(r"(\w):\s*'(\w)'", re.search(r'const MIRROR = \{([^}]*)\}', js)[1]))
+
+    def mirror(c: str) -> str:
+        if c in table:
+            return table[c]
+        if c.startswith('Shift+') and c[6:] in table:
+            return 'Shift+' + table[c[6:]]
+        return c
+    return mirror
+
+
+def _registered() -> set[str]:
+    """Action names the browser code registers: `register('name', ...)` (Actions' own or a
+    page's wrapper) and object literals of specs (`name: {run ...}`) registered in a loop."""
+    names = set()
+    for f in STATIC.glob('*.js'):
+        js = f.read_text()
+        names |= set(re.findall(r"register\(\s*'([\w-]+)'", js))
+        names |= set(re.findall(r"(?:^|[\s{,])'?([\w-]+)'?\s*:\s*\{\s*(?:available|run)\b", js, re.M))
+    return names
+
+
+def test_every_data_action_names_an_action():
+    known = set(_catalog()) | _registered()
+    used = {(f.name, name) for f in TEMPLATES.glob('*.html')
+            for name in re.findall(r'data-action="([^"{}]+)"', f.read_text())}
+    unknown = sorted(f"{f}: {name}" for f, name in used if name not in known)
+    assert not unknown, "\n".join(unknown)
+
+
+def test_every_preset_key_names_a_catalog_action():
+    catalog = _catalog()
+    assert catalog and _left()
+    assert sorted(set(_left()) - set(catalog)) == []
+
+
+def test_no_two_actions_of_a_group_share_a_single_key():
+    catalog, left = _catalog(), _left()
+    by_group: dict[tuple[str, str], list[str]] = {}
+    for name, combos in left.items():
+        for c in combos:
+            if not c.startswith(('Mod+', 'Alt+')):
+                by_group.setdefault((catalog.get(name, ''), c), []).append(name)
+    shared = {k: v for k, v in by_group.items() if len(v) > 1}
+    assert not shared, shared
+
+
+def test_the_right_hand_preset_keeps_keys_apart():
+    """Mirroring never sends two different left-hand keys of one group to the same key."""
+    catalog, left, mirror = _catalog(), _left(), _mirror()
+    groups: dict[str, set[str]] = {}
+    for name, combos in left.items():
+        groups.setdefault(catalog.get(name, ''), set()).update(combos)
+    for group, combos in groups.items():
+        images: dict[str, list[str]] = {}
+        for c in combos:
+            images.setdefault(mirror(c), []).append(c)
+        clashes = {k: sorted(v) for k, v in images.items() if len(v) > 1}
+        assert not clashes, (group, clashes)
