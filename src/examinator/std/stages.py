@@ -144,6 +144,18 @@ class CheckMath:
     def __post_init__(self):
         object.__setattr__(self, 'by_variant', per_variant(self.key))
 
+    def validate(self, question) -> None:
+        """A key per variant names exactly the question's variants (called by `Exam.question`)."""
+        if not self.by_variant:
+            return
+        missing = [v for v in question.variants if v not in self.key]
+        extra = [str(v) for v in self.key if v not in question.variants]
+        if missing or extra:
+            raise ValueError(f"{question.id}: the key is one per variant, but "
+                             + "; ".join(([f"variants {missing} have no key"] if missing else [])
+                                         + ([f"{extra} are not variants of the question "
+                                             f"{list(question.variants)}"] if extra else [])))
+
     def __call__(self, ctx: Context) -> Evidence:
         from . import math
         key = self.key[ctx.variant] if self.by_variant else self.key

@@ -254,7 +254,15 @@ def main(argv=None) -> int:
 
     args = ap.parse_args(argv)
     exam = load_exam(args.exam)
+    from . import synth
+    try:
+        return command(args, exam)
+    except (synth.BadCase, synth.NoScript, FileExistsError) as e:
+        print(f"examinator {args.cmd}: {e}", file=sys.stderr)
+        return 2
 
+
+def command(args, exam: Exam) -> int:
     if args.cmd == 'synth':
         from . import synth
         if args.stacks:
@@ -265,6 +273,7 @@ def main(argv=None) -> int:
             return 0
         root = synth.generate(exam, args.workspace, synth.load_cases(exam))
         print(f"synthetic workspace: {root}")
+        print(f"next: examinator run {args.exam} -w {args.workspace} --fake")
         return 0
 
     if args.cmd == 'selftest':
@@ -277,7 +286,11 @@ def main(argv=None) -> int:
         print("ok" if not problems else f"{len(problems)} mismatches")
         return 1 if problems else 0
 
-    ws = Workspace(args.workspace, exam, create=args.cmd in ('intake', 'serve'))
+    try:
+        ws = Workspace(args.workspace, exam, create=args.cmd in ('intake', 'serve'))
+    except FileNotFoundError as e:
+        print(f"examinator {args.cmd}: {e}", file=sys.stderr)
+        return 2
     try:
         return workspace_cmd(args, exam, ws)
     finally:
