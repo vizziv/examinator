@@ -50,6 +50,15 @@ class Region:
     bottom: int
 
 
+def check_region(region: Region, pages: int, what: str) -> None:
+    """`ValueError` unless `region` lies on a printed page 1..pages, inside 0..1000."""
+    if not 1 <= region.page <= pages:
+        raise ValueError(f"{what}: page {region.page} is not a printed page (1..{pages})")
+    if not (0 <= region.left < region.right <= 1000 and 0 <= region.top < region.bottom <= 1000):
+        raise ValueError(f"{what}: a region is per-mille of the printed page and needs "
+                         f"0 <= left < right <= 1000 and 0 <= top < bottom <= 1000, got {region}")
+
+
 @dataclass(frozen=True)
 class Field:
     """One answer slot: a printed label and, usually, where its box is."""
@@ -213,7 +222,10 @@ class Stage:
 
     `name` is also the kind of the artifact it writes: 'variant', 'transcript',
     'parse', 'evidence' or 'grade'. `fn(ctx)` returns the artifact body (text
-    or JSON-serializable data, or an `Evidence`).
+    or JSON-serializable data, or an `Evidence`). If `fn` has a method
+    `validate(question)`, `Exam.question` calls it, and it raises `ValueError`
+    for a configuration that does not fit the question (a key per variant
+    whose variants differ from the question's).
     """
     name: str
     fn: Callable[['Context'], Any]
@@ -279,6 +291,9 @@ class Exam:
         for f in self.identity:
             if f.roster not in (None, *ROSTER_FIELDS):
                 raise ValueError(f"identity {f.name!r}: roster must be one of {ROSTER_FIELDS} or None")
+        for what, items in (('landmark', self.landmarks), ('identity', self.identity)):
+            for x in items:
+                check_region(x.region, pages, f"{what} {x.name!r}")
         self.questions: dict[str, Question] = {}   # live: base definitions plus overrides
         self.base: dict[str, Question] = {}        # as built by the package
         self.overrides: dict[str, Any] = {}        # applied overrides {path: JSON value}; see `overrides`
@@ -312,10 +327,57 @@ class Exam:
                      fields=tuple(fields), stages=tuple(stages),
                      variants=tuple(variants), cues=tuple(cues), require=require, trust=trust,
                      facets=tuple(facets))
+        self._check(q)
+        for s in q.stages:              # a stage may check its configuration against the question
+            check = getattr(s.fn, 'validate', None)
+            if callable(check):
+                check(q)
         from .focus import facets as all_facets
         all_facets(q)                    # checks names: built-in, stage and question facets together
         self.questions[id] = self.base[id] = q
         return q
+
+    def _check(self, q: Question) -> None:
+        """Mistakes in a question's data that are mistakes whatever the exam: `ValueError`."""
+        def dupes(names):
+            return sorted({n for n in names if list(names).count(n) > 1})
+        for what, names in (("field labels", q.labels), ("variants", q.variants),
+                            ("cue names", [c.name for c in q.cues])):
+            if dupes(names):
+                raise ValueError(f"{q.id}: duplicate {what} {dupes(names)}")
+        for p in q.pages:
+            if not 1 <= p <= self.pages:
+                raise ValueError(f"{q.id}: page {p} is not a printed page (1..{self.pages})")
+        for f in q.fields:
+            if f.region is not None:
+                check_region(f.region, self.pages, f"{q.id}: field {f.label!r}")
+        computed = sum(1 for c in q.cues if c.fn is not None)
+        for c in q.cues:
+            if c.fn is not None:
+                continue
+            if c.region is None or not c.ask:
+                raise ValueError(f"{q.id}: cue {c.name!r} needs a region and an `ask` (or `fn=` to compute it)")
+            check_region(c.region, self.pages, f"{q.id}: cue {c.name!r}")
+            named = {*c.reads.values()}
+            unknown = sorted(named - {*q.variants})
+            if unknown and named & {*q.variants}:
+                raise ValueError(f"{q.id}: cue {c.name!r} reads to {unknown}, which are not variants "
+                                 f"of the question {list(q.variants)}")
+            if not named & {*q.variants} and not computed:
+                raise ValueError(f"{q.id}: cue {c.name!r} reads to none of the variants {list(q.variants)}")
+        if not q.cues:
+            return
+        for what, n in (('require', q.require), ('trust', q.trust)):
+            if n is not None and n > len(q.cues):
+                raise ValueError(f"{q.id}: {what}={n} but the question has {len(q.cues)} cue(s): "
+                                 f"never reached; set {what}={len(q.cues)} or add cues")
+        need = max(len(q.cues) if q.require is None else q.require, 1)
+        for v in q.variants:
+            able = sum(1 for c in q.cues if c.fn is not None or v in c.reads.values())
+            if able < need:
+                raise ValueError(f"{q.id}: variant {v!r} can be selected by {able} cue(s) but resolving "
+                                 f"needs {need}: give it a reading in every cue's `reads`"
+                                 + ("" if q.require is not None else ", or set `require`"))
 
 
 # --- describing and hashing definitions --------------------------------------
