@@ -76,13 +76,11 @@ def test_a_map_cue_needs_a_region_and_a_question():
         define(variants=['x', 'y'], cues=[Cue('c', reads={'a': 'x', 'b': 'y'})], trust=1)
 
 
-def test_trust_or_require_beyond_the_cues_is_never_reached():
-    with pytest.raises(ValueError, match="q: trust=2 but the question has 1 cue.*set trust=1"):
-        define(variants=['x', 'y'], cues=[cue()])
-    with pytest.raises(ValueError, match="q: require=3"):
+def test_require_beyond_the_cues_is_never_reached():
+    with pytest.raises(ValueError, match="q: require=3 but the question has 2 cue.*set require=2"):
         define(variants=['x', 'y'], cues=[cue(), cue('d')], require=3)
-    define(variants=['x', 'y'], cues=[cue()], trust=1)
-    define(variants=['x', 'y'])         # no cues: a person chooses every variant
+    define(variants=['x', 'y'], cues=[cue()])      # trust 2 > 1 cue: a person verifies every variant
+    define(variants=['x', 'y'])                    # no cues: a person chooses every variant
 
 
 def test_duplicate_labels_variants_and_cues():

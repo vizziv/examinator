@@ -367,10 +367,10 @@ class Exam:
                 raise ValueError(f"{q.id}: cue {c.name!r} reads to none of the variants {list(q.variants)}")
         if not q.cues:
             return
-        for what, n in (('require', q.require), ('trust', q.trust)):
-            if n is not None and n > len(q.cues):
-                raise ValueError(f"{q.id}: {what}={n} but the question has {len(q.cues)} cue(s): "
-                                 f"never reached; set {what}={len(q.cues)} or add cues")
+        # (`trust` above the number of cues is allowed: it means a person verifies every variant.)
+        if q.require is not None and q.require > len(q.cues):
+            raise ValueError(f"{q.id}: require={q.require} but the question has {len(q.cues)} cue(s): "
+                             f"the variant could never resolve; set require={len(q.cues)} or add cues")
         need = max(len(q.cues) if q.require is None else q.require, 1)
         for v in q.variants:
             able = sum(1 for c in q.cues if c.fn is not None or v in c.reads.values())
