@@ -1,9 +1,8 @@
 """Changing the exam while grading (MODEL.md): stored things are keyed by name,
 so the package can change under a workspace. One test per row of the table.
 Everything here is synthetic."""
-import dataclasses
 
-from examinator import Bool, Check, Exam, Field, Number, Region, Result
+from examinator import Bool, Check, Exam, Field
 from examinator.core import overrides
 from examinator.core.runner import Runner
 from examinator.core.workspace import Workspace

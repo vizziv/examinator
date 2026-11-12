@@ -30,7 +30,7 @@ from typing import Any, Mapping
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .core.defs import Exam, Question, Region, key
+from .core.defs import Exam, Question, Region
 from .core.printed import Printed
 from .core.runner import Runner
 from .core.workspace import Workspace
@@ -346,15 +346,6 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
         runner.close()
         ws.close()
     return problems
-
-
-def answers_of(exam: Exam, case: Case) -> dict[str, str]:
-    """The values a case's fields should read to: `{'question/label': text}`."""
-    out = {}
-    for qid, body in case.answers.items():
-        for label, text in given(exam.questions[qid], body).items():
-            out[key(qid, label)] = _text(text)
-    return out
 
 
 # --- stacks of scans, for intake ---------------------------------------------------

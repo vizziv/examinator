@@ -3,39 +3,38 @@
 One list, kept current. Design background is in [`DESIGN.md`](DESIGN.md); its
 §15 says what the core must already provide for later layers.
 
-## Organizing principle (decided 2026-11-11)
+## The model (built 2026-11-12)
 
-- **Field:** a region, a way to read it (handwriting, printed text, later a
-  barcode), and the value read. The only things read from paper.
-- **Check:** a function from field values to a result, possibly with parts.
-- **Question:** some fields and at most one check: the page a grader sees, the
-  unit of verification, and the unit of grading.
-- **Checks read fields; nothing reads a check.** A check may read any
-  question's fields; the library records what it read. Two layers, no graph.
-- No separate concept for versions, cues or exam information: a printed input
-  is a field, and "exam information" is a question with printed fields.
-- Names and IDs stay their own hard-coded thing.
+[`MODEL.md`](MODEL.md): fields, readers, checks, questions; values, results,
+decisions; the status table. Built, with one test per row of its two tables.
+Resolved by it: reading is one phase (no stored transcript); a field's region
+for one submission; a decision is outdated when any field on its page changes;
+how a field is read changes no value (the app offers to read again); a printed
+field's region may be unset in code; one grade per check, any number of checks.
 
-## Revision round, after the rewrite lands
+## Open after the rewrite
 
-- **Reading is one phase.** A handwritten field is one read with one value to
-  verify. Two prompts may stay inside the reader; the transcript is not shown,
-  not verified, not stored. No "parse again from the old transcript".
-- **A field's region for one submission.** Same shape as the per-submission
-  page override: exam default, optionally replaced for one submission, then the
-  ordinary read runs. ("Read again" is not a feature: it is the read, after
-  changing where it looks.)
-- Open after the rewrite: a manual grade is not outdated when a question it
-  would read changes; editing how a printed field is read (its region, its
-  `reads`, `verify=`) changes nothing until the parse is run again. Outdating
-  is still per parse: editing one field of a shared information question
-  outdates every check that read any of its fields (a recheck settles it).
-- **Leave it unset in code, set it in the app.** A handwritten field's region
-  may already be absent in code and drawn in the app. A printed field's may
-  not (the exam fails to load): allow it, with the field simply not read until
-  its region is set. Check the same for other things worth punting (pages,
-  `reads`). Setting them in code stays the normal way.
-- The guide's code blocks are checked by hand, not by a test.
+- **Which grades changed** after a check's code or key changed: old results
+  are in history; nothing lists them yet.
+- **Per-field handwriting reads** (one crop, one value) as an alternative to
+  the question's joint read: the reader protocol allows it; nothing compares
+  the two (a live-model question).
+- **A code-change fingerprint per check**: today a result is outdated by its
+  check's definition hash or by any change to the package's code, so editing
+  any file recomputes every result (in the background).
+- **Reloading the package without a restart**: state survives a restart; there
+  is no reload button.
+- After a reader's or region's change, the app says "read again" but does not
+  list which submissions' values came from the old reading.
+- A keyed check over a subset of a question's fields needs a restricted key in
+  the exam (Exam 2's `restricted`); a `labels=` option may be worth it.
+- Two checks that share a comparison (answer, and answer with work) compute it
+  twice.
+- The browser was exercised on a synthetic Exam 2 workspace (verify-next,
+  editing a value and the outdated check recomputing, a pseudocode page, the
+  grid); never in a browser yet: the per-submission region editor, the
+  restore button, the runs page with steps, the Exam data page's "read again"
+  message.
 
 ## Future
 
@@ -58,7 +57,6 @@ One list, kept current. Design background is in [`DESIGN.md`](DESIGN.md); its
   already split.
 - Exam 3 declares no landmarks or identity boxes.
 - No live-model run yet (`compare` untested live).
-- The guide (`WRITING_AN_EXAM.md`) is longer than intended.
 
 ## Declined so far, larger than a cleanup
 

@@ -26,7 +26,7 @@ An exam may pass `draw(undecided=...)`, a predicate over the error, instead.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np

@@ -1,7 +1,8 @@
-# The model (proposal, 2026-11-12)
+# The model
 
-Not built yet. This is the model the next rewrite of the core would implement.
-Everything here is per exam; "stored" means per submission, in the workspace.
+The model the core implements (built 2026-11-12). Everything here is per exam;
+"stored" means per submission, in the workspace. Where each piece lives is at
+the end.
 
 ## In one paragraph
 
@@ -164,7 +165,39 @@ no value yet, and the app can reload the exam package without losing state.
 ## Open, to settle by trying
 
 - **One read per field or per question?** The model allows both (a read fills
-  one or more fields). Which reads handwriting more reliably is a live-model
-  question; see `compare`.
+  one or more fields; a field may have a reader of its own). The library's
+  handwriting readers read a question's fields in one go. Which reads
+  handwriting more reliably is a live-model question; see `compare`.
 - Whether the grid needs a column for a question with no check, once its
-  fields show on the pages of the questions that read them.
+  fields show on the pages of the questions that read them. (It has one now:
+  not read, unverified, or verified.)
+
+## Where it lives
+
+| Piece | Code |
+| --- | --- |
+| Field, Check, Question, Exam, points (`Bool`, `Number`) | `core/defs.py` |
+| What a check returns (`Result`, `Judgement`, `Undecided`) | `core/result.py` |
+| `ctx.read` (recorded reads), the reader's context | `core/context.py` |
+| Stored value, result, decision; the status table; totals | `core/status.py` |
+| The small changes (read, set, verify, compute, decide, clear) | `core/runner.py` |
+| Printed reader; handwriting readers | `core/printed.py`; `std/readers.py` |
+| Overrides (exam-wide); a field's region for one submission | `core/overrides.py`; `Workspace.set_region` |
+| Batch: reads, then computes | `core/batch.py` |
+| One row table, keyed `(submission, kind, name)` | `core/store.py` |
+
+Choices made while building it:
+
+- A value's revision changes only with its text; settling or unsettling keeps
+  it (and goes to history). So verifying never outdates a result or a decision.
+- "A person settled it" protects a value from reads; a value a person set and
+  then unverified is unsettled, so a read may replace it.
+- A result is current while its check's definition hash (`Exam.check_hash`:
+  the check function and its configuration, keys included) and the exam
+  package's code hash are unchanged and every field it read is at the revision
+  it read. Points are not part of it.
+- A decision records the question's own fields and the fields that check's
+  result read.
+- Automatic recomputation recomputes outdated results only (and, after a
+  change on a question's page, that question's checks that never ran); it never
+  carries a grader's one-off parameters forward.

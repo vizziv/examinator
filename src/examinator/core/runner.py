@@ -19,7 +19,7 @@ from typing import Any, Mapping, Protocol, Sequence
 
 from .context import BadOutput, CheckContext, ReadContext, Unavailable
 from .defs import Exam, Field, Grade, Question, has_marker, key
-from .isolate import CheckCrash, CheckTimeout, Pool, PoolClosed
+from .isolate import CheckTimeout, Pool, PoolClosed
 from .result import Undecided, settle, undecided
 from .status import Decision, Sheet, Stored, Value, current
 from .store import ANY, Conflict
