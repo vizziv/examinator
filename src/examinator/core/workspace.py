@@ -35,8 +35,9 @@ def _get(d: dict, key: str) -> Any:
     return d.get(key, d.get(':' + key))
 
 
-def read_roster(pdfs: Path) -> dict[str, tuple[str, str]]:
-    """Submission id -> (name, email), from the one roster file in `pdfs`."""
+def read_submitters(pdfs: Path) -> dict[str, tuple[str, str]]:
+    """Submission id -> (name, email), from the one roster file in `pdfs` (the
+    scanning service's list of who submitted which PDF)."""
     files = sorted(p for p in pdfs.iterdir() if p.suffix.lower() in ('.yml', '.yaml', '.csv'))
     if len(files) != 1:
         raise RosterError(f"expected exactly one roster file (YAML or CSV) in {pdfs}, found {len(files)}")
@@ -83,7 +84,7 @@ class Workspace:
         pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink()]
         handed = [p for p in pdfs if p.stem not in made]
         try:
-            roster = read_roster(self.pdfs)
+            roster = read_submitters(self.pdfs)
         except RosterError:
             if handed:
                 raise
