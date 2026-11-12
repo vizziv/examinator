@@ -127,7 +127,7 @@ exam's code computed it. So the exam package can change under a workspace:
 | --- | --- |
 | A check's code or key changes | Field values and decisions untouched. That check's results are outdated and recomputed. The previous results stay in history, so the app can list which grades changed (a feature to build, not automatic). |
 | A question is added | Its fields are not read, its parts not run. Nothing else moves. |
-| A field is added to a question | The other fields keep their values and who settled them. The new one is not read; the check waits for it. |
+| A field is added to a question | The other fields keep their values and who settled them. The new one is not read. A check is affected only once it reads the new field: then it is recomputed and waits for it. |
 | A field or part is removed or renamed | Its stored values are ignored, not deleted (restoring the name restores them). A rename loses the work. |
 | Points change | Totals follow at once; they are derived. |
 | How a field is read changes | No value changes; the app offers to read again what no person settled. |
