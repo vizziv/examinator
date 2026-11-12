@@ -4,10 +4,10 @@
     GET  /filter                    the filter page: facets of every question
     GET  /focus/values              facet values for all submissions (?sub=: one), JSON
     GET  /s/{sub}/{q}               question page
-    POST /s/{sub}/{q}/{action}      save verify decide undecide run pages restore
+    POST /s/{sub}/{q}/{action}      save unverify decide clear read check pages region restore
     POST /s/{sub}/layout            per-submission layout override
     GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
-    GET  /raw/{sub}/{q}/{path}      one evidence 'raw' block, sandboxed
+    GET  /raw/{sub}/{q}/{check}/{path}   one evidence 'raw' block, sandboxed
     GET  /jobs/{id}                 background job state
     GET  /scan                      scan window that follows the question page
     GET  /runs                      batch runs;  POST /runs/preview|start|stop,  GET /runs/status
@@ -49,13 +49,12 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from ..core import batch, focus, grid, identity, intake, overrides, split
-from ..core.context import Context
-from ..core.defs import Bool, Exam, Question, grade_kind, has_marker
+from ..core.context import CheckContext
+from ..core.defs import Bool, Check, Exam, Question, Region, key, split_key
 from ..core.printed import Printed
 from ..core.reading import normalize
 from ..core.runner import Runner
 from ..core.store import Conflict
-from ..core.workflow import evidence_current, question_status, seen_revs
 from ..core.workspace import Workspace
 from ..pdf.layout import Layout
 from ..pdf.orient import Orient
@@ -72,13 +71,12 @@ ROSTER_SAMPLE = 5           # people a roster preview shows
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
 RAW_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'"
-# What a person sees of a workflow state: one word per idea (DESIGN.md, Vocabulary). Needs
-# review is shown as unverified (its grade is the undecided glyph ?): a person is asked either way.
+# What a person sees of a status: one word per idea (DESIGN.md, Words on screen).
 STATE_LABELS = {
-    'not_started': "not started", 'in_progress': "in progress", 'unverified': "unverified",
-    'graded': "graded", 'needs_review': "unverified", 'outdated': "outdated",
-    'manual': "manual", 'manual_outdated': "manual, outdated"}
-REASONS = {"by hand": "manual"}       # workflow's words for an undecided grade, as shown
+    'decided': "decided", 'decided_outdated': "decided, outdated", 'to_decide': "to decide",
+    'not_run': "not run", 'outdated': "outdated", 'unverified': "unverified", 'graded': "graded",
+    # a question with no checks: how its fields stand
+    'not_read': "not read", 'verified': "verified"}
 
 
 class Bad(ValueError):
@@ -216,7 +214,7 @@ def glyph(st) -> str:
     """What the grade is, as one glyph. Where it is in the workflow is `st.state`."""
     text = focus.grade_text(st)
     if text is None:
-        return {'needs_review': '?', 'unverified': '?', 'in_progress': '·'}.get(st.state, '')
+        return {'to_decide': '?', 'unverified': '?', 'outdated': '·'}.get(st.state, '')
     return '∅' if text == 'blank' else text
 
 
@@ -309,33 +307,32 @@ def entry_view(e: overrides.Entry, revs: dict, label: str | None = None) -> dict
             'rows': min(max(text.count('\n') + 2, 2), 24)}
 
 
-def picked_key(q: Question, arts: dict, parses: dict) -> str | None:
-    """Which of a key per value (a stage's `key` with `by`, as `std.stages.check_math`
-    has) the current parses pick, or None: no such key, or it cannot tell."""
-    fn = getattr(q.stage('evidence'), 'fn', None)
-    by, key = getattr(fn, 'by', None), getattr(fn, 'key', None)
-    parse = arts.get('parse')
-    if by is None or not isinstance(key, dict) or parse is None:
+def picked_key(exam: Exam, q: Question, c: Check, values: dict) -> str | None:
+    """Which of a key per value (a check's `key` with `by`, as `std.math.keyed`
+    has) the current values pick, or None: no such key, or it cannot tell."""
+    by, key_ = getattr(c.fn, 'by', None), getattr(c.fn, 'key', None)
+    if by is None or not isinstance(key_, dict):
         return None
-    ctx = Context(submission=parse.submission, question=q, stage='evidence', inputs={'parse': parse.body},
-                  parses={qid: (a.rev, a.body) for qid, a in parses.items()})
+    ctx = CheckContext(submission='', question=q, check=c.name, values={k: (v.rev, v.text) for k, v in values.items()},
+                       fields=frozenset(key(x.id, f.label) for x in exam.questions.values() for f in x.fields))
     try:
         value = normalize(str(by(ctx)))
     except Exception:
         return None
-    return next((name for name in key if normalize(str(name)) == value), None)
+    return next((name for name in key_ if normalize(str(name)) == value), None)
 
 
-def key_entries(entries: list[overrides.Entry], revs: dict, keys: list[str], picked: str | None) -> list[dict]:
-    """A question's key entries (stage configuration under 'key'); of a key per
-    value (`keys` its names), only the one picked when that is known."""
+def key_entries(entries: list[overrides.Entry], revs: dict, c: Check, picked: str | None) -> list[dict]:
+    """A check's key entries (configuration under 'key'); of a key per value,
+    only the one picked when that is known."""
+    names = [str(k) for k in getattr(c.fn, 'key', None) or {}] if getattr(c.fn, 'by', None) else []
     out = []
     for e in entries:
         segs = overrides.split(e.path)[1:]
-        if len(segs) < 4 or segs[0] != 'stages' or segs[2] != 'key':
+        if len(segs) < 4 or segs[:2] != ('checks', c.name) or segs[2] != 'key':
             continue
         rest = segs[3:]
-        if len(rest) > 1 and rest[0] in keys and picked is not None:
+        if len(rest) > 1 and rest[0] in names and picked is not None:
             if rest[0] != picked:
                 continue
             rest = rest[1:]
@@ -415,56 +412,60 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             return JSONResponse({'ok': True, **(out or {})})
         return endpoint
 
-    def recheck(sid: str, qid: str) -> str:
-        return jobs.start(lambda: runner.recheck(sid, qid))
+    def refresh(sid: str, qid: str | None = None) -> str:
+        """Recompute in the background what a change outdated (and this question's checks never run)."""
+        return jobs.start(lambda: runner.refresh(sid, questions=[qid] if qid else []))
 
     # --- grid ---
 
     def grid_page(request: Request) -> Response:
-        columns = []      # (question, part, column name)
+        columns = []
         for q in exam.questions.values():
-            for part, spec in q.result.items():
-                columns.append({'q': q, 'part': part, 'name': q.column(part), 'counts': spec.counts})
-            if not q.result:        # no grade: the column shows how its reading stands
-                columns.append({'q': q, 'part': '', 'name': q.id, 'counts': False})
+            for c in q.checks:
+                columns.append({'q': q, 'name': q.column(c.name), 'counts': c.points.counts})
+            if not q.checks:        # no checks: the column shows how its fields stand
+                columns.append({'q': q, 'name': q.id, 'counts': False})
         sel = selection(request.query_params.get('focus'))
         table = values() if sel else {}
-        rows = []
+        rows, started = [], False
         for row in grid.load(exam, store):
             cells = []
+            started = started or bool(row.sheet.values or row.sheet.results)
             for q in exam.questions.values():
-                cell = row.cells[q.id]
-                for part in q.result:
-                    st = cell.status[part]
-                    cells.append({'qid': q.id, 'col': q.column(part), 'state': st.state,
+                for c in q.checks:
+                    st = row.status[(q.id, c.name)]
+                    cells.append({'qid': q.id, 'col': q.column(c.name), 'state': st.state,
                                   'glyph': glyph(st), 'cls': value_class(st), 'v': value_key(st),
                                   'blank': 'blank' in st.flags, 'counts': st.counts,
                                   'title': STATE_LABELS[st.state]})
-                if not q.result:
-                    st = cell.status['']
-                    cells.append({'qid': q.id, 'col': q.id, 'state': st.state, 'glyph': {'graded': '–', 'unverified': '?'}.get(st.state, ''),
-                                  'cls': 'v-n', 'v': '', 'blank': False, 'counts': st.counts,
-                                  'title': {'graded': "read", 'not_started': "not read"}.get(st.state, "unverified")})
+                if not q.checks:
+                    state = row.fields[q.id]
+                    cells.append({'qid': q.id, 'col': q.id, 'state': state,
+                                  'glyph': {'verified': '–', 'unverified': '?'}.get(state, ''),
+                                  'cls': 'v-n', 'v': '', 'blank': False, 'counts': False,
+                                  'title': STATE_LABELS[state]})
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
                          'complete': row.complete, 'sort': row.points,
                          'hidden': bool(sel) and not focus.matches(table, sel, row.submission.id)})
-        started = any(c['state'] != 'not_started' for r in rows for c in r['cells'])
         return page('grid.html', rows=rows, columns=columns, questions=list(exam.questions.values()),
                     focus=focus.active(table, sel), started=started)
 
     # --- focus ---
 
     cached: dict[str, Any] = {}
+    memo: dict = {}             # what facets compute (normal forms), kept between tables
 
     def values() -> dict:
         """The whole values table, recomputed only when stored rows have changed."""
-        key = store.version()
+        key_ = store.version()
         with lock:
-            if cached.get('key') == key:
+            if cached.get('key') == key_:
                 return cached['table']
-        table = focus.values_table(exam, store)
+            if len(memo) > 200_000:
+                memo.clear()
+        table = focus.values_table(exam, store, memo=memo)
         with lock:
-            cached.update(key=key, table=table)
+            cached.update(key=key_, table=table)
         return table
 
     def filter_page(request: Request) -> Response:
@@ -477,125 +478,92 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         subs = store.submissions() if sid is None else [store.submission(sid)]
         return JSONResponse({'subs': [s.id for s in subs], 'names': [s.name for s in subs],
                              'questions': focus.describe_facets(exam),
-                             'values': values() if sid is None else focus.values_table(exam, store, submission=sid)})
+                             'values': values() if sid is None else
+                             focus.values_table(exam, store, submission=sid, memo=memo)})
 
     # --- question page ---
 
     def question_page(request: Request) -> Response:
         sub, q = target(request)
-        arts = store.for_question(sub.id, q.id)
-        parses = store.of_kind(sub.id, 'parse')
-        status = question_status(q, arts, parses=parses, code_hash=exam.code_hash)
+        sheet = runner.sheet(sub.id)
         layout = ws.layout(sub.id)
         try:
             count = ws.scan_page_count(sub.id)
         except Exception:
             count = 0
 
-        def crop(region, *path):
+        def crop(region, path):
             if region is None:
                 return None
             index = layout.scan_index(region.page)
             if not 0 <= index < count:
                 return None
             return {'index': index, 'box': ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad)),
-                    'path': overrides.join(q.id, *path)}
+                    'path': path}
 
         pages, note = ws.selected_pages(sub.id, q)
         scans = [{'page': p, 'index': layout.scan_index(p)} for p in pages
                  if 0 <= layout.scan_index(p) < count]
 
-        def editor(kind):
-            stage, art = q.stage(kind), arts.get(kind)
-            if stage is None:
-                return None
-            return {'kind': kind, 'art': art, 'rev': art.rev if art else '', 'editable': stage.editable,
-                    'trusted': art is not None and kind == 'parse' and art.trusted(q.labels or None),
-                    'marker': art is not None and has_marker(art.body)}
+        # the checks: status, proposal, evidence
+        checks, judged = [], {}
+        for c in q.checks:
+            k = key(q.id, c.name)
+            st = sheet.status(exam, q, c)
+            stored, decision = sheet.results.get(k), sheet.decisions.get(k)
+            row = store.get(sub.id, k, 'result')
+            blocks = prepare_blocks((row.body or {}).get('blocks')) if row else []
+            for label, j in (stored.fields if stored else {}).items():
+                judged.setdefault(label, []).append({'check': c.name, **j})
+            spec = c.points
+            checks.append({'name': c.name, 'column': q.column(c.name), 'st': st, 'glyph': glyph(st),
+                           'cls': value_class(st), 'fn': c.fn is not None,
+                           'rev': decision.rev if decision else '', 'decided': decision is not None,
+                           'bool': isinstance(spec, Bool), 'min': getattr(spec, 'min', None),
+                           'max': getattr(spec, 'max', None), 'counts': spec.counts,
+                           'step': 1 if getattr(spec, 'type', None) is int else 'any',
+                           'stored': stored, 'current': st.state not in ('outdated', 'not_run'),
+                           'params': stored.params if stored else {},
+                           'plots': [b for b in blocks if b['type'] == 'plot'],
+                           'rest': [b for b in blocks if b['type'] != 'plot']})
 
-        # fields read from the printing (or by another reader): shown with what was asked
-        asks = {f.label: {'tag': "printed" if isinstance(f.read, Printed) else "read",
-                          'ask': getattr(f.read, 'ask', "")} for f in q.read_fields}
-        parse = editor('parse')
-        if parse:
-            body = parse['art'].body if parse['art'] else None
-            # No declared body shape: follow the stored body; with none, a form if there are fields.
-            parse['mode'] = ('code' if isinstance(body, str) else 'form' if isinstance(body, dict)
-                             else 'form' if q.stage('parse').shape == 'fields' else 'code')
-            regions = {f.label: f.region for f in q.fields}
-            if parse['mode'] == 'form':
-                body = body if isinstance(body, dict) else {}
-                names = list(q.labels) + [k for k in body if k not in q.labels]
-                parse['fields'] = [{'label': n, 'value': '' if body.get(n) is None else str(body[n]),
-                                    'crop': crop(regions.get(n), 'fields', n, 'region'),
-                                    'marker': has_marker(body.get(n)), 'read': asks.get(n)}
-                                   for n in names]
-            else:
-                parse['text'] = body or ''
-                parse['crops'] = [c for c in (crop(r, 'fields', n, 'region') for n, r in regions.items()) if c]
-        # A question without a parse stage (decided by hand) still shows its answer areas.
-        loose = [] if parse else [{'label': f.label, 'crop': c} for f in q.fields
-                                  if (c := crop(f.region, 'fields', f.label, 'region'))]
-        transcript = editor('transcript')
-        if transcript:
-            transcript.update(mode='code', text=transcript['art'].body if transcript['art'] else '')
+        # the fields on the page: its own, then those its checks read elsewhere
+        own = [key(q.id, label) for label in q.labels]
+        keys = own + [k for c in checks if c['stored'] for k in c['stored'].reads if k not in own]
+        keys = list(dict.fromkeys(keys))
+        fields = []
+        for k in keys:
+            qid, label = split_key(k)
+            other = exam.questions.get(qid)
+            f = other.field(label) if other else None
+            if f is None:
+                continue
+            v = sheet.values.get(k)
+            reader = other.reader_of(label)
+            region = ws.region(sub.id, other, label)
+            fields.append({
+                'key': k, 'qid': qid, 'label': label, 'own': qid == q.id,
+                'title': label if qid == q.id else f"{qid} {label}",
+                'value': v.text if v else '', 'rev': v.rev if v else '', 'read': v is not None,
+                'settled': v.settled if v else None, 'by': v.by if v else None,
+                'marker': bool(v and v.marker),
+                'code': isinstance(getattr(reader, 'entries', None), (tuple, dict)) or bool(v and '\n' in v.text),
+                'printed': isinstance(reader, Printed), 'ask': getattr(reader, 'ask', ''),
+                'typed': reader is None,
+                'crop': crop(region, overrides.join(qid, 'fields', label, 'region')),
+                'judged': judged.get(label, []) if qid == q.id else []})
+        seen = {f['key']: (f['rev'] if f['read'] else None) for f in fields}
+        waiting = [f['key'] for f in fields if f['read'] and f['settled'] is None and not f['marker']]
 
-        ev = arts.get('evidence')
-        blocks = prepare_blocks((ev.body or {}).get('blocks')) if ev and isinstance(ev.body, dict) else []
-        evidence = {'art': ev, 'current': evidence_current(q, arts, parses),
-                    'plots': [b for b in blocks if b['type'] == 'plot'],
-                    'rest': [b for b in blocks if b['type'] != 'plot']}
+        history = []
+        for f in fields:
+            for h in store.history(sub.id, f['key'], 'value')[:20]:
+                b = h.body or {}
+                history.append({'field': f['title'], 'key': f['key'], 'rev': h.rev,
+                                'at': h.updated_at[:16].replace('T', ' '), 'who': h.author or "read",
+                                'settled': b.get('settled'), 'text': str(b.get('text', ''))[:300]})
+        history.sort(key=lambda h: h['at'], reverse=True)
 
-        def todo(st) -> str:
-            """What a person must do for a part, in one phrase without repeated words."""
-            out = []
-            if st.waiting == ('input',):
-                out.append("decide")
-            elif st.waiting:
-                out.append("verify " + ", ".join(w for w in st.waiting if w != 'input'))
-            reason = REASONS.get(st.reason, st.reason) if st.value is None else None
-            if reason and not (st.waiting_on and reason.startswith("no parse of")):
-                out.append(reason)
-            return " · ".join(out)
-
-        # other questions whose parse a check read and that wait for a person: linked
-        waits_on = [{'id': qid, 'title': exam.questions[qid].title if qid in exam.questions else qid,
-                     'missing': qid not in parses}
-                    for qid in dict.fromkeys(w for st in status.values() for w in st.waiting_on)]
-
-        parts = []
-        for part, spec in q.result.items():
-            st, g = status[part], arts.get(grade_kind(part))
-            parts.append({'part': part, 'name': q.column(part), 'st': st, 'glyph': glyph(st),
-                          'cls': value_class(st), 'rev': g.rev if g else '',
-                          'manual': g is not None and g.origin == 'manual',
-                          'bool': isinstance(spec, Bool), 'min': getattr(spec, 'min', None),
-                          'max': getattr(spec, 'max', None),
-                          'step': 1 if getattr(spec, 'type', None) is int else 'any', 'todo': todo(st)})
-
-        def replaces(names):
-            """What a deliberate run of these stages would overwrite of a grader's work."""
-            out = []
-            for n in names:
-                a = arts.get(n)
-                if n not in ('evidence', 'grade') and a is not None and a.protected:
-                    out.append(f"{'verified' if a.verified else 'edited'} {n}")
-                if n in ('evidence', 'grade') and any(p['manual'] for p in parts) and "manual grade" not in out:
-                    out.append("manual grade")
-            return ", ".join(out)
-
-        names = [s.name for s in q.stages]
-        stages = [{'name': s.name, 'model': s.uses_model, 'off': s.uses_model and not have_model(),
-                   'replaces': replaces([s.name]), 'replaces_on': replaces(names[i:])} for i, s in enumerate(q.stages)]
-        # what a person is asked to verify before the grades count, parse first
-        waiting = [w for w in ('parse', 'transcript') if any(w in p['st'].waiting for p in parts)]
-        # a question with no result: its parse is still for a person to verify
-        if not q.result and parse and parse['art'] is not None and not parse['art'].trusted(q.labels or None):
-            waiting.append('parse')
-        history = [{'rev': a.rev, 'at': a.updated_at[:16].replace('T', ' '), 'who': a.author or a.origin,
-                    'verified': a.verified,
-                    'preview': (a.body if isinstance(a.body, str) else json.dumps(a.body, ensure_ascii=False))[:300]}
-                   for a in store.history(sub.id, q.id, 'parse')[:30]]
         qids = list(exam.questions)
         i = qids.index(q.id)
         over = store.get(sub.id, '', 'layout')
@@ -603,104 +571,115 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         entries = overrides.editable(exam, q.id)
         regions = []
         for e in entries:
+            segs = overrides.split(e.path)
             if e.kind == 'region':
-                segs = overrides.split(e.path)
-                regions.append({'path': e.path, 'label': segs[2], 'printed': segs[2] in asks,
-                                'region': e.current, 'base': e.base, 'stored': e.path in revs,
-                                'rev': revs.get(e.path)})
-        check = getattr(q.stage('evidence'), 'fn', None)
-        names = [str(k) for k in getattr(check, 'key', None) or {}] if getattr(check, 'by', None) else []
-        picked = picked_key(q, arts, parses)
-        keys = key_entries(entries, revs, names, picked)
+                own_row = store.get(sub.id, key(q.id, segs[2]), 'region')
+                regions.append({'path': e.path, 'label': segs[2], 'printed': isinstance(q.reader_of(segs[2]), Printed),
+                                'region': (own_row.body['region'] if own_row else e.current), 'base': e.base,
+                                'stored': e.path in revs, 'rev': revs.get(e.path),
+                                'exam': e.current, 'own': own_row is not None,
+                                'own_rev': own_row.rev if own_row else None})
+        keyed = []
+        for c in q.checks:
+            picked = picked_key(exam, q, c, sheet.values)
+            entries_ = key_entries(entries, revs, c, picked)
+            if entries_:
+                keyed.append({'check': c.name, 'picked': picked, 'entries': entries_,
+                              'edited': any(e['overridden'] for e in entries_)})
+        readers_ = [r for r, _ in q.groups()]
         return page(
-            'question.html', sub=sub, q=q, parts=parts, scans=scans, parse=parse, loose=loose, transcript=transcript,
-            evidence=evidence, stages=stages, history=history, count=count, waits_on=waits_on, picked=picked,
-            seen=seen_revs(q, arts), waiting=waiting,
+            'question.html', sub=sub, q=q, checks=checks, fields=fields, seen=seen, waiting=waiting,
+            scans=scans, history=history[:60], count=count, keyed=keyed,
+            can_read=bool(readers_), off=bool(readers_) and not have_model(),
             pages=pages, note=note, pages_default=q.pages, layout=layout,
-            layout_over=over.body if over else None, regions=regions, keys=keys,
-            first_page=(q.pages or (1,))[0],
-            ids=[s.id for s in store.submissions()],
+            layout_over=over.body if over else None, regions=regions,
+            first_page=(q.pages or (1,))[0], ids=[s.id for s in store.submissions()],
             prev_q=qids[i - 1] if i else None, next_q=qids[i + 1] if i + 1 < len(qids) else None)
 
-    def save(request, data):
-        sub, q = target(request)
-        kind, body = data.get('kind'), data.get('body')
-        if kind not in ('parse', 'transcript'):
-            raise Bad("not editable")
-        cur = store.get(sub.id, q.id, kind)
-        if kind == 'transcript' or (cur is not None and isinstance(cur.body, str)):
-            ok = isinstance(body, str)
-        elif cur is not None:
-            ok = isinstance(body, dict)
-        else:
-            ok = isinstance(body, (str, dict))
-        if ok and isinstance(body, dict):
-            ok = all(isinstance(k, str) and (v is None or isinstance(v, str)) for k, v in body.items())
-        if not ok or len(json.dumps(body)) > MAX_BODY:
-            raise Bad("unexpected content")
-        art = runner.save(sub.id, q.id, kind, body, author=who(request), expect_rev=_rev(data),
-                          verify=bool(data.get('verify')))
-        return {'rev': art.rev, 'job': recheck(sub.id, q.id)}
+    def field_of(data: dict, k: Any) -> tuple[str, str]:
+        if not isinstance(k, str) or '/' not in k:
+            raise Bad("unknown field")
+        qid, label = split_key(k)
+        if qid not in exam.questions or exam.questions[qid].field(label) is None:
+            raise Bad("unknown field")
+        return qid, label
 
-    def verify(request, data):
+    def save(request, data):
+        """Set the values a person changed (each settled by them), then verify
+        the ones listed: 'save', 'save and verify', 'verify all here'."""
         sub, q = target(request)
-        kind = data.get('kind')
-        stage = q.stage(kind) if isinstance(kind, str) else None
-        if stage is None or not stage.editable:
-            raise Bad("nothing to verify")
+        changed, verify = data.get('values') or {}, data.get('verify') or []
+        if not isinstance(changed, dict) or not isinstance(verify, list):
+            raise Bad("unexpected content")
+        author, revs = who(request), {}
+        for k, item in changed.items():
+            qid, label = field_of(data, k)
+            text = item.get('text') if isinstance(item, dict) else None
+            if not isinstance(text, str) or len(text) > MAX_BODY:
+                raise Bad("unexpected content")
+            v = runner.set(sub.id, qid, label, text, author=author, expect_rev=_rev(item))
+            revs[k] = v.rev
+        for item in verify:
+            k = item.get('key') if isinstance(item, dict) else None
+            qid, label = field_of(data, k)
+            if k in revs:
+                continue            # set just now: settled by this person
+            runner.verify(sub.id, qid, label, author=author, expect_rev=_rev(item))
+        return {'revs': revs, 'job': refresh(sub.id, q.id) if revs else None}
+
+    def unverify(request, data):
+        sub, q = target(request)
+        qid, label = field_of(data, data.get('key'))
         rev = _rev(data)
         if rev is None:
-            raise Bad("nothing to verify")
-        art = runner.verify(sub.id, q.id, kind, author=who(request), expect_rev=rev,
-                            verified=data.get('verified', True) is not False)
-        return {'rev': art.rev, 'job': recheck(sub.id, q.id)}
+            raise Bad("nothing to unverify")
+        runner.verify(sub.id, qid, label, author=who(request), expect_rev=rev, verified=False)
 
-    def part_of(q: Question, data: dict) -> str:
-        part = data.get('part', '')
-        if part not in q.result:
-            raise Bad("unknown part")
-        return part
+    def check_of(q: Question, data: dict):
+        c = q.check(data.get('check')) if isinstance(data.get('check'), str) else None
+        if c is None:
+            raise Bad("unknown check")
+        return c
 
     def decide(request, data):
         sub, q = target(request)
-        part = part_of(q, data)
-        spec, value, flags = q.result[part], data.get('value'), ()
+        c = check_of(q, data)
+        spec, value, flags = c.points, data.get('value'), ()
         if data.get('blank'):
             value, flags = spec.coerce('blank').value, ('blank',)
         elif isinstance(value, str):
             value = spec.parse(value)
         seen = data.get('seen')
-        if isinstance(seen, str):          # a form field
-            try:
-                seen = json.loads(seen)
-            except ValueError:
-                seen = None
         if not isinstance(seen, dict):
             raise Bad("seen is required")
         seen = {str(k): _rev({'rev': v}) for k, v in seen.items()}
-        art = runner.decide(sub.id, q.id, part, value, author=who(request), flags=flags,
-                            expect_rev=_rev(data), seen=seen)
-        return {'rev': art.rev}
+        d = runner.decide(sub.id, q.id, c.name, value, author=who(request), flags=flags,
+                          expect_rev=_rev(data), seen=seen)
+        return {'rev': d.rev}
 
-    def undecide(request, data):
+    def clear(request, data):
         sub, q = target(request)
-        runner.undecide(sub.id, q.id, part_of(q, data), expect_rev=_rev(data))
+        runner.clear(sub.id, q.id, check_of(q, data).name, expect_rev=_rev(data))
 
-    def run(request, data):
+    def read(request, data):
+        """Read this question's fields again (not what a person settled, unless asked)."""
         sub, q = target(request)
-        name = data.get('stage')
-        stage = q.stage(name) if isinstance(name, str) else None
-        if stage is None:
-            raise Bad("unknown stage")
-        if stage.uses_model and not have_model():
+        if not have_model():
             raise Bad("model unavailable")
+        protected = bool(data.get('include_protected'))
+        reasoning = bool(data.get('reasoning'))
+
+        def work():
+            outs = runner.read(sub.id, q.id, include_protected=protected, fresh=True, reasoning=reasoning)
+            return outs + runner.refresh(sub.id, questions=[q.id])
+        return {'job': jobs.start(work)}
+
+    def run_check(request, data):
+        """A grader's explicit run of one check, with optional parameters."""
+        sub, q = target(request)
+        c = check_of(q, data)
         params = _params(data.get('params'))
-        # A grader's explicit run: it replaces protected content and manual grades
-        # (kept in history); the page says so on the button and asks first.
-        kw = dict(params=params, reasoning=bool(data.get('reasoning')), deliberate=True)
-        if data.get('onward'):
-            return {'job': jobs.start(lambda: runner.run_from(sub.id, q.id, name, **kw))}
-        return {'job': jobs.start(lambda: runner.run_stage(sub.id, q.id, name, **kw))}
+        return {'job': jobs.start(lambda: runner.compute(sub.id, q.id, c.name, params=params))}
 
     def set_pages(request, data):
         sub, q = target(request)
@@ -712,15 +691,35 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         pages = [_int(p, "page", 1, exam.pages) for p in pages]
         ws.set_pages(sub.id, q, pages, str(data.get('note') or '')[:2000], author=who(request))
 
-    def restore(request, data):
+    def set_region(request, data):
+        """A field's region for this submission only (null: back to the exam's). Changes no value."""
         sub, q = target(request)
-        if 'expect' not in data:
-            raise Bad("rev is required")
-        try:
-            store.restore(sub.id, q.id, 'parse', _rev(data), expect_rev=_rev({'rev': data['expect']}))
-        except KeyError:
-            raise Bad("no such version") from None
-        return {'job': recheck(sub.id, q.id)}
+        label = data.get('label')
+        if not isinstance(label, str) or q.field(label) is None:
+            raise Bad("unknown field")
+        value = data.get('value')
+        region = None
+        if value is not None:
+            if not (isinstance(value, list) and len(value) == 5):
+                raise Bad("a region is [page, left, top, right, bottom]")
+            region = Region(*[_int(v, "region", 0, 1000) for v in value])
+        ws.set_region(sub.id, q, label, region, author=who(request), expect_rev=_rev(data))
+        row = store.get(sub.id, key(q.id, label), 'region')
+        r = ws.region(sub.id, q, label)
+        return {'value': [r.page, r.left, r.top, r.right, r.bottom] if r else None,
+                'rev': row.rev if row else None, 'own': row is not None}
+
+    def restore(request, data):
+        """A field's earlier value back, set by this person."""
+        sub, q = target(request)
+        qid, label = field_of(data, data.get('key'))
+        rev = _rev(data)
+        old = next((h for h in store.history(sub.id, key(qid, label), 'value') if h.rev == rev), None)
+        if old is None:
+            raise Bad("no such version")
+        runner.set(sub.id, qid, label, str((old.body or {}).get('text', '')), author=who(request),
+                   expect_rev=_rev({'rev': data.get('expect')}))
+        return {'job': refresh(sub.id, q.id)}
 
     def set_layout(request, data):
         sub, _ = target(request, need_question=False)
@@ -747,9 +746,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def raw_block(request: Request) -> Response:
         sub, q = target(request)
-        ev = store.get(sub.id, q.id, 'evidence')
-        html = find_raw((ev.body or {}).get('blocks'), request.path_params['path']) \
-            if ev and isinstance(ev.body, dict) else None
+        row = store.get(sub.id, key(q.id, request.path_params['check']), 'result')
+        html = find_raw((row.body or {}).get('blocks'), request.path_params['path']) \
+            if row and isinstance(row.body, dict) else None
         if html is None:
             raise HTTPException(404)
         # Exam-supplied markup: an opaque origin, no scripts, nothing fetched.
@@ -768,10 +767,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     # --- runs ---
 
     def runs_page(request: Request) -> Response:
-        order = batch.stage_order(exam)
-        uses_model = {s.name for q in exam.questions.values() for s in q.stages if s.uses_model}
-        return page('runs.html', stages=[{'name': n, 'model': n in uses_model} for n in order],
-                    questions=list(exam.questions.values()), total=len(store.submissions()))
+        return page('runs.html', steps=batch.STEPS, questions=list(exam.questions.values()),
+                    total=len(store.submissions()))
 
     def runs_preview(request, data):
         known = [s.id for s in store.submissions()]
@@ -779,21 +776,20 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         subs = tuple(known) if subs is None else _strings(subs, set(known), "submissions")
         questions = data.get('questions')
         questions = tuple(exam.questions) if questions is None else _strings(questions, exam.questions, "questions")
-        order = batch.stage_order(exam)
-        chosen = _strings(data.get('stages') or [], order, "stages")
+        chosen = _strings(data.get('steps') or [], batch.STEPS, "steps")
         if not subs or not questions or not chosen:
             raise Bad("nothing selected")
-        sel = batch.Selection(subs, questions, tuple(n for n in order if n in chosen),
+        sel = batch.Selection(subs, questions, tuple(n for n in batch.STEPS if n in chosen),
                               missing_only=bool(data.get('missing_only')),
                               include_protected=bool(data.get('include_protected')))
-        plan = batch.plan(exam, store, sel, model_available=have_model())
+        plan = batch.plan(exam, store, sel, model_available=have_model(), regions=ws.fields)
         with lock:
             plans[plan.token] = plan
             while len(plans) > 8:
                 plans.popitem(last=False)
         groups: dict[tuple, list[str]] = {}
         for item in plan.items:
-            groups.setdefault((item.action, item.stage, item.question, item.reason), []).append(item.submission)
+            groups.setdefault((item.action, item.step, item.question, item.reason), []).append(item.submission)
         rank = {a: i for i, a in enumerate(batch.ACTIONS)}
         return {'plan': plan.token, 'counts': {a: plan.count(a) for a in batch.ACTIONS},
                 'groups': [{'action': a, 'stage': s, 'question': qn, 'reason': r, 'n': len(ids),
@@ -808,7 +804,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             current: Batch | None = request.app.state.batch
             if current is not None and current.active:
                 raise Conflict("a run is already in progress")
-            fresh = batch.plan(exam, store, plan.selection, model_available=have_model())
+            fresh = batch.plan(exam, store, plan.selection, model_available=have_model(), regions=ws.fields)
             if fresh.token != plan.token:
                 raise Conflict("the preview is out of date; preview again")
             request.app.state.batch = Batch(batch.BatchRun(
@@ -871,31 +867,23 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return path
 
     def _changed(path: str, change: overrides.Change, data: dict) -> dict:
-        """After an edit: count what it outdated and recheck it in the background,
-        the requesting page's submission first."""
+        """After an edit: recompute in the background what it outdated, the
+        requesting page's submission first; say which fields to offer to read again."""
         o = store.overrides().get(path)
         subs = [s.id for s in store.submissions()]
         first = data.get('sub')
         if first in subs:
             subs.remove(first)
             subs.insert(0, first)
-        affected = 0
-        for qid in change.questions:
-            q = exam.questions[qid]
-            for sid in subs:
-                arts = store.for_question(sid, qid)
-                if arts:
-                    status = question_status(q, arts, parses=store.of_kind(sid, 'parse'),
-                                             code_hash=exam.code_hash)
-                    affected += sum(st.state in ('outdated', 'manual_outdated') for st in status.values())
-        job = jobs.start_each([(s, qid) for s in subs for qid in change.questions], runner.recheck) \
-            if change.questions else None
+        job = jobs.start_each([(s,) for s in subs], runner.refresh) if change.checks else None
         segs = overrides.split(path)
         entry = next((e for e in overrides.editable(exam, segs[0]) if e.path == path), None)
         return {'rev': o.rev if o else None, 'value': entry.current if entry else None,
                 'text': show_value(entry.kind, entry.current) if entry else '',
-                'overridden': o is not None, 'questions': list(change.questions), 'affected': affected,
-                'job': job, 'skipped': [{'path': s.path, 'reason': s.reason} for s in change.skipped]}
+                'overridden': o is not None, 'checks': [f'{q}.{c}' for q, c in change.checks],
+                'affected': len(change.checks) * len(subs), 'job': job,
+                'reread': [f'{q}/{label}' for q, label in change.fields],
+                'skipped': [{'path': s.path, 'reason': s.reason} for s in change.skipped]}
 
     def _conflict(e: Conflict, path: str) -> Conflict:
         o = store.overrides().get(path)
@@ -1141,14 +1129,16 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         Route('/s/{sub}/{q}', question_page),
         post('/s/{sub}/layout', set_layout),
         post('/s/{sub}/{q}/save', save),
-        post('/s/{sub}/{q}/verify', verify),
+        post('/s/{sub}/{q}/unverify', unverify),
         post('/s/{sub}/{q}/decide', decide),
-        post('/s/{sub}/{q}/undecide', undecide),
-        post('/s/{sub}/{q}/run', run),
+        post('/s/{sub}/{q}/clear', clear),
+        post('/s/{sub}/{q}/read', read),
+        post('/s/{sub}/{q}/check', run_check),
         post('/s/{sub}/{q}/pages', set_pages),
+        post('/s/{sub}/{q}/region', set_region),
         post('/s/{sub}/{q}/restore', restore),
         Route('/page/{sub}/{index:int}.jpg', page_image),
-        Route('/raw/{sub}/{q}/{path}', raw_block),
+        Route('/raw/{sub}/{q}/{check}/{path}', raw_block),
         Route('/jobs/{id}', job),
         Route('/scan', scan_page),
         Route('/runs', runs_page),
@@ -1178,4 +1168,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     app = Starlette(routes=routes)
     app.add_middleware(Guard, public_url=public_url)
     app.state.batch = None
+    # Results outdated while the app was down (the exam's code or data changed) are recomputed now.
+    app.state.startup = jobs.start_each([(s.id,) for s in store.submissions()], runner.refresh)
     return app

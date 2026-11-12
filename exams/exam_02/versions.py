@@ -101,7 +101,7 @@ def names(qid) -> list:
 @dataclass(frozen=True)
 class Printing:
     """A question's printing, from the bits it depends on (`fn(ctx) -> name`, for
-    `stages.math(by=...)` and the custom checks). Undecided while a bit is."""
+    `math.keyed(by=...)` and the custom checks). Undecided while a bit is."""
     qid: str
 
     def __call__(self, ctx):

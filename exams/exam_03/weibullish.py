@@ -1,4 +1,7 @@
-"""The check for question 2: `weibull(a, b)` (2.1) and `weibullish()` (2.2)."""
+"""The checks for question 2: `weibull(a, b)` (2.1) and `weibullish()` (2.2), one per field.
+
+Each reads only its own field: 2.2 runs with a trusted `weibull`, so it does not
+depend on the student's 2.1."""
 import math
 import time
 
@@ -97,6 +100,9 @@ def check_weibullish(program: pseudocode.Program, params) -> checks.Part:
     return part.settle(outcome)
 
 
-def check(ctx):
-    return checks.check_source(ctx.input('parse'), SCALAR, ['2.1', '2.2'],
-                               lambda program: [check_weibull(program), check_weibullish(program, ctx.params)])
+def check_21(ctx):
+    return checks.check_source(ctx.read('2.1'), SCALAR, '2.1', check_weibull)
+
+
+def check_22(ctx):
+    return checks.check_source(ctx.read('2.2'), SCALAR, '2.2', lambda program: check_weibullish(program, ctx.params))

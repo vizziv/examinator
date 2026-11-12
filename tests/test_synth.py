@@ -17,7 +17,7 @@ def toy():
 @pytest.mark.parametrize('case, said', [
     (Case('c', answers={'sum': {'1': '2'}}), "case 'c': answers: no question 'sum'"),
     (Case('c', answers={'parity': {'C': 'even'}}), "case 'c': answers['parity']: no written field 'C'"),
-    (Case('c', answers={'parity': 'even'}), "case 'c': answers['parity']: expected {label"),
+    (Case('c', answers={'areas': '4'}), "case 'c': answers['areas']: expected {label"),
     (Case('c', printed={'parity': {'B': 'red'}}), "case 'c': printed['parity']: no printed field 'B'"),
     (Case('c', printed={'areas': {'A.1': '2'}}), "case 'c': printed['areas']: no printed field 'A.1'"),
     (Case('c', printed={'sum': {'side': '2'}}), "case 'c': printed: no question 'sum'"),

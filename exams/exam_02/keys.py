@@ -11,7 +11,7 @@ from typing import Any
 
 import sympy
 
-from examinator.std import math, stages
+from examinator.std import math
 
 FUNCTIONS = ('sqrt',)       # answers are numbers: arithmetic, sqrt and pi
 
@@ -141,7 +141,7 @@ class EitherOrder:
 
     @property
     def label(self):
-        return f"{stages.show_entry(self.first)} and {stages.show_entry(self.second)}, either order"
+        return f"{math.show_entry(self.first)} and {math.show_entry(self.second)}, either order"
 
     def __call__(self, answers):
         def results(entries):

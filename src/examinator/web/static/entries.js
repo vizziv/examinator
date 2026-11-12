@@ -62,7 +62,8 @@
       const el = form.querySelector('.ev');
       if (form.dataset.kind === 'bool') el.checked = !!b.value; else el.value = b.text;
     }
-    say(form, (clear ? "reverted" : "saved") + (b.job ? ` · ${b.affected} outdated` : ''));
+    say(form, (clear ? "reverted" : "saved") + (b.job ? ` · ${b.checks.join(', ')} outdated` : '')
+                  + ((b.reread || []).length ? " · read again to use it" : ''));
     document.dispatchEvent(new CustomEvent('entry-saved', {detail: b}));
   }
 
@@ -101,7 +102,7 @@
       if (r.body.state !== 'running') {
         const bad = r.body.outcomes || [];
         $('ch-fail').textContent = r.body.state === 'failed' ? `failed: ${r.body.error || ''}`
-          : bad.length ? `${bad.length} not done: ` + bad.slice(0, 5).map(o => `${o.submission} ${o.stage} ${o.status}`).join('; ') : '';
+          : bad.length ? `${bad.length} not done: ` + bad.slice(0, 5).map(o => `${o.submission} ${o.step} ${o.status}`).join('; ') : '';
         break;
       }
       await new Promise(done => setTimeout(done, 600));
@@ -114,9 +115,10 @@
     panel.hidden = false;
     $('ch-fail').textContent = '';
     for (const s of b.skipped || []) $('ch-fail').textContent += `not applied: ${s.path} (${s.reason}) `;
-    if (!b.job) { $('ch-text').textContent = "no grades affected"; return; }
-    $('ch-text').textContent = `${b.affected} answers outdated (${b.questions.join(', ')}); rechecking`;
-    await follow(b.job, `${b.affected} outdated · rechecked`);
+    const reread = (b.reread || []).length ? ` · how ${b.reread.join(', ')} is read changed: read again on its question page` : '';
+    if (!b.job) { $('ch-text').textContent = "no grades affected" + reread; return; }
+    $('ch-text').textContent = `${b.checks.join(', ')} outdated; recomputing` + reread;
+    await follow(b.job, `${b.checks.join(', ')} recomputed`);
   });
   Actions.register('copy-lines', {available: () => !!$('lines'), run: async () => {
     try { await navigator.clipboard.writeText($('lines').textContent); flash("copied", 'ok'); }

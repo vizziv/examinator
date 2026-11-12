@@ -1,8 +1,7 @@
 """Scaffolding for a sampler check: draw, test, and show the verdict.
 
-    def check(ctx):
-        return checks.check_source(ctx.input('parse'), LANGUAGE, ['2.1', '2.2'],
-                                   lambda program: [part_one(program), part_two(program)])
+    def check(ctx):                     # one check per field: its grade is the part's outcome
+        return checks.check_source(ctx.read('2.1'), LANGUAGE, '2.1', part_one)
 
     def part_one(program):
         part = checks.Part('2.1')
@@ -27,12 +26,12 @@ An exam may pass `draw(undecided=...)`, a predicate over the error, instead.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from examinator import Evidence
+from examinator import Judgement, Result
 from examinator.std import pseudocode
 from examinator.std.blocks import Code, Details, Note, Table
 
@@ -174,42 +173,37 @@ class Part:
         return self.settle(fits.combine(*self.fits))
 
 
-def evidence(parts: Part | Sequence[Part], source: str, ran: str | None = None) -> Evidence:
-    """Plots first, then one line per part; tests, samples and the source collapsed."""
-    parts = [parts] if isinstance(parts, Part) else list(parts)
-    data = {'fields': {p.label: {'outcome': p.outcome, 'note': p.note} for p in parts}}
-    blocks = [plot for p in parts for plot in p.plots]
-    blocks.append(Table(['', '', ''], [[p.label, p.outcome or '?', p.note] for p in parts]))
-    for p in parts:
-        if p.tests:
-            blocks.append(Details("Tests" if len(parts) == 1 else f"{p.label} tests",
-                                  Table(["test", '', ''], p.tests)))
-    dumps = [row for p in parts for row in p.dumps]
-    if dumps:
-        blocks.append(Details("Samples", Table(['', "first samples"], dumps), audience='grader'))
+def result(part: Part, source: str, ran: str | None = None) -> Result:
+    """The part's outcome as the grade, and its verdict beside its field; plots
+    first, then the tests, samples and the source collapsed."""
+    blocks: list = list(part.plots)
+    if part.tests:
+        blocks.append(Details("Tests", Table(["test", '', ''], part.tests)))
+    if part.dumps:
+        blocks.append(Details("Samples", Table(['', "first samples"], part.dumps), audience='grader'))
     blocks.append(Details("Source", Code(source), audience='grader'))
     if ran and ran != source:
         blocks.append(Details("As run", Code(ran), audience='grader'))
-    return Evidence(data, blocks)
+    note = part.note or None
+    return Result(part.outcome, {part.label: Judgement(part.outcome, note=note)}, blocks,
+                  reason=(note or "undecided") if part.outcome is None else None)
 
 
-def unparsed(labels: str | Sequence[str], source: str, error: pseudocode.Unsupported) -> Evidence:
-    """The source is outside the language: every part is undecided."""
-    labels = [labels] if isinstance(labels, str) else list(labels)
-    data = {'fields': {label: {'outcome': None, 'note': str(error)} for label in labels}}
-    return Evidence(data, [Note(str(error), 'warn'),
-                           Details("Source", Code(source, [error.line] if error.line else []),
-                                   audience='grader')])
+def unparsed(label: str, source: str, error: pseudocode.Unsupported) -> Result:
+    """The source is outside the language: undecided."""
+    return Result(None, {label: Judgement(None, note=str(error))},
+                  [Note(str(error), 'warn'),
+                   Details("Source", Code(source, [error.line] if error.line else []), audience='grader')],
+                  reason=str(error))
 
 
-def check_source(source: str, language: pseudocode.Language | None, labels: str | Sequence[str],
-                 judge: Callable[[pseudocode.Program], Part | Sequence[Part]], *,
-                 ran: str | None = None) -> Evidence:
+def check_source(source: str, language: pseudocode.Language | None, label: str,
+                 judge: Callable[[pseudocode.Program], Part], *, ran: str | None = None) -> Result:
     """Parse `source` (`ran`, if given, is what is run instead: a rewrite that keeps
-    line numbers), judge the program, and show the parts. Source outside the
-    language leaves every part undecided."""
+    line numbers), judge the program (`judge(program) -> Part`), and show the
+    part. Source outside the language is undecided (shown beside field `label`)."""
     try:
         program = pseudocode.parse(source if ran is None else ran, language)
     except pseudocode.Unsupported as e:
-        return unparsed(labels, source, e)
-    return evidence(judge(program), source, ran)
+        return unparsed(label, source, e)
+    return result(judge(program), source, ran)

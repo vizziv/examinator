@@ -28,13 +28,13 @@ text. Answer keys never appear in any prompt.
 
 ```text
 src/examinator/
-  core/     definitions, store, workflow rules, runner, batch, workspace;
+  core/     definitions, store, status rules (the model: MODEL.md), runner, batch, workspace;
             printed (fields read from the printing) and reading (one region, by the model);
             split (pure boundary logic) and intake (sources, plans, accepting into pdfs/);
             identity (roster, reading name/ID boxes, pure proposals, the pick)
   pdf/      page rendering, scan layout, orientation, writing submission PDFs
   model/    loopback model client, scripted fake model
-  std/      standard library: stages, prompts, fields, math, pseudocode, blocks
+  std/      standard library: readers, prompts, fields, math (the keyed check), pseudocode, blocks
   web/      server and browser interface
   synth.py  synthetic-workspace generator
 src/examinator_kits/
@@ -51,8 +51,8 @@ tests/
   needs something, it goes in that exam's package.
 - **No module-level state** in the library. Everything hangs off an `Exam` and
   an open `Workspace`.
-- **Workflow rules** (`core/workflow.py`, `agent_docs/DESIGN.md` §7) decide
-  whether a grade counts. Change them only with a test for the row you touch.
+- **Status rules** (`core/status.py`, `agent_docs/MODEL.md`) decide whether a
+  grade counts. Change them only with a test for the row you touch.
 - **Student-derived text is never executed as Python.** Math goes through the
   restricted expression parser; pseudocode through the bounded interpreter.
 - **Grading UI:** a working tool for trained staff. Short labels over
@@ -71,7 +71,7 @@ uv run examinator synth exams/toy_exam /path/outside/repo/ws   # synthetic works
 uv run examinator synth exams/toy_exam /outside/repo/st --stacks          # synthetic stacks of scans
 uv run examinator intake exams/toy_exam -w WS --fake --roster R.csv A.pdf   # add scans, propose splits
 uv run examinator intake exams/toy_exam -w WS --fake --names                # read name/ID boxes, list proposals
-uv run examinator run exams/toy_exam --workspace WS            # run stages from the CLI
-uv run examinator serve exams/toy_exam --workspace WS          # the app
-uv run examinator compare exams/toy_exam --workspace WS --fake # compare transcription models (report only)
+uv run examinator run exams/toy_exam --workspace WS --fake     # read, then check, from the CLI
+uv run examinator serve exams/toy_exam --workspace WS --fake   # the app
+uv run examinator compare exams/toy_exam --workspace WS --fake # compare reading models (report only)
 ```

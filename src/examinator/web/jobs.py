@@ -16,7 +16,7 @@ def _outcomes(result: Any) -> list[dict]:
     if result is None:
         return []
     items = result if isinstance(result, (list, tuple)) else [result]
-    return [{'stage': o.stage, 'status': o.status, 'detail': o.detail} for o in items]
+    return [{'step': o.step, 'status': o.status, 'detail': o.detail} for o in items]
 
 
 class Jobs:
@@ -67,7 +67,7 @@ class Jobs:
                     bad += [{**o, 'submission': item[0]} for o in out if o['status'] != 'done']
                 except Exception as e:      # the type only, as above
                     failed += 1
-                    bad.append({'stage': '', 'status': 'failed', 'detail': type(e).__name__,
+                    bad.append({'step': '', 'status': 'failed', 'detail': type(e).__name__,
                                 'submission': item[0]})
                 with self._lock:
                     self._jobs[id] = {'state': 'running', 'outcomes': bad[:200], 'done': i + 1,
@@ -117,5 +117,5 @@ class Batch:
         return {'state': state, 'done': len(outcomes), 'total': run.total, 'current': run.current,
                 'error': self.error if state == 'failed' else '',
                 'failed': len(failures),
-                'failures': [{'submission': o.submission, 'question': o.question, 'stage': o.stage,
+                'failures': [{'submission': o.submission, 'question': o.question, 'step': o.step,
                               'status': o.status, 'detail': o.detail} for o in failures[:500]]}

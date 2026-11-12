@@ -114,4 +114,4 @@ def check_program(program: pseudocode.Program, region: Region) -> checks.Part:
 
 def check(ctx):
     region = REGIONS[PRINTING['q4'](ctx)]
-    return checks.check_source(ctx.input('parse'), POINTS, LABEL, lambda program: check_program(program, region))
+    return checks.check_source(ctx.read(LABEL), POINTS, LABEL, lambda program: check_program(program, region))

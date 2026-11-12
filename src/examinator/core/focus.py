@@ -1,11 +1,13 @@
 """The focused set: which submissions a grader is looking at, and how a filter narrows it.
 
-A `Facet` is a small function from one submission's stored rows to zero or
-more short strings ("values"). The core supplies a few built-in facets for
-every question: from the workflow rules (grade value, workflow state), and the
-value of each field with a reader (a printed field: which printing a
-submission has); everything else comes from outside: a `Stage` declares facets over
-what it writes, and `Exam.question(..., facets=[...])` adds question-level ones.
+A `Facet` is a small function from one submission's view of one question (a
+`View`: its field values and the statuses of its checks) to zero or more short
+strings ("values"). The core supplies a few built-in facets for every
+question: from the status rules (each check's grade and state; how a question
+with no checks stands) and the value of each field with a reader of its own (a
+printed field: which printing a submission has). Everything else comes from
+outside: a reader or a check function may have `facets(question) -> [Facet]`,
+and `Exam.question(..., facets=[...])` adds question-level ones.
 
 `values_table` computes every facet's values for the workspace:
 
@@ -23,12 +25,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from .defs import Exam, Question
-from .grid import load, row_cells
-from .store import Store
-from .workflow import STATES
+from .defs import Exam, Question, key
+from .status import FIELD_STATES, STATES, Sheet, Status
 
-STATUS = '@status'      # what a facet reads to see the workflow's view (a `grid.Cell`)
 KINDS = ('choice', 'text')
 BLANK = '(blank)'        # the value of a blank answer, for facets that show one
 GRADES = ('✓', '✗', 'blank', 'undecided')
@@ -39,43 +38,51 @@ class Facet:
     """One way to describe a submission's answer to a question, for filtering.
 
     `name` is unique within the question ('answer/1.2'); `label` is what the
-    page shows. `reads` lists the artifact kinds `values` needs, each optionally
-    with a JSON path into the body ({'evidence': '$.data.fields'}) so that only
-    that part is loaded; `STATUS` gives the workflow's view instead. `values`
-    gets `{kind: body or part}` for the kinds that exist and returns zero or
-    more strings. A 'choice' facet has few distinct values (a checkbox list); a
-    'text' facet has free text, searched: the first line of each value is what
-    a search matches, any further lines are context shown with it. `group` lays
-    related facets together; `order` fixes the display order of known values.
+    page shows. `values(view)` returns zero or more strings. A 'choice' facet
+    has few distinct values (a checkbox list); a 'text' facet has free text,
+    searched: the first line of each value is what a search matches, any
+    further lines are context shown with it. `group` lays related facets
+    together; `order` fixes the display order of known values.
     """
     name: str
     label: str
-    values: Callable[[Mapping[str, Any]], Iterable[Any]]
-    reads: Any = ()                    # kinds, or {kind: JSON path | None}; stored as pairs
+    values: Callable[['View'], Iterable[Any]]
     kind: str = 'choice'
     group: str = ''
     order: tuple[str, ...] = ()
 
     def __post_init__(self):
-        pairs = tuple(self.reads.items()) if isinstance(self.reads, Mapping) else \
-            tuple((r, None) if isinstance(r, str) else tuple(r) for r in self.reads)
-        kinds = [k for k, _ in pairs]
-        if len(set(kinds)) != len(kinds):
-            raise ValueError(f"facet {self.name!r} reads a kind twice")
-        for _, path in pairs:
-            if path is not None and not str(path).startswith('$'):
-                raise ValueError(f"facet {self.name!r}: a JSON path starts with '$'")
         if self.kind not in KINDS:
             raise ValueError(f"facet {self.name!r}: kind must be one of {KINDS}")
         if not self.name:
             raise ValueError("a facet needs a name")
-        object.__setattr__(self, 'reads', pairs)
         object.__setattr__(self, 'order', tuple(self.order))
 
 
-# --- built-in facets: from the workflow rules, never from evidence contents ---------
+class View:
+    """What a facet sees of one submission and one question."""
 
-def grade_text(st, *, blank: bool = True) -> str | None:
+    def __init__(self, question: Question, sheet: Sheet, status: Mapping[tuple[str, str], Status],
+                 memo: dict | None = None):
+        self.question, self._sheet, self._status = question, sheet, status
+        self.memo = memo if memo is not None else {}     # for facets that compute something costly
+
+    def value(self, label: str, *, question: str | None = None) -> str | None:
+        """A field's value (text), or None if not read."""
+        v = self._sheet.values.get(key(question or self.question.id, label))
+        return v.text if v is not None else None
+
+    def status(self, check: str) -> Status:
+        return self._status[(self.question.id, check)]
+
+    def fields_state(self) -> str:
+        from .status import fields_state
+        return fields_state(self.question, self._sheet.values)
+
+
+# --- built-in facets: from the status rules, never from evidence contents ---------
+
+def grade_text(st: Status, *, blank: bool = True) -> str | None:
     """What a grade is, as text: None (undecided), 'blank' (unless `blank` is
     False), '✓', '✗' or the number. Every other rendering of a grade is built on this."""
     if st.value is None:
@@ -87,7 +94,7 @@ def grade_text(st, *, blank: bool = True) -> str | None:
     return f'{st.value:g}'
 
 
-def grade_value(st) -> str:
+def grade_value(st: Status) -> str:
     """What a grade is, as a facet value: '✓', '✗', 'blank', 'undecided' or the number."""
     text = grade_text(st)
     return 'undecided' if text is None else text
@@ -95,38 +102,45 @@ def grade_value(st) -> str:
 
 def builtin_facets(question: Question) -> list[Facet]:
     out = []
-    for part in question.result:
-        suffix, shown = (f':{part}', f' {part}') if part else ('', '')
-        out.append(Facet('grade' + suffix, 'grade' + shown,
-                         lambda b, p=part: [grade_value(b[STATUS].status[p])],
-                         reads=(STATUS,), group='result', order=GRADES))
-        out.append(Facet('state' + suffix, 'state' + shown,
-                         lambda b, p=part: [b[STATUS].status[p].state],
-                         reads=(STATUS,), group='result', order=STATES))
-    for f in question.read_fields:       # what was read of the printing, say: few values, filterable
-        out.append(Facet(f'field/{f.label}', f.label, lambda b, label=f.label: [field_value(b['parse'], label)],
-                         reads=('parse',), group='fields'))
+    several = len(question.checks) > 1
+    for c in question.checks:
+        suffix, named = (f':{c.name}', f' {c.name}') if several else ('', '')
+        out.append(Facet('grade' + suffix, 'grade' + named, lambda v, n=c.name: [grade_value(v.status(n))],
+                         group='grade', order=GRADES))
+        out.append(Facet('state' + suffix, 'state' + named, lambda v, n=c.name: [v.status(n).state],
+                         group='grade', order=STATES))
+    if not question.checks:
+        out.append(Facet('state', 'state', lambda v: [v.fields_state()], group='grade', order=FIELD_STATES))
+    for f in question.fields:       # what was read of the printing, say: few values, filterable
+        if f.read is not None:
+            out.append(Facet(f'field/{f.label}', f.label, lambda v, label=f.label: [shown(v.value(label))],
+                             group='fields'))
     return out
 
 
-def field_value(parse, label: str) -> str | None:
-    """One field's value in a parse of fields, as a facet value (`BLANK` if empty)."""
-    if not isinstance(parse, Mapping):
+def shown(text: str | None) -> str | None:
+    """A value as a facet value: `BLANK` if empty, None if not read."""
+    if text is None:
         return None
-    v = parse.get(label)
-    return BLANK if v is None or not str(v).strip() else str(v)
+    return BLANK if not text.strip() else text
 
 
 def facets(question: Question) -> list[Facet]:
-    """A question's facets: built-ins, then its stages', then its own."""
+    """A question's facets: built-ins, then its readers', its checks', then its own."""
     out = builtin_facets(question)
-    for s in question.stages:
-        out += list(s.facets)
+    seen: list = []
+    for thing in [f.read for f in question.fields] + [question.read] + [c.fn for c in question.checks]:
+        if thing is None or any(thing is s for s in seen):
+            continue
+        seen.append(thing)
+        make = getattr(thing, 'facets', None)
+        if callable(make):          # two checks over the same fields offer the same facet once
+            out += [f for f in make(question) if f.name not in {g.name for g in out}]
     out += list(question.facets)
-    names = [f.name for f in out]
     for f in out:
         if not isinstance(f, Facet):
             raise TypeError(f"{question.id}: {f!r} is not a Facet")
+    names = [f.name for f in out]
     dup = sorted({n for n in names if names.count(n) > 1})
     if dup:
         raise ValueError(f"{question.id}: duplicate facet names {dup}")
@@ -150,38 +164,31 @@ def _clean(got: Iterable[Any] | None) -> list[str]:
     return out
 
 
-def values_table(exam: Exam, store: Store, *, submission: str | None = None
-                 ) -> dict[str, dict[str, list[str]]]:
+def values_table(exam: Exam, store, *, submission: str | None = None,
+                 memo: dict | None = None) -> dict[str, dict[str, list[str]]]:
     """Every facet's values: `{facet_id: {submission: [values]}}`, for the whole
-    workspace (or one submission). One query per (question, kind, path) that
-    facets read, plus the grid's two; no per-row lookups."""
-    if submission is None:
-        cells = {r.submission.id: r.cells for r in load(exam, store)}
-    else:
-        cells = {submission: row_cells(exam, {qid: store.for_question(submission, qid)
-                                              for qid in exam.questions})}
+    workspace (or one submission). One query; `memo` keeps what facets compute
+    (normal forms of answers) between calls."""
+    from .grid import sheets
+    every = sheets(store, submission)
+    subs = [submission] if submission is not None else [s.id for s in store.submissions()]
+    empty = Sheet({}, {}, {})
+    memo = {} if memo is None else memo
     out: dict[str, dict[str, list[str]]] = {}
+    status = {sid: every.get(sid, empty).statuses(exam) for sid in subs}
     for qid, q in exam.questions.items():
         fs = facets(q)
-        needed = {(k, p) for f in fs for k, p in f.reads if k != STATUS}
-        data = {kp: store.bodies(qid, kp[0], kp[1], submission=submission) for kp in needed}
-        for f in fs:
-            col = out[facet_id(qid, f)] = {}
-            for sid, row in cells.items():
-                got: dict[str, Any] = {}
-                for k, p in f.reads:
-                    if k == STATUS:
-                        got[k] = row[qid]
-                    elif sid in data[(k, p)]:
-                        got[k] = data[(k, p)][sid]
-                if not got:
-                    continue
+        cols = {facet_id(qid, f): {} for f in fs}
+        out.update(cols)
+        for sid in subs:
+            view = View(q, every.get(sid, empty), status[sid], memo)
+            for f in fs:
                 try:
-                    vals = _clean(f.values(got))
+                    vals = _clean(f.values(view))
                 except Exception:        # one bad facet must not take the page down
                     vals = ['(error)']
                 if vals:
-                    col[sid] = vals
+                    cols[facet_id(qid, f)][sid] = vals
     return out
 
 
@@ -248,6 +255,6 @@ def counts(table, selection: Selection, fid: str, submissions: Iterable[str]) ->
     return out
 
 
-__all__ = ['BLANK', 'Facet', 'STATUS', 'active', 'builtin_facets', 'counts', 'describe_facets',
-           'facet_id', 'facets', 'field_value', 'focused', 'grade_text', 'grade_value', 'matches',
+__all__ = ['BLANK', 'Facet', 'View', 'active', 'builtin_facets', 'counts', 'describe_facets',
+           'facet_id', 'facets', 'focused', 'grade_text', 'grade_value', 'matches', 'shown',
            'values_table']

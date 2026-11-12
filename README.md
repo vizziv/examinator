@@ -2,11 +2,12 @@
 
 A small language for building exam graders, and the app that runs one.
 
-An instructor scans handwritten exams to PDF. For each submission and question,
-Examinator reads which printing the student received, transcribes the final
-answer with a local vision model, parses it into a structured answer, checks it
-with local deterministic code, and proposes a grade. Graders review all of this
-in a browser beside the scan, fix what the model misread, and decide.
+An instructor scans handwritten exams to PDF. For each submission, Examinator
+reads the answers into fields with a local vision model (and, from the
+printing, which version the student received), checks the fields with local
+deterministic code, and proposes one grade per check. Graders review all of
+this in a browser beside the scan, verify or fix the values, and decide where a
+check cannot.
 
 - **The library** (`src/examinator`) knows nothing about any particular exam.
 - **Kits** (`src/examinator_kits`) are optional batteries for a kind of course,
@@ -142,9 +143,9 @@ Without it, reviewing, editing, checking and deciding all still work.
 Design notes and history: [`agent_docs/`](agent_docs/README.md). Rules for
 agents working here, including the student data boundary: [`AGENTS.md`](AGENTS.md).
 
-## Comparing transcription models
+## Comparing reading models
 
-`examinator compare` has several local models transcribe the same answers and
+`examinator compare` has several local models read the same answers and
 writes a side-by-side report. It never writes to the workspace's store.
 
 ```sh
@@ -154,7 +155,8 @@ uv run examinator compare path/to/my_exam -w WORKSPACE --limit 5 \
   --ocr 'LightOnOCR@http://localhost:8243/v1::'
 ```
 
-- `--model NAME[@URL]` runs the exam's transcript stage as is with that model.
+- `--model NAME[@URL]` runs the question's own reader as is with that model
+  (one line per field).
 - `--ocr NAME[@URL][::PROMPT]` is for a dedicated OCR model: each answer box is
   sent alone with a short prompt (default `OCR:`; `::` with nothing after it
   sends no prompt text) and no system message.

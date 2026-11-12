@@ -1,14 +1,14 @@
-"""Compare transcription models on the same answers: `examinator compare`.
+"""Compare reading models on the same answers: `examinator compare`.
 
-Each model transcribes the same submissions and questions, one model at a time.
+Each model reads the same submissions and questions, one model at a time.
 Nothing is written to the workspace's store: the results go to a new folder
 under `WORKSPACE/exports/` as `report.html` (side by side, with what the model
 saw) and `results.json` (the same, with timings).
 
 A model takes part in one of two ways:
 
-- `stage`: the exam's own transcript stage runs with that model, prompt and
-  images exactly as in a normal run.
+- `stage`: the question's own reader runs with that model, prompts and images
+  exactly as in a normal read; the result is one line per field.
 - `ocr`: for a dedicated OCR model, which expects a short fixed prompt and one
   region at a time. Each answer box (or each page, when the question has no
   boxes) is sent alone with the given prompt and no system message.
@@ -30,12 +30,12 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .core import runner
-from .core.context import BadOutput, Blocked, Unavailable
+from .core.context import BadOutput, Unavailable
+from .core.defs import key
 from .core.defs import Exam, Question
 from .core.workspace import Workspace
 from .model.client import Client, ModelError
 
-STAGE = 'transcript'
 OCR_PROMPT = "OCR:"
 
 
@@ -91,7 +91,7 @@ class _Timed:
 def regions(ws: Workspace, submission: str, q: Question) -> list[tuple[str, Any]]:
     """What an OCR model is shown, one image at a time: `(label, image)`.
     The answer boxes when the question has any, else its pages."""
-    boxes = [(f.label, ws.crop(submission, f.region)) for f in q.fields
+    boxes = [(f.label, ws.crop(submission, f.region)) for f in ws.fields(submission, q)
              if f.region is not None and f.read is None]
     if boxes:
         return boxes
@@ -99,12 +99,17 @@ def regions(ws: Workspace, submission: str, q: Question) -> list[tuple[str, Any]
     return [(f"page {p}", ws.page_image(submission, p)) for p in pages]
 
 
+def _lines(values: dict[str, str], labels) -> str:
+    return "\n".join(f"{label}: {values.get(label, '')}" for label in labels)
+
+
 def _run_stage(ws: Workspace, q: Question, submission: str, model: _Timed) -> str:
-    """The stage as a normal run would run it, with the memo kept in memory."""
-    stage = q.stage(STAGE)
-    ctx, _ = runner.stage_context(ws, submission, q, stage, runner.Services(ws, model, memo={}))
-    out = stage.fn(ctx)
-    return out if isinstance(out, str) else json.dumps(out, indent=1, ensure_ascii=False)
+    """The question's reader as a normal read would run it, with the memo kept in memory."""
+    import dataclasses
+    resolved = dataclasses.replace(q, fields=ws.fields(submission, q))
+    fields = resolved.written
+    got = runner.read_group(ws, submission, resolved, q.read, fields, runner.Services(ws, model, memo={}))
+    return _lines(got, [f.label for f in fields])
 
 
 def _run_ocr(ws: Workspace, q: Question, submission: str, model: _Timed, prompt: str) -> str:
@@ -125,10 +130,10 @@ def client_for(e: Entrant) -> Client:
 def run(exam: Exam, ws: Workspace, entrants: Sequence[Entrant], *, submissions: Sequence[str],
         questions: Sequence[str], make_client: Callable[[Entrant], Any] | None = None,
         progress: Callable[[str], None] = lambda line: None) -> list[Result]:
-    """Every entrant on every (submission, question) that has a transcript stage."""
+    """Every entrant on every (submission, question) whose handwritten fields have a reader."""
     make_client = make_client or client_for
     items = [(s, exam.questions[qid]) for s in submissions for qid in questions
-             if exam.questions[qid].stage(STAGE) is not None]
+             if exam.questions[qid].read is not None and exam.questions[qid].written]
     results = []
     for e in entrants:
         client = make_client(e)
@@ -138,7 +143,7 @@ def run(exam: Exam, ws: Workspace, entrants: Sequence[Entrant], *, submissions: 
             try:
                 r.text = (_run_ocr(ws, q, submission, timed, e.prompt) if e.mode == 'ocr'
                           else _run_stage(ws, q, submission, timed))
-            except (ModelError, Blocked, Unavailable, BadOutput) as ex:      # structural messages
+            except (ModelError, Unavailable, BadOutput) as ex:      # structural messages
                 r.error = f"{type(ex).__name__}: {ex}"
             except Exception as ex:         # anything else might quote student text: its type only
                 r.error = type(ex).__name__
@@ -149,20 +154,26 @@ def run(exam: Exam, ws: Workspace, entrants: Sequence[Entrant], *, submissions: 
     return results
 
 
-def stored(ws: Workspace, submissions: Sequence[str], questions: Sequence[str]) -> dict[tuple[str, str], tuple[str, bool]]:
-    """The workspace's own transcripts: `(submission, question) -> (text, verified)`."""
+def stored(ws: Workspace, submissions: Sequence[str], questions: Sequence[str],
+           exam: Exam | None = None) -> dict[tuple[str, str], tuple[str, bool]]:
+    """The workspace's own values of each question's handwritten fields:
+    `(submission, question) -> (one line per field, every one verified by a person)`."""
+    exam = exam or ws.exam
     out = {}
     for s in submissions:
+        values = {r.name: r.body or {} for r in ws.store.rows(s, 'value').values()}
         for qid in questions:
-            a = ws.store.get(s, qid, STAGE)
-            if a is not None and isinstance(a.body, str):
-                out[(s, qid)] = (a.body, a.verified)
+            labels = [f.label for f in exam.questions[qid].written]
+            got = {label: values[key(qid, label)] for label in labels if key(qid, label) in values}
+            if labels and got:
+                out[(s, qid)] = (_lines({k: v.get('text', '') for k, v in got.items()}, labels),
+                                 len(got) == len(labels) and all(v.get('settled') == 'person' for v in got.values()))
     return out
 
 
 def summary(results: Sequence[Result], reference: dict[tuple[str, str], tuple[str, bool]]) -> list[dict]:
     """One row per model: counts, time per answer, and likeness to the workspace's
-    transcripts (0 to 1, by characters) where the workspace has one."""
+    values (0 to 1, by characters) where the workspace has them."""
     rows = []
     for model in dict.fromkeys(r.model for r in results):
         mine = [r for r in results if r.model == model]
@@ -213,7 +224,7 @@ def report(exam: Exam, ws: Workspace, results: Sequence[Result], reference: dict
     out = [f"<!doctype html><meta charset='utf-8'><title>{e(exam.title)}: model comparison</title><style>{_CSS}</style>",
            f"<h1>{e(exam.title)}: model comparison</h1>",
            "<table><tr><th>model</th><th>answers</th><th>failed</th><th>median s</th><th>total s</th>"
-           "<th title='likeness to the workspace transcript, by characters'>likeness</th></tr>"]
+           "<th title='likeness to the workspace values, by characters'>likeness</th></tr>"]
     for row in summary(results, reference):
         cells = [row['answers'], row['failed'], row['median_seconds'], row['total_seconds'], row['likeness']]
         out.append(f"<tr><td>{e(row['model'])}</td>" + "".join(
@@ -247,7 +258,7 @@ def report(exam: Exam, ws: Workspace, results: Sequence[Result], reference: dict
 def write(exam: Exam, ws: Workspace, results: Sequence[Result], out_dir: Path, *, images: bool = True,
           reference: dict[tuple[str, str], tuple[str, bool]] | None = None) -> Path:
     """`report.html` and `results.json` in `out_dir`; returns the report's path.
-    `reference`: the workspace's transcripts (`stored`), if the caller has them already."""
+    `reference`: the workspace's values (`stored`), if the caller has them already."""
     if reference is None:
         reference = stored(ws, list(dict.fromkeys(r.submission for r in results)),
                            list(dict.fromkeys(r.question for r in results)))

@@ -2,11 +2,12 @@
 
 An override replaces one plain-data value of a question, addressed by a path:
 
-    <question>/pages                          printed pages holding the answer
-    <question>/fields/<label>/region
-    <question>/fields/<label>/read/ask | reads    a printed field: what the model is asked; readings to values
-    <question>/stages/<name>/<field>[/<key>...]   a stage's configuration: a field of
-                                              its function's dataclass, then mapping keys
+    <question>/pages                           printed pages holding the answer
+    <question>/fields/<label>/region           where a field is (may be unset: then it is not read)
+    <question>/fields/<label>/read/<field>     a field's own reader (a printed field: ask, reads, verify)
+    <question>/read/<field>[/<key>...]         the question's reader (notes, prompts)
+    <question>/checks/<name>/<field>[/<key>...]    a check's configuration: a field of its
+                                               function's dataclass, then mapping keys (a key)
 
 Segments are separated by '/'; inside a segment '%' is written '%25' and '/'
 is written '%2F'. Labels with dots ('4.1.a') need no escaping.
@@ -15,13 +16,16 @@ What can be edited is what is plain data: text, numbers, booleans, a `Region`,
 page lists, a printed field's `reads` map, and key entries that are text or a
 choice (an object with an `accepted` tuple of texts). Functions are never
 editable, and neither are names used as addresses, result specs or stage
-wiring. A stage-configuration field can opt out with
+wiring. A configuration field can opt out with
 `dataclasses.field(metadata={'override': False})`.
 
 The `Exam` keeps the questions as built (`exam.base`); `apply` recomputes
 each live question from its base plus the overrides, replacing frozen objects
-along the path, never mutating them. Because `stage_hash` describes the live
-question, an edited key outdates exactly the checks that used it.
+along the path, never mutating them. Because a check's hash describes the live
+check, an edited key outdates exactly the checks that used it. Changing how a
+field is read changes no value; `Change.fields` lists the fields to offer to
+read again. (A field's region for one submission is not an override here:
+`Workspace.set_region`.)
 """
 from __future__ import annotations
 
@@ -31,8 +35,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .defs import Exam, Field, Question, Region, Stage, stage_hash
-from .printed import Printed
+from .defs import Check, Exam, Field, Question, Region, digest
 from .store import ANY, Store
 
 KINDS = ('region', 'text', 'int', 'number', 'bool', 'pages', 'map', 'choice')
@@ -110,11 +113,14 @@ def _annotation(ann: Any) -> tuple[str | None, bool]:
 
 
 def _config_leaves(obj: Any):
-    """(segments, kind, nullable) for the plain data in a stage function's dataclass."""
+    """(segments, kind, nullable) for the plain data in a reader's or check's dataclass."""
     for f in dataclasses.fields(obj):
         if not f.init or f.name.startswith('_') or f.metadata.get('override') is False:
             continue
         v = getattr(obj, f.name)
+        if f.metadata.get('override') == 'map':        # edited whole: readings -> values
+            yield (f.name,), 'map', False
+            continue
         if isinstance(v, Mapping):
             yield from _map_leaves((f.name,), v)
             continue
@@ -142,15 +148,18 @@ def _leaves(q: Question) -> dict[tuple[str, ...], tuple[str, bool]]:
     """Every editable value of a question: {segments after the id: (kind, nullable)}."""
     out: dict[tuple[str, ...], tuple[str, bool]] = {
         ('pages',): ('pages', False)}
+
+    def config(prefix, obj):
+        if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            for segs, kind, nullable in _config_leaves(obj):
+                out[(*prefix, *segs)] = (kind, nullable)
+
     for f in q.fields:
-        out[('fields', f.label, 'region')] = ('region', f.read is None)    # a reader needs its region
-        if isinstance(f.read, Printed):
-            out.update({('fields', f.label, 'read', 'ask'): ('text', False),
-                        ('fields', f.label, 'read', 'reads'): ('map', False)})
-    for s in q.stages:
-        if dataclasses.is_dataclass(s.fn) and not isinstance(s.fn, type):
-            for segs, kind, nullable in _config_leaves(s.fn):
-                out[('stages', s.name, *segs)] = (kind, nullable)
+        out[('fields', f.label, 'region')] = ('region', True)
+        config(('fields', f.label, 'read'), f.read)
+    config(('read',), q.read)
+    for c in q.checks:
+        config(('checks', c.name), c.fn)
     return out
 
 
@@ -159,10 +168,10 @@ def _leaves(q: Question) -> dict[tuple[str, ...], tuple[str, bool]]:
 def _child(node: Any, seg: str):
     """(child, rebuild): the value under one segment, and a function returning a
     copy of `node` with that value replaced."""
-    if isinstance(node, Stage):
+    if isinstance(node, Check):
         child, rebuild = _child(node.fn, seg)
         return child, lambda v: dataclasses.replace(node, fn=rebuild(v))
-    if isinstance(node, tuple) and all(isinstance(x, (Field, Stage)) for x in node):
+    if isinstance(node, tuple) and node and all(isinstance(x, (Field, Check)) for x in node):
         for i, x in enumerate(node):
             if (x.label if isinstance(x, Field) else x.name) == seg:
                 return x, lambda v, i=i: node[:i] + (v,) + node[i + 1:]
@@ -348,21 +357,30 @@ def refresh(exam: Exam, store: Store) -> list[Skipped]:
 
 @dataclass(frozen=True)
 class Change:
-    """What one edit did: the questions whose stage hashes changed (recheck these),
-    and stored overrides that could not be applied."""
-    questions: tuple[str, ...]
+    """What one edit did: the checks whose definition changed (their results are
+    now outdated and are recomputed), the fields whose reading changed (to offer
+    to read again), and stored overrides that could not be applied."""
+    checks: tuple[tuple[str, str], ...]
+    fields: tuple[tuple[str, str], ...] = ()
     skipped: tuple[Skipped, ...] = ()
 
+    @property
+    def questions(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(q for q, _ in self.checks))
 
-def _hashes(exam: Exam) -> dict[str, dict[str, str]]:
-    return {qid: {s.name: stage_hash(q, s) for s in q.stages} for qid, q in exam.questions.items()}
+
+def _hashes(exam: Exam) -> tuple[dict, dict]:
+    checks = {(qid, c.name): exam.check_hash(q, c) for qid, q in exam.questions.items() for c in q.checks}
+    fields = {(qid, f.label): digest({'region': f.region, 'read': q.reader_of(f.label), 'pages': q.pages})
+              for qid, q in exam.questions.items() for f in q.fields}
+    return checks, fields
 
 
 def _changed(exam: Exam, store: Store) -> Change:
-    before = _hashes(exam)
-    skipped = refresh(exam, store)
-    after = _hashes(exam)
-    return Change(tuple(q for q in after if after[q] != before.get(q)), tuple(skipped))
+    (c0, f0), skipped = _hashes(exam), refresh(exam, store)
+    c1, f1 = _hashes(exam)
+    return Change(tuple(k for k in c1 if c1[k] != c0.get(k)), tuple(k for k in f1 if f1[k] != f0.get(k)),
+                  tuple(skipped))
 
 
 def set(exam: Exam, store: Store, path: str, value: Any, *, author: str | None,

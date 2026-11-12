@@ -31,7 +31,7 @@
     msg.textContent = '';
     const r = await request('/runs/preview', {
       submissions: form.scope.value === 'grid' ? order : null,
-      questions: checked('question'), stages: checked('stage'),
+      questions: checked('question'), steps: checked('step'),
       missing_only: flag('missing_only'), include_protected: flag('include_protected')});
     if (!r.ok) { msg.textContent = r.body.error || "failed"; return; }
     token = r.body.plan;
@@ -43,11 +43,11 @@
     }
     const table = document.getElementById('groups');
     table.replaceChildren();
-    row(table, ['', 'stage', 'question', 'n', 'why', 'submissions'], true);
+    row(table, ['', 'step', 'question', 'n', 'why', 'submissions'], true);
     for (const g of r.body.groups) {
       const list = make('details', {}, make('summary', {textContent: g.submissions.slice(0, 3).join(', ') + (g.n > 3 ? ' …' : '')}),
                         g.submissions.join(', ') + (g.n > g.submissions.length ? ` … (${g.n})` : ''));
-      row(table, [names[g.action], g.stage, g.question, String(g.n), g.reason, list]);
+      row(table, [names[g.action], g.step, g.question, String(g.n), g.reason, list]);
     }
     document.getElementById('plan').hidden = false;
     start.disabled = r.body.counts.run === 0;
@@ -78,7 +78,7 @@
     for (const f of s.failures) {
       const link = make('a', {textContent: f.submission,
                               href: `${ROOT}/s/${encodeURIComponent(f.submission)}/${encodeURIComponent(f.question)}`});
-      row(table, [link, f.question, f.stage, f.status, f.detail]);
+      row(table, [link, f.question, f.step, f.status, f.detail]);
     }
     const running = s.state === 'running';
     stop.disabled = !running;

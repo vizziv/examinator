@@ -64,4 +64,4 @@ def check_program(program: pseudocode.Program, printing: str) -> checks.Part:
 
 def check(ctx):
     printing = PRINTING['q5'](ctx)
-    return checks.check_source(ctx.input('parse'), POINTS, LABEL, lambda program: check_program(program, printing))
+    return checks.check_source(ctx.read(LABEL), POINTS, LABEL, lambda program: check_program(program, printing))

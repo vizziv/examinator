@@ -2,7 +2,6 @@
 {% set nav = 'question' %}
 {% import 'blocks.html' as blocks %}
 {% import 'entries.html' as ed %}
-{% set here = root ~ '/s/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) %}
 {% block title %}{{ sub.id }} · {{ q.id }}{% endblock %}
 {% block head %}
 <script src="{{ root }}/static/plot.js" defer></script>
@@ -42,10 +41,10 @@
 <input type="number" class="rg-n" min="0" max="1000" aria-label="top" title="top">
 <input type="number" class="rg-n" min="0" max="1000" aria-label="right" title="right">
 <input type="number" class="rg-n" min="0" max="1000" aria-label="bottom" title="bottom">
-<span class="tag" title="an exam-wide override: the same region for every submission">all submissions</span>
+<label title="this submission's own region, instead of every submission's"><input type="checkbox" id="rg-own"> this submission</label>
 <button type="button" id="rg-save" data-action="region-save" class="primary">save</button>
 <button type="button" id="rg-undo" data-action="region-undo" title="back to the saved value">undo</button>
-<button type="button" id="rg-clear" data-action="region-revert" class="danger" title="back to the package value">revert</button>
+<button type="button" id="rg-clear" data-action="region-revert" class="danger" title="back to the package value (or, for this submission, to every submission's)">revert</button>
 <span id="rg-msg" role="status"></span>
 </span>
 </div>
@@ -56,131 +55,97 @@
 <p class="dim">no scan pages</p>
 {% endfor %}
 </section>
-<section id="work"{% if keys %} class="has-key"{% endif %}>
+<section id="work"{% if keyed %} class="has-key"{% endif %}>
 
 <div id="parts" data-live data-seen='{{ seen|tojson }}' data-waiting='{{ waiting|tojson }}' class="panel">
-{% for p in parts %}
+{% for c in checks %}
+{% set st = c.st %}
 <div class="part">
-{% if parts|length > 1 %}<span class="pname">{{ p.part }}</span>{% endif %}
-{% set g = p.cls[2:] %}
-{% set ask = p.st.state in ('unverified', 'needs_review') %}
-<span class="pill g-{{ g }}{% if g == 'n' and not ask %} idle{% endif %}">{% if g == 'num' %}<b>{{ p.glyph }}</b>{% if p.max is not none %} / {{ '%g'|format(p.max) }}{% endif %}{% else %}{% if g != 'n' %}<b>{{ p.glyph }}</b> {% elif ask %}<b class="qm">?</b> {% endif %}{{ {'t': "correct", 'f': "incorrect", 'b': "blank", 'n': "undecided" if ask else "no grade"}[g] }}{% endif %}</span>
-<span class="pill st st-{{ p.st.state }}">{{ labels[p.st.state] }}{% if p.st.author %} · {{ p.st.author }}{% endif %}</span>
-{% if p.todo %}<span class="reason">{{ p.todo }}</span>{% endif %}
-{% if p.st.stale_code %}<span class="tag" title="checked with older exam code">old code</span>{% endif %}
-<span class="decide" data-part="{{ p.part }}" data-rev="{{ p.rev }}" data-open="{{ 1 if p.st.value is none else '' }}" data-kind="{{ 'bool' if p.bool else 'number' }}">
-{% if p.bool %}
+{% if checks|length > 1 %}<span class="pname" title="{{ c.column }}{% if not c.counts %} · not in the total{% endif %}">{{ c.name }}</span>{% endif %}
+{% set g = c.cls[2:] %}
+{% set ask = st.state in ('unverified', 'to_decide') %}
+<span class="pill g-{{ g }}{% if g == 'n' and not ask %} idle{% endif %}">{% if g == 'num' %}<b>{{ c.glyph }}</b>{% if c.max is not none %} / {{ '%g'|format(c.max) }}{% endif %}{% else %}{% if g != 'n' %}<b>{{ c.glyph }}</b> {% elif ask %}<b class="qm">?</b> {% endif %}{{ {'t': "correct", 'f': "incorrect", 'b': "blank", 'n': "undecided" if ask else "no grade"}[g] }}{% endif %}</span>
+<span class="pill st st-{{ st.state }}">{{ labels[st.state] }}{% if st.author %} · {{ st.author }}{% endif %}</span>
+{% if st.value is none and st.reason and st.state != 'not_run' %}<span class="reason">{{ st.reason }}</span>{% endif %}
+<span class="decide" data-check="{{ c.name }}" data-rev="{{ c.rev }}" data-open="{{ 1 if st.value is none or st.state in ('unverified', 'outdated', 'decided_outdated') else '' }}" data-kind="{{ 'bool' if c.bool else 'number' }}">
+{% if c.bool %}
 <button type="button" data-action="decide" data-value="true" class="v-t" title="correct">✓</button>
 <button type="button" data-action="decide" data-value="false" class="v-f" title="incorrect">✗</button>
 {% else %}
-<input type="number" class="num" {% if p.min is not none %}min="{{ p.min }}"{% endif %} {% if p.max is not none %}max="{{ p.max }}"{% endif %} step="{{ p.step }}" aria-label="grade"
- {%- if p.max is not none %} placeholder="{{ '%g'|format(p.min or 0) }}–{{ '%g'|format(p.max) }}"{% endif %}>
+<input type="number" class="num" {% if c.min is not none %}min="{{ c.min }}"{% endif %} {% if c.max is not none %}max="{{ c.max }}"{% endif %} step="{{ c.step }}" aria-label="grade"
+ {%- if c.max is not none %} placeholder="{{ '%g'|format(c.min or 0) }}–{{ '%g'|format(c.max) }}"{% endif %}>
 <button type="button" data-action="decide-number" class="num-set">set</button>
 {% endif %}
 <button type="button" data-action="decide-blank" class="v-b" title="blank">∅</button>
-{% if p.manual %}<button type="button" data-action="undecide" title="clear the manual grade">clear</button>{% endif %}
+{% if c.decided %}<button type="button" data-action="clear" title="clear the decision: the check's grade shows again">clear</button>{% endif %}
 </span>
 </div>
 {% endfor %}
-{% if not parts %}<div class="part"><span class="pill g-n idle">no grade</span></div>{% endif %}
-{% for w in waits_on %}
-<div class="waits">waits on <a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ w.id|urlencode }}">{{ w.title }}</a>
-<span class="tag unv">{{ "no parse" if w.missing else "unverified" }}</span></div>
-{% endfor %}
-<div class="bar"><span class="grow"></span><button type="button" data-action="verify-next" class="primary" title="verify what waits ({{ waiting|join(', ') or 'nothing' }}), then the next submission">Verify, next</button></div>
+{% if not checks %}<div class="part"><span class="pill g-n idle">no grade</span></div>{% endif %}
+<div class="bar"><span class="grow"></span><button type="button" data-action="verify-next" class="primary" title="verify every value here, then the next submission">Verify, next</button></div>
 </div>
 <div id="chips" class="chips" hidden></div>
 
-{% if loose %}
+<form class="draft panel" id="ed-fields" autocomplete="off">
 <div class="fields">
-{% for f in loose %}
-<label class="field"><span class="flabel">{{ f.label }}</span>
-<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}" data-region="{{ f.crop.path }}"></span></label>
-{% endfor %}
-</div>
+{% for f in fields %}
+<div class="field{% if f.marker %} marked{% endif %}{% if not f.own %} elsewhere{% endif %}{% if f.code %} code{% endif %}" data-key="{{ f.key }}">
+<span class="flabel"{% if f.ask %} title="printed: {{ f.ask }}"{% endif %}>{% if f.own %}{{ f.label }}{% else %}<a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ f.qid|urlencode }}" title="{{ exam.questions[f.qid].title }}">{{ f.title }}</a>{% endif %}{% if f.printed %} <span class="ftag">printed</span>{% endif %}</span>
+{% if f.code %}<textarea data-key="{{ f.key }}" data-rev="{{ f.rev }}" spellcheck="false" rows="{{ [[f.value.count('\n') + 2, 6]|max, 40]|min }}">
+{{ f.value }}</textarea>
+{% else %}<input type="text" data-key="{{ f.key }}" data-rev="{{ f.rev }}" value="{{ f.value }}" spellcheck="false"{% if not f.read %} placeholder="not read"{% endif %}>
 {% endif %}
-{% if parse %}
-<form class="draft panel" id="ed-parse" data-kind="parse" data-mode="{{ parse.mode }}" data-rev="{{ parse.rev }}" autocomplete="off">
-{% if parse.mode == 'form' %}
-<div class="fields">
-{% for f in parse.fields %}
-<label class="field{% if f.marker %} marked{% endif %}{% if f.read %} read{% endif %}">
-<span class="flabel"{% if f.read %} title="{{ f.read.tag }}: {{ f.read.ask }}"{% endif %}>{{ f.label }}{% if f.read %} <span class="ftag">{{ f.read.tag }}</span>{% endif %}</span>
-<input type="text" data-label="{{ f.label }}" value="{{ f.value }}" spellcheck="false"{% if not parse.editable %} readonly{% endif %}>
+<span class="fstate" data-live id="fs-{{ loop.index }}">
+{% if not f.read %}<span class="tag" title="no value yet">not read</span>
+{% elif f.marker %}<span class="tag unv" title="a review marker: correct the value">review</span>
+{% elif f.settled is none %}<span class="tag unv">unverified</span>
+{% else %}<button type="button" class="quiet tiny" data-action="unverify" data-key="{{ f.key }}" data-rev="{{ f.rev }}" title="verified{% if f.by %} · {{ f.by }}{% elif f.settled == 'reader' %} · as read{% endif %}; unverify">✓</button>{% endif %}
+{% for j in f.judged %}<span class="judged o-{{ j.outcome or 'none' }}" title="{% if checks|length > 1 %}{{ j.check }}: {% endif %}{{ j.outcome or 'undecided' }}{% if j.expected %} · key {{ j.expected }}{% endif %}{% if j.note %} · {{ j.note }}{% endif %}">{{ {'correct': '✓', 'incorrect': '✗', 'blank': '∅'}.get(j.outcome, '?') }}{% if j.note %} <span class="jnote">{{ j.note }}</span>{% endif %}</span>{% endfor %}
+</span>
 {% if f.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}" data-region="{{ f.crop.path }}"></span>{% endif %}
-</label>
+</div>
 {% endfor %}
 </div>
-{% else %}
-<div class="codeedit">
-<textarea spellcheck="false" rows="{{ [[parse.text.count('\n') + 2, 8]|max, 40]|min }}"{% if not parse.editable %} readonly{% endif %}>
-{{ parse.text }}</textarea>
-<div class="crops">
-{% for c in parse.crops %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ c.index }}.jpg" data-box="{{ c.box }}" data-region="{{ c.path }}"></span>{% endfor %}
-</div>
-</div>
-{% endif %}
 <div class="bar">
-{% if parse.editable %}
-<button type="button" data-action="verify" class="primary" title="save and verify">Verify</button>
-<button type="button" data-action="save">save</button>
+{% if fields %}
+<button type="button" data-action="verify" class="primary" title="save edits and verify every value here">Verify</button>
+<button type="button" data-action="save" title="save edits (a value you set is verified by you)">save</button>
 <button type="button" data-action="edit" class="quiet" title="the first field">edit</button>
 {% endif %}
 <span class="notice" hidden>changed elsewhere <button type="button" data-action="discard" class="danger">discard draft, reload</button></span>
 <span class="grow"></span>
-<span id="meta-parse" data-live class="meta">
-{% if parse.art %}
-{% if parse.art.verified %}<span class="tag">verified · {{ parse.art.verified_by }}</span>
-{% if parse.editable %}<button type="button" data-action="unverify" data-kind="parse" data-rev="{{ parse.rev }}" class="quiet">unverify</button>{% endif %}
-{% elif parse.trusted %}<span class="tag">read, not verified</span>
-{% else %}<span class="tag unv">unverified</span>{% endif %}
-{% if parse.marker %}<span class="tag unv">review marker</span>{% endif %}
-<span class="dim">{{ parse.art.author or parse.art.origin }}</span>
-{% else %}<span class="dim">no parse</span>{% endif %}
-</span>
 </div>
 </form>
-{% endif %}
 
-<div id="evidence" data-live class="panel{% if evidence.art and not evidence.current %} stale{% endif %}"{% if not evidence.art %} hidden{% endif %}>
-{% if evidence.art %}
-{% if not evidence.current %}<span class="tag">outdated</span>{% endif %}
-{% if evidence.plots %}<div class="plots">{{ blocks.render(evidence.plots, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode)) }}</div>{% endif %}
-{{ blocks.render(evidence.rest, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode)) }}
-{% endif %}
+{% for c in checks %}
+{% if c.plots or c.rest %}
+<div id="evidence-{{ loop.index }}" data-live class="panel evidence{% if not c.current %} stale{% endif %}">
+{% if checks|length > 1 %}<span class="plabel">{{ c.name }}</span>{% endif %}
+{% if not c.current %}<span class="tag">outdated</span>{% endif %}
+{% if c.params %}<span class="tag" title="run with these parameters">{% for k, v in c.params.items() %}{{ k }}={{ v }} {% endfor %}</span>{% endif %}
+{% if c.plots %}<div class="plots">{{ blocks.render(c.plots, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) ~ '/' ~ (c.name|urlencode)) }}</div>{% endif %}
+{{ blocks.render(c.rest, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) ~ '/' ~ (c.name|urlencode)) }}
 </div>
-
-{% if keys %}
-<details id="key" class="panel">
-<summary>key{% if picked %} <span class="dim">{{ picked }}</span>{% endif %}{% if keys|selectattr('overridden')|list %} <span class="tag">edited</span>{% endif %}</summary>
-<p class="dim scope">edits apply to all submissions · <a href="{{ root }}/exam#{{ q.id }}">exam data</a></p>
-{% for e in keys %}{{ ed.entry(e) }}{% endfor %}
-</details>
 {% endif %}
+{% endfor %}
+
+{% for k in keyed %}
+<details class="panel key">
+<summary>key{% if keyed|length > 1 %} {{ k.check }}{% endif %}{% if k.picked %} <span class="dim">{{ k.picked }}</span>{% endif %}{% if k.edited %} <span class="tag">edited</span>{% endif %}</summary>
+<p class="dim scope">edits apply to all submissions · <a href="{{ root }}/exam#{{ q.id }}">exam data</a></p>
+{% for e in k.entries %}{{ ed.entry(e) }}{% endfor %}
+</details>
+{% endfor %}
 
 <div id="run" class="bar panel" data-live>
 <span class="plabel">run</span>
-{% for s in stages %}
-{% if s.off %}<span class="pair"><button type="button" data-action="run" data-stage="{{ s.name }}" data-off="1" title="no model" disabled>{{ s.name }}</button><button type="button" data-action="run" data-stage="{{ s.name }}" data-off="1" title="no model" disabled>↓</button></span>
-{% else %}<span class="pair"><button type="button" data-action="run" data-stage="{{ s.name }}"{% if s.model %} data-model="1"{% endif %}{% if s.replaces %} class="guard" data-confirm="{{ s.replaces }}" title="replaces {{ s.replaces }}"{% endif %}>{{ s.name }}</button><button type="button" data-action="run" data-stage="{{ s.name }}" data-onward="1"{% if s.model %} data-model="1"{% endif %}{% if s.replaces_on %} class="guard" data-confirm="{{ s.replaces_on }}"{% endif %} title="{{ s.name }} and everything after{% if s.replaces_on %}; replaces {{ s.replaces_on }}{% endif %}">↓</button></span>{% endif %}
-{% endfor %}
-{% if model %}<label><input type="checkbox" id="run-reasoning"> reasoning</label>{% endif %}
+{% if can_read %}<button type="button" data-action="read"{% if off %} disabled title="no model"{% else %} title="read this question's values again (not those a person verified)"{% endif %}>read</button>
+<label title="also read again what a person set or verified (kept in history)"><input type="checkbox" id="read-all"> verified too</label>{% endif %}
+{% for c in checks %}{% if c.fn %}<button type="button" data-action="check" data-check="{{ c.name }}" title="run the check now">{{ c.name if checks|length > 1 else 'check' }}</button>{% endif %}{% endfor %}
+{% if model and can_read %}<label><input type="checkbox" id="run-reasoning"> reasoning</label>{% endif %}
 <input type="text" id="run-params" placeholder="key=value" size="12" aria-label="params" spellcheck="false">
+<span id="reread" hidden><span class="tag unv">reading changed</span></span>
 </div>
-
-{% if transcript %}
-<details id="transcript" class="panel">
-<summary>transcript <span id="meta-transcript" data-live class="meta">{% if transcript.marker %}<span class="tag unv">review marker</span>{% endif %}{% if not transcript.art %}<span class="dim">none</span>{% endif %}</span></summary>
-<form class="draft" id="ed-transcript" data-kind="transcript" data-mode="code" data-rev="{{ transcript.rev }}" autocomplete="off">
-<textarea spellcheck="false" rows="{{ [[transcript.text.count('\n') + 2, 4]|max, 30]|min }}"{% if not transcript.editable %} readonly{% endif %}>
-{{ transcript.text }}</textarea>
-<div class="bar">
-{% if transcript.editable %}<button type="button" data-action="save" class="primary">Save</button>{% endif %}
-<span class="notice" hidden>changed elsewhere <button type="button" data-action="discard">discard draft, reload</button></span>
-</div>
-</form>
-</details>
-{% endif %}
 
 <details id="pages" class="panel">
 <summary>pages{% if pages != pages_default %} <span class="tag">{{ pages|join(', ') }}</span>{% endif %}{% if layout_over %} <span class="tag">layout</span>{% endif %}</summary>
@@ -201,8 +166,8 @@
 <summary>history <span class="dim">{{ history|length }}</span></summary>
 <table class="ev">
 {% for h in history %}
-<tr><td>{{ h.at }}</td><td>{{ h.who }}{% if h.verified %} ✓{% endif %}</td><td class="preview">{{ h.preview }}</td>
-<td><button type="button" data-action="restore" data-rev="{{ h.rev }}">restore</button></td></tr>
+<tr><td>{{ h.at }}</td><td>{{ h.field }}</td><td>{{ h.who }}{% if h.settled %} ✓{% endif %}</td><td class="preview">{{ h.text }}</td>
+<td><button type="button" data-action="restore" data-key="{{ h.key }}" data-rev="{{ h.rev }}">restore</button></td></tr>
 {% endfor %}
 </table>
 </details>

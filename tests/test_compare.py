@@ -32,14 +32,14 @@ def test_compare_runs_both_modes_and_leaves_the_store_alone(tmp_path):
     before = ws.store.version()
 
     stage, ocr = compare.Entrant('a', ''), compare.Entrant('b', '', 'ocr', "Read:")
-    clients = {stage: Echo("whole answer"), ocr: Echo("box")}
+    clients = {stage: Echo('{"answers": {"A.1": "whole answer"}}'), ocr: Echo("box")}
     lines = []
     results = compare.run(exam, ws, [stage, ocr], submissions=subs, questions=[qid],
                           make_client=clients.__getitem__, progress=lines.append)
 
     assert ws.store.version() == before                      # nothing written
     assert [r.model for r in results] == ['a', 'a', 'b (ocr)', 'b (ocr)'] and len(lines) == 4
-    assert results[0].text == "whole answer" and results[0].calls == 1
+    assert "A.1: whole answer" in results[0].text and results[0].calls == 2      # transcribe, then parse
     assert results[2].calls == boxes and results[2].text.count("box") == boxes
     assert all(call == ("Read:", 1) for call in clients[ocr].calls)        # one box, the bare prompt
 

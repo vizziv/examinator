@@ -44,4 +44,4 @@ def judge(program) -> checks.Part:
 
 
 def check(ctx):
-    return samplers.check(ctx.input('parse'), LABEL, judge)
+    return samplers.check(ctx.read(LABEL), LABEL, judge)

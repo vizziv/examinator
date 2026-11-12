@@ -1,8 +1,9 @@
 """Default prompt texts, as values, and small functions that build fragments.
 
-Every model stage accepts a prompt string. Adding a sentence is concatenation:
+Every reader accepts its prompts as strings. Adding a sentence is `notes=` or
+concatenation:
 
-    stages.transcribe(prompt=prompts.TRANSCRIBE_ANSWERS + " Angles are in degrees.")
+    readers.answers(prompt=prompts.TRANSCRIBE_ANSWERS + " Angles are in degrees.")
 
 Answer keys never appear in any prompt: only labels and notation do.
 """
@@ -49,10 +50,10 @@ a solution or pass stub. Return plain pseudocode, no Markdown. Use \
 # [REVIEW: reason] for ambiguity or an unsupported construct."""
 
 
-def context(question: Question, note: str = "") -> str:
-    """What every stage prompt is followed by: the question and the labels of the
-    fields the student writes (printed fields are read separately)."""
-    lines = [f"Question: {question.title}", f"Answer labels: {', '.join(question.written)}"]
+def context(question: Question, labels: Iterable[str], note: str = "") -> str:
+    """What every reading prompt is followed by: the question and the labels of
+    the fields being read (printed fields are read separately)."""
+    lines = [f"Question: {question.title}", f"Answer labels: {', '.join(labels)}"]
     if note:
         lines.append(f"Note from the grader about this submission's pages: {note}")
     return "\n".join(lines)

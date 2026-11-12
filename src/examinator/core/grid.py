@@ -1,53 +1,43 @@
-"""The grid's read model: every submission's status for every result part.
+"""The grid's read model: every submission's status for every check.
 
-Two queries, no page rendering and no per-row lookups: revisions for all
-artifacts, and bodies only for the small kinds that statuses read (grades).
+One query, no page rendering and no per-row lookups: every value, result
+(without its display blocks) and decision in the workspace.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping
 
-from .defs import Exam, grade_kind
-from .store import Artifact, Store, Submission
-from .workflow import Status, parses_of, question_status, reading_status, total
-
-
-@dataclass(frozen=True)
-class Cell:
-    status: Mapping[str, Status]      # part -> status; {'': how its reading stands} for a question with no result
+from .defs import Exam
+from .status import Sheet, Status, fields_state, total
+from .store import Store, Submission
 
 
 @dataclass(frozen=True)
 class Row:
     submission: Submission
-    cells: Mapping[str, Cell]         # question id -> cell
+    sheet: Sheet
+    status: Mapping[tuple[str, str], Status]     # (question, check) -> status
+    fields: Mapping[str, str]                    # question with no checks -> how its fields stand
     points: float
     complete: bool
 
 
+def sheets(store: Store, submission: str | None = None) -> dict[str, Sheet]:
+    rows: dict[str, list] = {}
+    for r in store.all(kinds=('value', 'result', 'decision'), drop='$.blocks', submission=submission):
+        rows.setdefault(r.submission, []).append(r)
+    return {s: Sheet.of(rs) for s, rs in rows.items()}
+
+
+def row(exam: Exam, sub: Submission, sheet: Sheet) -> Row:
+    status = sheet.statuses(exam)
+    fields = {qid: fields_state(q, sheet.values) for qid, q in exam.questions.items() if not q.checks}
+    points, complete = total(exam, status)
+    return Row(sub, sheet, status, fields, points, complete)
+
+
 def load(exam: Exam, store: Store) -> list[Row]:
-    small = {grade_kind(p) for q in exam.questions.values() for p in q.result}
-    arts: dict[tuple[str, str], dict[str, Artifact]] = {}
-    bodies = {(a.submission, a.question, a.kind): a for a in store.all(kinds=small)}
-    for a in store.all(bodies=False):
-        if a.kind in small:      # the two queries are not one snapshot: keep only rows seen whole
-            a = bodies.get((a.submission, a.question, a.kind))
-            if a is None:
-                continue
-        arts.setdefault((a.submission, a.question), {})[a.kind] = a
-    rows = []
-    for sub in store.submissions():
-        cells = row_cells(exam, {qid: arts.get((sub.id, qid), {}) for qid in exam.questions})
-        points, complete = total(exam, {qid: c.status for qid, c in cells.items()})
-        rows.append(Row(sub, cells, points, complete))
-    return rows
-
-
-def row_cells(exam: Exam, arts: Mapping[str, Mapping[str, Artifact]]) -> dict[str, Cell]:
-    """One submission's cells from its artifacts by question (bodies needed only
-    for grades; the other questions' parses are judged by revision)."""
-    parses = parses_of(arts)
-    return {qid: Cell(question_status(q, arts.get(qid, {}), parses=parses, code_hash=exam.code_hash)
-                      if q.result else {'': reading_status(q, arts.get(qid, {}))})
-            for qid, q in exam.questions.items()}
+    every = sheets(store)
+    empty = Sheet({}, {}, {})
+    return [row(exam, sub, every.get(sub.id, empty)) for sub in store.submissions()]

@@ -1,5 +1,6 @@
 'use strict';
-// The question page: drafts, actions (buttons and keys, see actions.js), live refresh, and the scan window.
+// The question page: the values on it (a draft), actions (buttons and keys, see actions.js),
+// live refresh, and the scan window.
 (() => {
   const main = $('question');
   const sub = main.dataset.sub, q = main.dataset.q;
@@ -30,8 +31,7 @@
     return order.some(s => (step > 0 ? rank.get(s) > me : rank.get(s) < me));
   }
 
-  // --- the filter: does this submission still match it; the chips set one to its values.
-  // Drawn again whenever the page's data refreshes (a verify or a grade changes the values). ---
+  // --- the filter: does this submission still match it; the chips set one to its values. ---
   async function chips() {
     const r = await request('/focus/values?sub=' + encodeURIComponent(sub));
     if (!r.ok) return;
@@ -49,54 +49,42 @@
     $('chips').hidden = !links.length;
   }
 
-  // --- drafts: an editor is a <form class="draft" data-kind data-mode data-rev> ---
-  const editors = () => [...document.querySelectorAll('form.draft')];
-  const draftKey = (ed, rev) => `draft:${sub}:${q}:${ed.dataset.kind}:${rev === undefined ? ed.dataset.rev : rev}`;
-  function read(ed) {
-    if (ed.dataset.mode !== 'form') return ed.querySelector('textarea').value;
-    const body = {};
-    for (const input of ed.querySelectorAll('[data-label]')) {
-      body[input.dataset.label] = input.value.trim() === '' ? null : input.value;
+  // --- the draft: every value on the page, <input|textarea data-key data-rev> in form#ed-fields ---
+  const form = () => $('ed-fields');
+  const inputs = () => [...form().querySelectorAll('[data-key]:is(input, textarea)')];
+  const draftKey = () => `draft:${sub}:${q}`;
+  function snapshot() {
+    for (const el of inputs()) el.dataset.orig = el.value;
+  }
+  const changed = () => inputs().filter(el => el.value !== el.dataset.orig);
+  const dirty = () => changed().length > 0;
+  function touched() {
+    form().classList.toggle('dirty', dirty());
+    for (const el of inputs()) el.closest('.field').classList.toggle('dirty', el.value !== el.dataset.orig);
+    try {
+      if (dirty()) {
+        sessionStorage.setItem(draftKey(), JSON.stringify(changed().map(el => ({key: el.dataset.key, rev: el.dataset.rev,
+                                                                                text: el.value}))));
+      } else sessionStorage.removeItem(draftKey());
+    } catch (e) { /* private mode */ }
+  }
+  // A draft left behind, possibly written against older values: bring it back with the
+  // revisions it was made against, so saving it cannot overwrite newer work.
+  function adopt() {
+    snapshot();
+    let saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem(draftKey())); } catch (e) { /* private mode */ }
+    for (const d of Array.isArray(saved) ? saved : []) {
+      const el = inputs().find(i => i.dataset.key === d.key);
+      if (!el) continue;
+      el.value = d.text;
+      if (String(d.rev) !== el.dataset.rev) { el.dataset.rev = d.rev; form().querySelector('.notice').hidden = false; }
     }
-    return body;
+    touched();
   }
-  function fill(ed, body) {
-    if (ed.dataset.mode !== 'form') { ed.querySelector('textarea').value = body; return; }
-    for (const input of ed.querySelectorAll('[data-label]')) input.value = body[input.dataset.label] ?? '';
-  }
-  const dirty = ed => JSON.stringify(read(ed)) !== ed.dataset.orig;
-  function touched(ed) {
-    const d = dirty(ed);
-    ed.classList.toggle('dirty', d);
-    try {
-      if (d) sessionStorage.setItem(draftKey(ed), JSON.stringify(read(ed)));
-      else sessionStorage.removeItem(draftKey(ed));
-    } catch (e) { /* private mode */ }
-  }
-  function adopt(ed) {
-    ed.dataset.orig = JSON.stringify(read(ed));
-    // A draft left behind, possibly written against an older revision: bring it back
-    // with the revision it was made against, so saving it cannot overwrite newer work.
-    const prefix = draftKey(ed, '');
-    try {
-      for (let i = 0; i < sessionStorage.length; i++) {
-        const key = sessionStorage.key(i);
-        if (!key.startsWith(prefix)) continue;
-        const rev = key.slice(prefix.length);
-        fill(ed, JSON.parse(sessionStorage.getItem(key)));
-        if (rev !== ed.dataset.rev) { ed.dataset.rev = rev; ed.querySelector('.notice').hidden = false; }
-        ed.classList.toggle('dirty', dirty(ed));
-        if (ed.closest('details')) ed.closest('details').open = true;
-        break;
-      }
-    } catch (e) { /* private mode */ }
-  }
-  editors().forEach(adopt);
-  document.addEventListener('input', e => {
-    const ed = e.target.closest('form.draft');
-    if (ed) touched(ed);
-  });
-  addEventListener('beforeunload', e => { if (editors().some(dirty)) e.preventDefault(); });
+  adopt();
+  document.addEventListener('input', e => { if (e.target.closest?.('#ed-fields')) touched(); });
+  addEventListener('beforeunload', e => { if (dirty()) e.preventDefault(); });
 
   // --- live refresh: re-read this page and swap what the server marks data-live ---
   async function refresh() {
@@ -116,15 +104,21 @@
       window.drawPlots(node);
       Actions.hints(node);
     }
-    for (const fresh of doc.querySelectorAll('form.draft')) {
-      const old = $(fresh.id);
-      if (!old || fresh.dataset.rev === old.dataset.rev) continue;
-      if (dirty(old)) { old.querySelector('.notice').hidden = false; continue; }
-      const node = document.importNode(fresh, true);
-      old.replaceWith(node);
-      node.dataset.orig = JSON.stringify(read(node));
-      drawCrops(node);
-      Actions.hints(node);
+    const fresh = doc.getElementById('ed-fields'), old = form();
+    if (fresh && old) {
+      const revs = () => inputs().map(i => `${i.dataset.key}@${i.dataset.rev}`).join();
+      const freshRevs = [...fresh.querySelectorAll('[data-key]:is(input, textarea)')]
+        .map(i => `${i.dataset.key}@${i.dataset.rev}`).join();
+      if (freshRevs !== revs()) {
+        if (dirty()) old.querySelector('.notice').hidden = false;
+        else {
+          const node = document.importNode(fresh, true);
+          old.replaceWith(node);
+          snapshot();
+          drawCrops(node);
+          Actions.hints(node);
+        }
+      }
     }
     ready();
     chips();
@@ -136,9 +130,9 @@
     busy.hidden = false;
     const job = await waitJob(body.job);
     busy.hidden = true;
-    const bad = (job.outcomes || []).filter(o => o.status !== 'done');
+    const bad = (job.outcomes || []).filter(o => o.status !== 'done' && o.status !== 'skipped');
     if (job.state === 'failed') flash(`failed: ${job.error || ''}`);
-    else if (bad.length) flash(bad.map(o => `${o.stage}: ${o.status}${o.detail ? ' — ' + o.detail : ''}`).join('; '));
+    else if (bad.length) flash(bad.map(o => `${o.step}: ${o.status}${o.detail ? ' — ' + o.detail : ''}`).join('; '));
     await refresh();
   }
 
@@ -151,41 +145,41 @@
     return true;
   }
 
-  async function save(ed, verify) {
-    if (!ed) return false;
+  // Save the values changed here (a person who sets a value verifies it); with `all`,
+  // verify every other value here too. False when something could not be saved or verified
+  // (a conflict, a review marker), so V stays on this submission.
+  async function save(all) {
     flash('');
-    const body = read(ed);
-    const r = await request(`${base}/save`, {kind: ed.dataset.kind, body, rev: revOf(ed), verify});
-    if (r.status === 409) { ed.querySelector('.notice').hidden = false; return false; }   // the draft stays
+    const values = {};
+    for (const el of changed()) values[el.dataset.key] = {text: el.value, rev: revOf(el)};
+    const verify = all ? JSON.parse($('parts').dataset.waiting || '[]')
+      .filter(k => !(k in values))
+      .map(k => ({key: k, rev: revOf(inputs().find(i => i.dataset.key === k))})) : [];
+    if (!Object.keys(values).length && !verify.length) return true;
+    const r = await request(`${base}/save`, {values, verify});
+    if (r.status === 409) { form().querySelector('.notice').hidden = false; flash("changed elsewhere"); return false; }
     if (!r.ok) { flash(r.body.error || "failed"); return false; }
-    try { sessionStorage.removeItem(draftKey(ed)); } catch (e) { /* private mode */ }
-    ed.dataset.rev = r.body.rev;
-    ed.dataset.orig = JSON.stringify(body);
-    ed.classList.remove('dirty');
-    ed.querySelector('.notice').hidden = true;
+    try { sessionStorage.removeItem(draftKey()); } catch (e) { /* private mode */ }
+    for (const el of changed()) {
+      el.dataset.orig = el.value;
+      if (r.body.revs && el.dataset.key in r.body.revs) el.dataset.rev = r.body.revs[el.dataset.key];
+    }
+    touched();
+    form().querySelector('.notice').hidden = true;
     await settle(r.body);
     return true;
   }
-  // Verify whatever waits for a person here: the parse. False when it could not be
-  // verified (a failed save, a review marker), so V stays on this submission.
-  async function verifyWaiting() {
-    const waiting = JSON.parse($('parts').dataset.waiting || '[]'), ed = parseEd();
-    return !(editable(ed) && (dirty(ed) || waiting.includes('parse')) && !await save(ed, true));
-  }
+  const waiting = () => JSON.parse($('parts').dataset.waiting || '[]').length > 0 || dirty();
 
-  const parseEd = () => $('ed-parse');
   const decide = (el, extra) => {
     const box = el.closest('.decide');
     // What the decision is made against: the revisions on screen, not the newest ones.
     const seen = JSON.parse($('parts').dataset.seen);
-    for (const kind of Object.keys(seen)) {
-      const ed = $('ed-' + kind);
-      if (ed) seen[kind] = revOf(ed);
-    }
-    return act('decide', {part: box.dataset.part, rev: revOf(box), seen, ...extra});
+    for (const i of inputs()) if (i.dataset.key in seen && i.dataset.rev !== '') seen[i.dataset.key] = Number(i.dataset.rev);
+    return act('decide', {check: box.dataset.check, rev: revOf(box), seen, ...extra});
   };
-  // Z / X / C / G grade the first undecided part (or the only part): its buttons carry those
-  // actions, so they show the keys; the other parts' buttons keep the plain ones.
+  // Z / X / C / G grade the first open check (or the only one): its buttons carry those
+  // actions, so they show the keys; the other checks' buttons keep the plain ones.
   const GRADES = {'v-t': 'grade-right', 'v-f': 'grade-wrong', 'v-b': 'grade-blank', 'num-set': 'grade-number'};
   function target(kind) {
     const boxes = [...document.querySelectorAll('#parts .decide')];
@@ -205,10 +199,9 @@
 
   // --- actions: buttons (data-action) and keys trigger the same ones ---
   const entryOf = ctx => ctx.target?.closest?.('form.entry');
-  const editorOf = ctx => (ctx.el || ctx.target)?.closest?.('form.draft') || parseEd();
-  const editable = ed => !!ed && !!ed.querySelector('input:not([readonly]), textarea:not([readonly])');
   const link = name => document.querySelector(`a[data-action="${name}"]`);
   const follow = name => ({available: () => !!link(name), run: () => link(name).click()});
+  const hasFields = () => inputs().length > 0;
   const actions = {
     'prev-student': {available: () => canGo(-1), run: () => go(-1)},
     'next-student': {available: () => canGo(1), run: () => go(1)},
@@ -216,47 +209,50 @@
     'next-question': follow('next-question'),
     scan: follow('scan'),
     // Cmd+S and Cmd+Enter in an exam-data entry (the key panel) save that entry.
-    save: {available: ctx => !!entryOf(ctx) || editable(editorOf(ctx)),
-           run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx)) : save(editorOf(ctx), false))},
-    // Cmd/Ctrl+Enter: an entry saves; in an editor, save and verify it; elsewhere verify what waits. Stays here.
-    verify: {available: ctx => !!entryOf(ctx) || editable(editorOf(ctx)),
-             run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx))
-               : ctx.el || ctx.target?.closest?.('form.draft') ? save(editorOf(ctx), true) : verifyWaiting())},
-    // V: verify what waits, then the next submission in the filter (as on Scans and Names: "yes, next").
-    'verify-next': {available: () => canGo(1) || JSON.parse($('parts').dataset.waiting || '[]').length > 0,
-                    run: async () => { if (await verifyWaiting() && canGo(1)) go(1); }},
+    save: {available: ctx => !!entryOf(ctx) || hasFields(),
+           run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx)) : save(false))},
+    // Cmd/Ctrl+Enter: an entry saves; elsewhere save and verify everything here. Stays here.
+    verify: {available: ctx => !!entryOf(ctx) || hasFields(),
+             run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx)) : save(true))},
+    // V: verify everything here, then the next submission in the filter (as on Scans and Names: "yes, next").
+    'verify-next': {available: () => canGo(1) || waiting(),
+                    run: async () => { if (await save(true) && canGo(1)) go(1); }},
     'grade-right': {available: () => !!targetButton('v-t'), run: ({el}) => decide(el || targetButton('v-t'), {value: true})},
     'grade-wrong': {available: () => !!targetButton('v-f'), run: ({el}) => decide(el || targetButton('v-f'), {value: false})},
     'grade-blank': {available: () => !!targetButton('v-b'), run: ({el}) => decide(el || targetButton('v-b'), {blank: true})},
     // G: to the number box (Enter there sets the grade); its set button sets it.
     'grade-number': {available: () => !!targetButton('num-set', 'number'),
                      run: ({el}) => (el ? setNumber(el) : target('number').querySelector('input').focus())},
-    edit: {available: () => editable(parseEd()),
-           run: () => parseEd().querySelector('input:not([readonly]), textarea:not([readonly])').focus()},
-    unverify: {run: ({el}) => act('verify', {kind: el.dataset.kind, rev: revOf(el), verified: false})},
-    discard: {run: ({el}) => {
-      const ed = el.closest('form.draft');
-      try { sessionStorage.removeItem(draftKey(ed)); } catch (e) { /* private mode */ }
-      ed.dataset.orig = JSON.stringify(read(ed));
+    edit: {available: hasFields, run: () => inputs()[0].focus()},
+    unverify: {run: ({el}) => act('unverify', {key: el.dataset.key, rev: revOf(el)})},
+    discard: {run: () => {
+      try { sessionStorage.removeItem(draftKey()); } catch (e) { /* private mode */ }
+      snapshot();
       location.reload();
     }},
     decide: {run: ({el}) => decide(el, {value: el.dataset.value === 'true'})},
     'decide-number': {run: ({el}) => setNumber(el)},
     'decide-blank': {run: ({el}) => decide(el, {blank: true})},
-    undecide: {run: ({el}) => {
+    clear: {run: ({el}) => {
       const box = el.closest('.decide');
-      return act('undecide', {part: box.dataset.part, rev: revOf(box)});
+      return act('clear', {check: box.dataset.check, rev: revOf(box)});
     }},
-    run: {available: ({el}) => !el || !el.dataset.off, run: ({el}) => ((el.dataset.confirm && !confirm(`Replace ${el.dataset.confirm}?`)) ? null
-      : act('run', {stage: el.dataset.stage, onward: !!el.dataset.onward,
-                    reasoning: !!el.dataset.model && !!$('run-reasoning')?.checked, params: $('run-params').value}))},
+    read: {available: ({el}) => !el || !el.disabled, run: () => {
+      const all = !!$('read-all')?.checked;
+      if (all && !confirm("Read again, replacing values a person set or verified?")) return null;
+      return act('read', {include_protected: all, reasoning: !!$('run-reasoning')?.checked});
+    }},
+    check: {run: ({el}) => act('check', {check: el.dataset.check, params: $('run-params').value})},
     pages: {run: async () => { if (await act('pages', {pages: $('pg-list').value, note: $('pg-note').value})) location.reload(); }},
     layout: {run: async () => {
       const r = await request(`/s/${encodeURIComponent(sub)}/layout`,
                               {cover_pages: $('lo-cover').value, print_area: $('lo-window').value});
       if (r.ok) location.reload(); else flash(r.body.error || "failed");
     }},
-    restore: {run: ({el}) => act('restore', {rev: Number(el.dataset.rev), expect: revOf(parseEd())})},
+    restore: {run: ({el}) => {
+      const field = inputs().find(i => i.dataset.key === el.dataset.key);
+      return act('restore', {key: el.dataset.key, rev: Number(el.dataset.rev), expect: field ? revOf(field) : null});
+    }},
   };
   for (const [name, spec] of Object.entries(actions)) Actions.register(name, spec);
   function setNumber(el) {
@@ -275,15 +271,16 @@
   ready();
   chips();
 
-  // --- an exam-data edit (key panel, regions): this submission is rechecked first ---
+  // --- an exam-data edit (key panel, regions): this submission is recomputed first ---
   document.addEventListener('entry-saved', async e => {
     const b = e.detail;
+    if (b.reread && b.reread.length) $('reread').hidden = false;      // how a field is read changed: offer to read
     await refresh();
     if (!b.job) return;
     busy.hidden = false;
     for (;;) {
       const r = await request('/jobs/' + encodeURIComponent(b.job));
-      if (!r.ok || r.body.state !== 'running' || r.body.done >= b.questions.length) break;
+      if (!r.ok || r.body.state !== 'running' || r.body.done >= 1) break;
       await new Promise(done => setTimeout(done, 400));
     }
     busy.hidden = true;

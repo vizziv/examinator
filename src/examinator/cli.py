@@ -7,10 +7,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .core import batch, focus, overrides
+from .core import batch, focus, grid, overrides
 from .core.defs import Exam, load_exam
 from .core.runner import Runner
-from .core.workflow import question_status, total
 from .core.workspace import Workspace
 
 DEFAULT_URL = 'http://localhost:8241/v1'
@@ -29,20 +28,15 @@ def open_model(args, root: Path):
 
 
 def status_table(exam: Exam, ws: Workspace) -> str:
-    cols = [(q, part) for q in exam.questions.values() for part in q.result]
-    lines = ["\t".join(['submission', *[q.column(p) for q, p in cols], 'total'])]
-    for sub in ws.store.submissions():
-        parses = ws.store.of_kind(sub.id, 'parse')
-        by_q = {qid: question_status(q, ws.store.for_question(sub.id, qid), parses=parses,
-                                     code_hash=exam.code_hash)
-                for qid, q in exam.questions.items()}
+    cols = [(q, c) for q in exam.questions.values() for c in q.checks]
+    lines = ["\t".join(['submission', *[q.column(c.name) for q, c in cols], 'total'])]
+    for row in grid.load(exam, ws.store):
         cells = []
-        for q, part in cols:
-            st = by_q[q.id][part]
+        for q, c in cols:
+            st = row.status[(q.id, c.name)]
             shown = focus.grade_text(st) or '-'
             cells.append(f"{shown} ({st.state})" if not st.counts else shown)
-        points, complete = total(exam, by_q)
-        lines.append("\t".join([sub.id, *cells, f"{points:g}{'' if complete else '+?'}"]))
+        lines.append("\t".join([row.submission.id, *cells, f"{row.points:g}{'' if row.complete else '+?'}"]))
     return "\n".join(lines)
 
 
@@ -162,22 +156,23 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
 
     runner = Runner(exam, ws, model=model)
     try:
-        sel = batch.Selection(
-            tuple(args.submission or [s.id for s in ws.store.submissions()]),
-            tuple(args.question or exam.questions),
-            tuple(args.stage or batch.stage_order(exam)),
-            missing_only=args.missing_only, include_protected=args.include_protected)
-        plan = batch.plan(exam, ws.store, sel, model_available=model is not None)
+        subs = tuple(args.submission or [s.id for s in ws.store.submissions()])
+        if not args.step:       # results gone outdated (a field or the exam's code changed) first
+            for sub in subs:
+                runner.refresh(sub)
+        sel = batch.Selection(subs, tuple(args.question or exam.questions), tuple(args.step or batch.STEPS),
+                              missing_only=args.missing_only, include_protected=args.include_protected)
+        plan = batch.plan(exam, ws.store, sel, model_available=model is not None, regions=ws.fields)
         for action in batch.ACTIONS:
             print(f"{action}: {plan.count(action)}")
         if args.dry_run:
             for item in plan.items:
-                print(f"  {item.submission} {item.question} {item.stage}: {item.action} {item.reason}")
+                print(f"  {item.submission} {item.question} {item.step}: {item.action} {item.reason}")
             return 0
         outcomes = batch.BatchRun(runner, plan, parallel=args.parallel).run()
         for o in outcomes:
             if not o.ok:
-                print(f"  {o.submission} {o.question} {o.stage}: {o.status} {o.detail}")
+                print(f"  {o.submission} {o.question} {o.step}: {o.status} {o.detail}")
         print(status_table(exam, ws))
     finally:
         runner.close()
@@ -219,13 +214,15 @@ def main(argv=None) -> int:
     p.add_argument('exam')
     p.add_argument('workspace', nargs='?', help="where to build the synthetic workspace (default: a temp dir)")
 
-    p = sub.add_parser('run', help="run stages for submissions")
+    p = sub.add_parser('run', help="read fields, then run checks, for submissions")
     common(p)
     p.add_argument('--submission', '-s', action='append', help="default: all")
     p.add_argument('--question', '-q', action='append', help="default: all")
-    p.add_argument('--stage', action='append', help="default: all")
-    p.add_argument('--missing-only', action='store_true')
-    p.add_argument('--include-protected', action='store_true')
+    p.add_argument('--step', action='append', choices=batch.STEPS, help="read, check (default: both)")
+    p.add_argument('--missing-only', action='store_true',
+                   help="read only fields with no value; run only checks whose result is not current")
+    p.add_argument('--include-protected', action='store_true',
+                   help="read again what a person set or verified (it stays in history)")
     p.add_argument('--parallel', type=int, default=2)
     p.add_argument('--dry-run', action='store_true', help="print the plan and stop")
 
@@ -237,7 +234,7 @@ def main(argv=None) -> int:
     p.add_argument('--workspace', '-w', required=True)
     p.add_argument('--model-url', default=DEFAULT_URL, help="endpoint for models given without @URL")
     p.add_argument('--model', action='append', default=[], metavar='NAME[@URL]',
-                   help="a model that runs the exam's transcript stage as is (repeatable)")
+                   help="a model that runs the question's own reader as is (repeatable)")
     p.add_argument('--ocr', action='append', default=[], metavar='NAME[@URL][::PROMPT]',
                    help="a dedicated OCR model: one answer box per call, short prompt (repeatable)")
     p.add_argument('--ocr-prompt', default=None, help='the prompt for --ocr models (default "OCR:")')

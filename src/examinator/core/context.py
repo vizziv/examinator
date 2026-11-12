@@ -1,29 +1,29 @@
-"""The stage context: what a stage function receives.
+"""What a check and a reader receive.
 
-A stage function is `fn(ctx) -> body`. Inside an isolated check there are no
-services: `ctx.pages()`, `ctx.crop()` and `ctx.model()` raise `Unavailable`.
-A check may read other questions' parses (`ctx.read`); what it read is
-recorded with its evidence (`ctx.reads`), so the grade waits for those parses
-to be verified and is outdated when they change.
+A check is `fn(ctx: CheckContext) -> Result`. It reads field values with
+`ctx.read(label)` (its own question's field) or `ctx.read(label,
+question='info')` (another question's). Every read is recorded with the
+field's revision, so the result is outdated when a field it read changes, and
+its grade counts only once every field it read is settled.
+
+A reader is called with a `ReadContext`: the pages and crops of one
+submission, and the loopback model. Inside an isolated check there are no
+pages and no model.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, Sequence
 
-from .defs import Question, Region
-from .evidence import Undecided
+from .defs import Question, Region, has_marker, key
+from .result import Undecided
 
 if TYPE_CHECKING:
     from PIL.Image import Image
 
 
 class Unavailable(RuntimeError):
-    """The stage asked for something this run cannot provide (pages, the model)."""
-
-
-class Blocked(RuntimeError):
-    """The stage cannot run yet. The message says why, in a few words."""
+    """Asked for something this run cannot provide (pages, the model)."""
 
 
 class BadOutput(RuntimeError):
@@ -31,8 +31,36 @@ class BadOutput(RuntimeError):
     structural only: it never quotes the output."""
 
 
+@dataclass
+class CheckContext:
+    submission: str
+    question: Question
+    check: str
+    # every field's stored value in this submission: {'question/label': (rev, text)}
+    values: Mapping[str, tuple[int, str]] = field(default_factory=dict)
+    params: Mapping[str, Any] = field(default_factory=dict)   # per-run, from a grader
+    fields: frozenset[str] = frozenset()      # the exam's fields ('question/label'): what may be read
+    reads: dict[str, int | None] = field(default_factory=dict)     # what was read: revision, None if not read
+
+    def read(self, label: str, *, question: str | None = None) -> str:
+        """One field's value (text; '' is blank). Recorded. A field that is not
+        read, or whose value carries a review marker, raises `Undecided`."""
+        q = question or self.question.id
+        k = key(q, label)
+        if k not in self.fields:
+            raise KeyError(f"no field {label!r} in {q}")
+        got = self.values.get(k)
+        self.reads[k] = got[0] if got is not None else None
+        name = label if q == self.question.id else f"{q} {label}"
+        if got is None:
+            raise Undecided(f"{name} not read")
+        if has_marker(got[1]):
+            raise Undecided(f"{name} has a review marker")
+        return got[1]
+
+
 class Services(Protocol):
-    """What the runner lends a stage that runs in-process."""
+    """What the runner lends a reader."""
 
     def pages(self, submission: str, question: Question) -> list['Image']: ...
     def crop(self, submission: str, region: Region) -> 'Image': ...
@@ -43,52 +71,13 @@ class Services(Protocol):
 
 
 @dataclass
-class Context:
+class ReadContext:
     submission: str
     question: Question
-    stage: str
-    inputs: Mapping[str, Any] = field(default_factory=dict)
-    params: Mapping[str, Any] = field(default_factory=dict)   # per-run, from the grader
-    note: str = ""                              # per-submission page note, for prompts
-    rerun: bool = False                         # the stage's artifact already exists
-    reasoning: bool = False                     # "retry with reasoning" for this run
+    note: str = ""                  # the grader's note about this submission's pages, for prompts
     services: Services | None = None
-    # A check's view of the other questions: {question: (rev, parse body), or None if no parse yet}
-    parses: Mapping[str, tuple[int, Any] | None] | None = None
-    reads: dict[str, int | None] = field(default_factory=dict)   # what `read` was asked for: rev or None
-    labels: dict[str, list[str] | None] = field(default_factory=dict)   # which of its fields; None: all of it
-
-    def input(self, kind: str) -> Any:
-        """Body of an upstream artifact named in the stage's `inputs`."""
-        return self.inputs[kind]
-
-    def read(self, question: str, label: str | None = None) -> Any:
-        """Another question's parse (`{label: value}`, or source text), for a check;
-        with `label`, one field's value (None if the parse has no such field).
-
-        The read is recorded: the grade counts only once what it read is verified
-        (or was read by a reader that vouches for it: `Artifact.trusted`), and is
-        outdated when that parse changes. A question with no parse yet raises
-        `Undecided` (the check is undecided, and outdated once the parse exists).
-        A check that never calls this does not depend on any other question."""
-        if self.parses is None:
-            raise Unavailable("only a check reads other questions' parses")
-        if question == self.question.id:
-            raise ValueError("a question's own parse is ctx.input('parse')")
-        if question not in self.parses:
-            raise KeyError(f"no question {question!r}")
-        got = self.parses[question]
-        self.reads[question] = got[0] if got is not None else None
-        seen = self.labels.setdefault(question, [])
-        if label is None:
-            self.labels[question] = None
-        elif seen is not None and label not in seen:
-            seen.append(label)
-        if got is None:
-            raise Undecided(f"no parse of {question} yet")
-        if label is None:
-            return got[1]
-        return got[1].get(label) if isinstance(got[1], Mapping) else None
+    reasoning: bool = False         # "retry with reasoning" for this run
+    fresh: bool = False             # ask again rather than use a remembered reading
 
     def pages(self) -> list['Image']:
         """Rendered images of the question's selected pages for this submission."""
@@ -99,16 +88,17 @@ class Context:
         return self._services().crop(self.submission, region)
 
     def model(self, prompt: str, *, images: Sequence['Image'] = (), text: str | None = None,
-              expect: str = 'text') -> str:
-        """Call the loopback model. `expect` is 'text', 'json' or 'code'."""
+              expect: str = 'text', step: str = 'read') -> str:
+        """Call the loopback model. `expect` is 'text', 'json' or 'code'; `step`
+        names the call (it tags it, for a scripted model and for diagnostics)."""
         return self._services().model(
             prompt, images=images, text=text, expect=expect, reasoning=self.reasoning,
-            tag=(self.submission, self.question.id, self.stage))
+            tag=(self.submission, self.question.id, step))
 
-    def remember(self, key: str, compute: Callable[[], str], *, refresh: bool = False) -> str:
-        """A per-submission memo (a printed field's reading, kept until its parse is rerun)."""
+    def remember(self, key: str, compute: Callable[[], str]) -> str:
+        """A per-submission memo (a printed field's reading); `fresh` asks again."""
         s = self._services()
-        if not refresh:
+        if not self.fresh:
             hit = s.memo(self.submission, key)
             if hit is not None:
                 return hit
@@ -118,5 +108,5 @@ class Context:
 
     def _services(self) -> Services:
         if self.services is None:
-            raise Unavailable("not available inside an isolated stage")
+            raise Unavailable("no pages or model here")
         return self.services

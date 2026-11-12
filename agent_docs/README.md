@@ -63,20 +63,18 @@ Each statement falls into one of three classes. Treat them differently.
 - **Printings are read into fields.** An exam may be printed in several
   versions, usually **covertly**: there is no printed version marker, because
   students should not be able to tell. The printing is inferred from printed
-  data, read into *printed fields* of a question's parse (in the question
-  itself, or in one question holding the whole exam's printing) and verified
-  like any parse. Checks read other questions' parses; the library records what
-  they read (`DESIGN.md` §5).
-- **Grades are typed values, not check marks.** A question's result is a `bool`,
-  an `int`, or a `float`, optionally with a range, or a small named group of
-  those. "Two outputs is secretly two questions" is the user's rule of thumb, so
-  keep multi-part results simple and rigid for now.
+  data, read into *printed fields* (in the question itself, or in one question
+  holding the whole exam's printing) and verified like any value. Checks read
+  any question's fields; the library records what they read (`MODEL.md`).
+- **Grades are typed values, not check marks.** A check proposes one grade: a
+  `bool`, an `int` or a `float`, optionally with a range. A question with two
+  grades has two checks.
 - **Checks are isolated and time-limited**, with a sensible default timeout that
   each question can override.
 - **Checks run on the server**, with NumPy available. Plots are part of what a
   check reports to the grader.
-- **Stages are composable.** The library ships a default bundle (transcribe,
-  parse, check) and also the individual pieces. Checks, grader plots and student
+- **Pieces compose.** The library ships readers (`std.readers`) and a keyed
+  check with grade rules (`std.math`), small pieces rather than bundles. Checks, grader plots and student
   feedback are expected to be custom per question much of the time.
 - **No general "tunable parameter" machinery.** Unusual per-question behaviour
   (see the `huge_constant` example in `EXAM3.md`) is custom code in the exam,

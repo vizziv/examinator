@@ -2370,13 +2370,12 @@ def comments(source: str, *, context: int = 2) -> list[Comment]:
     return out
 
 
-def comment_facet(kind: str = 'parse', *, name: str = 'comments', label: str = "comments",
-                  context: int = 2):
-    """A 'text' facet: the comments in source stored as `kind`, each value its
-    text followed by its lines of context, for searching across submissions."""
+def comment_facet(field: str, *, name: str = 'comments', label: str = "comments", context: int = 2):
+    """A 'text' facet: the comments in one field's source, each value its text
+    followed by its lines of context, for searching across submissions."""
     from ..core.focus import Facet
 
-    def values(bodies):
-        return ['\n'.join((c.text, *c.context)) for c in comments(bodies.get(kind), context=context)]
+    def values(view):
+        return ['\n'.join((c.text, *c.context)) for c in comments(view.value(field), context=context)]
 
-    return Facet(name, label, values, reads=(kind,), kind='text', group='code')
+    return Facet(name, label, values, kind='text', group='code')

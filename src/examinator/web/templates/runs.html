@@ -14,18 +14,19 @@
 {% for q in questions %}<label><input type="checkbox" name="question" value="{{ q.id }}" checked> {{ q.id }}</label>{% endfor %}
 <button type="button" class="quiet" data-action="toggle-questions">all / none</button>
 </fieldset>
-<fieldset><legend>stages</legend>
-{% for s in stages %}<label{% if s.model and not model %} class="dim"{% endif %}><input type="checkbox" name="stage" value="{{ s.name }}"{% if not s.model %} checked{% endif %}> {{ s.name }}{% if s.model %} <span class="dim">model</span>{% endif %}</label>{% endfor %}
-<p class="help">Each stage finishes for every submission before the next begins. The grade follows its check.</p>
+<fieldset><legend>steps</legend>
+<label{% if not model %} class="dim"{% endif %}><input type="checkbox" name="step" value="read"> read <span class="dim">model</span></label>
+<label><input type="checkbox" name="step" value="check" checked> check</label>
+<p class="help">Every read finishes before any check runs. Results that a change outdated are recomputed anyway, in the background.</p>
 </fieldset>
 <fieldset><legend>options</legend>
 <label><input type="checkbox" name="missing_only"> missing only</label>
 <label><input type="checkbox" name="include_protected"> include protected</label>
 <label>parallel <input type="number" name="parallel" value="2" min="1" max="16"></label>
 <label><input type="checkbox" name="reasoning"> reasoning</label>
-<p class="help"><b>Missing only</b> fills gaps and touches nothing that exists.
-<b>Include protected</b> overwrites what graders wrote, verified or decided; the replaced versions stay in history.
-Without it, protected work is skipped.</p>
+<p class="help"><b>Missing only</b> reads only fields with no value and runs only checks that are not current.
+<b>Include protected</b> reads again what a person set or verified; the replaced values stay in history.
+Without it, those are skipped. Decisions are never touched.</p>
 </fieldset>
 <div class="bar">
 <button type="button" id="preview" data-action="run-preview" class="primary">Preview</button>

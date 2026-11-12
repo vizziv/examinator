@@ -12,10 +12,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from examinator import Context, Printed, Undecided, load_exam, synth
-from examinator.core.evidence import EvidenceView, body_of
-from examinator.core.runner import Runner
-from examinator.core.workflow import part_status
+from examinator import Bool, Grade, Printed, load_exam, synth
+from examinator.core.runner import Runner, try_check
 from examinator.core.workspace import Workspace
 from examinator.std import pseudocode
 from examinator_kits.stochastic import checks
@@ -39,35 +37,37 @@ def pkg(exam):
     return lambda name: importlib.import_module(f'{EXAM.name}.{name}')
 
 
-def context(exam, qid, parse, info=None):
-    """A check's context, with `info`'s parse body (or no `info` parse)."""
-    q = exam.questions[qid]
-    parses = {other: None for other in exam.questions if other != qid}
-    if info is not None:
-        parses['info'] = (1, info)
-    return Context(submission='synthetic', question=q, stage='evidence', inputs={'parse': parse}, parses=parses)
+def values(exam, qid, answers, info=None):
+    """Field values for a check: the question's answers (`{label: text}`, or the
+    source of its one code field), and `info`'s printed fields (or none read)."""
+    answers = answers if isinstance(answers, dict) else {exam.questions[qid].written[0].label: answers}
+    out = {f'{qid}/{label}': '' if text is None else text for label, text in answers.items()}
+    out.update({f'info/{label}': v for label, v in (info or {}).items()})
+    return out
 
 
-def outcomes(exam, qid, parse, printing=None):
-    """Run one question's check directly on a parse body, with every printed field of
-    `info` read as `printing` (or no `info` parse): `({label: outcome}, body)`."""
+def outcomes(exam, qid, answers, printing=None):
+    """Run one question's check directly on answers, with every printed field of
+    `info` read as `printing` (or not read): `({label: outcome}, result)`."""
     info = None if printing is None else {f.label: printing for f in exam.questions['info'].fields}
-    body = body_of(exam.questions[qid].stage('evidence').fn(context(exam, qid, parse, info)))
-    return {label: f['outcome'] for label, f in body['data']['fields'].items()}, body
+    body = try_check(exam, qid, 'check', values(exam, qid, answers, info))
+    return {label: f['outcome'] for label, f in body['fields'].items()}, body
 
 
 def verdict(exam, qid, source, printing='original'):
     """A sampler question's single outcome and its note."""
     _, body = outcomes(exam, qid, source, printing)
-    f = body['data']['fields'][SAMPLERS[qid]]
-    return f['outcome'], f['note']
+    f = body['fields'][SAMPLERS[qid]]
+    return f['outcome'], f.get('note', "")
 
 
-def grade(exam, qid, parse, printing=None):
-    q = exam.questions[qid]
-    _, body = outcomes(exam, qid, parse, printing)
-    return q.result[''].coerce(q.stage('grade').fn(Context(
-        submission='synthetic', question=q, stage='grade', inputs={'evidence': body})))
+def grade(exam, qid, answers, printing=None):
+    return Grade.from_json(outcomes(exam, qid, answers, printing)[1]['grade'])
+
+
+def status(runner, sub, qid):
+    q = runner.exam.questions[qid]
+    return runner.sheet(sub).status(runner.exam, q, q.check('check'))
 
 
 # --- the fixtures end to end ----------------------------------------------------------
@@ -81,7 +81,7 @@ def test_definition(exam, pkg):
     assert list(exam.questions) == ['info'] + [f'q{i}' for i in range(1, 7)]
     assert exam.pages == 16 and exam.cover_pages == 1 and exam.scan_window == (60, 55, 920, 825)
     info = exam.questions['info']
-    assert info.result == {} and list(info.fields) == versions.FIELDS
+    assert info.checks == () and list(info.fields) == versions.FIELDS
     assert all(isinstance(f.read, Printed) and set(f.read.reads.values()) == {'original', 'alternate'}
                for f in info.fields)
     labels = {f.label: f for f in info.fields}
@@ -91,13 +91,13 @@ def test_definition(exam, pkg):
             assert f.region.page in q.pages
         if qid == 'info':
             continue
-        assert list(q.result) == ['']
-        assert q.result[''].counts == (qid not in ('q5', 'q6'))         # the shiny questions do not count
+        assert [c.name for c in q.checks] == ['check'] and q.columns() == [qid]
+        assert q.check('check').points == Bool(counts=qid not in ('q5', 'q6'))  # the shiny questions do not count
         if qid in VARIED:       # two printed fields of info, one printed on or just before its own page
             refs = versions.PRINTING[qid].refs()
             assert len(refs) == 2 and all(r.question == 'info' and r.label in labels for r in refs)
             assert any(labels[r.label].region.page in (q.pages[0] - 1, q.pages[0]) for r in refs), qid
-    assert exam.questions['q2'].stage('evidence').fn.by == versions.PRINTING['q2']
+    assert exam.questions['q2'].check('check').fn.by == versions.PRINTING['q2']
     assert {q.id: q.pages for q in exam.questions.values()} == {
         'info': (2, 4, 8, 10, 12), 'q1': (3,), 'q2': (5,), 'q3': (7,), 'q4': (9,), 'q5': (11,), 'q6': (13,)}
 
@@ -161,12 +161,12 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
     runner = Runner(exam, ws, model=model)
     try:
         for sub in ws.store.submissions():
-            for qid, q in exam.questions.items():
-                assert all(o.ok for o in runner.run_from(sub.id, qid, q.stages[0].name))
+            for qid in exam.questions:
+                assert all(o.ok for o in runner.read(sub.id, qid))
     finally:
         runner.close()
         ws.close()
-    assert {c.tag[2] for c in model.calls} == {'read', 'transcript', 'parse'}
+    assert {c.tag[2].split(':')[0] for c in model.calls} == {'read', 'transcribe', 'parse'}
     prompts = "\n".join(c.prompt for c in model.calls)
     for secret in ['log(1', 'log(U', 'expm1', 'sqrt(unif', '1/3)', '5/4', '3/2)', 'pi/2', '[3, 4]', '[2, 2]',
                    'x**(1/5)', 'x**(-1/5)', 'sin(40', 'sin(20', 'unit_disc', 'scoop', 'niform(0']:
@@ -192,20 +192,18 @@ def test_q2_the_printing_read_from_info_selects_the_key(exam, pkg):
             got, _ = outcomes(exam, 'q2', answers[written]['q2'], printing=printed)
             assert all(o == 'correct' for o in got.values()) == (printed == written)
             assert grade(exam, 'q2', answers[written]['q2'], printed).value == (printed == written)
-    # No info parse, or its two fields disagreeing: undecided.
-    fn = exam.questions['q2'].stage('evidence').fn
-    with pytest.raises(Undecided, match="no parse of info"):
-        fn(context(exam, 'q2', answers['original']['q2']))
+    # Info not read, or its two fields disagreeing: undecided.
+    body = try_check(exam, 'q2', 'check', values(exam, 'q2', answers['original']['q2']))
+    assert body['grade']['value'] is None and "info q1_parameter not read" in body['grade']['reason']
     split = {f.label: 'original' for f in exam.questions['info'].fields} | {'q2_m_goal': 'alternate'}
-    ctx = context(exam, 'q2', answers['original']['q2'], split)
-    with pytest.raises(Undecided, match="disagree"):
-        fn(ctx)
-    assert ctx.reads == {'info': 1}
+    body = try_check(exam, 'q2', 'check', values(exam, 'q2', answers['original']['q2'], split))
+    assert body['grade']['value'] is None and "disagree" in body['grade']['reason']
+    assert set(body['reads']) == {'info/q1_parameter', 'info/q2_m_goal'}       # what it read, nothing more
 
 
 def test_disagreeing_printed_fields_wait_for_a_grader(exam, pkg, tmp_path):
     """q4 and q5 read q5_function; when it disagrees with its neighbours, both are
-    undecided until a grader corrects the info parse."""
+    undecided until a grader corrects that one value."""
     f, versions = pkg('fixtures'), pkg('versions')
     printed = {'info': {**versions.printed_on(0)['info'], 'q5_function': 'twonit_cone'}}
     case = synth.Case('split', printed=printed, answers={q: f.ANSWERS['original'][q] for q in ('q2', 'q4', 'q5')})
@@ -213,58 +211,28 @@ def test_disagreeing_printed_fields_wait_for_a_grader(exam, pkg, tmp_path):
     ws = Workspace(root, exam)
     ws.sync()
     runner = Runner(exam, ws, model=synth.fake_model(root))
-
-    def status(qid):
-        return part_status(exam.questions[qid], '', ws.store.for_question('split', qid),
-                           parses=ws.store.of_kind('split', 'parse'))
-
     try:
         for qid in ('info', 'q2', 'q4', 'q5'):
-            assert all(o.ok for o in runner.run_from('split', qid, exam.questions[qid].stages[0].name))
-            runner.verify('split', qid, 'parse', author='ta', expect_rev=ws.store.get('split', qid, 'parse').rev)
-        info = ws.store.get('split', 'info', 'parse').body
-        assert info == {**versions.printed_on(0)['info'], 'q5_function': 'alternate'}
-        assert (status('q2').state, status('q2').value) == ('graded', True)      # reads other fields
+            assert all(o.ok for o in runner.read('split', qid))
+        for k, v in runner.values('split').items():
+            runner.verify('split', *k.split('/'), author='ta', expect_rev=v.rev)
+        runner.refresh('split', questions=['q2', 'q4', 'q5'])
+        assert {k: v.text for k, v in runner.values('split').items() if k.startswith('info/')} == \
+            {f'info/{k}': v for k, v in {**versions.printed_on(0)['info'], 'q5_function': 'alternate'}.items()}
+        assert (status(runner, 'split', 'q2').state, status(runner, 'split', 'q2').value) == ('graded', True)
         for qid in ('q4', 'q5'):
-            st = status(qid)
-            assert (st.state, st.value, st.counts) == ('needs_review', None, False), qid
-        runner.save('split', 'info', 'parse', versions.printed_on(0)['info'], author='ta', verify=True)
-        assert status('q4').state == status('q5').state == 'outdated'
-        assert status('q2').state == 'outdated'          # it read the info parse too
-        runner.recheck('split', 'info')
-        assert (status('q4').state, status('q4').value) == ('graded', True)
-        assert (status('q5').state, status('q5').value) == ('graded', True)
-        assert (status('q2').state, status('q2').value) == ('graded', True)
+            st = status(runner, 'split', qid)
+            assert (st.state, st.value, st.counts) == ('to_decide', None, False), qid
+        rev = runner.values('split')['info/q5_function'].rev
+        runner.set('split', 'info', 'q5_function', 'original', author='ta', expect_rev=rev)
+        assert status(runner, 'split', 'q4').state == status(runner, 'split', 'q5').state == 'outdated'
+        assert status(runner, 'split', 'q2').state == 'graded'          # it never read that field
+        runner.refresh('split')
+        for qid in ('q2', 'q4', 'q5'):
+            assert (status(runner, 'split', qid).state, status(runner, 'split', qid).value) == ('graded', True)
     finally:
         runner.close()
         ws.close()
-
-
-def view(**outcomes_by_label):
-    return EvidenceView({'data': {'fields': {k: {'outcome': v} for k, v in outcomes_by_label.items()}}})
-
-
-def test_credit_rules(pkg):
-    rules = pkg('rules')
-    five, with_f = rules.at_least(5), rules.at_least(5, required=('f',))
-    six = dict.fromkeys('abcdef', 'correct')
-    assert five(view(**six)) == 'correct'
-    assert five(view(**{**six, 'a': 'incorrect'})) == 'correct'
-    assert five(view(**{**six, 'a': 'blank'})) == 'correct'
-    assert five(view(**{**six, 'a': None})) == 'correct'                    # already enough
-    assert five(view(**{**six, 'a': 'incorrect', 'b': 'blank'})) == 'incorrect'
-    assert five(view(**dict.fromkeys('abcdef', 'blank'))) == 'blank'
-    undecided = five(view(**{**six, 'a': 'incorrect', 'b': None}))
-    assert undecided.value is None and 'b' in undecided.reason
-    assert five(view(**{**six, 'a': 'incorrect', 'b': None, 'c': None})).value is None
-    assert five(view(**{**six, 'a': 'incorrect', 'b': 'incorrect', 'c': None})) == 'incorrect'   # out of reach
-    assert with_f(view(**{**six, 'a': 'incorrect'})) == 'correct'
-    assert with_f(view(**{**six, 'f': 'incorrect'})) == 'incorrect'
-    assert with_f(view(**{**six, 'f': 'blank'})) == 'incorrect'
-    assert with_f(view(**{**six, 'f': None})).value is None
-    single = rules.single('x')
-    assert single(view(x='correct')) == 'correct' and single(view(x='blank')) == 'blank'
-    assert single(EvidenceView({'data': {'fields': {'x': {'outcome': None, 'note': "why"}}}})).reason == "why"
 
 
 # --- question 3: subscripted expressions and a distribution's name -----------------------
@@ -459,6 +427,7 @@ def test_q6_the_envelope_alone_passes_ks_but_not_the_phase_test(exam, pkg):
     """Why the check looks inside a period: the unrejected envelope is within KS noise of f."""
     _, body = outcomes(exam, 'q6', pkg('fixtures').WRONG['q6'], 'original')
     tests = next(b for b in body['blocks'] if b.get('summary') == "Tests")['blocks'][0]['rows']
+    assert body['grade']['value'] is False and body['fields']['6']['outcome'] == 'incorrect'
     by_name = {name: outcome for name, outcome, _ in tests}
     assert by_name == {'support': 'correct', 'CDF': 'correct', 'position within a period': 'incorrect'}
 

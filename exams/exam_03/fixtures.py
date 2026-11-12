@@ -86,14 +86,15 @@ def poisson_process():
     return events
 """
 
-Q2 = WEIBULL + "\n" + WEIBULLISH
-Q7 = POISSON_DIST + "\n" + POISSON_PROCESS
+# Questions 2 and 7: one source per code field.
+Q2 = {'2.1': WEIBULL, '2.2': WEIBULLISH}
+Q7 = {'7.1': POISSON_PROCESS, '7.2': POISSON_DIST}
 
-Q2_LITERAL = Q2.replace('huge_constant', '10**1000')            # the rewrite restores the name
-Q2_WRONG_WEIBULL = Q2.replace('** (1 / a)', '** a')             # fails 2.1 only
-Q2_ONLY_WEIBULL = WEIBULL + "\ndef weibullish():\n    pass\n"   # 2.2 blank
-Q7_OFF_BY_ONE = Q7.replace('n = 0', 'n = 1')                    # fails 7.2 only
-Q7_ONLY_PROCESS = POISSON_PROCESS                               # 7.2 blank (function absent)
+Q2_LITERAL = {**Q2, '2.2': WEIBULLISH.replace('huge_constant', '10**1000')}    # the rewrite restores the name
+Q2_WRONG_WEIBULL = {**Q2, '2.1': WEIBULL.replace('** (1 / a)', '** a')}       # fails 2.1 only
+Q2_ONLY_WEIBULL = {**Q2, '2.2': "def weibullish():\n    pass\n"}            # 2.2 blank
+Q7_OFF_BY_ONE = {**Q7, '7.2': POISSON_DIST.replace('n = 0', 'n = 1')}         # fails 7.2 only
+Q7_ONLY_PROCESS = {**Q7, '7.2': None}                                          # 7.2 blank
 
 ALL_TRUE = {**{q: True for q in MATH},
             'q2.check': True, 'q2.shiny': True, 'q7.check': True, 'q7.shiny': True}

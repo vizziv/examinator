@@ -1,8 +1,10 @@
 """Exam definition types.
 
-An exam package builds an `Exam` and adds questions to it. Once built, each
-`Question` is frozen data: it can be described as JSON (`describe`), hashed
-(`stage_hash`) and displayed. Nothing here knows about any particular exam.
+An exam package builds an `Exam` and adds questions to it. A question groups
+**fields** (named slots for one value read from paper) and **checks**
+(functions from field values to one proposed grade and evidence). Once built,
+every definition is frozen data: it can be described as JSON (`describe`),
+hashed (`digest`) and displayed. Nothing here knows about any particular exam.
 """
 from __future__ import annotations
 
@@ -17,10 +19,7 @@ import sys
 import types
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
-
-if TYPE_CHECKING:
-    from .context import Context
+from typing import Any, Callable, Mapping, Sequence
 
 # --- review markers ---------------------------------------------------------
 
@@ -61,14 +60,12 @@ def check_region(region: Region, pages: int, what: str) -> None:
 
 @dataclass(frozen=True)
 class Field:
-    """One slot of a question's parse: a printed label and, usually, where its box is.
+    """A named slot for one value read from paper.
 
-    `read` says how the value is read when the student does not write it: a
-    reader, called as `read(ctx, field) -> str | None` while the question's
-    parse stage runs (`core.printed.Printed` asks the model about the printed
-    text in `region`). None, the default: the student writes it, and the parse
-    stage reads it from the transcript. Either way the value sits in the parse,
-    where people edit and verify it.
+    `region` is where to look (it may be left unset and given in the app).
+    `read` is a reader for this field alone (`Printed`, say); None, the
+    default: the question's reader reads it with the question's other fields,
+    and without one a person types it. A value is always text.
     """
     label: str
     region: Region | None = None
@@ -111,11 +108,12 @@ class Identity:
     roster: str | None = None
 
 
-# --- results and grades -----------------------------------------------------
+# --- grades -------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class Grade:
-    """A result value (`None` is undecided) plus display flags such as 'blank'."""
+    """A grade value (`None` is undecided) plus display flags such as 'blank',
+    and the reason it is undecided."""
     value: bool | int | float | None = None
     flags: tuple[str, ...] = ()
     reason: str | None = None
@@ -124,14 +122,17 @@ class Grade:
         return {'value': self.value, 'flags': list(self.flags), 'reason': self.reason}
 
     @staticmethod
-    def from_json(body: Mapping) -> 'Grade':
+    def from_json(body: Mapping | None) -> 'Grade':
+        body = body or {}
         return Grade(body.get('value'), tuple(body.get('flags') or ()), body.get('reason'))
 
 
 @dataclass(frozen=True)
 class Bool:
-    """A true/false result. Accepts the standard outcomes directly."""
+    """A true/false grade, worth `worth` points when true. Accepts the standard
+    outcomes directly: 'correct', 'incorrect', 'blank' (false, flagged) and None."""
     counts: bool = True
+    worth: float = 1.0
 
     def coerce(self, x: Any) -> Grade:
         if isinstance(x, Grade):
@@ -146,10 +147,10 @@ class Bool:
             return Grade(False)
         if x == 'blank':
             return Grade(False, ('blank',))
-        raise ValueError(f"cannot read {x!r} as a bool result")
+        raise ValueError(f"cannot read {x!r} as a bool grade")
 
     def points(self, value: Any) -> float:
-        return 1.0 if value else 0.0
+        return self.worth if value else 0.0
 
     def parse(self, text: str) -> bool:
         """Read a grader's typed value."""
@@ -163,7 +164,8 @@ class Bool:
 
 @dataclass(frozen=True)
 class Number:
-    """A numeric result, `int` or `float`, optionally limited to a range."""
+    """A numeric grade, `int` or `float`, optionally limited to a range; the
+    value is the points."""
     type: type = float
     min: float | None = None
     max: float | None = None
@@ -200,73 +202,85 @@ class Number:
         return self._check(float(text.strip()))
 
 
-ResultSpec = Bool | Number
+Points = Bool | Number
 
 
-def grade_kind(part: str) -> str:
-    """The artifact kind holding the grade of one result part ('' is the only part)."""
-    return f'grade:{part}' if part else 'grade'
-
-
-# --- stages -----------------------------------------------------------------
+# --- checks and questions -----------------------------------------------------
 
 @dataclass(frozen=True)
-class Stage:
-    """One step for one submission and question.
+class Check:
+    """A function from field values to one proposed grade and evidence.
 
-    `name` is also the kind of the artifact it writes: 'transcript', 'parse',
-    'evidence' or 'grade'. `fn(ctx)` returns the artifact body (text or
-    JSON-serializable data, or an `Evidence`). A 'fields' stage returns the
-    fields the student writes; the runner adds the fields that have a reader
-    (`Field.read`). If `fn` has a method `validate(question, exam)`,
-    `Exam.question` calls it, and it raises `ValueError` for a configuration
-    that does not fit (a key chosen by a field the question does not have).
+    `fn(ctx) -> Result` (or a bare grade: a value, an outcome, a `Grade`); it
+    reads fields with `ctx.read(label)` or `ctx.read(label, question=...)`,
+    and what it read is recorded. None: a person decides every grade.
+    `points` is the grade's spec (`Bool()`, `Number(...)`) and what it is worth.
+    A check runs in a worker process with a wall-clock limit (`timeout`
+    seconds, default 60) unless `isolate` is False. If `fn` has a method
+    `validate(question, exam)`, `Exam.question` calls it, and it raises
+    `ValueError` for a configuration that does not fit.
     """
-    name: str
-    fn: Callable[['Context'], Any]
-    inputs: tuple[str, ...] = ()
-    uses_model: bool = False
-    editable: bool = False          # graders may edit the artifact directly
-    isolate: bool = False           # run in a subprocess with a wall-clock limit
-    timeout: float | None = None    # seconds; None means the runner's default
-    accepts_markers: bool = False   # consume inputs that still carry [REVIEW: ...]
-    shape: str = 'text'             # how the body is edited: 'text' | 'fields' ({label: answer}) | 'code'
-    # Facets over what this stage writes (`core.focus.Facet`): display, not definition,
-    # so they are left out of `describe` and never change the stage's hash.
-    facets: tuple[Any, ...] = field(default=(), metadata={'describe': False})
+    fn: Callable[[Any], Any] | None = None
+    points: Points = Bool()
+    timeout: float | None = None
+    isolate: bool = True
+    name: str = field(default='check', metadata={'describe': False})
 
 
 @dataclass(frozen=True)
 class Question:
+    """A group: some fields and any number of checks. It has no state."""
     id: str
     title: str
     pages: tuple[int, ...]                 # printed pages holding the answer
-    result: Mapping[str, ResultSpec]       # part name -> spec; '' for a single result; empty: none
     fields: tuple[Field, ...]
-    stages: tuple[Stage, ...]
-    facets: tuple[Any, ...] = field(default=(), metadata={'describe': False})   # question-level facets
-    _hashes: dict = field(init=False, default_factory=dict, compare=False, repr=False)
-
-    def stage(self, name: str) -> Stage | None:
-        return next((s for s in self.stages if s.name == name), None)
+    read: Any = None                       # reads the fields that have no reader of their own
+    checks: tuple[Check, ...] = ()
+    facets: tuple[Any, ...] = field(default=(), metadata={'describe': False})
 
     @property
     def labels(self) -> tuple[str, ...]:
         return tuple(f.label for f in self.fields)
 
-    @property
-    def written(self) -> tuple[str, ...]:
-        """Labels of the fields the student writes (no reader): what the parse prompt asks for."""
-        return tuple(f.label for f in self.fields if f.read is None)
+    def field(self, label: str) -> Field | None:
+        return next((f for f in self.fields if f.label == label), None)
+
+    def check(self, name: str) -> Check | None:
+        return next((c for c in self.checks if c.name == name), None)
 
     @property
-    def read_fields(self) -> tuple[Field, ...]:
-        """The fields with a reader (`Field.read`), read while the parse stage runs."""
-        return tuple(f for f in self.fields if f.read is not None)
+    def written(self) -> tuple[Field, ...]:
+        """The fields read by the question's reader (or typed, without one)."""
+        return tuple(f for f in self.fields if f.read is None)
 
-    def column(self, part: str) -> str:
-        """Name of the grid column for one result part."""
-        return f'{self.id}.{part}' if part else self.id
+    def groups(self) -> list[tuple[Any, tuple[Field, ...]]]:
+        """What reads what: (reader, fields), one per field with its own reader,
+        then the question's reader with every other field."""
+        out = [(f.read, (f,)) for f in self.fields if f.read is not None]
+        if self.read is not None and self.written:
+            out.append((self.read, self.written))
+        return out
+
+    def reader_of(self, label: str) -> Any:
+        f = self.field(label)
+        return None if f is None else (f.read if f.read is not None else self.read)
+
+    def column(self, check: str) -> str:
+        """The grid column of one check: the question id when it is the only one."""
+        return self.id if len(self.checks) <= 1 else f'{self.id}.{check}'
+
+    def columns(self) -> list[str]:
+        return [self.column(c.name) for c in self.checks] or [self.id]
+
+
+def key(question: str, label: str) -> str:
+    """How a field (or a check) is addressed in storage: 'question/label'."""
+    return f'{question}/{label}'
+
+
+def split_key(k: str) -> tuple[str, str]:
+    question, _, label = k.partition('/')
+    return question, label
 
 
 class Exam:
@@ -299,39 +313,44 @@ class Exam:
         self.overrides: dict[str, Any] = {}        # applied overrides {path: JSON value}; see `overrides`
         self.path: Path | None = None           # set by `load_exam`
         self.code_hash: str = ''
+        self._hashes: dict = {}
 
     def question(self, id: str, *, title: str = "", pages: Sequence[int],
-                 result: ResultSpec | Mapping[str, ResultSpec] | None = None,
-                 fields: Sequence[Field] = (), stages: Sequence[Stage],
+                 fields: Sequence[Field] = (), read: Any = None,
+                 check: Any = None, checks: Mapping[str, Any] | None = None,
                  facets: Sequence[Any] = ()) -> Question:
-        """Add a question. Without a `result` it has a parse to verify (exam
-        information that other questions read, say) and no grade of its own."""
+        """Add a question: its fields, the reader of the fields that have none
+        of their own (`read`), and its checks: one (`check`, named 'check'),
+        or several by name (`checks`). A check is a `Check` or a bare function
+        (a `Check` worth one `Bool` point). Without checks the question only
+        holds fields (the exam's printing, say, which other questions read)."""
         if id in self.questions:
             raise ValueError(f"duplicate question {id!r}")
-        if result is None:
-            result = {}
-        elif not isinstance(result, Mapping):
-            result = {'': result}
-        stages = list(stages)
-        names = [s.name for s in stages]
-        if len(set(names)) != len(names):
-            raise ValueError(f"{id}: duplicate stage names {names}")
-        for i, s in enumerate(stages):
-            for kind in s.inputs:
-                if kind not in [t.name for t in stages[:i]]:
-                    raise ValueError(f"{id}: stage {s.name!r} reads {kind!r}, which no earlier stage writes")
-        if not result and 'grade' in names:
-            raise ValueError(f"{id}: a grade stage needs a `result`")
-        q = Question(id=id, title=title or id, pages=tuple(pages), result=dict(result),
-                     fields=tuple(fields), stages=tuple(stages), facets=tuple(facets))
+        if not id or '/' in id:
+            raise ValueError(f"question id {id!r}: no '/' and not empty")
+        if check is not None and checks is not None:
+            raise ValueError(f"{id}: give `check` or `checks`, not both")
+        named = {'check': check} if check is not None else dict(checks or {})
+        built = []
+        for name, c in named.items():
+            if not name or '/' in name or '.' in name:
+                raise ValueError(f"{id}: check name {name!r}: no '/' or '.' and not empty")
+            c = c if isinstance(c, Check) else Check(c)
+            built.append(dataclasses.replace(c, name=name))
+        q = Question(id=id, title=title or id, pages=tuple(pages), fields=tuple(fields), read=read,
+                     checks=tuple(built), facets=tuple(facets))
         self._check(q)
-        for s in q.stages:              # a stage may check its configuration against the question
-            check = getattr(s.fn, 'validate', None)
-            if callable(check):
-                check(q, self)
-        from .focus import facets as all_facets
-        all_facets(q)                    # checks names: built-in, stage and question facets together
         self.questions[id] = self.base[id] = q
+        for c in q.checks:              # a check may check its configuration against the question
+            validate = getattr(c.fn, 'validate', None)
+            if callable(validate):
+                try:
+                    validate(q, self)
+                except ValueError:
+                    del self.questions[id], self.base[id]
+                    raise
+        from .focus import facets as all_facets
+        all_facets(q)                    # checks names: built-in, reader, check and question facets together
         return q
 
     def _check(self, q: Question) -> None:
@@ -339,23 +358,26 @@ class Exam:
         dupes = sorted({n for n in q.labels if q.labels.count(n) > 1})
         if dupes:
             raise ValueError(f"{q.id}: duplicate field labels {dupes}")
+        if any('/' in label or not label for label in q.labels):
+            raise ValueError(f"{q.id}: a field label is not empty and has no '/'")
         for p in q.pages:
             if not 1 <= p <= self.pages:
                 raise ValueError(f"{q.id}: page {p} is not a printed page (1..{self.pages})")
         for f in q.fields:
             if f.region is not None:
                 check_region(f.region, self.pages, f"{q.id}: field {f.label!r}")
-        for f in q.read_fields:
-            if f.region is None:
-                raise ValueError(f"{q.id}: field {f.label!r} has a reader but no region to read")
-            check = getattr(f.read, 'validate', None)
-            if callable(check):
-                check(f"{q.id}: field {f.label!r}")
-        parse = q.stage('parse')
-        if q.read_fields and (parse is None or parse.shape != 'fields'):
-            raise ValueError(f"{q.id}: a field with a reader is part of a parse of fields: give the "
-                             "question one (`stages.read_fields()` reads only such fields), or put the "
-                             "field in a question of its own that this one reads")
+            validate = getattr(f.read, 'validate', None)
+            if callable(validate):
+                validate(f"{q.id}: field {f.label!r}")
+
+    def check_hash(self, q: Question, c: Check) -> str:
+        """Digest of a check's definition as it computes: its function and that
+        function's configuration (keys, notes; exam code it calls). Not its
+        points (totals follow at once) nor the question's other fields."""
+        hit = self._hashes.get(id(c))
+        if hit is None or hit[0] is not c:      # the entry keeps `c` alive, so its id is not reused
+            hit = self._hashes[id(c)] = (c, digest(c.fn))
+        return hit[1]
 
 
 # --- describing and hashing definitions --------------------------------------
@@ -382,9 +404,9 @@ def describe(x: Any, _seen: frozenset = frozenset()) -> Any:
     Dataclasses become dicts of their fields. A function written in an exam
     package becomes a hash of its source together with the values it closes
     over and the module-level data and functions it names, so that editing a
-    key held in code changes the description of exactly the stages that use
+    key held in code changes the description of exactly the checks that use
     it. Library functions are described by name. What this cannot see (data
-    reached indirectly) is covered by the coarser exam-wide code hash.
+    reached indirectly) is covered by the exam-wide code hash.
     """
     if x is None or isinstance(x, (bool, int, float, str)):
         return x
@@ -435,19 +457,6 @@ def _has_contents(cell) -> bool:
 
 def digest(x: Any) -> str:
     return hashlib.sha256(json.dumps(describe(x), sort_keys=True).encode()).hexdigest()[:16]
-
-
-def stage_hash(question: Question, stage: Stage) -> str:
-    """Hash of the definition as one stage sees it.
-
-    Covers the stage's own configuration (including exam code it calls) and the
-    question's labels and result. Editing a key outdates the checks that used
-    it and nothing else.
-    """
-    if stage.name not in question._hashes:
-        seen = {'stage': stage, 'labels': question.labels, 'result': question.result}
-        question._hashes[stage.name] = digest(seen)
-    return question._hashes[stage.name]
 
 
 # --- loading an exam package --------------------------------------------------

@@ -1,6 +1,6 @@
-"""Isolated stage execution: warm worker processes with a wall-clock limit.
+"""Isolated checks: warm worker processes with a wall-clock limit.
 
-A worker imports the exam package once, then runs stage functions on request.
+A worker imports the exam package once, then runs check functions on request.
 Each request carries the parent's applied definition overrides; the worker
 applies them again whenever they differ from what it last applied.
 The parent kills a worker that exceeds its time limit and starts another, so
@@ -24,7 +24,10 @@ from pathlib import Path
 from typing import Any
 
 
-class StageTimeout(Exception):
+LOAD_TIMEOUT = 120.0     # seconds for a new worker to import the exam package
+
+
+class CheckTimeout(Exception):
     pass
 
 
@@ -32,8 +35,8 @@ class PoolClosed(Exception):
     """The app is shutting down; nothing was run."""
 
 
-class StageCrash(Exception):
-    """The stage raised, or its worker died. `detail` is a traceback, for graders only."""
+class CheckCrash(Exception):
+    """The check raised, or its worker died. `detail` is a traceback, for graders only."""
 
     def __init__(self, message: str, detail: str = ""):
         super().__init__(message)
@@ -52,7 +55,7 @@ def _recv_exact(fd: int, n: int, deadline: float | None) -> bytes:
         if deadline is not None:
             left = deadline - time.monotonic()
             if left <= 0 or not select.select([fd], [], [], left)[0]:
-                raise StageTimeout()
+                raise CheckTimeout()
         chunk = os.read(fd, n - len(buf))
         if not chunk:
             raise EOFError()
@@ -75,18 +78,25 @@ class Pool:
         self._closed = False
 
     def _spawn(self) -> subprocess.Popen:
-        return subprocess.Popen(
+        """A new worker, once it has loaded the exam (loading is not the check's time)."""
+        proc = subprocess.Popen(
             [sys.executable, '-m', 'examinator.core.isolate', self.exam_path],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        try:
+            _recv(proc.stdout.fileno(), time.monotonic() + LOAD_TIMEOUT)
+        except (CheckTimeout, EOFError, OSError):
+            proc.kill()
+            proc.wait()
+            raise CheckCrash("the exam package did not load in a worker")
+        return proc
 
-    def call(self, question: str, stage: str, payload: dict, timeout: float,
-             reads: dict | None = None, labels: dict | None = None) -> Any:
-        """Run one stage function in a worker and return its body.
+    def call(self, question: str, check: str, payload: dict, timeout: float, reads: dict) -> dict:
+        """Run one check in a worker and return its stored form (`result.settle`).
 
-        `payload` holds the context fields: submission, inputs, params, note,
-        parses (`Context.parses`, as lists), and the exam's applied `overrides`.
-        What the stage read of other questions is added to `reads`, whatever
-        the outcome. Raises `StageTimeout`, `StageCrash` or `Undecided`.
+        `payload` holds the context: submission, values ({key: [rev, text]}),
+        params, and the exam's applied `overrides`. What the check read is
+        added to `reads`, whatever the outcome. Raises `CheckTimeout`,
+        `CheckCrash` or `Undecided`.
         """
         with self._lock:
             if self._closed:
@@ -94,29 +104,26 @@ class Pool:
             proc = self._idle.pop() if self._idle else None
         proc = proc or self._spawn()
         try:
-            _send(proc.stdin, {'question': question, 'stage': stage, **payload})
+            _send(proc.stdin, {'question': question, 'check': check, **payload})
             reply = _recv(proc.stdout.fileno(), time.monotonic() + timeout)
-        except StageTimeout:
+        except CheckTimeout:
             proc.kill()
             proc.wait()
             raise
         except (EOFError, OSError):
             proc.kill()
             proc.wait()
-            raise StageCrash("the check's process died")
+            raise CheckCrash("the check's process died")
         with self._lock:
             if self._closed:
                 proc.kill()
             else:
                 self._idle.append(proc)
-        if reads is not None:
-            reads.update(reply.get('reads') or {})
-        if labels is not None:
-            labels.update(reply.get('labels') or {})
+        reads.update(reply.get('reads') or {})
         if 'error' in reply:
-            raise StageCrash(reply['error'], reply.get('detail', ""))
+            raise CheckCrash(reply['error'], reply.get('detail', ""))
         if 'undecided' in reply:
-            from .evidence import Undecided
+            from .result import Undecided
             raise Undecided(reply['undecided'])
         return reply['body']
 
@@ -130,15 +137,16 @@ class Pool:
 
 
 def _worker(exam_path: str) -> None:
-    from .context import Context
-    from .defs import load_exam
-    from .evidence import Undecided, body_of
+    from .context import CheckContext
+    from .defs import key, load_exam
     from .overrides import apply
+    from .result import Undecided, settle
 
     out = os.fdopen(os.dup(sys.stdout.fileno()), 'wb')
     sys.stdout = sys.stderr            # stray prints must not corrupt the protocol
     inp = sys.stdin.buffer.fileno()
     exam = load_exam(exam_path)
+    _send(out, {'ready': True})
     applied: dict = {}
     while True:
         try:
@@ -151,19 +159,19 @@ def _worker(exam_path: str) -> None:
                 applied = req.get('overrides') or {}
                 apply(exam, applied)
             q = exam.questions[req['question']]
-            parses = req.get('parses')
-            ctx = Context(submission=req['submission'], question=q, stage=req['stage'],
-                          inputs=req.get('inputs') or {}, params=req.get('params') or {},
-                          note=req.get('note') or "",
-                          parses=None if parses is None else {k: tuple(v) if v else None for k, v in parses.items()})
-            reply = {'body': body_of(q.stage(req['stage']).fn(ctx))}
+            c = q.check(req['check'])
+            ctx = CheckContext(submission=req['submission'], question=q, check=c.name,
+                               values={k: tuple(v) for k, v in (req.get('values') or {}).items()},
+                               params=req.get('params') or {},
+                               fields=frozenset(key(x.id, f.label) for x in exam.questions.values()
+                                                for f in x.fields))
+            reply = {'body': settle(c.points, c.fn(ctx))}
             json.dumps(reply)
         except Undecided as e:
             reply = {'undecided': str(e)}
         except Exception as e:
             reply = {'error': f"{type(e).__name__}: {e}", 'detail': traceback.format_exc()}
         reply['reads'] = ctx.reads if ctx is not None else {}
-        reply['labels'] = ctx.labels if ctx is not None else {}
         _send(out, reply)
 
 

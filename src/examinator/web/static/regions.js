@@ -1,6 +1,7 @@
 'use strict';
 // Region editing on the question page's scan: field regions as rectangles
-// to drag and resize, saved as exam-wide overrides (/exam/set).
+// to drag and resize, saved as exam-wide overrides (/exam/set) or, with "this
+// submission", as this submission's own region. Either changes no value: read again.
 //
 // A region is [page, left, top, right, bottom] in per-mille of the printed page.
 // The scan shows the printed page inside the submission's print area (per-mille
@@ -111,25 +112,35 @@
   async function save(clear) {
     const r = sel;
     if (!r) return;
-    if (clear && !confirm(`Back to the package's region for ${r.label}, for all submissions?`)) return;
+    const own = !!$('rg-own')?.checked;      // this submission's region, not every submission's
+    if (clear && !confirm(own ? `Back to every submission's region for ${r.label}?`
+                              : `Back to the package's region for ${r.label}, for all submissions?`)) return;
     say('…');
-    const res = await request(clear ? '/exam/clear' : '/exam/set',
-                              {path: r.path, value: r.draft, rev: r.rev ?? null, sub});
+    const res = own
+      ? await request(`/s/${encodeURIComponent(sub)}/${encodeURIComponent(document.getElementById('question').dataset.q)}/region`,
+                      {label: r.label, value: clear ? null : r.draft, rev: r.own_rev ?? null})
+      : await request(clear ? '/exam/clear' : '/exam/set', {path: r.path, value: r.draft, rev: r.rev ?? null, sub});
     if (res.status === 409) {    // keep the draft; saving again overwrites knowingly
       const cur = res.body.current || {};
-      r.rev = cur.rev ?? null;
-      say(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}: ${JSON.stringify(cur.value)}; save again to overwrite`, true);
+      if (own) r.own_rev = undefined; else r.rev = cur.rev ?? null;
+      say(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}${cur.value ? ': ' + JSON.stringify(cur.value) : ''}; reload`, true);
       return;
     }
     if (!res.ok) { say(res.body.error || "failed", true); return; }
-    r.rev = res.body.rev;
-    r.stored = res.body.overridden;
+    if (own) {
+      r.own_rev = res.body.rev;
+      r.own = res.body.own;
+    } else {
+      r.rev = res.body.rev;
+      r.stored = res.body.overridden;
+    }
     r.region = res.body.value;
     if (clear || !dirty(r)) r.draft = r.region && [...r.region];
-    say(clear ? "reverted" : "saved · all submissions");
+    say((clear ? "reverted" : "saved") + (own ? " · this submission" : " · all submissions") + " · read again to use it");
     inputs();
     draw();
     recrop(r);
+    if (own) res.body.reread = [r.label];
     document.dispatchEvent(new CustomEvent('entry-saved', {detail: res.body}));
   }
 

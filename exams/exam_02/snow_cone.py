@@ -88,4 +88,4 @@ def judge(program, region: Region) -> checks.Part:
 
 def check(ctx):
     region = REGIONS[printing('q10')(ctx)]        # reads the printing; undecided until it agrees
-    return samplers.check(ctx.input('parse'), LABEL, lambda program: judge(program, region))
+    return samplers.check(ctx.read(LABEL), LABEL, lambda program: judge(program, region))

@@ -1,9 +1,24 @@
 """The SQLite store: one file per workspace, keyed rows.
 
-Every normal read is a keyed lookup on `artifact`. Every write carries the
-`rev` the writer last saw; a mismatch raises `Conflict` and nothing changes.
-Revisions come from one workspace-wide counter, so a row that is deleted and
-recreated never reuses a revision.
+Everything stored per submission is a row `(submission, kind, name)` with a
+JSON body and a revision:
+
+    kind        name                body
+    'value'     'question/label'    a field's value: {'text', 'settled', 'by'}   (`core.state`)
+    'result'    'question/check'    a check's result: grade, evidence, what it read
+    'decision'  'question/check'    a person's grade for a check, and what they saw
+    'pages'     'question'          the question's pages for this submission, and a note
+    'region'    'question/label'    a field's region for this submission
+    'layout'    ''                  this submission's cover pages and print area
+    'identity', 'who'   ''          intake: who wrote it (`core.identity`)
+    'split'     ''                  intake: a source's split plan (`submission` is the source id)
+
+Every normal read is a keyed lookup. Every write may carry the `rev` the
+writer last saw; a mismatch raises `Conflict` and nothing changes. Revisions
+come from one workspace-wide counter, so a row that is deleted and recreated
+never reuses one. A write may keep the row's revision (`keep_rev`) when what
+changes is not its content (a value verified: same text, same revision).
+Replaced rows go to history.
 """
 from __future__ import annotations
 
@@ -18,27 +33,23 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 SCHEMA = """
-create table if not exists artifact (
-  submission   text not null,
-  question     text not null,
-  kind         text not null,
-  body         text,
-  origin       text not null,
-  author       text,
-  updated_at   text not null,
-  rev          integer not null,
-  inputs       text,
-  verified_rev integer,
-  verified_by  text,
-  primary key (submission, question, kind)
+create table if not exists row (
+  submission text not null,
+  kind       text not null,
+  name       text not null,
+  body       text,
+  origin     text not null,
+  author     text,
+  updated_at text not null,
+  rev        integer not null,
+  primary key (submission, kind, name)
 );
 create table if not exists history (
-  submission text not null, question text not null, kind text not null,
+  submission text not null, name text not null, kind text not null,
   body text, origin text not null, author text, updated_at text not null,
-  rev integer not null, inputs text, verified_rev integer, verified_by text,
-  replaced_at text not null
+  rev integer not null, replaced_at text not null
 );
-create index if not exists history_key on history (submission, question, kind, rev);
+create index if not exists history_key on history (submission, kind, name, rev);
 create table if not exists submission (id text primary key, name text, email text, pdf text, student text);
 create table if not exists setting (key text primary key, value text not null);
 create table if not exists override (
@@ -61,8 +72,8 @@ create table if not exists memo (
 );
 """
 
-COLUMNS = ('submission, question, kind, body, origin, author, updated_at, rev, '
-           'inputs, verified_rev, verified_by')
+COLUMNS = 'submission, name, kind, body, origin, author, updated_at, rev'
+WORK = ('value', 'result', 'decision')      # kinds that are grading work (intake will not rewrite over them)
 
 
 class Conflict(Exception):
@@ -78,45 +89,15 @@ ANY = _Any()   # `expect_rev=ANY`: write whatever is there
 
 
 @dataclass(frozen=True)
-class Artifact:
+class Row:
     submission: str
-    question: str
+    name: str
     kind: str
     body: Any
     origin: str                 # 'auto' | 'manual'
     author: str | None
     updated_at: str
     rev: int
-    inputs: Mapping[str, Any]   # {'revs': {kind: rev}, 'reads': {question: parse rev}, 'labels', 'trusted', 'defn': hash, 'code': hash}
-    verified_rev: int | None
-    verified_by: str | None
-
-    @property
-    def verified(self) -> bool:
-        return self.verified_rev == self.rev
-
-    @property
-    def protected(self) -> bool:
-        """A grader wrote, edited or verified this content."""
-        return self.origin == 'manual' or self.verified
-
-    @property
-    def revs(self) -> Mapping[str, int | None]:
-        return self.inputs.get('revs') or {}
-
-    @property
-    def reads(self) -> Mapping[str, int | None]:
-        """Other questions' parses a check read (`Context.read`): revision, or None if absent."""
-        return self.inputs.get('reads') or {}
-
-    def trusted(self, labels: Any = None) -> bool:
-        """Nobody need verify these fields of this parse (None: any of it): a
-        person verified it, or it stands as read and each field's reader vouched
-        for its value (a printed reading that was one of those expected)."""
-        if self.verified:
-            return True
-        return (labels is not None and self.origin == 'auto'
-                and set(labels) <= set(self.inputs.get('trusted') or ()))
 
 
 @dataclass(frozen=True)
@@ -160,13 +141,16 @@ class Made:
     made_at: str
 
 
-def _row(r) -> Artifact:
-    return Artifact(r[0], r[1], r[2], json.loads(r[3]) if r[3] is not None else None,
-                    r[4], r[5], r[6], r[7], json.loads(r[8]) if r[8] else {}, r[9], r[10])
+def _row(r) -> Row:
+    return Row(r[0], r[1], r[2], json.loads(r[3]) if r[3] is not None else None, r[4], r[5], r[6], r[7])
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec='seconds')
+    return datetime.now(timezone.utc).isoformat(timespec='microseconds')
+
+
+def _text(body: Any) -> str:
+    return json.dumps(body, ensure_ascii=False, sort_keys=True)
 
 
 class Store:
@@ -187,74 +171,53 @@ class Store:
 
     # --- reading ---
 
-    def get(self, submission: str, question: str, kind: str) -> Artifact | None:
+    def get(self, submission: str, name: str, kind: str) -> Row | None:
         with self._lock:
             r = self._db.execute(
-                f'select {COLUMNS} from artifact where submission=? and question=? and kind=?',
-                (submission, question, kind)).fetchone()
+                f'select {COLUMNS} from row where submission=? and kind=? and name=?',
+                (submission, kind, name)).fetchone()
         return _row(r) if r else None
 
-    def for_question(self, submission: str, question: str) -> dict[str, Artifact]:
+    def rows(self, submission: str, kind: str) -> dict[str, Row]:
+        """One kind's rows of a submission, by name (every field value, say)."""
         with self._lock:
             rows = self._db.execute(
-                f'select {COLUMNS} from artifact where submission=? and question=?',
-                (submission, question)).fetchall()
-        return {r[2]: _row(r) for r in rows}
-
-    def of_kind(self, submission: str, kind: str) -> dict[str, Artifact]:
-        """One kind's artifacts of a submission, by question (every question's parse, say)."""
-        with self._lock:
-            rows = self._db.execute(
-                f'select {COLUMNS} from artifact where submission=? and kind=?', (submission, kind)).fetchall()
+                f'select {COLUMNS} from row where submission=? and kind=?', (submission, kind)).fetchall()
         return {r[1]: _row(r) for r in rows}
 
-    def all(self, *, kinds: Iterable[str] | None = None, bodies: bool = True) -> list[Artifact]:
-        """Every artifact, in one query (the grid). `bodies=False` leaves bodies `None`."""
-        cols = COLUMNS if bodies else COLUMNS.replace('body', 'null')
-        sql, args = f'select {cols} from artifact', ()
+    def all(self, *, kinds: Iterable[str] | None = None, drop: str | None = None,
+            submission: str | None = None) -> list[Row]:
+        """Every row (of some kinds, of one submission), in one query. `drop`
+        is a JSON path left out of each body ('$.blocks'), so large parts are never loaded."""
+        body = 'body' if drop is None else 'json_remove(body, ?)'
+        sql, args = f'select submission, name, kind, {body}, origin, author, updated_at, rev from row', []
+        if drop is not None:
+            args.append(drop)
+        where = []
         if kinds is not None:
             kinds = tuple(kinds)
-            sql += f" where kind in ({','.join('?' * len(kinds))})"
-            args = kinds
+            where.append(f"kind in ({','.join('?' * len(kinds))})")
+            args += kinds
+        if submission is not None:
+            where.append('submission=?')
+            args.append(submission)
+        if where:
+            sql += ' where ' + ' and '.join(where)
         with self._lock:
             rows = self._db.execute(sql, args).fetchall()
         return [_row(r) for r in rows]
 
-    def bodies(self, question: str, kind: str, path: str | None = None, *,
-               submission: str | None = None) -> dict[str, Any]:
-        """One kind's bodies for every submission of a question, in one query:
-        `{submission: body}`. With a JSON `path` ('$.data.fields') only that part
-        is read out of each body (SQLite's `->`), so large parts such as plot
-        blocks are never loaded; rows where the path is absent or null are left out."""
-        col = 'body' if path is None else 'body -> ?'
-        sql = f'select submission, {col} from artifact where question=? and kind=?'
-        args: tuple = ((path,) if path is not None else ()) + (question, kind)
-        if submission is not None:
-            sql += ' and submission=?'
-            args += (submission,)
-        with self._lock:
-            rows = self._db.execute(sql, args).fetchall()
-        out = {}
-        for sub, text in rows:
-            value = json.loads(text) if text is not None else None
-            if value is not None:
-                out[sub] = value
-        return out
+    def version(self) -> int:
+        """Changes whenever anything per submission or an override is written:
+        a key for caching what is computed from stored rows."""
+        return self.setting('changes', 0)
 
-    def version(self) -> tuple:
-        """Changes whenever an artifact or override is written, deleted, verified or
-        unverified: a key for caching what is computed from stored rows."""
-        with self._lock:
-            return self._db.execute(
-                "select (select value from setting where key='rev'), count(*), total(verified_rev), "
-                "(select count(*) from override) from artifact").fetchone()
-
-    def history(self, submission: str, question: str, kind: str) -> list[Artifact]:
+    def history(self, submission: str, name: str, kind: str) -> list[Row]:
         """Replaced versions, newest first."""
         with self._lock:
             rows = self._db.execute(
-                f'select {COLUMNS} from history where submission=? and question=? and kind=? '
-                'order by rev desc', (submission, question, kind)).fetchall()
+                f'select {COLUMNS} from history where submission=? and kind=? and name=? '
+                'order by replaced_at desc, rev desc', (submission, kind, name)).fetchall()
         return [_row(r) for r in rows]
 
     # --- writing ---
@@ -265,98 +228,71 @@ class Store:
         self._db.execute("insert or replace into setting values ('rev', ?)", (json.dumps(rev),))
         return rev
 
-    def _check(self, submission, question, kind, expect_rev, guard) -> Artifact | None:
-        cur = self.get(submission, question, kind)
+    def _changed(self) -> None:
+        r = self._db.execute("select value from setting where key='changes'").fetchone()
+        self._db.execute("insert or replace into setting values ('changes', ?)",
+                         (json.dumps((json.loads(r[0]) if r else 0) + 1),))
+
+    def _check(self, submission, name, kind, expect_rev, guard) -> Row | None:
+        cur = self.get(submission, name, kind)
         if expect_rev is not ANY and (cur.rev if cur else None) != expect_rev:
-            raise Conflict(f"{kind} changed")
-        for k, rev in (guard or {}).items():
-            other, k = (question, k) if isinstance(k, str) else k
+            raise Conflict(f"{name or kind} changed")
+        for (other, k), rev in (guard or {}).items():
             g = self.get(submission, other, k)
             if (g.rev if g else None) != rev:
-                raise Conflict(f"{k} changed" if other == question else f"{other} {k} changed")
+                raise Conflict(f"{other or k} changed")
         return cur
 
-    def _archive(self, cur: Artifact) -> None:
+    def _archive(self, cur: Row) -> None:
         self._db.execute(
-            f'insert into history select {COLUMNS}, ? from artifact '
-            'where submission=? and question=? and kind=?',
-            (_now(), cur.submission, cur.question, cur.kind))
+            f'insert into history select {COLUMNS}, ? from row where submission=? and kind=? and name=?',
+            (_now(), cur.submission, cur.kind, cur.name))
 
-    def write(self, submission: str, question: str, kind: str, body: Any, *,
-              origin: str, author: str | None = None, inputs: Mapping | None = None,
-              expect_rev: int | None | _Any = ANY, guard: Mapping[Any, int | None] | None = None,
-              verified: bool = False, unless_protected: bool = False) -> Artifact:
-        """Create or replace one artifact; the replaced row goes to history.
+    def write(self, submission: str, name: str, kind: str, body: Any, *,
+              origin: str, author: str | None = None, expect_rev: int | None | _Any = ANY,
+              guard: Mapping[tuple[str, str], int | None] | None = None, keep_rev: bool = False) -> Row:
+        """Create or replace one row; the replaced row goes to history.
 
         `expect_rev` is the revision the writer last saw (`None`: must not
-        exist). `guard` maps other kinds of the same submission and question
-        (or `(question, kind)` pairs of another question) to the revisions a
-        computation read; the write happens only if all are still current. With `unless_protected`, content a grader wrote or
-        verified is never replaced, even if that happened a moment ago.
-        Saving unchanged content by hand is a no-op.
+        exist). `guard` maps other rows of the same submission, `(name, kind)`,
+        to the revisions a computation read; the write happens only if all
+        are still current. `keep_rev` keeps the row's revision (its content
+        did not change). Writing the body a row already has is a no-op.
         """
         assert origin in ('auto', 'manual')
-        text = json.dumps(body, ensure_ascii=False)
+        text = _text(body)
         with self._lock, self._tx():
-            cur = self._check(submission, question, kind, expect_rev, guard)
-            if unless_protected and cur is not None and cur.protected:
-                raise Conflict(f"{kind} is protected")
-            if (cur is not None and origin == 'manual' and inputs is None
-                    and json.dumps(cur.body, ensure_ascii=False) == text):
-                if verified and not cur.verified:
-                    self._db.execute(
-                        'update artifact set verified_rev=rev, verified_by=? '
-                        'where submission=? and question=? and kind=?',
-                        (author, submission, question, kind))
-                return self.get(submission, question, kind)
+            cur = self._check(submission, name, kind, expect_rev, guard)
+            if cur is not None and _text(cur.body) == text:
+                return cur
             if cur is not None:
                 self._archive(cur)
-            rev = self._next_rev()
+            rev = cur.rev if keep_rev and cur is not None else self._next_rev()
             self._db.execute(
-                f'insert or replace into artifact ({COLUMNS}) values (?,?,?,?,?,?,?,?,?,?,?)',
-                (submission, question, kind, text, origin, author, _now(), rev,
-                 json.dumps(inputs) if inputs else None,
-                 rev if verified else None, author if verified else None))
-            return self.get(submission, question, kind)
+                f'insert or replace into row ({COLUMNS}) values (?,?,?,?,?,?,?,?)',
+                (submission, name, kind, text, origin, author, _now(), rev))
+            self._changed()
+            return self.get(submission, name, kind)
 
-    def verify(self, submission: str, question: str, kind: str, *, expect_rev: int,
-               author: str | None, verified: bool = True) -> Artifact:
-        """Approve (or un-approve) the current content. Does not change who wrote it."""
+    def delete(self, submission: str, name: str, kind: str, *, expect_rev: int | _Any = ANY) -> None:
         with self._lock, self._tx():
-            self._check(submission, question, kind, expect_rev, None)
-            self._db.execute(
-                'update artifact set verified_rev=?, verified_by=? '
-                'where submission=? and question=? and kind=?',
-                (expect_rev if verified else None, author if verified else None,
-                 submission, question, kind))
-            return self.get(submission, question, kind)
-
-    def delete(self, submission: str, question: str, kind: str, *,
-               expect_rev: int | _Any = ANY) -> None:
-        with self._lock, self._tx():
-            cur = self._check(submission, question, kind, expect_rev, None)
+            cur = self._check(submission, name, kind, expect_rev, None)
             if cur is not None:
                 self._archive(cur)
-                self._db.execute('delete from artifact where submission=? and question=? and kind=?',
-                                 (submission, question, kind))
+                self._db.execute('delete from row where submission=? and kind=? and name=?',
+                                 (submission, kind, name))
+                self._changed()
 
-    def restore(self, submission: str, question: str, kind: str, rev: int, *,
-                expect_rev: int | None | _Any = ANY) -> Artifact:
-        """Undo: bring a replaced version back as it was (same origin, author and
-        inputs), under a new revision and unverified."""
+    def restore(self, submission: str, name: str, kind: str, rev: int, *,
+                expect_rev: int | None | _Any = ANY) -> Row:
+        """Undo: bring a replaced version back as it was (same origin and author),
+        under a new revision."""
         with self._lock, self._tx():
-            old = next((a for a in self.history(submission, question, kind) if a.rev == rev), None)
+            old = next((a for a in self.history(submission, name, kind) if a.rev == rev), None)
             if old is None:
                 raise KeyError(rev)
-            cur = self._check(submission, question, kind, expect_rev, None)
-            if cur is not None:
-                self._archive(cur)
-            new = self._next_rev()
-            self._db.execute(
-                f'insert or replace into artifact ({COLUMNS}) values (?,?,?,?,?,?,?,?,?,?,?)',
-                (submission, question, kind, json.dumps(old.body, ensure_ascii=False), old.origin,
-                 old.author, _now(), new, json.dumps(dict(old.inputs)) if old.inputs else None, None, None))
-            return self.get(submission, question, kind)
+            return self.write(submission, name, kind, old.body, origin=old.origin, author=old.author,
+                              expect_rev=expect_rev)
 
     def purge_history(self) -> None:
         with self._lock:
@@ -400,6 +336,7 @@ class Store:
             self._check_override(path, expect_rev)
             self._db.execute('insert or replace into override values (?,?,?,?,?)',
                              (path, text, author, _now(), self._next_rev()))
+            self._changed()
             return self.overrides()[path]
 
     def clear_override(self, path: str, *, expect_rev: int | _Any = ANY) -> None:
@@ -407,6 +344,7 @@ class Store:
         with self._lock, self._tx():
             if self._check_override(path, expect_rev) is not None:
                 self._db.execute('delete from override where path=?', (path,))
+                self._changed()
 
     # --- submissions, settings, memo ---
 
@@ -431,14 +369,12 @@ class Store:
         with self._lock:
             self._db.execute('delete from submission where id=?', (id,))
 
-    def has_work(self, submission: str, *, ignore: Iterable[str] = ()) -> bool:
-        """Whether any artifact exists for a submission (kinds in `ignore` aside)."""
-        ignore = tuple(ignore)
-        sql = 'select 1 from artifact where submission=?'
-        if ignore:
-            sql += f" and kind not in ({','.join('?' * len(ignore))})"
+    def has_work(self, submission: str) -> bool:
+        """Whether a submission has grading work: a value, a result or a decision."""
         with self._lock:
-            return self._db.execute(sql + ' limit 1', (submission, *ignore)).fetchone() is not None
+            return self._db.execute(
+                f"select 1 from row where submission=? and kind in ({','.join('?' * len(WORK))}) limit 1",
+                (submission, *WORK)).fetchone() is not None
 
     @contextmanager
     def transaction(self):
@@ -488,7 +424,7 @@ class Store:
         return json.loads(r[0]) if r else default
 
     def set_setting(self, key: str, value: Any) -> None:
-        assert key != 'rev'
+        assert key not in ('rev', 'changes')
         with self._lock:
             self._db.execute('insert or replace into setting values (?, ?)', (key, json.dumps(value)))
 
