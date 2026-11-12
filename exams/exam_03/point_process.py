@@ -1,4 +1,7 @@
-"""The check for question 7: `poisson_process()` (7.1) and `poisson_dist(m)` (7.2)."""
+"""The checks for question 7: `poisson_process()` (7.1) and `poisson_dist(m)` (7.2), one per field.
+
+Each reads only its own field: 7.1 runs with a trusted `poisson_dist`, so it does
+not depend on the student's 7.2."""
 import math
 import time
 from itertools import combinations
@@ -146,6 +149,9 @@ def check_process(program: pseudocode.Program) -> checks.Part:
     return part.combine()
 
 
-def check(ctx):
-    return checks.check_source(ctx.input('parse'), LANGUAGE, ['7.1', '7.2'],
-                               lambda program: [check_process(program), check_dist(program)])
+def check_71(ctx):
+    return checks.check_source(ctx.read('7.1'), LANGUAGE, '7.1', check_process)
+
+
+def check_72(ctx):
+    return checks.check_source(ctx.read('7.2'), LANGUAGE, '7.2', check_dist)

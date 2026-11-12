@@ -291,8 +291,7 @@ class Runner:
                         continue
                 elif current(stored, sheet.values, defn=self.exam.check_hash(q, c), code=self.exam.code_hash):
                     continue
-                outs.append(self.compute(submission, q.id, c.name,
-                                         params=stored.params if stored is not None else None))
+                outs.append(self.compute(submission, q.id, c.name))
         return outs
 
     # --- what people do ---------------------------------------------------------

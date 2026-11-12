@@ -649,14 +649,16 @@ class Keyed:
         fields: dict[str, Judgement] = {}
         for labels, entry in key.items():
             group = labels if isinstance(labels, tuple) else (labels,)
-            expected = None if isinstance(labels, tuple) else show_entry(entry)
+            shown = show_entry(entry)           # a group's key is shown beside its first field
+            expected = {label: shown if i == 0 else None for i, label in enumerate(group)}
             if any(label in problems for label in group):
                 for label in group:
-                    fields[label] = Judgement(None, expected, problems.get(label) or "a field it goes with is not read")
+                    fields[label] = Judgement(None, expected[label],
+                                              problems.get(label) or "a field it goes with is not read")
                 continue
             for label, (outcome, note) in check_answers({x: answers[x] for x in group}, {labels: entry},
                                                          symbols=self.symbols, functions=self.functions).items():
-                fields[label] = Judgement(outcome, expected, note or None)
+                fields[label] = Judgement(outcome, expected[label], note or None)
         outcomes = {label: j.outcome for label, j in fields.items()}
         grade = self.grade(outcomes)
         reason = None
