@@ -18,8 +18,8 @@ to those.
 | --- | --- |
 | **Field** | A named slot for one value read from paper: where to look (pages, region) and which reader reads it. |
 | **Reader** | How values get from page images into fields: handwriting (model), printed text (model, from a closed set of expected readings), later a barcode. One read fills one or more fields. A reader may **vouch** for a value it read. |
-| **Check** | A function from field values to a **result**: evidence to show, and a proposed grade for each part. It may read any field in the exam. Nothing reads a check. |
-| **Question** | A group: some fields, at most one check, the result parts and their points. The page a grader sees and a set of grid columns. |
+| **Check** | A function from field values to a **result**: one proposed grade, and evidence to show. It may read any field in the exam. Nothing reads a check. Its points are part of its definition. |
+| **Question** | A group: some fields and any number of checks. The page a grader sees; each check is a grid column. |
 
 An **override** replaces one of these values from the app without editing the
 code (a region, pages, a printed field's expected readings, an answer key),
@@ -62,9 +62,20 @@ whole state. Choices made here:
 
 ### 2. Result
 
-One per check. Content: the evidence, a proposed grade per part (a grade, or
-"undecided" with a reason), **which fields it read and at which revisions**,
-and which definition of the check computed it.
+One per check. Content: a proposed grade (a grade, or "undecided" with a
+reason), the evidence, **which fields it read and at which revisions**, and
+which definition of the check computed it.
+
+Evidence has two parts, both optional:
+
+- **Per field:** for any field the check judged, an outcome ('correct',
+  'incorrect', 'blank', or none) and optionally the expected answer and a short
+  note. Interfaces show this beside the field. "4 of 5 right" is the grade;
+  which four is this.
+- **Blocks:** an ordered list of things to show (text, table, code, plot,
+  collapsed details), each for graders only or for everyone.
+
+Nothing computes from evidence. It is for people.
 
 A result is a cache of a pure function. Its states are derived, never stored:
 
@@ -76,11 +87,11 @@ A result is a cache of a pure function. Its states are derived, never stored:
 
 ### 3. Decision
 
-One per result part, only where a person decided the grade by hand. Content:
+One per check, only where a person decided the grade by hand. Content:
 the grade, a reason, who, and **the revisions of the fields on the page when
 they decided**. It is outdated when any of those fields has changed since.
 
-## The grade of a part (derived)
+## The grade of a check (derived)
 
 In order; the first that applies:
 
@@ -119,16 +130,15 @@ question's fields; a batch run is reads, then computes.
 
 ## Changing the exam while grading
 
-Stored things are keyed by name (submission and field; submission and check;
-submission, question and part), and a result records which version of the
+Stored things are keyed by name (submission and field; submission and check), and a result records which version of the
 exam's code computed it. So the exam package can change under a workspace:
 
 | Change | What happens to stored work |
 | --- | --- |
 | A check's code or key changes | Field values and decisions untouched. That check's results are outdated and recomputed. The previous results stay in history, so the app can list which grades changed (a feature to build, not automatic). |
-| A question is added | Its fields are not read, its parts not run. Nothing else moves. |
+| A question or check is added | Its fields are not read, its checks not run. Nothing else moves. |
 | A field is added to a question | The other fields keep their values and who settled them. The new one is not read. A check is affected only once it reads the new field: then it is recomputed and waits for it. |
-| A field or part is removed or renamed | Its stored values are ignored, not deleted (restoring the name restores them). A rename loses the work. |
+| A field or check is removed or renamed | Its stored values are ignored, not deleted (restoring the name restores them). A rename loses the work. |
 | Points change | Totals follow at once; they are derived. |
 | How a field is read changes | No value changes; the app offers to read again what no person settled. |
 
@@ -140,7 +150,7 @@ no value yet, and the app can reload the exam package without losing state.
 - A question's page shows its own fields and the fields its check read from
   elsewhere, so "verify all here" settles everything the grade rests on.
 - A field shows a badge only when unsettled.
-- The grid shows one cell per result part, by the table above.
+- The grid shows one cell per check, by the table above.
 
 ## What goes away
 
