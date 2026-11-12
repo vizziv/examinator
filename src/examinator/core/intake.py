@@ -3,7 +3,7 @@
     WORKSPACE/sources/ID.pdf     each scanned PDF as added, never changed (ID: start of its SHA-256)
     WORKSPACE/pdfs/s0001.pdf     one per submission, written when a plan is accepted
 
-A source's split plan (`core.split`) is the artifact `(source id, '', 'split')`,
+A source's split plan (`core.split`) is the row `(source id, '', 'split')`,
 so edits keep history and carry revisions like everything else a grader edits.
 The plan also says how the sheets are turned: an orientation for the whole
 source, and optionally one per submission (`core.split` entries' `orient`).
@@ -40,8 +40,7 @@ from . import identity, reading, split
 from .defs import Landmark, digest
 from .reading import normalize
 from .printed import PRINTED_PROMPT
-from .store import ANY, Artifact, Conflict, Made, Source
-from .workflow import NOT_WORK
+from .store import ANY, Row, Conflict, Made, Source
 
 PLAN = 'split'
 LANDMARK_PROMPT = PRINTED_PROMPT    # a landmark, like a printed field, is printed text
@@ -145,7 +144,7 @@ def anchor(ws, cover: int = 0) -> int:
     return cover + (min(first) if first else 1) - 1
 
 
-def plan(ws, id: str) -> Artifact | None:
+def plan(ws, id: str) -> Row | None:
     return ws.store.get(id, '', PLAN)
 
 
@@ -234,7 +233,7 @@ def reader(ws, src: Source, body: Mapping, model) -> LandmarkReader | None:
 
 
 def reguess(ws, id: str, *, model=None, length: int | None = None, fresh: bool = False,
-            author: str | None = None, expect_rev: Any = ANY) -> Artifact:
+            author: str | None = None, expect_rev: Any = ANY) -> Row:
     """Guess the plan again and write it: every unconfirmed start (all of them with
     `fresh`), checked with the landmarks when there is a model. A person's
     confirmed starts and dropped sheets stay. `length` changes the expected length.
@@ -319,7 +318,7 @@ def _turn_entry(body: Mapping, n: int, k: Any, by: Orient | None) -> dict:
 
 
 def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | None = None,
-         sheet: int | None = None, delta: int | None = None) -> Artifact:
+         sheet: int | None = None, delta: int | None = None) -> Row:
     """One person's edit of a plan (see `core.split`), against the revision they saw.
     Orientation: `turn_source` (a quarter turn), `flip_source` (mirror), and for
     submission `k`: `turn` (a half turn), `flip`, `upright` (back to the source's)."""
@@ -345,7 +344,7 @@ def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | 
 UNDONE = 'undone'       # in a plan brought back by undo: the revision it was brought back from
 
 
-def _before(ws, id: str, cur: Artifact | None) -> Artifact | None:
+def _before(ws, id: str, cur: Row | None) -> Row | None:
     """The plan one step back: the newest replaced version, or, when the current plan
     was itself brought back by undo, the newest one older than what it came from
     (so undoing twice goes back two steps instead of undoing the undo)."""
@@ -357,7 +356,7 @@ def can_undo(ws, id: str) -> bool:
     return _before(ws, id, ws.store.get(id, '', PLAN)) is not None
 
 
-def undo(ws, id: str, *, expect_rev: Any) -> Artifact:
+def undo(ws, id: str, *, expect_rev: Any) -> Row:
     cur = ws.store.get(id, '', PLAN)
     old = _before(ws, id, cur)
     if old is None:
@@ -432,8 +431,8 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
     entries = body['entries']
     sheets = _sheets_of(body, src.pages)
     busy = [e['id'] for e, st, (pages, _) in zip(entries, states, sheets)
-            if st == 'changed' and pages and ws.store.has_work(e['id'], ignore=NOT_WORK)]
-    busy += [s for s in gone if ws.store.has_work(s, ignore=NOT_WORK)]
+            if st == 'changed' and pages and ws.store.has_work(e['id'])]
+    busy += [s for s in gone if ws.store.has_work(s)]
     if busy and not force:
         raise Busy(busy)
     fresh = _next_ids(ws, {s.id for s in ws.store.submissions()} | set(made))

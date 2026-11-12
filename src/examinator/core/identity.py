@@ -2,8 +2,8 @@
 students write who they are, ranked proposals, and the person a grader picks.
 
     setting 'people'                  the roster: [{'name', 'id', 'email', 'key'}]
-    artifact (sub, '', 'identity')    what the model read: {'fields': {box: text | None}, 'basis': {box: digest}}
-    artifact (sub, '', 'who')         the pick: a person's, or from an ID in the file name: {'name', 'id', 'email', 'key'?}
+    row (sub, '', 'identity')    what the model read: {'fields': {box: text | None}, 'basis': {box: digest}}
+    row (sub, '', 'who')         the pick: a person's, or from an ID in the file name: {'name', 'id', 'email', 'key'?}
 
 The boxes are the exam's `Identity` declarations. Reading is memoised per
 submission, box and scan layout, so reading again is free. Proposals are
@@ -26,7 +26,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from ..pdf.orient import Orient
 from .defs import Identity, digest
 from .reading import ask, basis, memo_key
-from .store import ANY, Artifact, Submission
+from .store import ANY, Row, Submission
 
 WHO = 'who'
 READ = 'identity'
@@ -224,7 +224,7 @@ def _tag(ws, sid: str, page: int) -> tuple[str, str, str]:
     return sid, str(i), READ
 
 
-def read(ws, sid: str, model, *, fresh: bool = False, prompt: str = IDENTITY_PROMPT) -> Artifact | None:
+def read(ws, sid: str, model, *, fresh: bool = False, prompt: str = IDENTITY_PROMPT) -> Row | None:
     """Ask the model what is written in each of the exam's identity boxes on one
     submission, and store the readings (unchanged readings are not rewritten).
     A failed call is no reading and is not remembered. `fresh` asks again."""

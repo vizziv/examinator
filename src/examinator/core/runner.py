@@ -1,31 +1,28 @@
-"""Running stages, and the actions graders take.
+"""The small changes (MODEL.md): everything the app or a batch run does is one
+or more of these.
 
-`Runner.run_stage` runs one stage for one submission and question: it reads
-the upstream artifacts, computes outside any transaction, then publishes only
-if everything it read is still current, other questions' parses included. A
-stage that fails leaves the previous artifact intact. A check that times out,
-crashes or cannot decide (`Undecided`, another question's parse not there
-yet) is stored as undecided evidence: never "incorrect".
+    field value   read (a reader)  set, verify, unverify (a person)
+    result        compute (automatic: `refresh` recomputes what is outdated)
+    decision      decide, clear (a person)
 
-A parse stage of fields returns what the student wrote; the runner adds every
-field that has a reader (`Field.read`, a printed field), in label order.
-
-The grade stage is pure and fast; it runs in-process right after every check
-and writes one row per result part, leaving manual decisions alone unless the
-run was deliberate.
+A read writes only values no person settled (unless told to), and a read that
+yields the same text changes nothing: same revision, still settled. A compute
+runs outside any transaction and is published only if every field it read is
+still at the revision it read. A check that times out, crashes or cannot decide
+is stored as an undecided result: never "incorrect". Writes by people carry
+the revision they saw; a mismatch raises `store.Conflict`.
 """
 from __future__ import annotations
 
-import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping, Protocol, Sequence
 
-from .context import BadOutput, Blocked, Context, Unavailable
-from .defs import Exam, Grade, Question, Stage, grade_kind, has_marker, stage_hash
-from .evidence import Undecided, body_of, undecided
-from .isolate import Pool, PoolClosed, StageTimeout
-from .store import ANY, Artifact, Conflict
-from .workflow import _derived, evidence_current, grade_current, recheck_wanted, seen_revs
+from .context import BadOutput, CheckContext, ReadContext, Unavailable
+from .defs import Exam, Field, Grade, Question, has_marker, key
+from .isolate import CheckCrash, CheckTimeout, Pool, PoolClosed
+from .result import Undecided, settle, undecided
+from .status import Decision, Sheet, Stored, Value, current
+from .store import ANY, Conflict
 from .workspace import Workspace
 
 DEFAULT_TIMEOUT = 60.0
@@ -44,26 +41,21 @@ class Model(Protocol):
 class Outcome:
     submission: str
     question: str
-    stage: str
+    step: str            # 'read', or a check's name
     status: str          # 'done' | 'blocked' | 'failed' | 'discarded' | 'skipped'
     detail: str = ""
 
     @property
     def ok(self) -> bool:
-        return self.status == 'done'
+        return self.status in ('done', 'skipped')
 
 
 class Services:
-    """What a stage's context reaches: pages and crops from the workspace, the
+    """What a reader's context reaches: pages and crops from the workspace, the
     model, and the memo: the store's, or with `memo` (a dict) one kept in memory."""
 
     def __init__(self, workspace: Workspace, model: Model | None, memo: dict | None = None):
         self.ws, self._model, self._memo = workspace, model, memo
-
-    def parses(self, submission, exam):
-        """What a check sees of the other questions: `Context.parses`."""
-        have = self.ws.store.of_kind(submission, 'parse')
-        return {qid: ((a.rev, a.body) if (a := have.get(qid)) is not None else None) for qid in exam.questions}
 
     def pages(self, submission, question):
         pages, _ = self.ws.selected_pages(submission, question)
@@ -90,33 +82,30 @@ class Services:
             self.ws.store.set_memo(submission, key, value)
 
 
-def stage_context(ws: Workspace, submission: str, q: Question, stage: Stage, services: Services, *,
-                  arts: Mapping[str, Artifact] | None = None, **kw) -> tuple[Context, dict]:
-    """The context `stage` runs with for one submission, and the revisions of what
-    it reads. Raises `Blocked` when an input is missing, or carries review markers
-    and the stage does not accept them. `kw` goes to the `Context`."""
-    arts = ws.store.for_question(submission, q.id) if arts is None else arts
-    inputs, revs = {}, {}
-    for kind in stage.inputs:
-        a = arts.get(kind)
-        if a is None:
-            raise Blocked(f"no {kind}")
-        if not stage.accepts_markers and has_marker(a.body):
-            raise Blocked(f"{kind} has review markers")
-        inputs[kind], revs[kind] = a.body, a.rev
+def structural(e: Exception) -> str:
+    """A failure as graders may see it: model errors are structural by contract;
+    anything else might quote student text, so only its type."""
+    if isinstance(e, (Unavailable, BadOutput)) or type(e).__name__ == 'ModelError':
+        return str(e)
+    return type(e).__name__
+
+
+def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields: Sequence[Field],
+               services: Services, *, reasoning: bool = False, fresh: bool = False) -> dict[str, str]:
+    """One reader on some of a question's fields (with this submission's regions):
+    `{label: text}`. Model errors and bad output raise."""
     _, note = ws.selected_pages(submission, q)
-    ctx = Context(submission=submission, question=q, stage=stage.name,
-                  inputs=inputs, note=note, services=services, **kw)
-    return ctx, revs
-
-
-def read_fields(ctx: Context, body: Any) -> dict:
-    """A parse of fields as stored: what the stage returned for the fields the
-    student writes, and every field with a reader read now, in label order."""
-    body = body if isinstance(body, Mapping) else {}
-    rctx = dataclasses.replace(ctx, stage='read')     # its model calls are tagged 'read'
-    got = {f.label: f.read(rctx, f) for f in ctx.question.read_fields}
-    return {label: got[label] if label in got else body.get(label) for label in ctx.question.labels}
+    ctx = ReadContext(submission=submission, question=q, note=note, services=services,
+                      reasoning=reasoning, fresh=fresh)
+    got = reader.read(ctx, tuple(fields))
+    out = {}
+    for f in fields:
+        v = got.get(f.label) if isinstance(got, Mapping) else None
+        if v is not None:
+            if not isinstance(v, str):
+                raise BadOutput("a reader returned a value that is not text")
+            out[f.label] = v
+    return out
 
 
 class Runner:
@@ -133,259 +122,237 @@ class Runner:
         if self.pool is not None:
             self.pool.close()
 
-    # --- running stages -------------------------------------------------------
+    # --- what is stored -------------------------------------------------------
 
-    def run_stage(self, submission: str, qid: str, name: str, *, params: Mapping | None = None,
-                  deliberate: bool = False, overwrite: bool = False, reasoning: bool = False) -> Outcome:
-        """Run one stage.
+    def sheet(self, submission: str) -> Sheet:
+        return Sheet.of(self.store.all(submission=submission, kinds=('value', 'result', 'decision')))
 
-        Content a grader wrote or verified is never replaced unless `overwrite`
-        is set (the replaced row goes to history). `deliberate` marks a grader's
-        explicit single run: it implies `overwrite`, and a deliberate check also
-        replaces manual grades."""
-        overwrite = overwrite or deliberate
+    def values(self, submission: str) -> dict[str, Value]:
+        return {k: Value.of(r) for k, r in self.store.rows(submission, 'value').items()}
+
+    # --- read -------------------------------------------------------------------
+
+    def read(self, submission: str, qid: str, *, labels: Sequence[str] | None = None,
+             missing_only: bool = False, include_protected: bool = False, fresh: bool = False,
+             reasoning: bool = False) -> list[Outcome]:
+        """Read a question's fields (or some of them) and write what was read.
+        Values a person settled are skipped unless `include_protected`; with
+        `missing_only`, only fields with no value are read. One outcome per reader run."""
         q = self.exam.questions[qid]
-        stage = q.stage(name)
+        resolved = replace(q, fields=self.ws.fields(submission, q))
+        have = self.values(submission)
+        outs = []
 
         def out(status, detail=""):
-            return Outcome(submission, qid, name, status, detail)
+            outs.append(Outcome(submission, qid, 'read', status, detail))
 
-        if stage is None:
-            return out('blocked', f"no {name} stage")
-        if name == 'grade':
-            return self._grade(submission, q, deliberate=deliberate)
-        if stage.uses_model and self.model is None:
-            return out('blocked', "model unavailable")
-
-        arts = self.store.for_question(submission, qid)
-        target = arts.get(name)
-        if target is not None and target.protected and not overwrite:
-            return out('skipped', "protected")
-        is_check = name == 'evidence'
-        try:
-            ctx, revs = stage_context(self.ws, submission, q, stage, self._services, arts=arts,
-                                      params=dict(params or {}), rerun=target is not None, reasoning=reasoning,
-                                      parses=self._services.parses(submission, self.exam) if is_check else None)
-        except Blocked as e:
-            return out('blocked', str(e))
-        try:
-            body = self._execute(q, stage, ctx)
-            if stage.shape == 'fields' and q.read_fields:
-                body = read_fields(ctx, body)
-            if is_check and not (isinstance(body, Mapping) and isinstance(body.get('data'), Mapping)):
-                body = undecided("the check returned no evidence")
-        except Undecided as e:
-            if not is_check:
-                return out('failed', "undecided")
-            body = undecided(str(e))
-        except Blocked as e:
-            return out('blocked', str(e))
-        except PoolClosed:
-            return out('failed', "shutting down")
-        except StageTimeout:
-            if not is_check:
-                return out('failed', "timed out")
-            body = undecided(f"timed out after {self._timeout(stage):g} s")
-        except Exception as e:
-            if not is_check:
-                # Model errors are structural by contract; anything else might quote
-                # student text, so only its type is reported.
-                structural = isinstance(e, (Unavailable, BadOutput)) or type(e).__name__ == 'ModelError'
-                return out('failed', str(e) if structural else type(e).__name__)
-            detail = getattr(e, 'detail', "") or f"{type(e).__name__}: {e}"
-            body = undecided("the check failed to run", [
-                {'type': 'details', 'summary': "Error", 'audience': 'grader',
-                 'blocks': [{'type': 'code', 'text': detail}]}])
-        inputs = {'revs': revs, 'defn': stage_hash(q, stage), 'code': self.exam.code_hash}
-        if ctx.reads:
-            inputs['reads'] = dict(ctx.reads)
-            inputs['labels'] = dict(ctx.labels)
-        if stage.shape == 'fields' and isinstance(body, Mapping):
-            # fields whose reader vouches for what it read: nobody need verify those
-            sure = [f.label for f in q.read_fields
-                    if getattr(f.read, 'trusted', False) and not has_marker(body.get(f.label))]
-            if sure:
-                inputs['trusted'] = sure
-        guard = {**revs, **{(other, 'parse'): rev for other, rev in ctx.reads.items()}}
-        try:
-            self.store.write(
-                submission, qid, name, body, origin='auto', inputs=inputs,
-                expect_rev=target.rev if target else None, guard=guard, unless_protected=not overwrite)
-        except Conflict as e:
-            return out('discarded', str(e))
-        if is_check and q.stage('grade') is not None:
-            g = self._grade(submission, q, deliberate=deliberate)
-            if not g.ok:
-                return out(g.status, g.detail)
-        return out('done')
-
-    def run_from(self, submission: str, qid: str, name: str, **kw) -> list[Outcome]:
-        """Run a stage and everything after it, stopping at the first that does not
-        finish. `deliberate` and `overwrite` apply to the named stage only: later
-        stages never replace protected work, so the chain stops at a verified parse."""
-        q = self.exam.questions[qid]
-        names = [s.name for s in q.stages]
-        outs = []
-        for n in names[names.index(name):]:
-            if n == 'grade' and outs:       # already ran with the check
+        for reader, fields in resolved.groups():
+            targets = []
+            for f in fields:
+                v = have.get(key(qid, f.label))
+                if labels is not None and f.label not in labels:
+                    continue
+                if missing_only and v is not None:
+                    continue
+                if v is not None and v.settled == 'person' and not include_protected:
+                    continue
+                targets.append(f)
+            if not targets:
                 continue
-            outs.append(self.run_stage(submission, qid, n, **kw))
-            if not outs[-1].ok:
-                break
-            kw = {**kw, 'deliberate': False, 'overwrite': False}
+            if getattr(reader, 'needs_region', False):
+                bare = [f.label for f in targets if f.region is None]
+                if bare:
+                    out('blocked', f"no region: {', '.join(bare)}")
+                targets = [f for f in targets if f.region is not None]
+                if not targets:
+                    continue
+            if getattr(reader, 'uses_model', True) and self.model is None:
+                out('blocked', "model unavailable")
+                continue
+            try:
+                got = read_group(self.ws, submission, resolved, reader, targets, self._services,
+                                 reasoning=reasoning, fresh=fresh)
+            except Exception as e:
+                out('failed', structural(e))
+                continue
+            vouches = getattr(reader, 'vouches', None)
+            lost = []
+            for f in targets:
+                if f.label not in got:
+                    continue
+                text = got[f.label]
+                vouched = bool(callable(vouches) and vouches(f, text))
+                if not self._put_read(submission, qid, f.label, text, vouched, include_protected):
+                    lost.append(f.label)
+            out('discarded', f"changed meanwhile: {', '.join(lost)}") if lost else out('done')
         return outs
 
-    def _timeout(self, stage: Stage) -> float:
-        return stage.timeout or DEFAULT_TIMEOUT
+    def _put_read(self, submission, qid, label, text, vouched, include_protected) -> bool:
+        k = key(qid, label)
+        row = self.store.get(submission, k, 'value')
+        cur = Value.of(row) if row is not None else None
+        if cur is not None and cur.settled == 'person' and not include_protected:
+            return True
+        settled = 'reader' if vouched and not has_marker(text) else None
+        try:
+            if cur is not None and cur.text == text:       # the same value: nothing moves
+                if cur.settled == 'person' or cur.settled == settled:
+                    return True
+                self.store.write(submission, k, 'value', replace(cur, settled=settled, by=None).body(),
+                                 origin='auto', expect_rev=cur.rev, keep_rev=True)
+            else:
+                self.store.write(submission, k, 'value', Value(text, 0, settled).body(), origin='auto',
+                                 expect_rev=cur.rev if cur else None)
+        except Conflict:
+            return False
+        return True
 
-    def _execute(self, q: Question, stage: Stage, ctx: Context) -> Any:
-        if stage.isolate and self.pool is not None:
-            return self.pool.call(q.id, stage.name, {
-                'submission': ctx.submission, 'inputs': ctx.inputs, 'parses': ctx.parses,
-                'params': ctx.params, 'note': ctx.note, 'overrides': self.exam.overrides},
-                self._timeout(stage), reads=ctx.reads, labels=ctx.labels)
-        return body_of(stage.fn(ctx))
+    # --- compute ----------------------------------------------------------------
 
-    def _grade(self, submission: str, q: Question, *, deliberate: bool) -> Outcome:
-        stage = q.stage('grade')
-        arts = self.store.for_question(submission, q.id)
-        ev = arts.get('evidence')
+    def compute(self, submission: str, qid: str, check: str, *, params: Mapping | None = None) -> Outcome:
+        """Run one check on the current values and store its result."""
+        q = self.exam.questions[qid]
+        c = q.check(check)
 
         def out(status, detail=""):
-            return Outcome(submission, q.id, 'grade', status, detail)
+            return Outcome(submission, qid, check, status, detail)
 
-        if ev is None:
-            return out('blocked', "no evidence")
-        reason = (ev.body.get('data') or {}).get('undecided')
-        if reason is not None:
-            grades = {part: Grade(None, reason=str(reason)) for part in q.result}
-        else:
-            try:
-                raw = stage.fn(Context(submission=submission, question=q, stage='grade',
-                                       inputs={'evidence': ev.body}))
-                if list(q.result) == [''] and not (isinstance(raw, Mapping) and '' in raw):
-                    raw = {'': raw}
-                if not isinstance(raw, Mapping):
-                    raise ValueError("a multi-part result needs a dict of parts")
-                grades = {part: spec.coerce(raw.get(part)) for part, spec in q.result.items()}
-            except Exception as e:
-                grades = {part: Grade(None, reason=f"grade rule failed: {type(e).__name__}")
-                          for part in q.result}
-        inputs = {'revs': {'evidence': ev.rev}, 'defn': stage_hash(q, stage)}
+        if c is None:
+            return out('blocked', "no such check")
+        if c.fn is None:
+            return out('blocked', "decided by a person")
+        values = {k: (v.rev, v.text) for k, v in self.values(submission).items()}
+        reads: dict[str, int | None] = {}
+        timeout = c.timeout or DEFAULT_TIMEOUT
         try:
-            for part, grade in grades.items():
-                kind = grade_kind(part)
-                cur = arts.get(kind)
-                if cur is not None and cur.origin == 'manual' and not deliberate:
-                    continue
-                self.store.write(submission, q.id, kind, grade.to_json(), origin='auto', inputs=inputs,
-                                 expect_rev=cur.rev if cur else None, guard={'evidence': ev.rev})
+            if c.isolate and self.pool is not None:
+                body = self.pool.call(qid, check, {
+                    'submission': submission, 'values': {k: list(v) for k, v in values.items()},
+                    'params': dict(params or {}), 'overrides': self.exam.overrides}, timeout, reads)
+            else:
+                ctx = CheckContext(submission=submission, question=q, check=check, values=values,
+                                   params=dict(params or {}), fields=self.field_keys(), reads=reads)
+                body = settle(c.points, c.fn(ctx))
+        except Undecided as e:
+            body = settle(c.points, undecided(str(e)))
+        except PoolClosed:
+            return out('failed', "shutting down")
+        except CheckTimeout:
+            body = settle(c.points, undecided(f"timed out after {timeout:g} s"))
+        except Exception as e:
+            detail = getattr(e, 'detail', "") or f"{type(e).__name__}: {e}"
+            body = settle(c.points, undecided("the check failed to run", [
+                {'type': 'details', 'summary': "Error", 'audience': 'grader',
+                 'blocks': [{'type': 'code', 'text': detail}]}]))
+        body.update(reads=dict(reads), defn=self.exam.check_hash(q, c), code=self.exam.code_hash)
+        if params:
+            body['params'] = dict(params)
+        try:
+            self.store.write(submission, key(qid, check), 'result', body, origin='auto',
+                             guard={(k, 'value'): rev for k, rev in reads.items()})
         except Conflict as e:
             return out('discarded', str(e))
         return out('done')
 
-    def recheck(self, submission: str, qid: str) -> Outcome | None:
-        """Automatic recheck after a parse changes or is verified: this question's,
-        then that of every question whose check read this question's parse.
+    def field_keys(self) -> frozenset[str]:
+        return frozenset(key(q.id, f.label) for q in self.exam.questions.values() for f in q.fields)
 
-        Reruns derived stages and the check if the evidence is not current, and
-        otherwise repairs automatic grades that fell behind. Never replaces a
-        manual grade or anything protected. Returns this question's outcome."""
-        out = self._recheck(submission, qid)
-        for other in self.readers(submission, qid):
-            self._recheck(submission, other)
-        return out
+    def refresh(self, submission: str, *, questions: Sequence[str] = ()) -> list[Outcome]:
+        """Recompute every outdated result of a submission, and run the checks of
+        `questions` that never ran. Never touches a value or a decision."""
+        sheet = self.sheet(submission)
+        outs = []
+        for q in self.exam.questions.values():
+            for c in q.checks:
+                if c.fn is None:
+                    continue
+                stored = sheet.results.get(key(q.id, c.name))
+                if stored is None:
+                    if q.id not in questions:
+                        continue
+                elif current(stored, sheet.values, defn=self.exam.check_hash(q, c), code=self.exam.code_hash):
+                    continue
+                outs.append(self.compute(submission, q.id, c.name,
+                                         params=stored.params if stored is not None else None))
+        return outs
 
-    def readers(self, submission: str, qid: str) -> list[str]:
-        """The questions whose stored check read `qid`'s parse, for one submission."""
-        return [other for other, ev in self.store.of_kind(submission, 'evidence').items()
-                if qid in ev.reads and other in self.exam.questions]
-
-    def _recheck(self, submission: str, qid: str) -> Outcome | None:
-        q = self.exam.questions[qid]
-        if q.stage('evidence') is None:
-            return None
-        arts = self.store.for_question(submission, qid)
-        if not recheck_wanted(q, arts):
-            return None
-        parses = self.store.of_kind(submission, 'parse')
-        if evidence_current(q, arts, parses):
-            if q.stage('grade') is not None and any(
-                    (g := arts.get(grade_kind(p))) is None
-                    or (g.origin != 'manual' and not grade_current(q, p, arts, parses)) for p in q.result):
-                return self._grade(submission, q, deliberate=False)
-            return None
-        out = None
-        for name in self._derived_chain(q):
-            out = self.run_stage(submission, qid, name)
-            if not out.ok:
-                break
-        return out
-
-    def _derived_chain(self, q: Question) -> list[str]:
-        """The check and the derived (non-editable, model-free) stages it rests on, in order."""
-        need: set[str] = set()
-
-        def walk(kind):
-            need.add(kind)
-            for k in q.stage(kind).inputs:
-                s = q.stage(k)
-                if _derived(q, k) and not s.uses_model:
-                    walk(k)
-
-        walk('evidence')
-        return [s.name for s in q.stages if s.name in need]
-
-    # --- what graders do ------------------------------------------------------
+    # --- what people do ---------------------------------------------------------
     # Each raises `Conflict` if `expect_rev` is no longer current, and `ValueError`
-    # for input a grader should correct. None of these runs a check: call
-    # `recheck` afterwards (the app does so in the background).
+    # for input a person should correct. None computes: call `refresh` afterwards
+    # (the app does so in the background).
 
-    def save(self, submission: str, qid: str, kind: str, body: Any, *, author: str | None,
-             expect_rev: Any = ANY, verify: bool = False) -> Artifact:
-        """A grader's edit of an editable artifact. Editing clears verification
-        unless `verify` approves the new content in the same step."""
-        stage = self.exam.questions[qid].stage(kind)
-        if stage is None or not stage.editable:
-            raise ValueError(f"{kind} is not editable")
-        if verify and has_marker(body):
+    def _field(self, qid: str, label: str) -> str:
+        q = self.exam.questions.get(qid)
+        if q is None or q.field(label) is None:
+            raise ValueError(f"no field {label!r} in {qid}")
+        return key(qid, label)
+
+    def set(self, submission: str, qid: str, label: str, text: str, *, author: str | None,
+            expect_rev: Any = ANY) -> Value:
+        """A person's value. It is settled by them, unless it carries a review marker."""
+        k = self._field(qid, label)
+        if not isinstance(text, str):
+            raise ValueError("a value is text")
+        settled = None if has_marker(text) else 'person'
+        row = self.store.get(submission, k, 'value')
+        cur = Value.of(row) if row is not None else None
+        keep = cur is not None and cur.text == text
+        new = Value(text, 0, settled, author if settled else None)
+        return Value.of(self.store.write(submission, k, 'value', new.body(), origin='manual', author=author,
+                                         expect_rev=expect_rev, keep_rev=keep))
+
+    def verify(self, submission: str, qid: str, label: str, *, author: str | None, expect_rev: int,
+               verified: bool = True) -> Value:
+        """Settle the value as it stands (or, `verified=False`, unsettle it). Same revision."""
+        k = self._field(qid, label)
+        row = self.store.get(submission, k, 'value')
+        if row is None or row.rev != expect_rev:
+            raise Conflict(f"{label} changed")
+        cur = Value.of(row)
+        if verified and cur.marker:
             raise ValueError("resolve review markers before verifying")
-        return self.store.write(submission, qid, kind, body, origin='manual', author=author,
-                                expect_rev=expect_rev, verified=verify)
+        new = replace(cur, settled='person' if verified else None, by=author if verified else None)
+        return Value.of(self.store.write(submission, k, 'value', new.body(), origin=row.origin, author=row.author,
+                                         expect_rev=expect_rev, keep_rev=True))
 
-    def verify(self, submission: str, qid: str, kind: str, *, author: str | None,
-               expect_rev: int, verified: bool = True) -> Artifact:
-        cur = self.store.get(submission, qid, kind)
-        if verified and cur is not None and has_marker(cur.body):
-            raise ValueError("resolve review markers before verifying")
-        return self.store.verify(submission, qid, kind, expect_rev=expect_rev, author=author,
-                                 verified=verified)
-
-    def decide(self, submission: str, qid: str, part: str, value: Any, *, author: str | None,
-               flags: Sequence[str] = (), reason: str | None = None, expect_rev: Any = ANY,
-               seen: Mapping[str, int | None] | None = None) -> Artifact:
-        """A manual grade for one part, recorded against the content the grader was
-        looking at. `seen` maps each verifiable artifact (see `workflow.verifiable`;
-        usually just 'parse') to the revision on the grader's screen; if any has
-        changed the decision is refused. Without `seen`, the current revisions are used."""
+    def page(self, submission: str, qid: str, *, check: str | None = None) -> list[str]:
+        """The fields on a question's page: its own, then those its checks (or one
+        check) read from other questions, as stored. What a decision is recorded against."""
         q = self.exam.questions[qid]
-        grade = q.result[part].coerce(Grade(value, tuple(flags), reason))
+        out = [key(qid, label) for label in q.labels]
+        for c in q.checks:
+            if check is not None and c.name != check:
+                continue
+            row = self.store.get(submission, key(qid, c.name), 'result')
+            for k in (Stored.of(row).reads if row is not None else {}):
+                if k not in out:
+                    out.append(k)
+        return out
+
+    def decide(self, submission: str, qid: str, check: str, value: Any, *, author: str | None,
+               flags: Sequence[str] = (), reason: str | None = None, expect_rev: Any = ANY,
+               seen: Mapping[str, int | None] | None = None) -> Decision:
+        """A person's grade for one check, recorded against the fields on the page:
+        `seen` maps each to the revision on their screen (refused if one changed;
+        without `seen`, the current revisions)."""
+        q = self.exam.questions[qid]
+        c = q.check(check)
+        if c is None:
+            raise ValueError(f"no check {check!r} in {qid}")
+        grade = c.points.coerce(Grade(value, tuple(flags), reason))
         if grade.value is None:
             raise ValueError("a decision needs a value")
-        current = seen_revs(q, self.store.for_question(submission, qid))
+        values = self.values(submission)
+        now = {k: (values[k].rev if k in values else None) for k in self.page(submission, qid, check=check)}
         if seen is not None:
-            seen = {k: seen.get(k) for k in current}
-        else:
-            seen = current
-        return self.store.write(submission, qid, grade_kind(part), grade.to_json(), origin='manual',
-                                author=author, inputs={'revs': seen}, expect_rev=expect_rev, guard=seen)
+            for k, rev in now.items():
+                if k not in seen or seen[k] != rev:
+                    raise Conflict(f"{k.partition('/')[2] or k} changed")
+        row = self.store.write(submission, key(qid, check), 'decision', {'grade': grade.to_json(), 'seen': now},
+                               origin='manual', author=author, expect_rev=expect_rev,
+                               guard={(k, 'value'): rev for k, rev in now.items()})
+        return Decision.of(row)
 
-    def undecide(self, submission: str, qid: str, part: str, *, expect_rev: Any = ANY) -> None:
-        """Remove a manual grade; the automatic grade (if evidence exists) returns."""
-        q = self.exam.questions[qid]
-        cur = self.store.get(submission, qid, grade_kind(part))
-        if cur is None or cur.origin != 'manual':
-            return
-        self.store.delete(submission, qid, grade_kind(part), expect_rev=expect_rev)
-        if q.stage('grade') is not None:
-            self._grade(submission, q, deliberate=False)
+    def clear(self, submission: str, qid: str, check: str, *, expect_rev: Any = ANY) -> None:
+        """Remove a decision: the check's own result shows again."""
+        self.store.delete(submission, key(qid, check), 'decision', expect_rev=expect_rev)

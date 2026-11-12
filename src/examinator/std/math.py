@@ -3,9 +3,10 @@
 Student-derived text is data. `parse_expr` reads a small arithmetic grammar with
 its own tokenizer and builds SymPy objects explicitly; nothing is evaluated as
 Python and SymPy never sees raw text. `equal` compares two expressions under the
-assumptions their symbols carry. `check_answers` compares parsed answers with a
-key, field by field (or a group of fields at once), and is what the standard
-`check_math` stage calls.
+assumptions their symbols carry. `check_answers` compares answers with a key,
+field by field (or a group of fields at once). `keyed(key, grade=...)` is the
+standard check built from these: one judgement per field, one grade from the
+fields' outcomes (`all_correct`, `at_least(k)`, or the exam's own rule).
 
 Outcomes are 'correct', 'incorrect', 'blank' or None. None means "could not
 decide" (unsupported notation, an unknown symbol, an inconclusive comparison, a
@@ -21,7 +22,9 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 import sympy
 
 from ..core.defs import has_marker
-from ..core.evidence import OUTCOMES
+from ..core.reading import normalize
+from ..core.result import OUTCOMES, Judgement, Result, Undecided
+from .blocks import Note
 
 MAX_CHARS = 400          # longest accepted expression
 MAX_DEPTH = 40           # deepest nesting of parentheses, signs and exponents
@@ -505,31 +508,196 @@ def check_group(answers: Sequence[str | None], entry: Callable) -> list[tuple[st
 
 def check_answers(answers: Mapping[str, str | None], key: Mapping[str | tuple, Any], *,
                   symbols: Iterable[str] | Mapping[str, Any] = (),
-                  functions: Sequence[str] | None = None) -> dict:
-    """Compare parsed answers with a key, in key order. A missing label is blank.
+                  functions: Sequence[str] | None = None) -> dict[str, tuple[str | None, str]]:
+    """Compare answers with a key, in key order: `{label: (outcome, note)}`.
+    A missing or empty answer is blank.
 
     A key maps a label to an entry (see `check_field`), or a tuple of labels to
     a callable over those fields' answers (see `check_group`):
 
         {'a': '1/2', ('b', 'c'): either_order}
     """
-    fields = {}
+    out = {}
     for labels, entry in key.items():
         if isinstance(labels, tuple):
             if not callable(entry):
                 raise TypeError(f"the entry for {labels} must be callable")
-            group = [answers.get(label) for label in labels]
-            results = check_group(group, entry)
+            out.update(zip(labels, check_group([answers.get(label) for label in labels], entry)))
         else:
-            group = [answers.get(labels)]
-            results = [check_field(group[0], entry, symbols=symbols, functions=functions)]
-            labels = (labels,)
-        for label, answer, (outcome, note) in zip(labels, group, results):
-            normal = None if outcome == 'blank' else normal_form(
-                answer, symbols=symbols, functions=functions, text=isinstance(entry, Choice))
-            fields[label] = {'answer': None if outcome == 'blank' else answer, 'outcome': outcome,
-                             'note': note, 'normal': normal}
-    return {'fields': fields}
+            out[labels] = check_field(answers.get(labels), entry, symbols=symbols, functions=functions)
+    return out
+
+
+def labels_of(key: Mapping[str | tuple, Any]) -> list[str]:
+    """Every label a key names, in key order."""
+    out: list[str] = []
+    for k in key:
+        out += [x for x in (k if isinstance(k, tuple) else (k,)) if x not in out]
+    return out
+
+
+def show_entry(entry: Any) -> str:
+    """A key entry as graders see it. A callable entry may carry a `label`."""
+    if isinstance(entry, str):
+        return entry
+    label = getattr(entry, 'label', None)
+    if label:
+        return str(label)
+    accepted = getattr(entry, 'accepted', None)
+    if accepted:
+        return " | ".join(accepted)
+    if isinstance(entry, Approx):
+        return f"{entry.value} ± {entry.tol}" if entry.tol is not None else f"{entry.value} ± {entry.rel:.0%}"
+    return getattr(entry, '__name__', type(entry).__name__)
+
+
+# --- grade rules: from the fields' outcomes to one grade -----------------------------
+
+def _list(outcomes) -> list[str | None]:
+    return list(outcomes.values()) if isinstance(outcomes, Mapping) else list(outcomes)
+
+
+def all_correct(outcomes) -> str | None:
+    """Correct only if every field is; all blank is blank. A demonstrated
+    mistake outranks an undecided field, which outranks a partly blank answer
+    (incorrect). `outcomes` is `{label: outcome}` or a list."""
+    outcomes = _list(outcomes)
+    if 'incorrect' in outcomes:
+        return 'incorrect'
+    if not outcomes or None in outcomes:
+        return None
+    if all(o == 'blank' for o in outcomes):
+        return 'blank'
+    return 'incorrect' if 'blank' in outcomes else 'correct'
+
+
+def at_least(k: int, required: Sequence[str] = ()) -> Callable[[Mapping], str | None]:
+    """Correct when at least `k` fields are correct, all of `required` among them.
+    Incorrect once that is out of reach; undecided while undecided fields could
+    still tip it; all blank is blank."""
+    def rule(outcomes: Mapping[str, str | None]) -> str | None:
+        values = list(outcomes.values())
+        if values and all(o == 'blank' for o in values):
+            return 'blank'
+        correct, open_ = values.count('correct'), values.count(None)
+        must = [outcomes.get(label) for label in required]
+        if any(o in ('incorrect', 'blank') for o in must) or correct + open_ < k:
+            return 'incorrect'
+        if correct >= k and all(o == 'correct' for o in must):
+            return 'correct'
+        return None
+    rule.__qualname__ = f'at_least({k})'
+    return rule
+
+
+# --- the keyed check -------------------------------------------------------------
+
+def pick(keys: Mapping[str, Any], value: str) -> tuple[str, Any]:
+    """The key for a field's value (names compared normalised), or `Undecided`."""
+    for name, k in keys.items():
+        if normalize(name) == normalize(value):
+            return name, k
+    raise Undecided(f"no key for {value!r}"[:120])
+
+
+def keyed_by_value(key: Mapping[Any, Any]) -> bool:
+    """A key whose every value is itself a mapping is one key per value of a field."""
+    return bool(key) and all(isinstance(v, Mapping) for v in key.values())
+
+
+@dataclass(frozen=True)
+class Keyed:
+    """A check comparing each field with its key entry (`keyed`)."""
+    key: Mapping[Any, Any]               # {label or (label, ...): entry}, or {value: {...}} with `by`
+    symbols: Mapping[str, str] | tuple[str, ...] = ()
+    functions: tuple[str, ...] | None = None
+    by: Any = None                       # with a key per value: what picks it (`fields.value`, ...)
+    grade: Callable[[Mapping], Any] = all_correct
+
+    def validate(self, question, exam) -> None:
+        """A key per value comes with `by`, its labels are the question's fields,
+        and its names are the values the printed fields `by` names can take."""
+        from . import fields as fields_
+        per_value = keyed_by_value(self.key)
+        if per_value != (self.by is not None):
+            raise ValueError(f"{question.id}: " + ("a key per value needs `by=` to pick one" if per_value
+                                                   else "`by=` picks one of several keys: give one key per value"))
+        unknown = [label for k in (self.key.values() if per_value else [self.key]) for label in labels_of(k)
+                   if question.field(label) is None]
+        if unknown:
+            raise ValueError(f"{question.id}: the key names {sorted(set(unknown))}, which are not its fields")
+        if self.by is None:
+            return
+        can = fields_.possible(exam, question, self.by, question.id)
+        if can is None:
+            return
+        names = {normalize(str(n)) for n in self.key}
+        missing, extra = sorted(can - names), sorted(names - can)
+        if missing or extra:
+            raise ValueError(f"{question.id}: the key is one per value of {getattr(self.by, 'name', 'by')}, but "
+                             + "; ".join(([f"{missing} have no key"] if missing else [])
+                                         + ([f"{extra} are not values it reads to"] if extra else [])))
+
+    def __call__(self, ctx) -> Result:
+        name, key = pick(self.key, self.by(ctx)) if self.by is not None else (None, self.key)
+        answers, problems = {}, {}
+        for label in labels_of(key):
+            try:
+                answers[label] = ctx.read(label)
+            except Undecided as e:
+                problems[label] = str(e)
+        fields: dict[str, Judgement] = {}
+        for labels, entry in key.items():
+            group = labels if isinstance(labels, tuple) else (labels,)
+            expected = None if isinstance(labels, tuple) else show_entry(entry)
+            if any(label in problems for label in group):
+                for label in group:
+                    fields[label] = Judgement(None, expected, problems.get(label) or "a field it goes with is not read")
+                continue
+            for label, (outcome, note) in check_answers({x: answers[x] for x in group}, {labels: entry},
+                                                         symbols=self.symbols, functions=self.functions).items():
+                fields[label] = Judgement(outcome, expected, note or None)
+        outcomes = {label: j.outcome for label, j in fields.items()}
+        grade = self.grade(outcomes)
+        reason = None
+        if grade is None:
+            why = [j.note if j.note and j.note.startswith(label) else f"{label}: {j.note}" if j.note else label
+                   for label, j in fields.items() if j.outcome is None]
+            reason = ("undecided: " + "; ".join(why)) if why else "undecided"
+        return Result(grade, fields, [Note(f"key: {name}")] if name is not None else [], reason=reason)
+
+    def facets(self, question) -> list:
+        """One facet per field: the answer's normal form, so equal answers group."""
+        keys = list(self.key.values()) if keyed_by_value(self.key) else [self.key]
+        choice = {label for k in keys for labels, e in k.items() if isinstance(e, Choice)
+                  for label in (labels if isinstance(labels, tuple) else (labels,))}
+        labels = dict.fromkeys(label for k in keys for label in labels_of(k))
+        return [answer_facet(label, symbols=self.symbols, functions=self.functions, text=label in choice)
+                for label in labels]
+
+
+def keyed(key: Mapping[Any, Any], *, by: Any = None, symbols: Mapping[str, str] | Sequence[str] = (),
+          functions: Sequence[str] | None = None, grade: Callable[[Mapping], Any] = all_correct) -> Keyed:
+    """A check that compares each field with its key entry, and grades the
+    fields' outcomes with `grade` (`all_correct`, `at_least(k)`, or any
+    `fn({label: outcome}) -> grade`).
+
+    A key entry is an expression string, a `Choice`, an `Approx`, or a function
+    `answer -> outcome` (see `check_field`); a tuple of labels maps to a function
+    over those fields' answers (`check_group`). With `by`, `key` is one key per
+    value of a field, and `by` picks it: a label of the question's own field, a
+    `fields.value(label, question=...)` of another question's,
+    `fields.agree(...)`, or any `fn(ctx) -> value` (raise `Undecided` when it
+    cannot tell). `symbols` maps names to assumptions (`{'a': 'positive'}`), or
+    lists names; `functions=[]` means no function calls, so juxtaposition is
+    multiplication. A field that is not read, or carries a review marker, is
+    undecided, and so is a grade it could tip.
+    """
+    from . import fields as fields_
+    if not isinstance(symbols, Mapping):
+        symbols = tuple(symbols)
+    return Keyed(key, symbols, None if functions is None else tuple(functions),
+                 None if by is None else fields_.as_chooser(by), grade)
 
 
 # --- normal forms and answer facets -----------------------------------------------
@@ -582,34 +750,25 @@ def normal_form(answer: str | None, *, symbols: Iterable[str] | Mapping[str, Any
     return normalize_text(answer)
 
 
-def answer_facet(label: str, *, kind: str = 'evidence'):
-    """A facet over one field's stored normal form (`fields[label]['normal']`
-    in evidence data, as `check_answers` writes it). A blank field has the
-    value `focus.BLANK`; evidence from before normal forms existed has none."""
+
+
+def answer_facet(label: str, *, symbols: Iterable[str] | Mapping[str, Any] = (),
+                 functions: Sequence[str] | None = None, text: bool = False):
+    """A facet over one field's answer, in its normal form (`normal_form`), so
+    that equal answers usually group. A blank field has the value `focus.BLANK`."""
     from ..core.focus import BLANK, Facet
+    symbols = tuple(sorted(symbols.items())) if isinstance(symbols, Mapping) else tuple(symbols)
 
-    def values(bodies):
-        f = (bodies.get(kind) or {}).get(label)
-        if not isinstance(f, Mapping):
+    def values(view):
+        answer = view.value(label)
+        if answer is None:
             return []
-        if f.get('outcome') == 'blank':
+        if not answer.strip():
             return [BLANK]
-        return [f['normal']] if f.get('normal') is not None else []
+        k = ('normal', answer, symbols, functions, text)
+        if k not in view.memo:
+            view.memo[k] = normal_form(answer, symbols=dict(symbols) if symbols and isinstance(symbols[0], tuple)
+                                       else symbols, functions=functions, text=text)
+        return [view.memo[k]]
 
-    return Facet(f'answer/{label}', label, values, reads={kind: '$.data.fields'}, group='answer')
-
-
-def all_correct(evidence) -> str | None:
-    """The standard grade rule: correct only if every field is; all blank is blank.
-
-    A demonstrated mistake outranks an undecided field, which outranks a
-    partly blank answer (incorrect).
-    """
-    outcomes = evidence.outcomes()
-    if 'incorrect' in outcomes:
-        return 'incorrect'
-    if not outcomes or None in outcomes:
-        return None
-    if all(o == 'blank' for o in outcomes):
-        return 'blank'
-    return 'incorrect' if 'blank' in outcomes else 'correct'
+    return Facet(f'answer/{label}', label, values, group='answer')

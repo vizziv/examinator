@@ -13,14 +13,15 @@ name that carries a roster ID (`identity.by_file`).
 """
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 from PIL import Image
 
 from ..pdf.layout import Layout
 from ..pdf.render import Renderer
-from .defs import Exam, Question, Region
-from .store import Store, Submission
+from .defs import Exam, Field, Question, Region, check_region, key
+from .store import ANY, Store, Submission
 
 
 class Workspace:
@@ -102,6 +103,33 @@ class Workspace:
                 raise ValueError("page out of range")
             self.store.write(submission, question.id, 'pages', {'pages': pages, 'note': note},
                              origin='manual', author=author)
+
+    def region(self, submission: str, question: Question, label: str) -> Region | None:
+        """A field's region for this submission: its own override, else the exam's
+        (which may itself be an exam-wide override, or unset).
+        The override is the row (submission, 'question/label', 'region'): `{'region': [p, l, t, r, b]}`."""
+        o = self.store.get(submission, key(question.id, label), 'region')
+        if o and o.body.get('region'):
+            return Region(*o.body['region'])
+        f = question.field(label)
+        return f.region if f is not None else None
+
+    def set_region(self, submission: str, question: Question, label: str, region: Region | None, *,
+                   author: str | None, expect_rev=ANY) -> None:
+        """Set (or, with None, clear) a field's region for this submission. Changes no value."""
+        k = key(question.id, label)
+        if region is None:
+            self.store.delete(submission, k, 'region', expect_rev=expect_rev)
+        else:
+            check_region(region, self.exam.pages, f"{question.id}: field {label!r}")
+            self.store.write(submission, k, 'region', {'region': [region.page, region.left, region.top,
+                                                                  region.right, region.bottom]},
+                             origin='manual', author=author, expect_rev=expect_rev)
+
+    def fields(self, submission: str, question: Question) -> tuple[Field, ...]:
+        """The question's fields with this submission's regions."""
+        return tuple(dataclasses.replace(f, region=self.region(submission, question, f.label))
+                     for f in question.fields)
 
     # --- pages and crops ---
 

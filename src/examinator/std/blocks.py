@@ -1,6 +1,6 @@
 """The evidence block vocabulary.
 
-A check returns `Evidence(data, blocks)`. Blocks are what graders see; the app
+A check returns `Result(grade, fields, blocks)`. Blocks are what graders see; the app
 renders them, and exams never write layout. Plots are stored as data and drawn
 in the browser. Every block serializes with `to_json()` to a dict with a
 `'type'`, and may carry `audience='grader'` to hide it from a student view.
