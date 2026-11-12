@@ -29,6 +29,7 @@ const Actions = (() => {
     ['split-confirm', "scans: confirm first page, next", 'scans'], ['split-earlier', "scans: a page earlier", 'scans'],
     ['split-later', "scans: a page later", 'scans'], ['split-back', "scans: previous boundary", 'scans'],
     ['split-next', "scans: next boundary", 'scans'], ['split-drop', "scans: drop this page", 'scans'],
+    ['split-cut', "scans: a new exam starts here", 'scans'],
     ['split-turn', "scans: turn this exam 180°", 'scans'], ['split-turn-source', "scans: turn whole scan 90°", 'scans'],
     // Names (the scans page's other tab): the same shapes again; one tab's keys work at a time.
     ['who-confirm', "names: this person, next", 'names'], ['who-prev', "names: previous proposal", 'names'],
@@ -42,7 +43,7 @@ const Actions = (() => {
     grid: ['q'], scan: ['f'], search: ['/'], 'leave-field': ['Escape'],
     'split-confirm': ['v'], 'split-earlier': ['a', 'ArrowLeft'], 'split-later': ['d', 'ArrowRight'],
     'split-back': ['w'], 'split-next': ['s'], 'split-drop': ['x'],
-    'split-turn': ['r'], 'split-turn-source': ['Shift+r'],
+    'split-cut': ['Shift+v'], 'split-turn': ['r'], 'split-turn-source': ['Shift+r'],
     'who-confirm': ['v'], 'who-prev': ['a', 'ArrowLeft'], 'who-next': ['d', 'ArrowRight'],
     'who-back': ['w'], 'who-skip': ['s'], 'who-search': ['e'],
   };

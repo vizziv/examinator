@@ -481,6 +481,10 @@ label.btn.primary { background: var(--accent); border-color: var(--accent); colo
 .sheets { display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start; margin-top: 3px; }
 .sheets .crop { align-self: center; margin-right: 6px; }
 figure.sh { position: relative; margin: 0; line-height: 0; }
+button.pg { all: unset; display: block; cursor: pointer; }
+button.pg:focus-visible { outline: 2px solid var(--accent2); }
+#st-pages .ctx { cursor: pointer; }
+#st-pages figcaption a { margin-left: 6px; }
 figure.sh img { display: block; border: 1px solid var(--line); background: #fff; width: 64px; height: auto; }
 figure.sh.first img { width: 120px; }
 .srow .crop { margin: 2px 0 0; }

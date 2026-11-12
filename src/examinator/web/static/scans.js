@@ -1,17 +1,19 @@
 'use strict';
 // Scans: split stacks of scans into submissions. One boundary at a time: the guessed
 // first page of the next exam, large, with its neighbours; confirm it (V) or move it
-// a page earlier (A) or later (D). The overview below shows every submission, doubtful
-// ones first, and is where pages are dropped or a submission is started by hand.
+// a page earlier (A) or later (D). Clicking any small page shows it large the same way;
+// on a page that is not a first page, A and D look around and Shift+V starts an exam there.
+// The overview below shows every submission, doubtful ones first.
 (() => {
   const $ = id => document.getElementById(id);
   const main = $('scans'), msg = $('msg');
   let plan = null, k = 0;
+  let peek = null;        // a page shown large that is not a first page, else null
 
   const say = text => { msg.textContent = text || ''; };
   const sheet = (i, w) => `${ROOT}/sheet/${encodeURIComponent(plan.id)}/${i}.jpg?o=${plan.sheet_o[i]}&w=${w}`;
   const reading = i => plan.readings[i] || '';
-  const done = () => k >= plan.entries.length;
+  const done = () => peek === null && k >= plan.entries.length;
   const firstOf = e => (e.pages.length ? e.pages[0] : e.start);
 
   // --- adding scans and the roster ---
@@ -82,7 +84,7 @@
     const r = await request(`/scans/${encodeURIComponent(id)}/plan`);
     if (!r.ok) { say('could not load'); return; }
     plan = r.body;
-    if (!keep) k = plan.cursor ?? plan.entries.length;
+    if (!keep) { k = plan.cursor ?? plan.entries.length; peek = null; }
     history.replaceState(null, '', '#src=' + id);
     render();
   }
@@ -110,17 +112,35 @@
 
   // --- the step-through ---
   const live = () => !!plan && !$('step').hidden;
-  const at = () => live() && !done();
+  const at = () => live() && !done() && peek === null;                 // on an exam's first page
+  const owner = i => plan.entries.findIndex(e => e.pages.includes(i));
+  const focus = () => (peek !== null ? peek : firstOf(plan.entries[k])); // the page shown large
+  // Show page `i` large: as its exam's first page if it is one, else on its own.
+  function show(i) {
+    if (i < 0 || i >= plan.n) return;
+    const j = plan.entries.findIndex(e => firstOf(e) === i);
+    if (j >= 0) { k = j; peek = null; } else { peek = i; if (owner(i) >= 0) k = owner(i); }
+    render();
+  }
+  const look = delta => () => show(peek + delta);
   register('split-confirm', {available: at, run: async () => {
     const r = await edit('confirm', {k});
     if (r && r.ok) { k = nextOpen(k); render(); }
   }});
-  register('split-earlier', {available: at, run: () => edit('move', {k, delta: -1})});
-  register('split-later', {available: at, run: () => edit('move', {k, delta: 1})});
-  register('split-back', {available: () => live() && k > 0, run: () => { k = Math.min(k, plan.entries.length) - 1; render(); }});
-  register('split-next', {available: at, run: () => { k += 1; render(); }});
-  register('split-drop', {available: at, run: () => edit('drop', {sheet: firstOf(plan.entries[k])})});
-  register('split-turn', {available: at, run: () => edit('turn', {k})});
+  register('split-earlier', {available: () => live() && !done() && (peek === null || peek > 0),
+    run: () => (peek === null ? edit('move', {k, delta: -1}) : look(-1)())});
+  register('split-later', {available: () => live() && !done() && (peek === null || peek < plan.n - 1),
+    run: () => (peek === null ? edit('move', {k, delta: 1}) : look(1)())});
+  register('split-back', {available: () => live() && (peek !== null ? owner(peek) >= 0 : k > 0), run: () => {
+    if (peek !== null) peek = null; else k = Math.min(k, plan.entries.length) - 1;
+    render();
+  }});
+  register('split-next', {available: () => live() && !done(), run: () => { peek = null; k += 1; render(); }});
+  register('split-cut', {available: () => live() && peek !== null && !plan.dropped.includes(peek),
+    run: () => edit('cut', {sheet: peek})});
+  register('split-drop', {available: () => live() && !done() && !plan.dropped.includes(focus()),
+    run: () => edit('drop', {sheet: focus()})});
+  register('split-turn', {available: () => live() && !done() && (peek === null || owner(peek) >= 0), run: () => edit('turn', {k})});
   register('split-turn-source', {available: () => !!plan, run: () => edit('turn_source')});
   register('split-flip-source', {available: () => !!plan, run: () => edit('flip_source')});
   register('split-undo', {available: () => !!plan && plan.undo, run: () => send('undo', {})});
@@ -179,24 +199,32 @@
     return [e.confirmed ? tag('good', 'confirmed', 'its first page is confirmed') : tag('ask', 'guess', 'its first page is a guess'),
             tag(cls, text, title), ...e.doubts.map(d => tag('bad', d)), e.own ? tag('accent2', 'turned') : ''];
   }
+  // The neighbours in the step view: a click looks at that page.
+  for (const [id, d] of [['st-a', -1], ['st-c', 1]]) {
+    $(id).addEventListener('click', () => { if (plan && !done()) show(focus() + d); });
+  }
   function renderStep() {
     const E = plan.entries, finished = done();
     $('st-done').hidden = !finished;
     $('st-pages').hidden = finished;
-    $('st-k').textContent = finished ? 'done' : `exam ${k + 1} of ${E.length}`;
+    const mine = peek === null ? -1 : owner(peek);
+    $('st-k').textContent = finished ? 'done' : peek === null ? `exam ${k + 1} of ${E.length}`
+      : mine < 0 ? 'in no exam' : `exam ${mine + 1} of ${E.length} · its page ${E[mine].pages.indexOf(peek) + 1}`;
     const towrite = E.filter(e => e.state !== 'made').length + plan.removed.length;
     $('st-done-sum').textContent = !finished ? '' : towrite ? `Accept writes them (${towrite} to write).` : 'All written.';
     const tags = [];
     let before = '';
     if (!finished) {
-      const e = E[k], s = firstOf(e);
-      tags.push(...badges(e));
+      const s = focus();
+      if (peek === null) tags.push(...badges(E[k]));
+      else tags.push(make('span', {className: 'tag', textContent: 'not a first page'}));
       figure($('st-a'), s - 1, 360, 'before');
-      figure($('st-b'), s, 1000, 'first page?');
+      figure($('st-b'), s, 1000, peek === null ? 'first page?' : 'looking');
       figure($('st-c'), s + 1, 360, 'after');
-      preload(k + 1);
+      $('st-b').querySelector('figcaption').append(make('a', {href: sheet(s, 0), target: '_blank', rel: 'noopener', textContent: 'full size'}));
+      if (peek === null) preload(k + 1);
     }
-    const prev = finished ? E[E.length - 1] : E[k - 1];
+    const prev = finished ? E[E.length - 1] : peek !== null ? null : E[k - 1];
     if (prev) before = `exam ${finished ? E.length : k}: ${prev.pages.length} of ${plan.length} pages${prev.doubts.length ? ' · ' + prev.doubts.join(', ') : ''}`;
     $('st-tags').replaceChildren(...tags);
     $('st-prev').textContent = before;
@@ -206,10 +234,16 @@
   // --- the overview ---
   function thumb(i, w, buttons) {
     const fig = make('figure', {className: 'sh'},
-      make('a', {href: sheet(i, 0), target: '_blank', rel: 'noopener'}, make('img', {src: sheet(i, w), alt: `page ${i + 1}`, loading: 'lazy'})),
+      opener(i, make('img', {src: sheet(i, w), alt: `page ${i + 1}`, loading: 'lazy'})),
       make('figcaption', {}, String(i + 1), reading(i) ? make('span', {className: 'dim', textContent: ' ' + reading(i)}) : ''));
     if (buttons.length) fig.append(make('span', {className: 'acts'}, ...buttons));
     return fig;
+  }
+  // A small page: a click shows it large in the step view above.
+  function opener(i, img) {
+    const b = make('button', {type: 'button', className: 'pg', title: 'show this page large'}, img);
+    b.addEventListener('click', () => { show(i); $('step').scrollIntoView({block: 'nearest'}); });
+    return b;
   }
   const button = (text, title, fn) => {
     const b = make('button', {type: 'button', className: 'quiet', textContent: text, title});
@@ -245,14 +279,14 @@
     const E = plan.entries;
     const order = E.map((e, j) => j);
     const look = j => (E[j].doubts.length || !E[j].confirmed ? 0 : 1);
-    const here = done() ? -1 : k;
+    const here = done() || (peek !== null && owner(peek) < 0) ? -1 : k;
     order.sort((a, b) => look(a) - look(b) || a - b);
     const names = {};
     for (const e of E) if (e.name) names[e.name] = (names[e.name] || 0) + 1;
     const rows = order.map(j => {
       const e = E[j];
       const head = make('div', {className: 'rhead'},
-        button(`#${j + 1}`, 'step through from here', () => { k = j; render(); $('step').scrollIntoView({block: 'nearest'}); }),
+        button(`#${j + 1}`, 'step through from here', () => { k = j; peek = null; render(); $('step').scrollIntoView({block: 'nearest'}); }),
         e.id ? make('code', {textContent: e.id}) : '',
         ...badges(e),
         e.name && names[e.name] > 1 ? make('span', {className: 'tag warn', textContent: 'name twice'}) : '',
@@ -277,6 +311,12 @@
   }
 
   function render() {
+    // A page being looked at that has become a first page (or gone) is no longer just looked at.
+    if (peek !== null) {
+      const j = plan.entries.findIndex(e => firstOf(e) === peek);
+      if (j >= 0) { k = j; peek = null; } else if (peek >= plan.n) peek = null;
+      else if (owner(peek) >= 0) k = owner(peek);
+    }
     for (const id of ['srcbar', 'step', 'over']) $(id).hidden = false;
     $('s-name').textContent = plan.name;
     $('s-info').textContent = `${plan.n} pages · ${plan.entries.length} exams${plan.checked ? ' · checked' : ''}`;

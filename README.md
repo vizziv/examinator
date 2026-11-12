@@ -50,9 +50,14 @@ first page of the next exam, large, between its neighbours.
 | `V` | `N` | this is the first page; go to the next guess |
 | `A` / `D` (or arrows) | `J` / `L` | the guess is a page too late / too early |
 | `W` / `S` | `I` / `K` | previous / next boundary |
+| `Shift+V` | `Shift+N` | a new exam starts at the page shown (when it is not a first page) |
 | `X` | `M` | drop this page (blank or stray) |
 | `R` | `U` | turn this exam 180° |
 | `Shift+R` | `Shift+U` | turn the whole scan 90° (also: mirror, as a button) |
+
+Clicking any small page shows it large in the same view. On a page that is
+not a first page, `A` / `D` look at its neighbours and `Shift+V` starts an exam
+there. The scan image itself opens from "full size" under the large page.
 
 A confirmed first page is your decision: it outranks the every-N guess and any
 landmark reading, and later guesses follow from it. Turn a stack fed in
