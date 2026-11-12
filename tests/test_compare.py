@@ -65,6 +65,14 @@ def test_compare_reports_failures_without_model_text(tmp_path):
                      questions=[next(iter(exam.questions))], make_client=lambda e: Broken())
     assert r.text is None and r.error == "ModelError: model server returned HTTP 500"
     assert compare.summary([r], {})[0]['failed'] == 1
+
+    class Odd:
+        def complete(self, prompt, **kw):
+            raise RuntimeError("could quote an answer")
+
+    a, b = compare.run(exam, ws, [compare.Entrant('y', '')], submissions=[sub, sub],
+                       questions=[next(iter(exam.questions))], make_client=lambda e: Odd())
+    assert (a.text, a.error) == (None, "RuntimeError") and b.error == "RuntimeError"   # the run goes on
     ws.close()
 
 
@@ -87,3 +95,17 @@ def test_cli_compare_with_the_scripted_model(tmp_path, capsys):
     report = Path(out.strip().splitlines()[-1].removeprefix("report: "))
     assert report.is_file() and root / 'exports' in report.parents
     assert 'data:image' not in report.read_text()
+
+
+def test_cli_closes_the_workspace(tmp_path, monkeypatch, capsys):
+    exam = load_exam(TOY)
+    root = synth.generate(exam, tmp_path / 'ws', synth.load_cases(exam))
+    closed = []
+
+    class Tracked(Workspace):
+        def close(self):
+            closed.append(1)
+            super().close()
+    monkeypatch.setattr(cli, 'Workspace', Tracked)
+    assert cli.main(['status', str(TOY), '-w', str(root), '--fake']) == 0
+    assert closed == [1]

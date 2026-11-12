@@ -65,12 +65,14 @@ def compare_models(args, exam: Exam, ws: Workspace) -> int:
         print("name at least one model: --model NAME[@URL] or --ocr NAME[@URL]", file=sys.stderr)
         return 1
     subs = args.submission or [s.id for s in ws.store.submissions()][:args.limit]
+    qids = args.question or list(exam.questions)
     out_dir = Path(args.out) if args.out else ws.root / 'exports' / time.strftime('compare-%Y%m%d-%H%M%S')
-    results = compare.run(exam, ws, entrants, submissions=subs, questions=args.question or list(exam.questions),
+    results = compare.run(exam, ws, entrants, submissions=subs, questions=qids,
                           make_client=lambda e: clients.get(e) or compare.client_for(e),
                           progress=print)
-    path = compare.write(exam, ws, results, out_dir, images=not args.no_images)
-    for row in compare.summary(results, compare.stored(ws, subs, args.question or list(exam.questions))):
+    reference = compare.stored(ws, subs, qids)
+    path = compare.write(exam, ws, results, out_dir, images=not args.no_images, reference=reference)
+    for row in compare.summary(results, reference):
         print("  ".join(f"{k}={v}" for k, v in row.items()))
     print(f"report: {path}")
     return 0
@@ -124,6 +126,59 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
     if not args.accept:
         print(f"review and accept: examinator serve {args.exam} -w {args.workspace}   (Scans page)")
     return 0
+
+
+def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
+    """The commands that work on an open workspace."""
+    if args.cmd == 'intake':
+        return intake_cmd(args, exam, ws)
+    ws.sync_roster()
+    for s in overrides.refresh(exam, ws.store):
+        print(f"override not applied: {s.path}: {s.reason}", file=sys.stderr)
+    if args.cmd == 'compare':
+        return compare_models(args, exam, ws)
+    model = open_model(args, ws.root)
+
+    if args.cmd == 'status':
+        print(status_table(exam, ws))
+        return 0
+
+    if args.cmd == 'serve':
+        import uvicorn
+        from .web.app import create_app
+        runner = Runner(exam, ws, model=model)
+        app = create_app(exam, ws, runner, author=args.author or getpass.getuser(),
+                         public_url=args.public_url)
+        print(f"http://127.0.0.1:{args.port}/" + ("" if model else "   (model unavailable: model stages are off)"))
+        try:
+            uvicorn.run(app, host='127.0.0.1', port=args.port, log_level='warning')
+        finally:
+            runner.close()
+        return 0
+
+    runner = Runner(exam, ws, model=model)
+    try:
+        sel = batch.Selection(
+            tuple(args.submission or [s.id for s in ws.store.submissions()]),
+            tuple(args.question or exam.questions),
+            tuple(args.stage or batch.stage_order(exam)),
+            missing_only=args.missing_only, include_protected=args.include_protected)
+        plan = batch.plan(exam, ws.store, sel, model_available=model is not None)
+        for action in batch.ACTIONS:
+            print(f"{action}: {plan.count(action)}")
+        if args.dry_run:
+            for item in plan.items:
+                print(f"  {item.submission} {item.question} {item.stage}: {item.action} {item.reason}")
+            return 0
+        outcomes = batch.BatchRun(runner, plan, parallel=args.parallel).run()
+        for o in outcomes:
+            if not o.ok:
+                print(f"  {o.submission} {o.question} {o.stage}: {o.status} {o.detail}")
+        print(status_table(exam, ws))
+    finally:
+        runner.close()
+    return 0
+
 
 
 def main(argv=None) -> int:
@@ -221,57 +276,10 @@ def main(argv=None) -> int:
         return 1 if problems else 0
 
     ws = Workspace(args.workspace, exam, create=args.cmd == 'intake')
-    if args.cmd == 'intake':
-        try:
-            return intake_cmd(args, exam, ws)
-        finally:
-            ws.close()
-    ws.sync_roster()
-    for s in overrides.refresh(exam, ws.store):
-        print(f"override not applied: {s.path}: {s.reason}", file=sys.stderr)
-    if args.cmd == 'compare':
-        return compare_models(args, exam, ws)
-    model = open_model(args, ws.root)
-
-    if args.cmd == 'status':
-        print(status_table(exam, ws))
-        return 0
-
-    if args.cmd == 'serve':
-        import uvicorn
-        from .web.app import create_app
-        runner = Runner(exam, ws, model=model)
-        app = create_app(exam, ws, runner, author=args.author or getpass.getuser(),
-                         public_url=args.public_url)
-        print(f"http://127.0.0.1:{args.port}/" + ("" if model else "   (model unavailable: model stages are off)"))
-        try:
-            uvicorn.run(app, host='127.0.0.1', port=args.port, log_level='warning')
-        finally:
-            runner.close()
-        return 0
-
-    runner = Runner(exam, ws, model=model)
     try:
-        sel = batch.Selection(
-            tuple(args.submission or [s.id for s in ws.store.submissions()]),
-            tuple(args.question or exam.questions),
-            tuple(args.stage or batch.stage_order(exam)),
-            missing_only=args.missing_only, include_protected=args.include_protected)
-        plan = batch.plan(exam, ws.store, sel, model_available=model is not None)
-        for action in batch.ACTIONS:
-            print(f"{action}: {plan.count(action)}")
-        if args.dry_run:
-            for item in plan.items:
-                print(f"  {item.submission} {item.question} {item.stage}: {item.action} {item.reason}")
-            return 0
-        outcomes = batch.BatchRun(runner, plan, parallel=args.parallel).run()
-        for o in outcomes:
-            if not o.ok:
-                print(f"  {o.submission} {o.question} {o.stage}: {o.status} {o.detail}")
-        print(status_table(exam, ws))
+        return workspace_cmd(args, exam, ws)
     finally:
-        runner.close()
-    return 0
+        ws.close()
 
 
 if __name__ == '__main__':

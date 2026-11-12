@@ -170,8 +170,10 @@ def run(exam: Exam, ws: Workspace, entrants: Sequence[Entrant], *, submissions: 
             try:
                 r.text = (_run_ocr(ws, q, submission, timed, e.prompt) if e.mode == 'ocr'
                           else _run_stage(ws, q, submission, timed))
-            except (ModelError, Blocked, Unavailable, BadOutput) as ex:
+            except (ModelError, Blocked, Unavailable, BadOutput) as ex:      # structural messages
                 r.error = f"{type(ex).__name__}: {ex}"
+            except Exception as ex:         # anything else might quote student text: its type only
+                r.error = type(ex).__name__
             r.seconds, r.calls = timed.seconds, timed.calls
             results.append(r)
             progress(f"{e.label}  {i}/{len(items)}  {submission} {q.id}  "
@@ -274,11 +276,13 @@ def report(exam: Exam, ws: Workspace, results: Sequence[Result], reference: dict
     return "\n".join(out)
 
 
-def write(exam: Exam, ws: Workspace, results: Sequence[Result], out_dir: Path, *, images: bool = True) -> Path:
-    """`report.html` and `results.json` in `out_dir`; returns the report's path."""
-    subs = list(dict.fromkeys(r.submission for r in results))
-    qids = list(dict.fromkeys(r.question for r in results))
-    reference = stored(ws, subs, qids)
+def write(exam: Exam, ws: Workspace, results: Sequence[Result], out_dir: Path, *, images: bool = True,
+          reference: dict[tuple[str, str], tuple[str, bool]] | None = None) -> Path:
+    """`report.html` and `results.json` in `out_dir`; returns the report's path.
+    `reference`: the workspace's transcripts (`stored`), if the caller has them already."""
+    if reference is None:
+        reference = stored(ws, list(dict.fromkeys(r.submission for r in results)),
+                           list(dict.fromkeys(r.question for r in results)))
     out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     data = {'exam': exam.id, 'summary': summary(results, reference),
             'results': [vars(r) for r in results]}
