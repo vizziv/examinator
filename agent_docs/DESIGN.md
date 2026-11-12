@@ -1,4 +1,4 @@
-# Examiner: design
+# Examinator: design
 
 Read [`README.md`](README.md) first for what is decided, recommended and open.
 Unless a section says **Decided**, what follows is **Recommended**: a design the
@@ -17,7 +17,7 @@ names are placeholders.
 | Region | A rectangle on a printed exam page, in per-mille of that page. |
 | Variant | One of several printings of a question. A question with one printing has none. |
 | Cue | A piece of printed evidence that distinguishes variants. |
-| Stage | One step for one submission and question: `variant`, `transcribe`, `parse`, `check`, `grade`. |
+| Stage | One step for one submission and question, named by the artifact it writes: `variant`, `transcript`, `parse`, `evidence` (the check), `grade`. |
 | Artifact | The stored output of a stage. Editable by graders where the stage allows. |
 | Evidence | What a check found: data plus an ordered list of display blocks. |
 | Result | The typed value a question produces: a bool, a number, or a small named group. |
@@ -26,24 +26,28 @@ names are placeholders.
 ## 2. Shape
 
 ```text
-examiner/                 the library and app (this repository)
-  core/                   definitions, store, runner, workflow rules
-  pdf/  model/            rendering and scan layout; loopback model client
-  std/                    the standard library: stages, math, pseudocode, sampling, plots
+src/examinator/           the library and app (this repository)
+  core/                   definitions, store, runner, workflow rules, overrides, focus;
+                          intake (split, intake, identity) and reading a region (reading)
+  pdf/  model/            rendering, scan layout, orientation, writing PDFs; loopback model client
+  std/                    the standard library: stages, prompts, math, pseudocode, blocks
   web/                    server and browser interface
+src/examinator_kits/
+  stochastic/             optional kit for sampler questions (primitives, fit tests, checks)
 
 my_exam/                  an exam package (lives wherever the user keeps exams)
   exam.py                 builds and exposes `exam`
   ...                     any helper modules the exam needs
 
 workspace/                one exam's data (never in a repository)
-  pdfs/  ID.pdf, plus roster metadata
+  sources/  scanned stacks as added (intake)
+  pdfs/  ID.pdf, plus roster metadata for PDFs handed in already split
   exam.sqlite
   cache/  exports/
 ```
 
 ```sh
-examiner serve path/to/my_exam --workspace path/to/workspace
+examinator serve path/to/my_exam --workspace path/to/workspace
 ```
 
 One process serves one exam (**Decided**, for now). Keep no module-level state in
@@ -56,10 +60,10 @@ An exam is declared in Python. Plain data where data suffices, functions where i
 does not. See [`EXAM3.md`](EXAM3.md) for a complete example.
 
 ```python
-from examiner import Exam, Field, Region, Cue, Bool, Number
-from examiner.std import stages, math
+from examinator import Exam, Field, Region, Cue, Bool, Number
+from examinator.std import stages, math
 
-exam = Exam('midterm', title="Midterm", pages=12, front=[1], extra=[11, 12])
+exam = Exam('midterm', title="Midterm", pages=12)
 
 exam.question(
     'q1', title="Rectangles",
@@ -87,7 +91,7 @@ Design rules for this layer:
   ```python
   [stages.transcribe(),
    stages.parse_math(symbols=['a']),
-   stages.check_math(key=..., assume={'a': 'positive'}),
+   stages.check_math(key=..., symbols={'a': 'positive'}),
    stages.grade(math.all_correct)]
   ```
 
@@ -100,7 +104,7 @@ Design rules for this layer:
   in: a custom check, a custom cue, a custom grade rule. Exams build their own
   abstractions with ordinary Python (loops, helpers, shared lists).
 - **Definitions are data once built.** After `exam.py` runs, each question is a
-  frozen structure that can be hashed, displayed and (later) overridden.
+  frozen structure that can be hashed, displayed and overridden (`core/overrides.py`).
 
 ## 4. Stages and the stage context
 
@@ -135,15 +139,16 @@ The standard pipeline, and why each stage is separate:
 
 1. **`variant`** (only for questions with variants). Reads cues, narrows the
    candidate set. See §5.
-2. **`transcribe`** — model, images in, text out. Records what is on the page,
-   mistakes included. Never solves or corrects.
+2. **`transcript`** (`stages.transcribe`) — model, images in, text out. Records
+   what is on the page, mistakes included. Never solves or corrects.
 3. **`parse`** — model, text in, structured answer out (a JSON object of field
    values, or source code in the pseudocode language). This is what graders
    edit and verify against the scan.
-4. **`check`** — local code, no model. Produces evidence.
+4. **`evidence`** (the check: `stages.check`, `stages.check_math`) — local code,
+   no model. Produces evidence.
 5. **`grade`** — a pure, fast function from evidence to the question's result.
-   Runs in-process immediately after `check`. A grader's manual decision writes
-   this same artifact.
+   Runs in-process immediately after the check, one artifact per result part
+   (`grade`, or `grade:<part>`). A grader's manual decision writes this same artifact.
 
 A model output may contain `[REVIEW: reason]` wherever it is unsure. A stage
 refuses to consume an upstream artifact that still contains a marker; a check
@@ -165,8 +170,11 @@ treats a field containing one as undecided. Graders clear markers by editing.
 - The artifact records each cue's reading, the region used and the resulting
   candidates. The review page shows each cue's crop beside its reading with a
   control to correct it. A manual choice is authoritative until removed.
-- Until a variant is resolved, checks that depend on it are undecided and
-  exports of that question are skipped; other questions are unaffected.
+- Until a variant is resolved, checks that depend on it are undecided; other
+  questions are unaffected.
+- Reading a cue is `core/reading.py`, shared with intake's landmarks and identity
+  boxes: the prompt (with "expected to be one of" from `reads`), the basis
+  digest (region and question), the memo key.
 - A cue's region may be on any page. Regions are instructor-defined template
   rectangles. Do **not** ask the model to locate regions (see `LESSONS.md`).
 
@@ -219,7 +227,10 @@ as pure functions over stored rows, and test every row. Get it reviewed.
 
 Definitions, for one submission and question:
 
-- **Started:** any artifact exists.
+- **Started:** any artifact exists, other than per-submission settings and
+  intake records (`workflow.NOT_WORK`: the page selection, the scan layout, the
+  identity reading and the pick). Intake uses the same list to decide whether
+  a submission has grading work.
 - **Verified parse:** a human confirmed the parse's current content.
 - **Current evidence:** computed from the current parse, the current variant (if
   the check depends on it) and the current question definition.
@@ -261,20 +272,27 @@ grade is automatic or missing. It never replaces a manual grade.
 
 ```sql
 create table artifact (
-  submission   text not null,
-  question     text not null,
-  kind         text not null,      -- the stage name, or 'pages' / 'layout' overrides
+  submission   text not null,      -- or a source id, for its split plan
+  question     text not null,      -- '' for per-submission rows
+  kind         text not null,      -- a stage name; 'pages', 'layout', 'identity', 'who', 'split'
   body         text,
   origin       text not null,      -- 'auto' | 'manual'
   author       text,
   updated_at   text not null,
-  rev          integer not null,   -- increases on every write to this row
+  rev          integer not null,   -- from one workspace-wide counter; never reused
   inputs       text,               -- JSON: upstream {kind: rev}, definition hash, code hash
   verified_rev integer,            -- equals rev when a human approved this content
+  verified_by  text,
   primary key (submission, question, kind)
 );
 create table history (...);        -- same columns plus replaced_at; written on overwrite
 create table submission (id text primary key, name text, email text, pdf text, student text);
+create table setting (key text primary key, value text);        -- workspace defaults, roster, counters
+create table override (path, value, author, updated_at, rev);   -- live edits of exam data (§15)
+create table override_history (...);                            -- plus replaced_at
+create table source (id, file, name, sha256, pages, added_at);  -- intake: scanned stacks
+create table made (submission, source, pages, orient, made_at); -- intake: what each PDF holds
+create table memo (submission, key, value);                     -- model readings (cues, landmarks, boxes)
 ```
 
 - Every read on the normal path is a keyed lookup on `artifact`. History is
@@ -346,8 +364,7 @@ the PDF's identity, the page and the resolution.
   each submission can override it. The exam definition may supply the initial
   defaults for cover pages and the scan window; the workspace's saved settings
   take precedence once they exist.
-- A question names the `pages` that hold its answer (what the model sees) and
-  may name `export_pages` (its full printed extent, used by exports).
+- A question names the `pages` that hold its answer (what the model sees).
 - The printed page is usually reduced and inset within the scanned page. A
   **scan window** (left, top, right, bottom, per-mille of the scanned page) maps
   printed-page coordinates onto the scan. There is a workspace default and a
@@ -373,12 +390,17 @@ leave it out and let the exam package write it.
 
 | Module | Contents |
 | --- | --- |
-| `std.stages` | `transcribe`, `parse_math`, `parse_pseudocode`, `check_math`, `check(fn)`, `grade(fn)`, cue reading; bundles `math(...)` and `pseudocode(...)` that return lists of these. |
+| `std.stages` | `transcribe`, `parse_math`, `parse_pseudocode`, `check_math`, `check(fn)`, `grade(fn)`, `read_variant`; bundles `math(...)` and `pseudocode(...)` that return lists of these. |
 | `std.prompts` | Default prompt texts as values, and small functions that generate prompt fragments. |
 | `std.math` | A restricted expression parser feeding SymPy (expressions are data, never `eval`); equality under declared symbol assumptions; choice and text normalization; a key entry may be an expression string, a choice set, or a function `answer -> outcome`. |
 | `std.pseudocode` | A bounded interpreter for a Python-syntax teaching language: whitelisted syntax, no imports or attributes, step and randomness budgets; seeded sampling of a named function; instructor-supplied trusted primitives and constants registered through an API; selection of one entry point and its helpers; blank detection; error reports that name the failing expression and its operand values. The language description for prompts is a value. |
-| `std.sampling` | Goodness-of-fit helpers for samplers (KS against a CDF, chi-square against a PMF with merged tails, projected KS against a reference sampler in several dimensions), each returning an outcome and plot data. |
 | `std.blocks` | The evidence block vocabulary. |
+
+Sampler questions use an optional kit outside the standard library,
+`examinator_kits.stochastic`: random primitives for the pseudocode language,
+goodness-of-fit tests (support, KS, chi-square, projected KS) that return a
+verdict and a plot, and check scaffolding. It uses the core; the core never
+imports it.
 
 Out of the standard library: anything about a particular distribution, problem
 or rubric; multi-trial "try several interpretations" policies; numeric-constant
@@ -440,11 +462,10 @@ Do not build these in M1–M3. Do not block them either.
 
 | Later feature | What the core must already provide |
 | --- | --- |
-| Live editing of exam data (keys, regions, prompt notes) | Definitions are frozen data with a stable path to each value; `inputs` records a definition hash. An `override(path, value, author, updated_at)` table then layers on top. |
+| Live editing of exam data (keys, regions, prompt notes) | **Built** (`core/overrides.py`, the Exam page and the question page's editors). Plain data addressed by path, stored in the `override` table with history; an edit outdates exactly the checks whose stage hash it changes and rechecks them. |
 | Live-editable logic (small rules) | Grade rules are already just functions of evidence. A restricted interpreter (the pseudocode interpreter with a rules profile, or an embedded hermetic language) can supply such a function from stored text. |
 | Filter and search facets (group by normalized answer; search comments in parsed code) | **Built** (`core/focus.py`). A facet is a small function from stored rows to values, computed on read (one query per question and kind, JSON paths so plot blocks are not loaded) and cached by the store's version. |
 | Static student view | Evidence blocks carry an audience mark; a question may supply `feedback(evidence, grade)`. The view is a second renderer over stored rows. |
-| PDF exports by question variant | Resolved variants are queryable per question; page selection and cover counts are stored per submission; each variant names its blank template PDF. |
 | Several exams in one process | No module-level state; exam packages loaded under distinct names. |
 | Cross-question variant constraints | Variants stored as candidate sets per question. |
 | "Review me later" flag (a TA marks an answer for the professor to look over) | Not built. The glyph `!` is reserved for it in the grid and on the question page; `?` means only "a person must decide". The flag would be a small manual artifact per submission and question, with author and an optional note, and a built-in facet so the filter page can gather flagged answers. It must not affect whether a grade counts. |
@@ -463,15 +484,18 @@ submission into `pdfs/`; everything downstream is unchanged.
   sheet where each submission begins; its pages run to the next start, less
   dropped sheets), each marked confirmed or a guess, plus dropped sheets,
   landmark readings, the expected length and orientation (`core/split.py`).
-  Boundary logic is pure: `propose(n, length, read)` takes a reader
+  Boundary logic is pure: `split.propose(n, length, read)` takes a reader
   `sheet -> position | None` and is tested with plain dicts.
+  `intake.reguess` guesses a source's plan again and writes it.
 - **Landmarks** (`Exam(landmarks=[Landmark(name, region, ask, reads)])`): like
   a `Cue`, a region and a question for the model about printed text, reading
   normalised; `reads` maps a reading to a printed page (a title on page 1),
   or, absent, the reading is the page number. Readings are taken only where
   needed: at the expected boundary, then neighbours back and forth (a page
   number jumps straight to the right place), and memoised per source, sheet,
-  landmark, orientation and scan window.
+  landmark, orientation and scan window (`core/reading.py`, as for cues). A
+  failed model call leaves its sheet unread, not read as nothing; the plan
+  counts such sheets (`failed`) and is not marked checked when every call failed.
 - **Doubts** are computed, never stored: too few or too many pages, a first
   page whose landmark did not read as one, a page number out of place. A sheet
   never read is no doubt.
@@ -491,10 +515,12 @@ submission into `pdfs/`; everything downstream is unchanged.
   the image, so every written page is a plain scan for the renderer's fast
   path. A `made` table records each submission's source sheets and their
   orientation. Ids are opaque (`s0001`), allocated once, never reused.
-  Accepting marks every start confirmed. A submission that would change or
-  disappear while it has grading work (any artifact but the name) is refused
-  with the list (`Busy`); a forced accept keeps the work and clears that
-  submission's model memo.
+  Accepting marks every start confirmed. An entry left with no pages removes
+  its submission. A submission that would change or disappear while it has
+  grading work (any artifact outside `workflow.NOT_WORK`) is refused with the
+  list (`Busy`); a forced accept keeps the work and clears that submission's
+  model memo. PDFs are written to temporary files and moved into place only
+  after the store has committed, so a plan edit in between changes nothing.
 - **Who** (`core/identity.py`). A roster is optional for intake workspaces
   (still required for PDFs handed in already split). It is stored as a
   setting, `[{'name', 'id', 'email', 'key'}]`, read from a CSV/TSV with a
@@ -510,7 +536,8 @@ submission into `pdfs/`; everything downstream is unchanged.
     per box (region and question), scan window and cover pages. Stored as the
     artifact `(submission, '', 'identity')`, `{'fields', 'basis'}` (history like
     any artifact; unchanged readings are not rewritten); a reading under an old
-    box definition is ignored. A background job on the Scans page; hidden
+    box definition is ignored. A background job on the Scans page (and
+    `intake --names`) reads only what `identity.unread` lists; hidden
     without a model or boxes. Accepting a rewritten submission drops its
     reading (and memo), not its pick. No roster text ever reaches a prompt.
   - **Proposing** is pure: `propose(readings by roster field, roster)` ranks
