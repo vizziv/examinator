@@ -6,17 +6,24 @@ from examinator.core.store import Conflict
 from examinator.core.workflow import NOT_WORK, part_status, question_status, total
 from conftest import make_exam
 
-S, Q = 's1', 'a'
+S, Q, P = 's1', 'a', 'p'      # question 'a' reads the printing, question 'p' (no grade)
 
 
 def status(env, part='x', sub=S, q=Q, exam=None):
     exam0, ws, _ = env
     exam = exam or exam0
-    return part_status(exam.questions[q], part, ws.store.for_question(sub, q))
+    return part_status(exam.questions[q], part, ws.store.for_question(sub, q),
+                       parses=ws.store.of_kind(sub, 'parse'))
 
 
-def run_all(env, sub=S, q=Q):
+def run_all(env, sub=S, q=Q, printing=True):
+    """Run a question's stages; for 'a', first read the printing ('p') and, with
+    `printing`, verify it, so that only 'a' itself waits for a person."""
     exam, ws, runner = env
+    if q == Q and ws.store.get(sub, P, 'parse') is None:
+        assert runner.run_stage(sub, P, 'parse').ok
+        if printing:
+            verify(env, sub=sub, q=P)
     outs = runner.run_from(sub, q, exam.questions[q].stages[0].name)
     assert all(o.ok for o in outs), outs
 
@@ -77,15 +84,82 @@ def test_outdated_by_older_parse(env):
     assert (st.state, st.value, st.counts) == ('outdated', True, False)   # old evidence still visible
 
 
-def test_outdated_by_older_variant(env):
+def test_outdated_when_a_parse_it_read_changes(env):
+    """Row 'evidence computed from an older parse': another question's parse that
+    the check read counts as one of its inputs."""
     exam, ws, runner = env
     run_all(env)
     verify(env)
-    runner.choose_variant(S, Q, 'two', author='t')
+    assert ws.store.get(S, Q, 'evidence').reads == {P: ws.store.get(S, P, 'parse').rev}
+    runner.save(S, P, 'parse', {'c1': 'two', 'c2': 'two'}, author='t', verify=True)
     assert status(env).state == 'outdated'
-    runner.recheck(S, Q)
+    runner.recheck(S, P)                                   # rechecks the questions that read 'p'
     st = status(env)
-    assert (st.state, st.value) == ('graded', False)      # the other variant's key now applies
+    assert (st.state, st.value) == ('graded', False)      # the other printing's key now applies
+
+
+def test_waits_until_a_parse_it_read_is_verified(env):
+    """Row 'parse verified, evidence current': only when every parse the check read
+    is verified too; until then the grade waits, naming the question."""
+    exam, ws, runner = env
+    run_all(env, printing=False)
+    verify(env)
+    st = status(env)
+    assert (st.state, st.value, st.counts, st.waiting, st.waiting_on) == ('unverified', True, False, (), (P,))
+    verify(env, q=P)
+    assert (status(env).state, status(env).value) == ('graded', True)
+    runner.verify(S, P, 'parse', author='t', expect_rev=ws.store.get(S, P, 'parse').rev, verified=False)
+    assert status(env).waiting_on == (P,)
+
+
+def test_a_missing_parse_it_reads_leaves_the_check_undecided(env):
+    """A check that asks for a parse that does not exist is undecided and waits;
+    it is outdated once the parse appears, and a recheck then decides it."""
+    exam, ws, runner = env
+    for kind in ('transcript', 'parse', 'evidence'):
+        assert runner.run_stage(S, Q, kind).ok
+    verify(env)
+    ev = ws.store.get(S, Q, 'evidence')
+    assert ev.reads == {P: None} and ev.body['data'] == {'undecided': "no parse of p yet"}
+    st = status(env)
+    assert (st.state, st.value, st.counts, st.waiting_on) == ('unverified', None, False, (P,))
+    assert runner.run_stage(S, P, 'parse').ok
+    assert status(env).state == 'outdated'
+    verify(env, q=P)
+    runner.recheck(S, P)
+    assert (status(env).state, status(env).value) == ('graded', True)
+
+
+def test_a_check_that_reads_nothing_does_not_depend(env):
+    """What a check did not read does not hold it back or outdate it: question 'b'
+    reads no other question, whatever happens to 'p'."""
+    exam, ws, runner = env
+    run_all(env, q='b')
+    verify(env, q='b')
+    assert ws.store.get(S, 'b', 'evidence').reads == {}
+    assert runner.run_stage(S, P, 'parse').ok                    # exists, unverified
+    assert status(env, '', q='b').state == 'graded'
+    runner.save(S, P, 'parse', {'c1': 'two', 'c2': 'two'}, author='t')
+    assert status(env, '', q='b').state == 'graded'
+    assert runner.readers(S, P) == []
+
+
+def test_status_needs_the_parses_when_the_check_read_some(env):
+    exam, ws, runner = env
+    run_all(env)
+    with pytest.raises(TypeError):
+        part_status(exam.questions[Q], 'x', ws.store.for_question(S, Q))
+
+
+def test_a_question_with_no_result(env):
+    """The printing has a parse to verify and no grade: no status parts, nothing to total."""
+    exam, ws, runner = env
+    q = exam.questions[P]
+    assert q.result == {} and q.labels == ('c1', 'c2') and q.written == ()
+    assert runner.run_stage(S, P, 'parse').ok
+    assert ws.store.get(S, P, 'parse').body == {'c1': 'one', 'c2': 'one'}
+    assert question_status(q, ws.store.for_question(S, P)) == {}
+    assert runner.recheck(S, P) is None
 
 
 def test_outdated_by_older_definition(env):
@@ -222,35 +296,31 @@ def test_undecide_restores_automatic_grade(env):
     assert (status(env).state, status(env).value) == ('graded', True)
 
 
-def test_unresolved_variant_makes_the_check_undecided(env):
+def test_disagreeing_printed_fields_leave_the_check_undecided(env):
     exam, ws, runner = env
-    runner.model.script[('a', 'variant')] = lambda call: '{"value": "1"}' if "first cue" in call.prompt else '{"value": "ii"}'
+    runner.model.script[(P, 'read')] = lambda call: '{"value": "1"}' if "first cue" in call.prompt else '{"value": "ii"}'
     run_all(env)
-    assert ws.store.get(S, Q, 'variant').body['resolved'] is None
     verify(env)
     st = status(env)
-    assert st.state == 'unverified' and st.value is None and 'variant' in st.waiting
-    runner.choose_variant(S, Q, 'one', author='t')
-    runner.recheck(S, Q)
+    assert (st.state, st.value, st.reason) == ('needs_review', None, "p c1, p c2 disagree")
+    runner.save(S, P, 'parse', {'c1': 'one', 'c2': 'one'}, author='t', verify=True)
+    runner.recheck(S, P)
     assert (status(env).state, status(env).value) == ('graded', True)
 
 
-def test_single_cue_variant_needs_confirmation(env):
+def test_an_unread_printed_field_holds_the_parse_back(env):
+    """A printed field the model could not read carries a review marker: the parse
+    of the printing cannot be verified until a person fills it in."""
     exam, ws, runner = env
-    runner.model.script[('a', 'variant')] = lambda call: '{"value": "1"}' if "first cue" in call.prompt else '{"value": null}'
-    import dataclasses
-    exam.questions[Q] = dataclasses.replace(exam.questions[Q], require=1)
-    run_all(env)
-    verify(env)
-    assert ws.store.get(S, Q, 'variant').body['resolved'] == 'one'
-    assert status(env).state == 'graded'                         # the cues agreed as required: it counts
-    exam.questions[Q] = dataclasses.replace(exam.questions[Q], verify_variant=True)
-    assert status(env).waiting == ('variant',)                   # unless the exam has a person verify it
-    verify(env, 'variant')
-    assert status(env).state == 'graded'
+    runner.model.script[(P, 'read')] = lambda call: '{"value": "1"}' if "first cue" in call.prompt else '{"value": null}'
+    assert runner.run_stage(S, P, 'parse').ok
+    a = ws.store.get(S, P, 'parse')
+    assert a.body == {'c1': 'one', 'c2': '[REVIEW: not read]'}
+    with pytest.raises(ValueError):
+        runner.verify(S, P, 'parse', author='t', expect_rev=a.rev)
 
 
-def test_question_without_variants(env):
+def test_question_reading_nothing(env):
     run_all(env, q='b')
     verify(env, q='b')
     st = status(env, '', q='b')
@@ -261,12 +331,15 @@ def test_totals_count_only_counting_parts(env):
     exam, ws, runner = env
     run_all(env)
     run_all(env, q='b')
-    by_q = {q: question_status(exam.questions[q], ws.store.for_question(S, q)) for q in exam.questions}
+    parses = ws.store.of_kind(S, 'parse')
+    by_q = {q: question_status(exam.questions[q], ws.store.for_question(S, q), parses=parses)
+            for q in exam.questions}
     assert total(exam, by_q) == (0.0, False)                     # nothing verified
     verify(env)
     verify(env, q='b')
-    by_q = {q: question_status(exam.questions[q], ws.store.for_question(S, q)) for q in exam.questions}
-    assert total(exam, by_q) == (2.0, True)                      # a.x and b; a.y does not count
+    by_q = {q: question_status(exam.questions[q], ws.store.for_question(S, q), parses=parses)
+            for q in exam.questions}
+    assert total(exam, by_q) == (2.0, True)                      # a.x and b; a.y does not count; p has no result
 
 
 def test_stale_computation_is_discarded(env):
@@ -321,7 +394,7 @@ def test_batch_runs_everything_then_skips_protected(env):
     runner.decide(S, Q, 'x', False, author='ta')
     plan = batch.plan(exam, ws.store, select(exam), model_available=True)
     skipped = {(i.submission, i.question, i.stage) for i in plan.items if i.action == 'skip_protected'}
-    assert ('s1', 'a', 'parse') in skipped
+    assert ('s1', 'a', 'parse') in skipped and ('s1', 'p', 'parse') not in skipped
     batch.BatchRun(runner, plan).run()
     assert ws.store.get(S, Q, 'parse').verified
     assert status(env).state == 'manual'                          # a manual grade survives a batch

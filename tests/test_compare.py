@@ -28,7 +28,7 @@ def test_compare_runs_both_modes_and_leaves_the_store_alone(tmp_path):
     ws.sync()
     subs = [s.id for s in ws.store.submissions()][:2]
     qid = next(q.id for q in exam.questions.values() if any(f.region for f in q.fields))
-    boxes = sum(1 for f in exam.questions[qid].fields if f.region)
+    boxes = sum(1 for f in exam.questions[qid].fields if f.region and f.read is None)    # answer boxes, not printed fields
     before = ws.store.version()
 
     stage, ocr = compare.Entrant('a', ''), compare.Entrant('b', '', 'ocr', "Read:")

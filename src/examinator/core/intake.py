@@ -39,12 +39,12 @@ from ..pdf.orient import HALF, MIRROR, QUARTER, Orient
 from . import identity, reading, split
 from .defs import Landmark, digest
 from .reading import normalize
+from .printed import PRINTED_PROMPT
 from .store import ANY, Artifact, Conflict, Made, Source
-from .variants import CUE_PROMPT
 from .workflow import NOT_WORK
 
 PLAN = 'split'
-LANDMARK_PROMPT = CUE_PROMPT        # a landmark, like a cue, is printed text
+LANDMARK_PROMPT = PRINTED_PROMPT    # a landmark, like a printed field, is printed text
 
 
 class Busy(Conflict):

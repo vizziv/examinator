@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from ..core.defs import Question
-from ..core.variants import CUE_PROMPT  # noqa: F401  (re-exported)
+from ..core.printed import PRINTED_PROMPT  # noqa: F401  (re-exported)
 from ..model.client import PREAMBLE  # noqa: F401  (re-exported)
 
 TRANSCRIBE_ANSWERS = """\
@@ -50,8 +50,9 @@ a solution or pass stub. Return plain pseudocode, no Markdown. Use \
 
 
 def context(question: Question, note: str = "") -> str:
-    """What every stage prompt is followed by: the question and its field labels."""
-    lines = [f"Question: {question.title}", f"Answer labels: {', '.join(question.labels)}"]
+    """What every stage prompt is followed by: the question and the labels of the
+    fields the student writes (printed fields are read separately)."""
+    lines = [f"Question: {question.title}", f"Answer labels: {', '.join(question.written)}"]
     if note:
         lines.append(f"Note from the grader about this submission's pages: {note}")
     return "\n".join(lines)

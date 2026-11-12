@@ -34,9 +34,9 @@
  data-cover="{{ layout.cover_pages }}" data-pad="{{ exam.crop_pad }}" data-first="{{ first_page }}" data-pages="{{ exam.pages }}">
 {% if regions %}
 <div id="rg" class="bar">
-<button type="button" id="rg-on" data-action="regions" aria-pressed="false" title="edit field and cue regions on the scan">regions</button>
+<button type="button" id="rg-on" data-action="regions" aria-pressed="false" title="edit field regions on the scan">regions</button>
 <span id="rg-panel" class="bar" hidden>
-<select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.cue %} (cue){% endif %}</option>{% endfor %}</select>
+<select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.printed %} (printed){% endif %}</option>{% endfor %}</select>
 <label>p <input type="number" class="rg-n" min="1" max="{{ exam.pages }}" aria-label="page"></label>
 <input type="number" class="rg-n" min="0" max="1000" aria-label="left" title="left">
 <input type="number" class="rg-n" min="0" max="1000" aria-label="top" title="top">
@@ -82,6 +82,11 @@
 </span>
 </div>
 {% endfor %}
+{% if not parts %}<div class="part"><span class="pill g-n idle">no grade</span></div>{% endif %}
+{% for w in waits_on %}
+<div class="waits">waits on <a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ w.id|urlencode }}">{{ w.title }}</a>
+<span class="tag unv">{{ "no parse" if w.missing else "unverified" }}</span></div>
+{% endfor %}
 <div class="bar"><span class="grow"></span><button type="button" data-action="verify-next" class="primary" title="verify what waits ({{ waiting|join(', ') or 'nothing' }}), then the next submission">Verify, next</button></div>
 </div>
 <div id="chips" class="chips" hidden></div>
@@ -99,8 +104,8 @@
 {% if parse.mode == 'form' %}
 <div class="fields">
 {% for f in parse.fields %}
-<label class="field{% if f.marker %} marked{% endif %}">
-<span class="flabel">{{ f.label }}</span>
+<label class="field{% if f.marker %} marked{% endif %}{% if f.read %} read{% endif %}">
+<span class="flabel"{% if f.read %} title="{{ f.read.tag }}: {{ f.read.ask }}"{% endif %}>{{ f.label }}{% if f.read %} <span class="ftag">{{ f.read.tag }}</span>{% endif %}</span>
 <input type="text" data-label="{{ f.label }}" value="{{ f.value }}" spellcheck="false"{% if not parse.editable %} readonly{% endif %}>
 {% if f.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}" data-region="{{ f.crop.path }}"></span>{% endif %}
 </label>
@@ -136,35 +141,6 @@
 </form>
 {% endif %}
 
-{% if variant %}
-<div id="variant" data-live data-rev="{{ variant.rev }}" class="panel{% if not variant.resolved %} attention{% endif %}">
-<div class="bar">
-<span class="plabel">variant</span>
-{% if variant.resolved %}<b>{{ variant.resolved }}</b>{% else %}<span class="tag unv"><b class="qm">?</b> undecided</span>{% if variant.candidates %}<span class="dim">{{ variant.candidates|join(' / ') }}</span>{% endif %}{% endif %}
-{% if variant.manual %}<span class="tag">manual · {{ variant.art.author }}</span>{% endif %}
-{% if variant.art and variant.art.verified %}<span class="tag">verified · {{ variant.art.verified_by }}</span>
-{% elif variant.resolved and not variant.trusted %}<span class="tag unv">unverified</span>{% endif %}
-<select id="variant-pick" aria-label="choose variant"><option value="">choose…</option>{% for v in q.variants %}<option{% if v == variant.resolved and variant.manual %} selected{% endif %}>{{ v }}</option>{% endfor %}</select>
-<button type="button" data-action="variant-choose">set</button>
-{% if variant.art %}<button type="button" data-action="variant-clear" title="back to the cue readings">clear</button>{% endif %}
-{% if variant.resolved and variant.art and not variant.art.verified %}<button type="button" data-action="variant-verify">verify variant</button>{% endif %}
-</div>
-{% if variant.cues %}
-<div class="cues">
-{% for c in variant.cues %}
-<div class="cue">
-{% if c.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ c.crop.index }}.jpg" data-box="{{ c.crop.box }}" data-region="{{ c.crop.path }}"></span>{% endif %}
-<span class="cueline"><span class="flabel" title="{{ c.ask }}">{{ c.name }}</span>
-<input type="text" value="{{ '' if c.reading is none else c.reading }}" data-cue="{{ c.name }}" size="8" aria-label="reading" spellcheck="false">
-<button type="button" data-action="cue">set</button>
-{% if c.variant %}<span class="dim">→ {{ c.variant }}</span>{% else %}<span class="dim">→</span> <b class="qm" title="undecided">?</b>{% endif %}</span>
-</div>
-{% endfor %}
-</div>
-{% endif %}
-</div>
-{% endif %}
-
 <div id="evidence" data-live class="panel{% if evidence.art and not evidence.current %} stale{% endif %}"{% if not evidence.art %} hidden{% endif %}>
 {% if evidence.art %}
 {% if not evidence.current %}<span class="tag">outdated</span>{% endif %}
@@ -175,7 +151,7 @@
 
 {% if keys %}
 <details id="key" class="panel">
-<summary>key{% if variant and variant.resolved %} <span class="dim">{{ variant.resolved }}</span>{% endif %}{% if keys|selectattr('overridden')|list %} <span class="tag">edited</span>{% endif %}</summary>
+<summary>key{% if picked %} <span class="dim">{{ picked }}</span>{% endif %}{% if keys|selectattr('overridden')|list %} <span class="tag">edited</span>{% endif %}</summary>
 <p class="dim scope">edits apply to all submissions · <a href="{{ root }}/exam#{{ q.id }}">exam data</a></p>
 {% for e in keys %}{{ ed.entry(e) }}{% endfor %}
 </details>

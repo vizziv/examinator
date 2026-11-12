@@ -61,24 +61,18 @@ def check_region(region: Region, pages: int, what: str) -> None:
 
 @dataclass(frozen=True)
 class Field:
-    """One answer slot: a printed label and, usually, where its box is."""
+    """One slot of a question's parse: a printed label and, usually, where its box is.
+
+    `read` says how the value is read when the student does not write it: a
+    reader, called as `read(ctx, field) -> str | None` while the question's
+    parse stage runs (`core.printed.Printed` asks the model about the printed
+    text in `region`). None, the default: the student writes it, and the parse
+    stage reads it from the transcript. Either way the value sits in the parse,
+    where people edit and verify it.
+    """
     label: str
     region: Region | None = None
-
-
-@dataclass(frozen=True)
-class Cue:
-    """Printed evidence that distinguishes variants.
-
-    Either a `region` with a question to `ask` the model about the printed text
-    there and a map `reads` from readings to variant names, or a function
-    `fn(ctx) -> variant | None` for what a map cannot express.
-    """
-    name: str
-    region: Region | None = None
-    ask: str = ""
-    reads: Mapping[str, str] = field(default_factory=dict)
-    fn: Callable[['Context'], str | None] | None = None
+    read: Any = None
 
 
 @dataclass(frozen=True)
@@ -88,7 +82,7 @@ class Landmark:
 
     The model is asked `ask` about the printed text in `region` (printed-page
     coordinates, on whatever sheet is being looked at). With `reads`, a reading
-    maps (normalised, as for a `Cue`) to a printed page number, e.g. the title
+    maps (normalised, as for a printed field) to a printed page number, e.g. the title
     that only page 1 carries: `reads={'Midterm 2': 1}`. Without `reads`, the
     reading is the printed page number itself (a page-number footer).
     `region.page` is the first printed page that carries the landmark.
@@ -105,8 +99,8 @@ ROSTER_FIELDS = ('name', 'id', 'email')     # what a roster row may hold (`core.
 @dataclass(frozen=True)
 class Identity:
     """A box where the student writes who they are (a name, an ID, ...), read by
-    the model to propose a roster entry (`core.identity`). Like a `Cue`: a
-    `region` on a printed page and what to `ask` about it, here about the
+    the model to propose a roster entry (`core.identity`). Like a printed
+    field: a `region` on a printed page and what to `ask` about it, here about the
     handwriting. `roster` names the roster field the reading is compared with
     ('name', 'id' or 'email'); None shows the reading without comparing it.
     Several boxes may share a roster field (first and last name): their
@@ -220,12 +214,13 @@ def grade_kind(part: str) -> str:
 class Stage:
     """One step for one submission and question.
 
-    `name` is also the kind of the artifact it writes: 'variant', 'transcript',
-    'parse', 'evidence' or 'grade'. `fn(ctx)` returns the artifact body (text
-    or JSON-serializable data, or an `Evidence`). If `fn` has a method
-    `validate(question)`, `Exam.question` calls it, and it raises `ValueError`
-    for a configuration that does not fit the question (a key per variant
-    whose variants differ from the question's).
+    `name` is also the kind of the artifact it writes: 'transcript', 'parse',
+    'evidence' or 'grade'. `fn(ctx)` returns the artifact body (text or
+    JSON-serializable data, or an `Evidence`). A 'fields' stage returns the
+    fields the student writes; the runner adds the fields that have a reader
+    (`Field.read`). If `fn` has a method `validate(question, exam)`,
+    `Exam.question` calls it, and it raises `ValueError` for a configuration
+    that does not fit (a key chosen by a field the question does not have).
     """
     name: str
     fn: Callable[['Context'], Any]
@@ -234,7 +229,6 @@ class Stage:
     editable: bool = False          # graders may edit the artifact directly
     isolate: bool = False           # run in a subprocess with a wall-clock limit
     timeout: float | None = None    # seconds; None means the runner's default
-    uses_variant: bool = False      # result depends on the resolved variant
     accepts_markers: bool = False   # consume inputs that still carry [REVIEW: ...]
     shape: str = 'text'             # how the body is edited: 'text' | 'fields' ({label: answer}) | 'code'
     # Facets over what this stage writes (`core.focus.Facet`): display, not definition,
@@ -247,13 +241,9 @@ class Question:
     id: str
     title: str
     pages: tuple[int, ...]                 # printed pages holding the answer
-    result: Mapping[str, ResultSpec]       # part name -> spec; '' for a single result
+    result: Mapping[str, ResultSpec]       # part name -> spec; '' for a single result; empty: none
     fields: tuple[Field, ...]
     stages: tuple[Stage, ...]
-    variants: tuple[str, ...] = ()
-    cues: tuple[Cue, ...] = ()
-    require: int | None = None             # cues that must agree to resolve; None = all
-    verify_variant: bool = False           # True: a resolved variant still waits for a person
     facets: tuple[Any, ...] = field(default=(), metadata={'describe': False})   # question-level facets
     _hashes: dict = field(init=False, default_factory=dict, compare=False, repr=False)
 
@@ -263,6 +253,16 @@ class Question:
     @property
     def labels(self) -> tuple[str, ...]:
         return tuple(f.label for f in self.fields)
+
+    @property
+    def written(self) -> tuple[str, ...]:
+        """Labels of the fields the student writes (no reader): what the parse prompt asks for."""
+        return tuple(f.label for f in self.fields if f.read is None)
+
+    @property
+    def read_fields(self) -> tuple[Field, ...]:
+        """The fields with a reader (`Field.read`), read while the parse stage runs."""
+        return tuple(f for f in self.fields if f.read is not None)
 
     def column(self, part: str) -> str:
         """Name of the grid column for one result part."""
@@ -301,37 +301,34 @@ class Exam:
         self.code_hash: str = ''
 
     def question(self, id: str, *, title: str = "", pages: Sequence[int],
-                 result: ResultSpec | Mapping[str, ResultSpec],
+                 result: ResultSpec | Mapping[str, ResultSpec] | None = None,
                  fields: Sequence[Field] = (), stages: Sequence[Stage],
-                 variants: Sequence[str] = (),
-                 cues: Sequence[Cue] = (), require: int | None = None,
-                 verify_variant: bool = False, facets: Sequence[Any] = ()) -> Question:
+                 facets: Sequence[Any] = ()) -> Question:
+        """Add a question. Without a `result` it has a parse to verify (exam
+        information that other questions read, say) and no grade of its own."""
         if id in self.questions:
             raise ValueError(f"duplicate question {id!r}")
-        if not isinstance(result, Mapping):
+        if result is None:
+            result = {}
+        elif not isinstance(result, Mapping):
             result = {'': result}
         stages = list(stages)
         names = [s.name for s in stages]
         if len(set(names)) != len(names):
             raise ValueError(f"{id}: duplicate stage names {names}")
-        if variants and 'variant' not in names:
-            from .variants import read_variant
-            stages.insert(0, read_variant())
-        if cues and not variants:
-            raise ValueError(f"{id}: cues without variants")
         for i, s in enumerate(stages):
             for kind in s.inputs:
                 if kind not in [t.name for t in stages[:i]]:
                     raise ValueError(f"{id}: stage {s.name!r} reads {kind!r}, which no earlier stage writes")
+        if not result and 'grade' in names:
+            raise ValueError(f"{id}: a grade stage needs a `result`")
         q = Question(id=id, title=title or id, pages=tuple(pages), result=dict(result),
-                     fields=tuple(fields), stages=tuple(stages),
-                     variants=tuple(variants), cues=tuple(cues), require=require, verify_variant=verify_variant,
-                     facets=tuple(facets))
+                     fields=tuple(fields), stages=tuple(stages), facets=tuple(facets))
         self._check(q)
         for s in q.stages:              # a stage may check its configuration against the question
             check = getattr(s.fn, 'validate', None)
             if callable(check):
-                check(q)
+                check(q, self)
         from .focus import facets as all_facets
         all_facets(q)                    # checks names: built-in, stage and question facets together
         self.questions[id] = self.base[id] = q
@@ -339,44 +336,26 @@ class Exam:
 
     def _check(self, q: Question) -> None:
         """Mistakes in a question's data that are mistakes whatever the exam: `ValueError`."""
-        def dupes(names):
-            return sorted({n for n in names if list(names).count(n) > 1})
-        for what, names in (("field labels", q.labels), ("variants", q.variants),
-                            ("cue names", [c.name for c in q.cues])):
-            if dupes(names):
-                raise ValueError(f"{q.id}: duplicate {what} {dupes(names)}")
+        dupes = sorted({n for n in q.labels if q.labels.count(n) > 1})
+        if dupes:
+            raise ValueError(f"{q.id}: duplicate field labels {dupes}")
         for p in q.pages:
             if not 1 <= p <= self.pages:
                 raise ValueError(f"{q.id}: page {p} is not a printed page (1..{self.pages})")
         for f in q.fields:
             if f.region is not None:
                 check_region(f.region, self.pages, f"{q.id}: field {f.label!r}")
-        computed = sum(1 for c in q.cues if c.fn is not None)
-        for c in q.cues:
-            if c.fn is not None:
-                continue
-            if c.region is None or not c.ask:
-                raise ValueError(f"{q.id}: cue {c.name!r} needs a region and an `ask` (or `fn=` to compute it)")
-            check_region(c.region, self.pages, f"{q.id}: cue {c.name!r}")
-            named = {*c.reads.values()}
-            unknown = sorted(named - {*q.variants})
-            if unknown and named & {*q.variants}:
-                raise ValueError(f"{q.id}: cue {c.name!r} reads to {unknown}, which are not variants "
-                                 f"of the question {list(q.variants)}")
-            if not named & {*q.variants} and not computed:
-                raise ValueError(f"{q.id}: cue {c.name!r} reads to none of the variants {list(q.variants)}")
-        if not q.cues:
-            return
-        if q.require is not None and q.require > len(q.cues):
-            raise ValueError(f"{q.id}: require={q.require} but the question has {len(q.cues)} cue(s): "
-                             f"the variant could never resolve; set require={len(q.cues)} or add cues")
-        need = max(len(q.cues) if q.require is None else q.require, 1)
-        for v in q.variants:
-            able = sum(1 for c in q.cues if c.fn is not None or v in c.reads.values())
-            if able < need:
-                raise ValueError(f"{q.id}: variant {v!r} can be selected by {able} cue(s) but resolving "
-                                 f"needs {need}: give it a reading in every cue's `reads`"
-                                 + ("" if q.require is not None else ", or set `require`"))
+        for f in q.read_fields:
+            if f.region is None:
+                raise ValueError(f"{q.id}: field {f.label!r} has a reader but no region to read")
+            check = getattr(f.read, 'validate', None)
+            if callable(check):
+                check(f"{q.id}: field {f.label!r}")
+        parse = q.stage('parse')
+        if q.read_fields and (parse is None or parse.shape != 'fields'):
+            raise ValueError(f"{q.id}: a field with a reader is part of a parse of fields: give the "
+                             "question one (`stages.read_fields()` reads only such fields), or put the "
+                             "field in a question of its own that this one reads")
 
 
 # --- describing and hashing definitions --------------------------------------
@@ -462,14 +441,11 @@ def stage_hash(question: Question, stage: Stage) -> str:
     """Hash of the definition as one stage sees it.
 
     Covers the stage's own configuration (including exam code it calls) and the
-    question's labels, result and variants; for the variant stage also the cues.
-    Editing a key outdates the checks that used it and nothing else.
+    question's labels and result. Editing a key outdates the checks that used
+    it and nothing else.
     """
     if stage.name not in question._hashes:
-        seen = {'stage': stage, 'labels': question.labels,
-                'result': question.result, 'variants': question.variants}
-        if stage.name == 'variant':
-            seen.update(cues=question.cues, require=question.require)
+        seen = {'stage': stage, 'labels': question.labels, 'result': question.result}
         question._hashes[stage.name] = digest(seen)
     return question._hashes[stage.name]
 

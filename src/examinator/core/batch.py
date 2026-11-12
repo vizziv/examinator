@@ -56,9 +56,10 @@ class Plan:
 
 def stage_order(exam: Exam) -> list[str]:
     """Stage names in pipeline order across all questions: a name comes after every
-    name that precedes it in some question's own list (so a stage one question adds
-    in front, like reading the variant, still runs before what depends on it).
-    Ties, and orders that contradict each other, fall back to first appearance."""
+    name that precedes it in some question's own list. Ties, and orders that
+    contradict each other, fall back to first appearance. So every question's
+    parse is written before any check runs, and a check that reads another
+    question's parse finds it."""
     seen: list[str] = []
     before: dict[str, set[str]] = {}
     for q in exam.questions.values():

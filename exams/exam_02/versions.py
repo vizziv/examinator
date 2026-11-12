@@ -1,4 +1,4 @@
-"""The eight printings: three independent bits, each read from two printed cues.
+"""The eight printings: three independent bits, each read from two printed fields.
 
 Printing `alt<i>` has bit 1 set if `i & 1`, bit 2 if `i & 2`, bit 4 if `i & 4`
 (checked against the eight blank PDFs). A question's printing depends on one,
@@ -9,61 +9,66 @@ two or all three bits:
     bit 4   q2, q7, q10, q12        bits 1, 2, 4   q4
     none    q11
 
-A one-bit question reads that bit's two cues directly. For the others no single
-printed region shows the whole printing, so they declare the cues of every bit
-they depend on (which vote for nothing there) plus two computed cues, each
-combining one reading per bit into the question's variant name.
+The six printed fields live in the `info` question (`FIELDS`). A bit is its two
+fields agreeing (`std.fields.agree`); a question's printing is named from its
+bits by `Printing`, which its check uses to pick a key. Question 1 is printed
+four ways with one key, so it reads nothing.
 """
 import os
 from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
-from typing import Mapping
 
-from examinator import Cue, Region
-from examinator.core import variants
+from examinator import Field, Printed, Region
+from examinator.std import fields
 
 ORIGINAL, ALTERNATE = 'original', 'alternate'
 STATES = (ORIGINAL, ALTERNATE)
+INFO = 'info'
 
 
 def band(page, top, bottom):
     return Region(page, 0, top, 1000, bottom)
 
 
-def cue(name, region, ask, original, alternate):
+def printed(label, region, ask, original, alternate):
     reads = {text: state for state, texts in ((ORIGINAL, original), (ALTERNATE, alternate)) for text in texts}
-    return Cue(name, region=region, ask=ask, reads=reads)
+    return Field(label, region=region, read=Printed(ask, reads=reads))
 
 
-# bit -> its two printed cues
-CUES = {
-    1: (cue('q5_totals', band(10, 395, 510),
-            "the name of the list of totals defined in the printed code, exactly as printed",
-            ['totals_all'], ['totals_few']),
-        cue('q8_first', band(16, 280, 340),
-            "what printed question 8.1 supposes about m1 and m2: 'unequal' if m1 ≠ m2, 'equal' if m1 = m2",
-            ['unequal', '≠', '!=', 'm1 ≠ m2', 'm1 != m2'], ['equal', '=', 'm1 = m2'])),
-    2: (cue('q6_density', Region(12, 480, 205, 760, 330),
-            "the fraction printed for the case 0 <= r < 1 of the density f(r), as numerator/denominator",
-            ['3/6'], ['1/6']),
-        cue('q9_variance', band(18, 300, 365),
-            "the sample variance stated in the printed text, as a number",
-            ['4'], ['9'])),
-    4: (cue('q2_animal', band(4, 85, 165),
-            "the name of the function being written in question 2, without parentheses",
-            ['koala'], ['wombat']),
-        cue('q7_quantile', band(14, 85, 200),
-            "which quantile of D the unknown m is: 'median' or 'upper quartile'",
-            ['median'], ['upper quartile', 'quartile'])),
+# bit -> its two printed fields (in the `info` question)
+FIELDS = {
+    1: (printed('q5_totals', band(10, 395, 510),
+                "the name of the list of totals defined in the printed code, exactly as printed",
+                ['totals_all'], ['totals_few']),
+        printed('q8_first', band(16, 280, 340),
+                "what printed question 8.1 supposes about m1 and m2: 'unequal' if m1 ≠ m2, 'equal' if m1 = m2",
+                ['unequal', '≠', '!=', 'm1 ≠ m2', 'm1 != m2'], ['equal', '=', 'm1 = m2'])),
+    2: (printed('q6_density', Region(12, 480, 205, 760, 330),
+                "the fraction printed for the case 0 <= r < 1 of the density f(r), as numerator/denominator",
+                ['3/6'], ['1/6']),
+        printed('q9_variance', band(18, 300, 365),
+                "the sample variance stated in the printed text, as a number",
+                ['4'], ['9'])),
+    4: (printed('q2_animal', band(4, 85, 165),
+                "the name of the function being written in question 2, without parentheses",
+                ['koala'], ['wombat']),
+        printed('q7_quantile', band(14, 85, 200),
+                "which quantile of D the unknown m is: 'median' or 'upper quartile'",
+                ['median'], ['upper quartile', 'quartile'])),
 }
+
+
+def bit(n):
+    """One bit's state, 'original' or 'alternate': its two fields, which must agree."""
+    return fields.agree(*(fields.value(f.label, question=INFO) for f in FIELDS[n]))
 
 
 def _l_piece(mirrored, shifted):
     return ('left' if mirrored else 'right') + ('+1' if shifted else '')
 
 
-# question -> (the bits it depends on, {bit states: variant name})
+# question -> (the bits it depends on, {bit states: printing name}, or None for original/alternate)
 PRINTINGS = {
     'q1': ((1, 4), _l_piece),
     'q2': ((4,), None),
@@ -81,61 +86,51 @@ PRINTINGS = {
 
 
 def _table(qid) -> dict:
-    """{bit states (a tuple of bools): variant name} for one question."""
+    """{bit states (a tuple of bools): printing name} for one question."""
     bits, name = PRINTINGS[qid]
     if name is None:
         return {(False,): ORIGINAL, (True,): ALTERNATE}
     return {states: name(*states) for states in product((False, True), repeat=len(bits))}
 
 
-@dataclass(frozen=True)
-class Combine:
-    """A computed cue: one reading per bit, combined into a variant name.
+def names(qid) -> list:
+    """A question's printing names, in table order."""
+    return list(dict.fromkeys(_table(qid).values()))
 
-    The readings are the ones the standard variant stage has just made for the
-    question's own declared cues (shared per submission)."""
-    cues: tuple
-    names: Mapping          # {'original,alternate': variant}
+
+@dataclass(frozen=True)
+class Printing:
+    """A question's printing, from the bits it depends on (`fn(ctx) -> name`, for
+    `stages.math(by=...)` and the custom checks). Undecided while a bit is."""
+    qid: str
 
     def __call__(self, ctx):
-        states = []
-        for c in self.cues:
-            state = variants.vote(ctx, c)
-            if state is None:
-                return None
-            states.append(state)
-        return self.names[','.join(states)]
+        bits, _ = PRINTINGS[self.qid]
+        return _table(self.qid)[tuple(bit(b)(ctx) == ALTERNATE for b in bits)]
 
 
-def printing(qid) -> dict:
-    """`variants`, `cues` and `require` for one question."""
-    bits, _ = PRINTINGS[qid]
-    table = _table(qid)
-    names = list(dict.fromkeys(table.values()))
-    if len(bits) == 1:
-        return dict(variants=names, cues=list(CUES[bits[0]]))
-    by_state = {','.join(STATES[s] for s in states): name for states, name in table.items()}
-    declared = [c for bit in bits for c in CUES[bit]]
-    combined = [Cue(f'{qid}_{which}', fn=Combine(tuple(CUES[bit][i] for bit in bits), by_state))
-                for i, which in enumerate(('first', 'second'))]
-    return dict(variants=names, cues=declared + combined, require=2)
+def printing(qid):
+    """What picks a question's key: one bit directly (so its readings are checked
+    against the key at definition), or the bits combined."""
+    bits, name = PRINTINGS[qid]
+    return bit(bits[0]) if name is None else Printing(qid)
 
 
 def bits_of(alt: int) -> dict:
-    return {bit: bool(alt & bit) for bit in CUES}
+    return {b: bool(alt & b) for b in FIELDS}
 
 
-# alt index -> question -> variant
+# alt index -> question -> printing name
 VERSIONS = {alt: {qid: _table(qid)[tuple(bits_of(alt)[b] for b in bits)] for qid, (bits, _) in PRINTINGS.items()}
             for alt in range(8)}
 
 
 def readings(alt: int) -> dict:
-    """What each printed cue reads on one printing: cue name -> reading."""
+    """What each printed field reads on one printing: label -> reading."""
     out = {}
-    for bit, on in bits_of(alt).items():
-        for c in CUES[bit]:
-            out[c.name] = next(text for text, state in c.reads.items() if state == STATES[on])
+    for b, on in bits_of(alt).items():
+        for f in FIELDS[b]:
+            out[f.label] = next(text for text, state in f.read.reads.items() if state == STATES[on])
     return out
 
 

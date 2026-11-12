@@ -9,6 +9,7 @@ from examinator_kits.stochastic import checks
 from examinator_kits.stochastic import fit as sampling
 
 from .language import SCALAR, draw
+from .versions import PRINTING
 
 LABEL = '1'
 ENTRY = 'exponential'
@@ -45,5 +46,5 @@ def check_program(program: pseudocode.Program, meaning: str) -> checks.Part:
 
 
 def check(ctx):
-    meaning = MEANING[ctx.variant]
+    meaning = MEANING[PRINTING['q1'](ctx)]       # undecided until the printing agrees
     return checks.check_source(ctx.input('parse'), SCALAR, LABEL, lambda program: check_program(program, meaning))

@@ -1,5 +1,5 @@
 'use strict';
-// Region editing on the question page's scan: field and cue regions as rectangles
+// Region editing on the question page's scan: field regions as rectangles
 // to drag and resize, saved as exam-wide overrides (/exam/set).
 //
 // A region is [page, left, top, right, bottom] in per-mille of the printed page.
@@ -61,7 +61,7 @@
       if (!r.draft) continue;
       const s = sheet(r.draft[0], r === sel);
       if (!s) continue;
-      const box = make('div', {className: `rbox${r.cue ? ' cue' : ''}${r === sel ? ' sel' : ''}${dirty(r) ? ' dirty' : ''}`},
+      const box = make('div', {className: `rbox${r.printed ? ' printed' : ''}${r === sel ? ' sel' : ''}${dirty(r) ? ' dirty' : ''}`},
                        make('span', {className: 'rlabel', textContent: r.label}));
       box.dataset.path = r.path;
       if (r === sel) for (const h of ['nw', 'ne', 'sw', 'se']) {

@@ -87,7 +87,7 @@ class Artifact:
     author: str | None
     updated_at: str
     rev: int
-    inputs: Mapping[str, Any]   # {'revs': {kind: rev}, 'defn': hash, 'code': hash}
+    inputs: Mapping[str, Any]   # {'revs': {kind: rev}, 'reads': {question: parse rev}, 'defn': hash, 'code': hash}
     verified_rev: int | None
     verified_by: str | None
 
@@ -103,6 +103,11 @@ class Artifact:
     @property
     def revs(self) -> Mapping[str, int | None]:
         return self.inputs.get('revs') or {}
+
+    @property
+    def reads(self) -> Mapping[str, int | None]:
+        """Other questions' parses a check read (`Context.read`): revision, or None if absent."""
+        return self.inputs.get('reads') or {}
 
 
 @dataclass(frozen=True)
@@ -187,6 +192,13 @@ class Store:
                 (submission, question)).fetchall()
         return {r[2]: _row(r) for r in rows}
 
+    def of_kind(self, submission: str, kind: str) -> dict[str, Artifact]:
+        """One kind's artifacts of a submission, by question (every question's parse, say)."""
+        with self._lock:
+            rows = self._db.execute(
+                f'select {COLUMNS} from artifact where submission=? and kind=?', (submission, kind)).fetchall()
+        return {r[1]: _row(r) for r in rows}
+
     def all(self, *, kinds: Iterable[str] | None = None, bodies: bool = True) -> list[Artifact]:
         """Every artifact, in one query (the grid). `bodies=False` leaves bodies `None`."""
         cols = COLUMNS if bodies else COLUMNS.replace('body', 'null')
@@ -249,9 +261,10 @@ class Store:
         if expect_rev is not ANY and (cur.rev if cur else None) != expect_rev:
             raise Conflict(f"{kind} changed")
         for k, rev in (guard or {}).items():
-            g = self.get(submission, question, k)
+            other, k = (question, k) if isinstance(k, str) else k
+            g = self.get(submission, other, k)
             if (g.rev if g else None) != rev:
-                raise Conflict(f"{k} changed")
+                raise Conflict(f"{k} changed" if other == question else f"{other} {k} changed")
         return cur
 
     def _archive(self, cur: Artifact) -> None:
@@ -262,14 +275,14 @@ class Store:
 
     def write(self, submission: str, question: str, kind: str, body: Any, *,
               origin: str, author: str | None = None, inputs: Mapping | None = None,
-              expect_rev: int | None | _Any = ANY, guard: Mapping[str, int | None] | None = None,
+              expect_rev: int | None | _Any = ANY, guard: Mapping[Any, int | None] | None = None,
               verified: bool = False, unless_protected: bool = False) -> Artifact:
         """Create or replace one artifact; the replaced row goes to history.
 
         `expect_rev` is the revision the writer last saw (`None`: must not
-        exist). `guard` maps other kinds of the same submission and question to
-        the revisions a computation read; the write happens only if all are
-        still current. With `unless_protected`, content a grader wrote or
+        exist). `guard` maps other kinds of the same submission and question
+        (or `(question, kind)` pairs of another question) to the revisions a
+        computation read; the write happens only if all are still current. With `unless_protected`, content a grader wrote or
         verified is never replaced, even if that happened a moment ago.
         Saving unchanged content by hand is a no-op.
         """

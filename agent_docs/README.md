@@ -17,7 +17,7 @@ Build **Examiner**: a Python library for building exam graders, plus the app
 that runs one. An instructor scans handwritten exams to PDF. For each
 submission and each question, Examiner:
 
-1. works out which variant of the question the student received,
+1. reads which printing of the exam (or question) the student received,
 2. transcribes the handwritten final answer with a local vision model,
 3. parses the transcription into a structured answer,
 4. checks it with local, deterministic code, and
@@ -60,11 +60,13 @@ Each statement falls into one of three classes. Treat them differently.
   append-only, and nothing should require a materialized-view engine.
 - **One exam per process for now.** Multiple exams in one process may come
   later; do not build it, and do not make it hard (keep no module-level state).
-- **Variants are per question.** Each question has its own list of variants.
-  Variants are usually **covert**: there is no printed version marker, because
-  students should not be able to tell. The variant must be inferred from printed
-  data in the question itself. Constraints across questions (allowed
-  combinations) are a later layer.
+- **Printings are read into fields.** An exam may be printed in several
+  versions, usually **covertly**: there is no printed version marker, because
+  students should not be able to tell. The printing is inferred from printed
+  data, read into *printed fields* of a question's parse (in the question
+  itself, or in one question holding the whole exam's printing) and verified
+  like any parse. Checks read other questions' parses; the library records what
+  they read (`DESIGN.md` §5).
 - **Grades are typed values, not check marks.** A question's result is a `bool`,
   an `int`, or a `float`, optionally with a range, or a small named group of
   those. "Two outputs is secretly two questions" is the user's rule of thumb, so
@@ -84,7 +86,7 @@ Each statement falls into one of three classes. Treat them differently.
   against JavaScript and Node; avoid a Node toolchain and keep browser code small.
 - **In scope eventually:** live editing of exam *data* (keys, regions, prompt
   notes) through the app; a static per-student view of results; PDF exports
-  grouped by question variant.
+  grouped by question and printing.
 
 ## Not negotiable
 
@@ -147,8 +149,8 @@ You will probably lead a team of subagents. What I would want in your position:
    - The library package contains no Exam 3 identifiers. A test greps it for
      question ids and topic words (`q2`, `weibull`, `poisson`, `huge`, `shiny`).
    - A second, deliberately different **toy exam** runs through the same app:
-     one question scored as a number in a range with three variants, one boolean
-     question with no variants. If the toy exam needs a library change, the
+     one question scored as a number in a range with three printings, one boolean
+     question printed one way. If the toy exam needs a library change, the
      library was not generic.
 8. **Ask the user when it changes what they see or do; decide the rest.** They
    have said style and implementation detail are yours.
@@ -174,8 +176,7 @@ client, the math checker, the pseudocode interpreter, sampling diagnostics.
 have been exercised once against real blank PDFs and the real loopback model.
 
 **M3 — The app.** Grid, question page (scan crops beside editable parsed answer,
-evidence, grade), verify and decide, single runs, batch runs with a preview,
-variant review.
+evidence, grade), verify and decide, single runs, batch runs with a preview.
 *Check:* a real-browser smoke test on the synthetic workspace: edit a parse,
 verify it, watch the check rerun, override a grade, run a protected batch.
 
@@ -184,8 +185,8 @@ verify it, watch the check rerun, override a grade, run a protected batch.
 versions, every question grades correct; deliberately wrong answers grade
 incorrect; the overfitting checks in step 7 pass.
 
-**M5 and after, in the order the user prefers:** PDF exports by question
-variant; live editing of exam data; filter-and-search facets; the static student
+**M5 and after, in the order the user prefers:** PDF exports by question and
+printing; live editing of exam data; filter-and-search facets; the static student
 view; server deployment behind an authenticating proxy. `DESIGN.md` §15 says what
 each needs from the core so that M1–M3 do not block them.
 

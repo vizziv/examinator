@@ -4,7 +4,7 @@
     GET  /filter                    the filter page: facets of every question
     GET  /focus/values              facet values for all submissions (?sub=: one), JSON
     GET  /s/{sub}/{q}               question page
-    POST /s/{sub}/{q}/{action}      save verify decide undecide variant cue run pages restore
+    POST /s/{sub}/{q}/{action}      save verify decide undecide run pages restore
     POST /s/{sub}/layout            per-submission layout override
     GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
     GET  /raw/{sub}/{q}/{path}      one evidence 'raw' block, sandboxed
@@ -12,7 +12,7 @@
     GET  /scan                      scan window that follows the question page
     GET  /runs                      batch runs;  POST /runs/preview|start|stop,  GET /runs/status
     GET  /settings                  workspace defaults;  POST /settings
-    GET  /exam                      exam data (overrides);  POST /exam/set|clear|variants
+    GET  /exam                      exam data (overrides);  POST /exam/set|clear
     GET  /scans                     intake: sources, split plans, accept;  GET /scans/{src}/plan (JSON)
     POST /scans/upload?name=        a scanned PDF as the raw request body (streamed to disk)
     POST /scans/{src}/{action}      edit propose undo accept;  POST /scans/roster, /scans/who
@@ -49,12 +49,13 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from ..core import batch, focus, grid, identity, intake, overrides, split
+from ..core.context import Context
 from ..core.defs import Bool, Exam, Question, grade_kind, has_marker
+from ..core.printed import Printed
+from ..core.reading import normalize
 from ..core.runner import Runner
 from ..core.store import Conflict
-from ..core import variants
-from ..core.variants import resolved
-from ..core.workflow import evidence_current, question_status, seen_revs, variant_trusted
+from ..core.workflow import evidence_current, question_status, seen_revs
 from ..core.workspace import Workspace
 from ..pdf.layout import Layout
 from ..pdf.orient import Orient
@@ -308,20 +309,36 @@ def entry_view(e: overrides.Entry, revs: dict, label: str | None = None) -> dict
             'rows': min(max(text.count('\n') + 2, 2), 24)}
 
 
-def key_entries(q: Question, entries: list[overrides.Entry], revs: dict, variant: str | None) -> list[dict]:
-    """A question's key entries (stage configuration under 'key'), for one variant
-    when the key is per variant and the variant is known."""
+def picked_key(q: Question, arts: dict, parses: dict) -> str | None:
+    """Which of a key per value (a stage's `key` with `by`, as `std.stages.check_math`
+    has) the current parses pick, or None: no such key, or it cannot tell."""
+    fn = getattr(q.stage('evidence'), 'fn', None)
+    by, key = getattr(fn, 'by', None), getattr(fn, 'key', None)
+    parse = arts.get('parse')
+    if by is None or not isinstance(key, dict) or parse is None:
+        return None
+    ctx = Context(submission=parse.submission, question=q, stage='evidence', inputs={'parse': parse.body},
+                  parses={qid: (a.rev, a.body) for qid, a in parses.items()})
+    try:
+        value = normalize(str(by(ctx)))
+    except Exception:
+        return None
+    return next((name for name in key if normalize(str(name)) == value), None)
+
+
+def key_entries(entries: list[overrides.Entry], revs: dict, keys: list[str], picked: str | None) -> list[dict]:
+    """A question's key entries (stage configuration under 'key'); of a key per
+    value (`keys` its names), only the one picked when that is known."""
     out = []
     for e in entries:
         segs = overrides.split(e.path)[1:]
         if len(segs) < 4 or segs[0] != 'stages' or segs[2] != 'key':
             continue
         rest = segs[3:]
-        if len(rest) > 1 and rest[0] in q.variants:
-            if variant is not None and rest[0] != variant:
+        if len(rest) > 1 and rest[0] in keys and picked is not None:
+            if rest[0] != picked:
                 continue
-            if variant is not None:
-                rest = rest[1:]
+            rest = rest[1:]
         out.append(entry_view(e, revs, ' / '.join(rest)))
     return out
 
@@ -415,9 +432,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             cells = []
             for q in exam.questions.values():
                 cell = row.cells[q.id]
-                if q.variants:
-                    cells.append({'variant': True, 'qid': q.id, 'text': cell.variant or '?',
-                                  'open': cell.variant is None})
                 for part in q.result:
                     st = cell.status[part]
                     cells.append({'qid': q.id, 'col': q.column(part), 'state': st.state,
@@ -426,8 +440,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
                          'complete': row.complete, 'sort': row.points,
                          'hidden': bool(sel) and not focus.matches(table, sel, row.submission.id)})
-        started = any(c.get('state', 'not_started') != 'not_started' or c.get('variant') and not c['open']
-                      for r in rows for c in r['cells'])
+        started = any(c['state'] != 'not_started' for r in rows for c in r['cells'])
         return page('grid.html', rows=rows, columns=columns, questions=list(exam.questions.values()),
                     focus=focus.active(table, sel), started=started)
 
@@ -463,7 +476,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     def question_page(request: Request) -> Response:
         sub, q = target(request)
         arts = store.for_question(sub.id, q.id)
-        status = question_status(q, arts, code_hash=exam.code_hash)
+        parses = store.of_kind(sub.id, 'parse')
+        status = question_status(q, arts, parses=parses, code_hash=exam.code_hash)
         layout = ws.layout(sub.id)
         try:
             count = ws.scan_page_count(sub.id)
@@ -490,6 +504,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             return {'kind': kind, 'art': art, 'rev': art.rev if art else '', 'editable': stage.editable,
                     'marker': art is not None and has_marker(art.body)}
 
+        # fields read from the printing (or by another reader): shown with what was asked
+        asks = {f.label: {'tag': "printed" if isinstance(f.read, Printed) else "read",
+                          'ask': getattr(f.read, 'ask', "")} for f in q.read_fields}
         parse = editor('parse')
         if parse:
             body = parse['art'].body if parse['art'] else None
@@ -502,7 +519,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 names = list(q.labels) + [k for k in body if k not in q.labels]
                 parse['fields'] = [{'label': n, 'value': '' if body.get(n) is None else str(body[n]),
                                     'crop': crop(regions.get(n), 'fields', n, 'region'),
-                                    'marker': has_marker(body.get(n))}
+                                    'marker': has_marker(body.get(n)), 'read': asks.get(n)}
                                    for n in names]
             else:
                 parse['text'] = body or ''
@@ -514,23 +531,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         if transcript:
             transcript.update(mode='code', text=transcript['art'].body if transcript['art'] else '')
 
-        variant = None
-        if q.variants:
-            art = arts.get('variant')
-            body = art.body if art and isinstance(art.body, dict) else {}
-            cues = body.get('cues') or {}
-            variant = {
-                'art': art, 'rev': art.rev if art else '', 'resolved': resolved(body),
-                'candidates': body.get('candidates') or [], 'trusted': variant_trusted(q, arts),
-                'manual': art is not None and art.origin == 'manual',
-                'cues': [{'name': c.name, 'ask': c.ask, 'crop': crop(c.region, 'cues', c.name, 'region'),
-                          'fixed': c.fn is not None,
-                          'reading': (cues.get(c.name) or {}).get('reading'),
-                          'variant': (cues.get(c.name) or {}).get('variant')} for c in q.cues]}
-
         ev = arts.get('evidence')
         blocks = prepare_blocks((ev.body or {}).get('blocks')) if ev and isinstance(ev.body, dict) else []
-        evidence = {'art': ev, 'current': evidence_current(q, arts),
+        evidence = {'art': ev, 'current': evidence_current(q, arts, parses),
                     'plots': [b for b in blocks if b['type'] == 'plot'],
                     'rest': [b for b in blocks if b['type'] != 'plot']}
 
@@ -542,9 +545,14 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             elif st.waiting:
                 out.append("verify " + ", ".join(w for w in st.waiting if w != 'input'))
             reason = REASONS.get(st.reason, st.reason) if st.value is None else None
-            if reason and not ('variant' in st.waiting and 'variant' in reason):
+            if reason and not (st.waiting_on and reason.startswith("no parse of")):
                 out.append(reason)
             return " · ".join(out)
+
+        # other questions whose parse a check read and that wait for a person: linked
+        waits_on = [{'id': qid, 'title': exam.questions[qid].title if qid in exam.questions else qid,
+                     'missing': qid not in parses}
+                    for qid in dict.fromkeys(w for st in status.values() for w in st.waiting_on)]
 
         parts = []
         for part, spec in q.result.items():
@@ -571,7 +579,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         stages = [{'name': s.name, 'model': s.uses_model, 'off': s.uses_model and not have_model(),
                    'replaces': replaces([s.name]), 'replaces_on': replaces(names[i:])} for i, s in enumerate(q.stages)]
         # what a person is asked to verify before the grades count, parse first
-        waiting = [w for w in ('parse', 'transcript', 'variant') if any(w in p['st'].waiting for p in parts)]
+        waiting = [w for w in ('parse', 'transcript') if any(w in p['st'].waiting for p in parts)]
+        # a question with no result: its parse is still for a person to verify
+        if not q.result and parse and parse['art'] is not None and not parse['art'].verified:
+            waiting.append('parse')
         history = [{'rev': a.rev, 'at': a.updated_at[:16].replace('T', ' '), 'who': a.author or a.origin,
                     'verified': a.verified,
                     'preview': (a.body if isinstance(a.body, str) else json.dumps(a.body, ensure_ascii=False))[:300]}
@@ -585,12 +596,16 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         for e in entries:
             if e.kind == 'region':
                 segs = overrides.split(e.path)
-                regions.append({'path': e.path, 'label': segs[2], 'cue': segs[1] == 'cues', 'region': e.current,
-                                'base': e.base, 'stored': e.path in revs, 'rev': revs.get(e.path)})
-        keys = key_entries(q, entries, revs, variant['resolved'] if variant else None)
+                regions.append({'path': e.path, 'label': segs[2], 'printed': segs[2] in asks,
+                                'region': e.current, 'base': e.base, 'stored': e.path in revs,
+                                'rev': revs.get(e.path)})
+        check = getattr(q.stage('evidence'), 'fn', None)
+        names = [str(k) for k in getattr(check, 'key', None) or {}] if getattr(check, 'by', None) else []
+        picked = picked_key(q, arts, parses)
+        keys = key_entries(entries, revs, names, picked)
         return page(
             'question.html', sub=sub, q=q, parts=parts, scans=scans, parse=parse, loose=loose, transcript=transcript,
-            variant=variant, evidence=evidence, stages=stages, history=history, count=count,
+            evidence=evidence, stages=stages, history=history, count=count, waits_on=waits_on, picked=picked,
             seen=seen_revs(q, arts), waiting=waiting,
             pages=pages, note=note, pages_default=q.pages, layout=layout,
             layout_over=over.body if over else None, regions=regions, keys=keys,
@@ -661,24 +676,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     def undecide(request, data):
         sub, q = target(request)
         runner.undecide(sub.id, q.id, part_of(q, data), expect_rev=_rev(data))
-
-    def choose_variant(request, data):
-        sub, q = target(request)
-        variant = data.get('variant') or None
-        if not q.variants or (variant is not None and variant not in q.variants):
-            raise Bad("unknown variant")
-        runner.choose_variant(sub.id, q.id, variant, author=who(request), expect_rev=_rev(data))
-        return {'job': recheck(sub.id, q.id)}
-
-    def correct_cue(request, data):
-        sub, q = target(request)
-        reading = data.get('reading')
-        if reading is not None and not isinstance(reading, str):
-            raise Bad("reading: expected text")
-        reading = (reading or '').strip()[:200] or None
-        runner.correct_cue(sub.id, q.id, str(data.get('cue')), reading, author=who(request),
-                           expect_rev=_rev(data))
-        return {'job': recheck(sub.id, q.id)}
 
     def run(request, data):
         sub, q = target(request)
@@ -879,18 +876,17 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             for sid in subs:
                 arts = store.for_question(sid, qid)
                 if arts:
-                    status = question_status(q, arts, code_hash=exam.code_hash)
+                    status = question_status(q, arts, parses=store.of_kind(sid, 'parse'),
+                                             code_hash=exam.code_hash)
                     affected += sum(st.state in ('outdated', 'manual_outdated') for st in status.values())
         job = jobs.start_each([(s, qid) for s in subs for qid in change.questions], runner.recheck) \
             if change.questions else None
         segs = overrides.split(path)
-        cue = len(segs) == 4 and segs[1] == 'cues' and segs[3] in ('region', 'ask')
         entry = next((e for e in overrides.editable(exam, segs[0]) if e.path == path), None)
         return {'rev': o.rev if o else None, 'value': entry.current if entry else None,
                 'text': show_value(entry.kind, entry.current) if entry else '',
                 'overridden': o is not None, 'questions': list(change.questions), 'affected': affected,
-                'job': job, 'variants': [segs[0]] if cue and have_model() else [],
-                'skipped': [{'path': s.path, 'reason': s.reason} for s in change.skipped]}
+                'job': job, 'skipped': [{'path': s.path, 'reason': s.reason} for s in change.skipped]}
 
     def _conflict(e: Conflict, path: str) -> Conflict:
         o = store.overrides().get(path)
@@ -916,20 +912,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         except Conflict as e:
             raise _conflict(e, path) from None
         return _changed(path, change, data)
-
-    def exam_variants(request, data):
-        """Read the cues again where a changed cue left the variant open."""
-        if not have_model():
-            raise Bad("model unavailable")
-        qids = _strings(data.get('questions') or [], [k for k, q in exam.questions.items() if q.variants],
-                        "questions")
-        items = variants.to_read_again(exam, store, qids)
-
-        def reread(sid, qid):
-            out = runner.run_stage(sid, qid, 'variant')
-            return [out] + ([o] if out.ok and (o := runner.recheck(sid, qid)) else [])
-
-        return {'job': jobs.start_each(items, reread), 'n': len(items)}
 
     # --- intake: scans in, submissions out ---
 
@@ -1153,8 +1135,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         post('/s/{sub}/{q}/verify', verify),
         post('/s/{sub}/{q}/decide', decide),
         post('/s/{sub}/{q}/undecide', undecide),
-        post('/s/{sub}/{q}/variant', choose_variant),
-        post('/s/{sub}/{q}/cue', correct_cue),
         post('/s/{sub}/{q}/run', run),
         post('/s/{sub}/{q}/pages', set_pages),
         post('/s/{sub}/{q}/restore', restore),
@@ -1172,7 +1152,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         Route('/exam', exam_page),
         post('/exam/set', exam_set),
         post('/exam/clear', exam_clear),
-        post('/exam/variants', exam_variants),
         Route('/scans', scans_page),
         Route('/scans/upload', scans_upload, methods=['POST']),
         post('/scans/roster', scans_roster),

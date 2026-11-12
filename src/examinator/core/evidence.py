@@ -8,8 +8,9 @@ Standard checks put `{'fields': {label: {'answer': ..., 'outcome': ...}}}` in
 `data`, with outcome 'correct', 'incorrect', 'blank' or None (could not
 decide). Custom checks may put anything there; only their own grade rule reads it.
 
-A check that could not run at all (timeout, crash, unresolved variant) is
-stored with `data == {'undecided': reason}`; every part is then undecided.
+A check that could not reach a verdict at all (timeout, crash, `Undecided`
+raised, another question's parse not there yet) is stored with
+`data == {'undecided': reason}`; every part is then undecided.
 """
 from __future__ import annotations
 
@@ -17,6 +18,12 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 OUTCOMES = ('correct', 'incorrect', 'blank', None)
+
+
+class Undecided(Exception):
+    """Raised by a check that cannot decide anything (the printing's fields
+    disagree, say): every part is undecided, and the message, a few words of
+    the exam's own, is the reason graders see. Never quote student text in it."""
 
 
 @dataclass

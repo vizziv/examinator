@@ -12,9 +12,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from examinator import Context, load_exam, synth
+from examinator import Context, Printed, Undecided, load_exam, synth
 from examinator.core.evidence import EvidenceView, body_of
 from examinator.core.runner import Runner
+from examinator.core.workflow import part_status
 from examinator.core.workspace import Workspace
 from examinator.std import pseudocode
 from examinator_kits.stochastic import checks
@@ -38,24 +39,33 @@ def pkg(exam):
     return lambda name: importlib.import_module(f'{EXAM.name}.{name}')
 
 
-def outcomes(exam, qid, parse, variant=None):
-    """Run one question's check directly on a parse body: `({label: outcome}, body)`."""
+def context(exam, qid, parse, info=None):
+    """A check's context, with `info`'s parse body (or no `info` parse)."""
     q = exam.questions[qid]
-    body = body_of(q.stage('evidence').fn(Context(
-        submission='synthetic', question=q, stage='evidence', variant=variant, inputs={'parse': parse})))
+    parses = {other: None for other in exam.questions if other != qid}
+    if info is not None:
+        parses['info'] = (1, info)
+    return Context(submission='synthetic', question=q, stage='evidence', inputs={'parse': parse}, parses=parses)
+
+
+def outcomes(exam, qid, parse, printing=None):
+    """Run one question's check directly on a parse body, with every printed field of
+    `info` read as `printing` (or no `info` parse): `({label: outcome}, body)`."""
+    info = None if printing is None else {f.label: printing for f in exam.questions['info'].fields}
+    body = body_of(exam.questions[qid].stage('evidence').fn(context(exam, qid, parse, info)))
     return {label: f['outcome'] for label, f in body['data']['fields'].items()}, body
 
 
-def verdict(exam, qid, source, variant='original'):
+def verdict(exam, qid, source, printing='original'):
     """A sampler question's single outcome and its note."""
-    _, body = outcomes(exam, qid, source, variant)
+    _, body = outcomes(exam, qid, source, printing)
     f = body['data']['fields'][SAMPLERS[qid]]
     return f['outcome'], f['note']
 
 
-def grade(exam, qid, parse, variant=None):
+def grade(exam, qid, parse, printing=None):
     q = exam.questions[qid]
-    _, body = outcomes(exam, qid, parse, variant)
+    _, body = outcomes(exam, qid, parse, printing)
     return q.result[''].coerce(q.stage('grade').fn(Context(
         submission='synthetic', question=q, stage='grade', inputs={'evidence': body})))
 
@@ -66,68 +76,84 @@ def test_selftest(exam, tmp_path):
     assert synth.selftest(exam, tmp_path / 'ws') == []
 
 
-def test_definition(exam):
-    assert list(exam.questions) == [f'q{i}' for i in range(1, 7)]
+def test_definition(exam, pkg):
+    versions = pkg('versions')
+    assert list(exam.questions) == ['info'] + [f'q{i}' for i in range(1, 7)]
     assert exam.pages == 16 and exam.cover_pages == 1 and exam.scan_window == (60, 55, 920, 825)
+    info = exam.questions['info']
+    assert info.result == {} and list(info.fields) == versions.FIELDS
+    assert all(isinstance(f.read, Printed) and set(f.read.reads.values()) == {'original', 'alternate'}
+               for f in info.fields)
+    labels = {f.label: f for f in info.fields}
+    assert set(versions.PRINTING) == set(VARIED)
     for qid, q in exam.questions.items():
-        assert list(q.result) == ['']
-        assert q.result[''].counts == (qid not in ('q5', 'q6'))         # the shiny questions do not count
-        if qid in VARIED:
-            assert q.variants == ('original', 'alternate') and len(q.cues) == 2
-            assert q.stage('evidence').uses_variant
-            assert any(c.region.page in (q.pages[0] - 1, q.pages[0]) for c in q.cues)  # one cue from its own pages
-        else:
-            assert not q.variants
         for f in q.fields:
             assert f.region.page in q.pages
+        if qid == 'info':
+            continue
+        assert list(q.result) == ['']
+        assert q.result[''].counts == (qid not in ('q5', 'q6'))         # the shiny questions do not count
+        if qid in VARIED:       # two printed fields of info, one printed on or just before its own page
+            refs = versions.PRINTING[qid].refs()
+            assert len(refs) == 2 and all(r.question == 'info' and r.label in labels for r in refs)
+            assert any(labels[r.label].region.page in (q.pages[0] - 1, q.pages[0]) for r in refs), qid
+    assert exam.questions['q2'].stage('evidence').fn.by == versions.PRINTING['q2']
     assert {q.id: q.pages for q in exam.questions.values()} == {
-        'q1': (3,), 'q2': (5,), 'q3': (7,), 'q4': (9,), 'q5': (11,), 'q6': (13,)}
+        'info': (2, 4, 8, 10, 12), 'q1': (3,), 'q2': (5,), 'q3': (7,), 'q4': (9,), 'q5': (11,), 'q6': (13,)}
 
 
 @needs_blanks
 def test_versions_match_the_printed_blanks(exam, pkg):
-    """The alt index -> variants table agrees with the cues printed in each blank."""
+    """What each printed field of `info` reads to agrees with the text printed in each
+    blank, and the field's region holds that text."""
     import pypdfium2
     versions = pkg('versions')
-    printed = {      # cue -> (pattern in the page's text, the match that marks the original printing)
+    printed = {      # field -> (pattern in the page's text, the match that marks the original printing)
         'q1_parameter': (r'exponential distribution with (\w+)', 'mean'),
         'q2_m_goal': (r'Answer with the (\w+) possible positive value of 𝑚', 'smallest'),
         'q4_y_axis_top': (r'𝑦\s+(−1 1 2 3 4|−1 1 2 3\s)', '−1 1 2 3 4'),
         'q5_function': (r'for a function (\w+)\(\)', 'unit_cone'),
         'q6_sine_frequency': (r'sin\((\d+)𝑥\)', '40'),
     }
-    for alt, variants in versions.VERSIONS.items():
+    fields = exam.questions['info'].fields
+    assert {f.label for f in fields} == set(printed)
+    for alt in versions.VERSIONS:
         doc = pypdfium2.PdfDocument(str(versions.blank(alt)))
         try:
             assert len(doc) == exam.pages
-            for q in exam.questions.values():
-                for cue in q.cues:
-                    pattern, original = printed[cue.name]
-                    text = doc[cue.region.page - 1].get_textpage().get_text_range()
-                    found = re.search(pattern, text, re.S)
-                    assert found, (alt, cue.name)
-                    want = 'original' if found[1].strip() == original else 'alternate'
-                    assert variants[q.id] == want, (alt, q.id, cue.name)
+            for f in fields:
+                pattern, original = printed[f.label]
+                page = doc[f.region.page - 1]
+                found = re.search(pattern, page.get_textpage().get_text_range(), re.S)
+                assert found, (alt, f.label)
+                want = 'original' if found[1].strip() == original else 'alternate'
+                assert versions.printed_on(alt)['info'][f.label] == want, (alt, f.label)
+                w, h = page.get_size()
+                r = f.region
+                inside = page.get_textpage().get_text_bounded(
+                    left=w * r.left / 1000, right=w * r.right / 1000,
+                    top=h * (1 - r.top / 1000), bottom=h * (1 - r.bottom / 1000))
+                assert ' '.join(found[1].split()) in ' '.join(inside.split()), (alt, f.label, "outside the region")
         finally:
             doc.close()
 
 
 @needs_blanks
-def test_cue_and_field_regions_hold_ink_on_the_blanks(exam, pkg, tmp_path):
-    """Every region lands on printed content (a cue's text, a box's frame) in both printings."""
+def test_field_regions_hold_ink_on_the_blanks(exam, pkg, tmp_path):
+    """Every region lands on printed content (a printed field's text, a box's frame) in both printings."""
     from examinator.pdf.layout import Layout
     from examinator.pdf.render import Renderer
     renderer, versions = Renderer(tmp_path / 'cache', dpi=72), pkg('versions')
     for alt in versions.VERSIONS:
         for q in exam.questions.values():
-            for region in [c.region for c in q.cues] + [f.region for f in q.fields]:
+            for region in [f.region for f in q.fields]:
                 crop = Layout().crop(renderer.page(versions.blank(alt), region.page - 1), region)
                 assert np.asarray(crop.convert('L')).min() < 128, (alt, q.id, region)
 
 
 def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
     f, versions = pkg('fixtures'), pkg('versions')
-    cases = [synth.Case(f'v{alt}', variants=versions.VERSIONS[alt], answers=f.canonical(alt)) for alt in (0, 1)]
+    cases = [synth.Case(f'v{alt}', printed=versions.printed_on(alt), answers=f.canonical(alt)) for alt in (0, 1)]
     root = synth.generate(exam, tmp_path / 'ws', cases)
     ws = Workspace(root, exam)
     ws.sync()
@@ -140,14 +166,14 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
     finally:
         runner.close()
         ws.close()
-    assert {c.tag[2] for c in model.calls} == {'variant', 'transcript', 'parse'}
+    assert {c.tag[2] for c in model.calls} == {'read', 'transcript', 'parse'}
     prompts = "\n".join(c.prompt for c in model.calls)
     for secret in ['log(1', 'log(U', 'expm1', 'sqrt(unif', '1/3)', '5/4', '3/2)', 'pi/2', '[3, 4]', '[2, 2]',
                    'x**(1/5)', 'x**(-1/5)', 'sin(40', 'sin(20', 'unit_disc', 'scoop', 'niform(0']:
         assert secret not in prompts, secret
 
     def own(qid):       # short keys: check the prompts of their own question
-        return "\n".join(c.prompt for c in model.calls if c.tag[1] == qid and c.tag[2] != 'variant')
+        return "\n".join(c.prompt for c in model.calls if c.tag[1] == qid)
 
     for secret in ['s[', 's_', 'w[', 'w_', 'niform', '/ s']:
         assert secret not in own('q3'), secret
@@ -159,13 +185,59 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
 
 # --- question 2: numbers, five of six ---------------------------------------------------
 
-def test_q2_variant_selects_the_key(exam, pkg):
+def test_q2_the_printing_read_from_info_selects_the_key(exam, pkg):
     answers = pkg('fixtures').ANSWERS
     for printed in ('original', 'alternate'):
         for written in ('original', 'alternate'):
-            got, _ = outcomes(exam, 'q2', answers[written]['q2'], variant=printed)
+            got, _ = outcomes(exam, 'q2', answers[written]['q2'], printing=printed)
             assert all(o == 'correct' for o in got.values()) == (printed == written)
             assert grade(exam, 'q2', answers[written]['q2'], printed).value == (printed == written)
+    # No info parse, or its two fields disagreeing: undecided.
+    fn = exam.questions['q2'].stage('evidence').fn
+    with pytest.raises(Undecided, match="no parse of info"):
+        fn(context(exam, 'q2', answers['original']['q2']))
+    split = {f.label: 'original' for f in exam.questions['info'].fields} | {'q2_m_goal': 'alternate'}
+    ctx = context(exam, 'q2', answers['original']['q2'], split)
+    with pytest.raises(Undecided, match="disagree"):
+        fn(ctx)
+    assert ctx.reads == {'info': 1}
+
+
+def test_disagreeing_printed_fields_wait_for_a_grader(exam, pkg, tmp_path):
+    """q4 and q5 read q5_function; when it disagrees with its neighbours, both are
+    undecided until a grader corrects the info parse."""
+    f, versions = pkg('fixtures'), pkg('versions')
+    printed = {'info': {**versions.printed_on(0)['info'], 'q5_function': 'twonit_cone'}}
+    case = synth.Case('split', printed=printed, answers={q: f.ANSWERS['original'][q] for q in ('q2', 'q4', 'q5')})
+    root = synth.generate(exam, tmp_path / 'ws', [case])
+    ws = Workspace(root, exam)
+    ws.sync()
+    runner = Runner(exam, ws, model=synth.fake_model(root))
+
+    def status(qid):
+        return part_status(exam.questions[qid], '', ws.store.for_question('split', qid),
+                           parses=ws.store.of_kind('split', 'parse'))
+
+    try:
+        for qid in ('info', 'q2', 'q4', 'q5'):
+            assert all(o.ok for o in runner.run_from('split', qid, exam.questions[qid].stages[0].name))
+            runner.verify('split', qid, 'parse', author='ta', expect_rev=ws.store.get('split', qid, 'parse').rev)
+        info = ws.store.get('split', 'info', 'parse').body
+        assert info == {**versions.printed_on(0)['info'], 'q5_function': 'alternate'}
+        assert (status('q2').state, status('q2').value) == ('graded', True)      # reads other fields
+        for qid in ('q4', 'q5'):
+            st = status(qid)
+            assert (st.state, st.value, st.counts) == ('needs_review', None, False), qid
+        runner.save('split', 'info', 'parse', versions.printed_on(0)['info'], author='ta', verify=True)
+        assert status('q4').state == status('q5').state == 'outdated'
+        assert status('q2').state == 'outdated'          # it read the info parse too
+        runner.recheck('split', 'info')
+        assert (status('q4').state, status('q4').value) == ('graded', True)
+        assert (status('q5').state, status('q5').value) == ('graded', True)
+        assert (status('q2').state, status('q2').value) == ('graded', True)
+    finally:
+        runner.close()
+        ws.close()
 
 
 def view(**outcomes_by_label):
@@ -439,7 +511,7 @@ def test_reference_geometry(pkg):
     assert inside(orig, 3, 4.9) and inside(orig, 3, -0.9) and inside(orig, 2.1, 2.1) and inside(orig, 3.9, 1.9)
     assert not inside(orig, 2.1, 1.0) and not inside(orig, 2.1, 4.9) and not inside(orig, 3, 5.1)
     assert inside(alt, 2, 0) and inside(alt, 2, -3.9) and inside(alt, 1.1, -1.9) and not inside(alt, 1.1, -3)
-    for variant, h in cone.HEIGHTS.items():
+    for printing, h in cone.HEIGHTS.items():
         x, y, z = cone.reference(h, 20_000, 3).T
         assert (x * x + y * y <= z * z).all() and 0 < z.min() and z.max() < h
         assert np.mean(z) == pytest.approx(0.75 * h, abs=0.01)             # E[z] = 3h/4

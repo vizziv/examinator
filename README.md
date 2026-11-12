@@ -3,7 +3,7 @@
 A small language for building exam graders, and the app that runs one.
 
 An instructor scans handwritten exams to PDF. For each submission and question,
-Examinator works out which variant the student received, transcribes the final
+Examinator reads which printing the student received, transcribes the final
 answer with a local vision model, parses it into a structured answer, checks it
 with local deterministic code, and proposes a grade. Graders review all of this
 in a browser beside the scan, fix what the model misread, and decide.

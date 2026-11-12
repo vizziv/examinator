@@ -79,12 +79,14 @@ class Pool:
             [sys.executable, '-m', 'examinator.core.isolate', self.exam_path],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
-    def call(self, question: str, stage: str, payload: dict, timeout: float) -> Any:
+    def call(self, question: str, stage: str, payload: dict, timeout: float,
+             reads: dict | None = None) -> Any:
         """Run one stage function in a worker and return its body.
 
-        `payload` holds the context fields: submission, variant, inputs, params, note,
-        and the exam's applied `overrides`.
-        Raises `StageTimeout` or `StageCrash`.
+        `payload` holds the context fields: submission, inputs, params, note,
+        parses (`Context.parses`, as lists), and the exam's applied `overrides`.
+        What the stage read of other questions is added to `reads`, whatever
+        the outcome. Raises `StageTimeout`, `StageCrash` or `Undecided`.
         """
         with self._lock:
             if self._closed:
@@ -107,8 +109,13 @@ class Pool:
                 proc.kill()
             else:
                 self._idle.append(proc)
+        if reads is not None:
+            reads.update(reply.get('reads') or {})
         if 'error' in reply:
             raise StageCrash(reply['error'], reply.get('detail', ""))
+        if 'undecided' in reply:
+            from .evidence import Undecided
+            raise Undecided(reply['undecided'])
         return reply['body']
 
     def close(self) -> None:
@@ -123,7 +130,7 @@ class Pool:
 def _worker(exam_path: str) -> None:
     from .context import Context
     from .defs import load_exam
-    from .evidence import body_of
+    from .evidence import Undecided, body_of
     from .overrides import apply
 
     out = os.fdopen(os.dup(sys.stdout.fileno()), 'wb')
@@ -136,18 +143,24 @@ def _worker(exam_path: str) -> None:
             req = _recv(inp, None)
         except EOFError:
             return
+        ctx = None
         try:
             if (req.get('overrides') or {}) != applied:
                 applied = req.get('overrides') or {}
                 apply(exam, applied)
             q = exam.questions[req['question']]
+            parses = req.get('parses')
             ctx = Context(submission=req['submission'], question=q, stage=req['stage'],
-                          variant=req.get('variant'), inputs=req.get('inputs') or {},
-                          params=req.get('params') or {}, note=req.get('note') or "")
+                          inputs=req.get('inputs') or {}, params=req.get('params') or {},
+                          note=req.get('note') or "",
+                          parses=None if parses is None else {k: tuple(v) if v else None for k, v in parses.items()})
             reply = {'body': body_of(q.stage(req['stage']).fn(ctx))}
             json.dumps(reply)
+        except Undecided as e:
+            reply = {'undecided': str(e)}
         except Exception as e:
             reply = {'error': f"{type(e).__name__}: {e}", 'detail': traceback.format_exc()}
+        reply['reads'] = ctx.reads if ctx is not None else {}
         _send(out, reply)
 
 

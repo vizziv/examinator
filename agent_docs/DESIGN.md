@@ -12,12 +12,12 @@ names are placeholders.
 | Exam | One printed exam: its pages, its questions, its grader. One Python package. |
 | Workspace | A folder of one exam's data: scanned PDFs, a roster, the SQLite file, exports. |
 | Submission | One student's scanned PDF, identified by its file stem. |
-| Question | A gradable unit with fields, stages and a typed result. |
-| Field | One answer slot within a question, with a label (`'1.2'`) and usually a region. |
+| Question | A unit with fields and stages, usually a typed result. One with no result (the exam's printing, say) has only a parse to verify. |
+| Field | One slot of a question's parse, with a label (`'1.2'`) and usually a region. The student writes it, or a reader reads it (a printed field). |
 | Region | A rectangle on a printed exam page, in per-mille of that page. |
-| Variant | One of several printings of a question. A question with one printing has none. |
-| Cue | A piece of printed evidence that distinguishes variants. |
-| Stage | One step for one submission and question, named by the artifact it writes: `variant`, `transcript`, `parse`, `evidence` (the check), `grade`. |
+| Printing | One of several printed versions of an exam or a question. Not a library concept: it is read into printed fields. |
+| Printed field | A field whose value the model reads from the printed text in its region (`Printed`), not from the student's answer. |
+| Stage | One step for one submission and question, named by the artifact it writes: `transcript`, `parse`, `evidence` (the check), `grade`. |
 | Artifact | The stored output of a stage. Editable by graders where the stage allows. |
 | Evidence | What a check found: data plus an ordered list of display blocks. |
 | Result | The typed value a question produces: a bool, a number, or a small named group. |
@@ -28,9 +28,9 @@ names are placeholders.
 ```text
 src/examinator/           the library and app (this repository)
   core/                   definitions, store, runner, workflow rules, overrides, focus;
-                          intake (split, intake, identity) and reading a region (reading)
+                          printed fields (printed); intake (split, intake, identity); reading a region (reading)
   pdf/  model/            rendering, scan layout, orientation, writing PDFs; loopback model client
-  std/                    the standard library: stages, prompts, math, pseudocode, blocks
+  std/                    the standard library: stages, prompts, fields, math, pseudocode, blocks
   web/                    server and browser interface
 src/examinator_kits/
   stochastic/             optional kit for sampler questions (primitives, fit tests, checks)
@@ -60,7 +60,7 @@ An exam is declared in Python. Plain data where data suffices, functions where i
 does not. See [`EXAM3.md`](EXAM3.md) for a complete example.
 
 ```python
-from examinator import Exam, Field, Region, Cue, Bool, Number
+from examinator import Exam, Field, Printed, Region, Bool, Number
 from examinator.std import stages, math
 
 exam = Exam('midterm', title="Midterm", pages=12)
@@ -69,14 +69,14 @@ exam.question(
     'q1', title="Rectangles",
     pages=[3],                       # where the answer is; sent to the model
     result=Bool(),
-    variants=['original', 'alternate'],
-    cues=[Cue('q1_width', region=Region(2, 80, 120, 920, 300),
-              ask="the printed width of the rectangle, as a number",
-              reads={'3': 'original', '4': 'alternate'})],
-    fields=[Field('1.1', region=Region(3, 500, 96, 885, 196)),
+    fields=[Field('width', region=Region(2, 80, 120, 920, 300),        # printed: tells the printing
+                  read=Printed("the printed width of the rectangle, as a number",
+                               reads={'3': 'original', '4': 'alternate'})),
+            Field('1.1', region=Region(3, 500, 96, 885, 196)),
             Field('1.2', region=Region(3, 500, 207, 885, 307))],
     stages=stages.math(
         symbols={'a': 'positive'},
+        by='width',                  # one key per value of the field
         key={'original': {'1.1': '3*a', '1.2': '1/2'},
              'alternate': {'1.1': '4*a', '1.2': '1/2'}},
     ),
@@ -101,7 +101,7 @@ Design rules for this layer:
   functions returning strings. Adding a sentence is concatenation, never a
   reimplementation.
 - **Anything the standard library cannot express is a function** the exam passes
-  in: a custom check, a custom cue, a custom grade rule. Exams build their own
+  in: a custom check, a custom key chooser, a custom grade rule. Exams build their own
   abstractions with ordinary Python (loops, helpers, shared lists).
 - **Definitions are data once built.** After `exam.py` runs, each question is a
   frozen structure that can be hashed, displayed and overridden (`core/overrides.py`).
@@ -112,7 +112,7 @@ A stage is a named function plus a little metadata:
 
 | Property | Purpose |
 | --- | --- |
-| `name` | Also the artifact kind: `'variant'`, `'transcript'`, `'parse'`, `'evidence'`, `'grade'`. |
+| `name` | Also the artifact kind: `'transcript'`, `'parse'`, `'evidence'`, `'grade'`. |
 | `inputs` | Names of earlier stages in the same question whose artifacts it reads. |
 | `uses_model` | True for stages that call the model. Drives permissions and batch planning. |
 | `editable` | Whether graders may edit the artifact directly (parse: yes; evidence: no). |
@@ -124,8 +124,8 @@ JSON-serializable data):
 ```python
 ctx.submission      # id
 ctx.question        # the frozen definition
-ctx.variant         # resolved variant name, or None
 ctx.input('parse')  # body of an upstream artifact
+ctx.read('info')    # a check only: another question's parse (recorded, see §5)
 ctx.pages()         # rendered images of the question's selected pages
 ctx.crop(region)    # one rendered region
 ctx.model(prompt, images=..., text=...)   # loopback model call; returns text
@@ -137,16 +137,15 @@ setting". The library attaches no meaning to it.
 
 The standard pipeline, and why each stage is separate:
 
-1. **`variant`** (only for questions with variants). Reads cues, narrows the
-   candidate set. See §5.
-2. **`transcript`** (`stages.transcribe`) — model, images in, text out. Records
+1. **`transcript`** (`stages.transcribe`) — model, images in, text out. Records
    what is on the page, mistakes included. Never solves or corrects.
-3. **`parse`** — model, text in, structured answer out (a JSON object of field
-   values, or source code in the pseudocode language). This is what graders
-   edit and verify against the scan.
-4. **`evidence`** (the check: `stages.check`, `stages.check_math`) — local code,
-   no model. Produces evidence.
-5. **`grade`** — a pure, fast function from evidence to the question's result.
+2. **`parse`** — model, text in, structured answer out (a JSON object of field
+   values, or source code in the pseudocode language). A parse of fields also
+   holds the question's printed fields, read beside it (§5). This is what
+   graders edit and verify against the scan.
+3. **`evidence`** (the check: `stages.check`, `stages.check_math`) — local code,
+   no model. Produces evidence. It may read other questions' parses.
+4. **`grade`** — a pure, fast function from evidence to the question's result.
    Runs in-process immediately after the check, one artifact per result part
    (`grade`, or `grade:<part>`). A grader's manual decision writes this same artifact.
 
@@ -154,39 +153,53 @@ A model output may contain `[REVIEW: reason]` wherever it is unsure. A stage
 refuses to consume an upstream artifact that still contains a marker; a check
 treats a field containing one as undecided. Graders clear markers by editing.
 
-## 5. Variants
+## 5. Printings: printed fields, and checks that read other questions
 
-**Decided:** per question, usually covert, inferred from printed data.
+**Decided:** two layers, no graph. The whole exam is parsed into fields; checks
+run on parsed fields. Which printing a submission has is not a library concept:
+it is read into fields like anything else, and checks use it.
 
-- A question lists its variants and its cues. A question with no `variants` has
-  no variant stage and its key is not keyed by variant.
-- A **cue** is a region, a question to ask the model about the *printed* text in
-  that region, and a map from readings to variants. A cue may also be a function
-  `(ctx) -> variant | None` for cases a map cannot express.
-- Each cue that reads successfully eliminates the variants it does not match.
-  The variant is **resolved** when exactly one candidate remains and at least
-  `require` cues agree (default: all the question's cues). Otherwise it is
-  unresolved and goes to review. Never guess, never pick "the best match".
-  A resolved variant counts; `verify_variant=True` on a question has a person
-  verify every one.
-- The artifact records each cue's reading, the region used and the resulting
-  candidates. The review page shows each cue's crop beside its reading with a
-  control to correct it. A manual choice is authoritative until removed.
-- Until a variant is resolved, checks that depend on it are undecided; other
-  questions are unaffected.
-- Reading a cue is `core/reading.py`, shared with intake's landmarks and identity
-  boxes: the prompt (with "expected to be one of" from `reads`), the basis
-  digest (region and question), the memo key.
-- A cue's region may be on any page. Regions are instructor-defined template
-  rectangles. Do **not** ask the model to locate regions (see `LESSONS.md`).
+- **A printed field** (`Field(label, region, read=Printed(ask, reads=...))`) is
+  an ordinary field of a question's parse whose value the model reads from the
+  *printed* text in its region (`core/printed.py`), asked `ask`. With `reads`, a
+  reading is normalised (case, spaces, one layer of brackets or quotes, a
+  trailing `.` or `%`) and mapped to a value; the prompt lists the expected
+  readings and tells the model to answer with a review marker when it sees none
+  of them. A reading that is absent, or not one of `reads`, becomes a value with
+  a review marker, which holds the parse back as any marker does. Never guess.
+- The value sits in the parse beside the student's fields, is shown with its
+  crop, is edited like them, and is verified with them: one verify covers the
+  whole parse. `Field.read` is a value (a reader, `reader(ctx, field) -> str`)
+  so another kind of reader (a barcode) can be added without a new concept.
+- A question with only printed fields and no `result` holds the exam's printing
+  (`stages.read_fields()`): it has a parse to verify and no grade. Nothing in the
+  library names or special-cases it.
+- **A check reads other questions' parses** with `ctx.read(question)`. There is
+  no declaration: the library **records** what a check read, the parse's
+  revision for each question (`None` if it did not exist), with the evidence's
+  recorded inputs (`inputs['reads']`). A grade is outdated when any parse it
+  read has changed, and counts only when its own parse and every parse it read
+  are verified; until then it waits, naming the question (`Status.waiting_on`).
+  A read of a parse that does not exist leaves the check undecided, and the
+  evidence outdated once the parse appears. A check that returns before reading
+  a question does not depend on it. Checks never read other checks' results.
+- Batches run every question's parse before any check (§9), so a missing parse
+  is rare. Saving or verifying a parse rechecks the questions whose stored
+  evidence read it.
+- Keys that differ by printing are chosen by a field's value: `stages.math(key=
+  {value: {...}}, by=...)`, where `by` is a label of the question's own field,
+  `std.fields.value(label, question=...)`, `std.fields.agree(...)` (fields that
+  must agree, else undecided), or any `fn(ctx) -> value`. Agreement and flags
+  need no other library concept.
+- Reading a printed field is `core/reading.py`, shared with intake's landmarks
+  and identity boxes: the prompt (with "expected to be one of" from `reads`),
+  the memo key. A field's region may be on any page. Regions are
+  instructor-defined template rectangles. Do **not** ask the model to locate
+  regions (see `LESSONS.md`).
 
-**Open, later:** constraints across questions (only certain combinations of
-variants were printed), which would let one question's cues corroborate
-another's. Leave room: keep "candidate set per question" as the stored form.
-
-**Open, worth a spike:** identify the variant with no model call by comparing the
-printed region against each variant's blank template. Scan registration is the
-risk. Untested.
+**Open, worth a spike:** read a printed field with no model call by comparing
+the printed region against each printing's blank template. Scan registration is
+the risk. Untested.
 
 ## 6. Evidence, results and grades
 
@@ -234,8 +247,8 @@ Definitions, for one submission and question:
   identity reading and the pick). Intake uses the same list to decide whether
   a submission has grading work.
 - **Verified parse:** a human confirmed the parse's current content.
-- **Current evidence:** computed from the current parse, the current variant (if
-  the check depends on it) and the current question definition.
+- **Current evidence:** computed from the current parse, the current parse of
+  every other question the check read (§5), and the current question definition.
 - **Automatic grade:** written by the grade stage. **Manual grade:** written by a
   grader, recording which parse content they were looking at.
 
@@ -243,9 +256,10 @@ Definitions, for one submission and question:
 | --- | --- | --- |
 | Nothing exists | Not started | No |
 | Artifacts exist, parse not verified | Proposed grade, marked unverified | No |
-| Parse verified, evidence current, grade decided | The grade | Yes |
-| Parse verified, evidence current, grade undecided | Needs review, with the reason | No |
-| Evidence computed from an older parse, variant or definition | Outdated; old evidence still visible | No |
+| Parse verified, a parse the check read not verified (or missing) | Proposed grade, waiting on that question | No |
+| Parse verified, every parse read verified, evidence current, grade decided | The grade | Yes |
+| Parse verified, every parse read verified, evidence current, grade undecided | Needs review, with the reason | No |
+| Evidence computed from an older parse (its own or one it read) or definition | Outdated; old evidence still visible | No |
 | Manual grade, parse unchanged since | The grade, marked manual | Yes |
 | Manual grade, parse changed since | The old decision, marked outdated | No |
 
@@ -259,6 +273,9 @@ Further rules:
   part does not approve another.
 - Supporting work on the page is never transcribed or checked. Graders judge it.
 - Status always comes from these rules, never from sniffing evidence contents.
+- A check that read nothing of another question does not depend on it.
+- A manual grade is recorded against the question's own parse only, not the
+  parses its check read.
 
 **Protection.** An artifact is protected if a grader wrote it, edited it or
 verified it, and a manual grade is always protected. Batch runs skip protected
@@ -282,7 +299,7 @@ create table artifact (
   author       text,
   updated_at   text not null,
   rev          integer not null,   -- from one workspace-wide counter; never reused
-  inputs       text,               -- JSON: upstream {kind: rev}, definition hash, code hash
+  inputs       text,               -- JSON: upstream {kind: rev}, parses read {question: rev}, definition hash, code hash
   verified_rev integer,            -- equals rev when a human approved this content
   verified_by  text,
   primary key (submission, question, kind)
@@ -294,7 +311,7 @@ create table override (path, value, author, updated_at, rev);   -- live edits of
 create table override_history (...);                            -- plus replaced_at
 create table source (id, file, name, sha256, pages, added_at);  -- intake: scanned stacks
 create table made (submission, source, pages, orient, made_at); -- intake: what each PDF holds
-create table memo (submission, key, value);                     -- model readings (cues, landmarks, boxes)
+create table memo (submission, key, value);                     -- model readings (printed fields, landmarks, boxes)
 ```
 
 - Every read on the normal path is a keyed lookup on `artifact`. History is
@@ -379,7 +396,7 @@ the PDF's identity, the page and the resolution.
   threads at once; confine it to a worker. Cache rendered pages, and cut crops
   from the cache.
 - The same regions serve three purposes: crops shown beside the grader's input,
-  crops sent to the model for cues, and (optionally) cropped transcription.
+  crops sent to the model for printed fields, and (optionally) cropped transcription.
   Whether transcription sees whole pages or crops is a per-stage option;
   whole pages is the proven default.
 
@@ -392,7 +409,8 @@ leave it out and let the exam package write it.
 
 | Module | Contents |
 | --- | --- |
-| `std.stages` | `transcribe`, `parse_math`, `parse_pseudocode`, `check_math`, `check(fn)`, `grade(fn)`, `read_variant`; bundles `math(...)` and `pseudocode(...)` that return lists of these. |
+| `std.stages` | `transcribe`, `parse_math`, `parse_pseudocode`, `read_fields`, `check_math` (with `by=`, a key per value of a field), `check(fn)`, `grade(fn)`; bundles `math(...)` and `pseudocode(...)` that return lists of these. |
+| `std.fields` | A field's value in a check (`value(label, question=)`, recorded through `ctx.read`) and fields that must agree (`agree`), else `Undecided`. |
 | `std.prompts` | Default prompt texts as values, and small functions that generate prompt fragments. |
 | `std.math` | A restricted expression parser feeding SymPy (expressions are data, never `eval`); equality under declared symbol assumptions; choice and text normalization; a key entry may be an expression string, a choice set, or a function `answer -> outcome`. |
 | `std.pseudocode` | A bounded interpreter for a Python-syntax teaching language: whitelisted syntax, no imports or attributes, step and randomness budgets; seeded sampling of a named function; instructor-supplied trusted primitives and constants registered through an API; selection of one entry point and its helpers; blank detection; error reports that name the failing expression and its operand values. The language description for prompts is a value. |
@@ -423,21 +441,23 @@ normalization. Those are exam code.
 
 Screens for the first version:
 
-- **Grid:** one row per submission, one column per result, plus variant. Shows
+- **Grid:** one row per submission, one column per result (a question with no
+  result has none; its readers show that they wait for it). Shows
   the focused set (below); text search; sort; totals. Previous/next
   navigation follows the focus, search and sort.
 - **Filter page:** the focused set (`core/focus.py`). One card per question with
-  its facets: grade value, workflow state, variant (built in, from the workflow
-  rules), plus facets declared by stages (`Stage.facets`) and questions
+  its facets: grade value and workflow state (built in, from the workflow
+  rules), the value of each printed field (built in), plus facets declared by stages (`Stage.facets`) and questions
   (`Exam.question(..., facets=)`), e.g. the standard check's normalized answer
   per field and the comments in parsed pseudocode. OR within a facet's values,
   AND across facets; counts are over the other facets' selection. The focus is
   per browser (localStorage) and shareable as `?focus=` in a link.
 - **Question page:** the parsed answer as a form (one input per field, with its
-  scan crop beside it) or a code editor (with the answer areas beside it);
-  verify; evidence blocks; the proposed grade with a control to decide it;
-  run controls; the answer key for the resolved variant, collapsed.
-- **Variant review:** each cue's crop, reading and a correction control.
+  scan crop beside it; a printed field is marked "printed") or a code editor
+  (with the answer areas beside it); verify; evidence blocks; the proposed grade
+  with a control to decide it; "waits on" with a link to each question whose
+  parse the check read and that is not verified; run controls; the answer key
+  the printing picks, collapsed.
 - **Runs:** scope, stage checkboxes, options, preview, progress, stop.
 - **Settings:** per-browser keys and appearance first, then workspace defaults (cover pages, print area)
   last.
@@ -496,7 +516,6 @@ Do not build these in M1–M3. Do not block them either.
 | Filter and search facets (group by normalized answer; search comments in parsed code) | **Built** (`core/focus.py`). A facet is a small function from stored rows to values, computed on read (one query per question and kind, JSON paths so plot blocks are not loaded) and cached by the store's version. |
 | Static student view | Evidence blocks carry an audience mark; a question may supply `feedback(evidence, grade)`. The view is a second renderer over stored rows. |
 | Several exams in one process | No module-level state; exam packages loaded under distinct names. |
-| Cross-question variant constraints | Variants stored as candidate sets per question. |
 | "Review me later" flag (a TA marks an answer for the professor to look over) | Not built. The glyph `!` is reserved for it in the grid and on the question page; `?` means only "a person must decide". The flag would be a small manual artifact per submission and question, with author and an optional note, and a built-in facet so the filter page can gather flagged answers. It must not affect whether a grade counts. |
 | A pluggable interpreter back end (vectorized, masked execution) | Not built; the closure interpreter is fast enough so far. The route: keep one front end (parse, whitelist, validate), expose the validated tree, and route operators through an overridable table; a masked executor is then a second back end. |
 
@@ -517,12 +536,12 @@ submission into `pdfs/`; everything downstream is unchanged.
   `sheet -> position | None` and is tested with plain dicts.
   `intake.reguess` guesses a source's plan again and writes it.
 - **Landmarks** (`Exam(landmarks=[Landmark(name, region, ask, reads)])`): like
-  a `Cue`, a region and a question for the model about printed text, reading
+  a printed field, a region and a question for the model about printed text, reading
   normalised; `reads` maps a reading to a printed page (a title on page 1),
   or, absent, the reading is the page number. Readings are taken only where
   needed: at the expected boundary, then neighbours back and forth (a page
   number jumps straight to the right place), and memoised per source, sheet,
-  landmark, orientation and scan window (`core/reading.py`, as for cues). A
+  landmark, orientation and scan window (`core/reading.py`, as for printed fields). A
   failed model call leaves its sheet unread, not read as nothing; the plan
   counts such sheets (`failed`) and is not marked checked when every call failed.
 - **Doubts** are computed, never stored: too few or too many pages, a first
@@ -556,7 +575,7 @@ submission into `pdfs/`; everything downstream is unchanged.
   is the part with no spaces and a digit). A preview (count, first rows,
   unreadable lines) comes before saving.
   - **Declared boxes**: `Exam(identity=[Identity(name, region, ask, roster)])`,
-    shaped like a `Cue`, but about handwriting (`IDENTITY_PROMPT`); `roster`
+    shaped like a printed field, but about handwriting (`IDENTITY_PROMPT`); `roster`
     is the roster field the reading is compared with (`'name'`, `'id'`,
     `'email'`, or None to show only); boxes sharing a field are joined (first
     and last name). The library names no field beyond those three.
@@ -594,7 +613,8 @@ submission into `pdfs/`; everything downstream is unchanged.
 
 ## 17. Testing
 
-- Unit tests for the workflow rules, one per table row and further rule in §7.
+- Unit tests for the workflow rules, one per table row and further rule in §7
+  (and §5: reading another question's parse).
 - Store tests for concurrent edits, discarded stale checks and history.
 - Toolkit tests on synthetic inputs only.
 - A scripted fake model that returns canned text per (stage, question), so the

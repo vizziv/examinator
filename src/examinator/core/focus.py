@@ -2,8 +2,9 @@
 
 A `Facet` is a small function from one submission's stored rows to zero or
 more short strings ("values"). The core supplies a few built-in facets for
-every question, from the workflow rules only (grade value, workflow state,
-variant); everything else comes from outside: a `Stage` declares facets over
+every question: from the workflow rules (grade value, workflow state), and the
+value of each field with a reader (a printed field: which printing a
+submission has); everything else comes from outside: a `Stage` declares facets over
 what it writes, and `Exam.question(..., facets=[...])` adds question-level ones.
 
 `values_table` computes every facet's values for the workspace:
@@ -102,10 +103,18 @@ def builtin_facets(question: Question) -> list[Facet]:
         out.append(Facet('state' + suffix, 'state' + shown,
                          lambda b, p=part: [b[STATUS].status[p].state],
                          reads=(STATUS,), group='result', order=STATES))
-    if question.variants:
-        out.append(Facet('variant', 'variant', lambda b: [b[STATUS].variant or 'undecided'],
-                         reads=(STATUS,), group='result', order=(*question.variants, 'undecided')))
+    for f in question.read_fields:       # what was read of the printing, say: few values, filterable
+        out.append(Facet(f'field/{f.label}', f.label, lambda b, label=f.label: [field_value(b['parse'], label)],
+                         reads=('parse',), group='fields'))
     return out
+
+
+def field_value(parse, label: str) -> str | None:
+    """One field's value in a parse of fields, as a facet value (`BLANK` if empty)."""
+    if not isinstance(parse, Mapping):
+        return None
+    v = parse.get(label)
+    return BLANK if v is None or not str(v).strip() else str(v)
 
 
 def facets(question: Question) -> list[Facet]:
@@ -150,7 +159,7 @@ def values_table(exam: Exam, store: Store, *, submission: str | None = None
         cells = {r.submission.id: r.cells for r in load(exam, store)}
     else:
         cells = {submission: row_cells(exam, {qid: store.for_question(submission, qid)
-                                               for qid in exam.questions})}
+                                              for qid in exam.questions})}
     out: dict[str, dict[str, list[str]]] = {}
     for qid, q in exam.questions.items():
         fs = facets(q)
@@ -240,4 +249,5 @@ def counts(table, selection: Selection, fid: str, submissions: Iterable[str]) ->
 
 
 __all__ = ['BLANK', 'Facet', 'STATUS', 'active', 'builtin_facets', 'counts', 'describe_facets',
-           'facet_id', 'facets', 'focused', 'grade_text', 'grade_value', 'matches', 'values_table']
+           'facet_id', 'facets', 'field_value', 'focused', 'grade_text', 'grade_value', 'matches',
+           'values_table']

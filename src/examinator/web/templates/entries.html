@@ -3,7 +3,7 @@
 {% if e.kind == 'bool' %}<input type="checkbox" class="ev"{% if e.current %} checked{% endif %} aria-label="{{ e.label }}">
 {% elif e.kind in ('int', 'number') %}<input type="number" class="ev" step="{{ 1 if e.kind == 'int' else 'any' }}" value="{{ e.text }}" aria-label="{{ e.label }}"{% if e.nullable %} placeholder="none"{% endif %}>
 {% elif e.area %}<textarea class="ev" rows="{{ e.rows }}" spellcheck="false" aria-label="{{ e.label }}"
- {%- if e.kind == 'map' %} placeholder="reading = variant"{% elif e.kind == 'choice' %} placeholder="one accepted text per line"{% endif %}>
+ {%- if e.kind == 'map' %} placeholder="reading = value"{% elif e.kind == 'choice' %} placeholder="one accepted text per line"{% endif %}>
 {{ e.text }}</textarea>
 {% else %}<input type="text" class="ev" value="{{ e.text }}" spellcheck="false" aria-label="{{ e.label }}"
  {%- if e.kind == 'region' %} placeholder="page left top right bottom" size="20"{% elif e.kind == 'pages' %} placeholder="1, 2" size="10"{% elif e.nullable %} placeholder="none"{% endif %}>

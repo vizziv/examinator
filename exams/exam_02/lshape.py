@@ -150,12 +150,12 @@ def y_valid(shape: L, texts) -> bool:
 @dataclass(frozen=True)
 class Unit:
     """One of the two functions: three fields scored together."""
-    variant: str
+    printing: str
     axis: str               # 'x' or 'y'
 
     @property
     def forms(self):
-        return (x_forms if self.axis == 'x' else y_forms)(SHAPES[self.variant])
+        return (x_forms if self.axis == 'x' else y_forms)(SHAPES[self.printing])
 
     @property
     def symbols(self):
@@ -191,12 +191,12 @@ class Unit:
         if all(isinstance(p, sympy.Expr) for p in parsed):
             valid = x_valid if self.axis == 'x' else y_valid
             try:
-                if valid(SHAPES[self.variant], answers):
+                if valid(SHAPES[self.printing], answers):
                     return [('correct', "right law")] * 3
             except math.Unsupported:
                 pass
         return best
 
 
-def key(variant: str) -> dict:
-    return {('??_1', '??_2', '??_3'): Unit(variant, 'x'), ('??_4', '??_5', '??_6'): Unit(variant, 'y')}
+def key(printing: str) -> dict:
+    return {('??_1', '??_2', '??_3'): Unit(printing, 'x'), ('??_4', '??_5', '??_6'): Unit(printing, 'y')}

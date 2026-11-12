@@ -11,7 +11,7 @@ from examinator.core.workflow import question_status, seen_revs
 from examinator.web.app import create_app, find_raw, prepare_blocks
 
 BASE = 'http://127.0.0.1:8580'
-STAGES = ('variant', 'transcript', 'parse', 'evidence')
+STAGES = ('transcript', 'parse', 'evidence')
 
 
 class Site:
@@ -51,9 +51,16 @@ class Site:
 
     def state(self, sub, q, part=''):
         question = self.exam.questions[q]
-        return question_status(question, self.ws.store.for_question(sub, q))[part]
+        return question_status(question, self.ws.store.for_question(sub, q),
+                               parses=self.ws.store.of_kind(sub, 'parse'))[part]
 
-    def run_all(self, sub='s1', q='a'):
+    def run_all(self, sub='s1', q='a', printing=True):
+        """Run a question's stages; for 'a', first read the printing ('p') and, with
+        `printing`, verify it, so that only 'a' itself waits for a person."""
+        if q == 'a' and self.ws.store.get(sub, 'p', 'parse') is None:
+            assert self.runner.run_stage(sub, 'p', 'parse').ok
+            if printing:
+                self.runner.verify(sub, 'p', 'parse', author='t', expect_rev=self.rev(sub, 'p', 'parse'))
         for stage in STAGES:
             assert self.runner.run_stage(sub, q, stage).ok
 
@@ -84,7 +91,11 @@ def test_question_page_before_and_after_stages(site):
     assert r.status_code == 200
     assert 'data-label="x" value="1"' in r.text
     assert 'pill st st-unverified' in r.text
-    assert 'data-cue="c1"' in r.text and '/page/s1/0.jpg' in r.text
+    assert '/page/s1/0.jpg' in r.text
+    printing = site.get('/s/s1/p').text                        # no result: a parse to verify, no grade
+    assert 'data-label="c1" value="one"' in printing and '<span class="ftag">printed</span>' in printing
+    assert 'title="printed: first cue"' in printing and 'data-region="p/fields/c1/region"' in printing
+    assert 'no grade' in printing and 'data-action="decide"' not in printing
     assert site.get('/s/s1/b').status_code == 200
     for path in ('/runs', '/settings', '/scan'):
         assert site.get(path).status_code == 200
@@ -124,7 +135,7 @@ def test_theme_and_actions_are_static_and_controls_declare_actions(site):
     assert all(f'data-action="{a}"' in runs for a in ('run-preview', 'run-start', 'run-stop'))
     grid = site.get('/').text
     assert 'class="c cell s-' in grid and '+?' not in grid          # '?' only means "a person must decide"
-    assert 'title="incomplete' in grid and '>?</a>' in grid         # s2's variant is open
+    assert 'title="incomplete' in grid
     settings = site.get('/settings').text
     assert all(f'id="{i}"' in settings for i in ('theme', 'pk-accent', 'pk-accent2', 'k-single', 'keymap'))
     assert 'k-preset' not in settings                               # one key map: no presets
@@ -306,40 +317,34 @@ def test_decision_against_a_changed_parse_is_refused(site):
     assert site.ws.store.get('s1', 'a', 'grade:x') == grade
 
 
-def test_variant_choice_and_cue_correction(site):
-    site.run_all()
-    r = site.post('/s/s1/a/cue', {'cue': 'c1', 'reading': '2', 'rev': site.rev('s1', 'a', 'variant')})
-    assert r.status_code == 200
+def test_printed_fields_are_edited_and_verified_like_any_parse(site):
+    """A question that read the printing waits for it, says so, and links to it;
+    correcting the printing there rechecks the question that read it."""
+    site.run_all(printing=False)
+    r = site.post('/s/s1/a/verify', {'kind': 'parse', 'rev': site.rev('s1', 'a', 'parse')})
     site.wait(r.json()['job'])
-    body = site.ws.store.get('s1', 'a', 'variant').body
-    assert body['resolved'] is None and body['cues']['c1'] == {'reading': '2', 'variant': 'two'}
+    st = site.state('s1', 'a', 'x')
+    assert (st.state, st.value, st.waiting_on) == ('unverified', True, ('p',))
     html = site.get('/s/s1/a').text
-    assert '</b> undecided</span>' in html and 'variant unresolved' not in html
-    r = site.post('/s/s1/a/variant', {'variant': 'two', 'rev': site.rev('s1', 'a', 'variant')})
+    assert 'waits on <a href="/s/s1/p">p</a>' in html and '<span class="tag unv">unverified</span></div>' in html
+    r = site.post('/s/s1/p/save', {'kind': 'parse', 'body': {'c1': 'two', 'c2': 'two'},
+                                   'rev': site.rev('s1', 'p', 'parse'), 'verify': True})
     assert r.status_code == 200
-    site.wait(r.json()['job'])
-    art = site.ws.store.get('s1', 'a', 'variant')
-    assert art.body['resolved'] == 'two' and art.author == 'tester'
-    assert site.state('s1', 'a', 'x').value is False            # rechecked against the other key
-    assert site.post('/s/s1/a/variant', {'variant': 'three', 'rev': art.rev}).status_code == 400
-    assert site.post('/s/s1/a/variant', {'variant': 'one', 'rev': art.rev + 99}).status_code == 409
-    assert site.post('/s/s1/a/cue', {'cue': 'zz', 'reading': '1', 'rev': art.rev}).status_code == 400
-    r = site.post('/s/s1/a/verify', {'kind': 'variant', 'rev': art.rev})
-    assert r.status_code == 200 and site.ws.store.get('s1', 'a', 'variant').verified
-    r = site.post('/s/s1/a/variant', {'variant': None, 'rev': art.rev})
-    assert r.status_code == 200
-    site.wait(r.json()['job'])
-    assert site.ws.store.get('s1', 'a', 'variant').body['resolved'] is None
-    assert site.post('/s/s1/b/variant', {'variant': 'one', 'rev': None}).status_code == 400
+    site.wait(r.json()['job'])                                     # rechecks 'a', which read 'p'
+    st = site.state('s1', 'a', 'x')
+    assert (st.state, st.value) == ('graded', False)              # the other printing's key
+    assert 'waits on' not in site.get('/s/s1/a').text
+    assert site.post('/s/s1/a/variant', {'variant': 'two', 'rev': None}).status_code == 404
+    assert site.post('/s/s1/a/cue', {'cue': 'c1', 'rev': None}).status_code == 404
 
 
 # --- running ---
 
 def test_run_stage_and_from(site):
-    r = site.post('/s/s1/a/run', {'stage': 'variant', 'onward': True, 'params': 'n=3 mode=fast'})
+    r = site.post('/s/s1/a/run', {'stage': 'transcript', 'onward': True, 'params': 'n=3 mode=fast'})
     assert r.status_code == 200
     info = site.wait(r.json()['job'])
-    assert [o['status'] for o in info['outcomes']] == ['done'] * 4
+    assert [o['status'] for o in info['outcomes']] == ['done'] * 3
     assert site.state('s1', 'a', 'x').state == 'unverified'
     # The deliberate check replaces a manual grade; a plain recheck never does.
     assert site.decide('s1', 'a', 'x', False).status_code == 200
@@ -370,8 +375,8 @@ def test_model_stages_refused_without_a_model(env):
     assert 'no model' in html
     assert 'data-stage="transcript" data-off="1" title="no model" disabled' in html     # shown, dimmed
     assert 'data-stage="evidence" data-off' not in html
-    for stage in ('variant', 'transcript', 'parse'):
-        r = site.post('/s/s1/a/run', {'stage': stage, 'onward': True})
+    for q, stage in (('a', 'transcript'), ('a', 'parse'), ('p', 'parse')):
+        r = site.post(f'/s/s1/{q}/run', {'stage': stage, 'onward': True})
         assert r.status_code == 400 and 'model' in r.json()['error']
     before = site.rev('s1', 'a', 'transcript')
     r = site.post('/s/s1/a/run', {'stage': 'evidence'})
@@ -487,7 +492,6 @@ def test_student_text_is_escaped(site):
                 inputs=dict(ev.inputs))
     store.write('s1', 'a', 'parse', {'x': EVIL, 'y': '"><img src=x onerror=alert(1)>'}, origin='manual')
     store.write('s1', 'a', 'transcript', f"</textarea>{EVIL}", origin='manual')
-    site.runner.correct_cue('s1', 'a', 'c1', EVIL, author=EVIL)
     r = site.get('/s/s1/a')
     assert r.status_code == 200
     assert '<script>alert' not in r.text and '<img src=x' not in r.text and '</textarea><' not in r.text
@@ -505,6 +509,9 @@ def test_student_text_is_escaped(site):
     for path in ('/raw/s1/a/0', '/raw/s1/a/3', '/raw/s1/a/3-1', '/raw/s1/a/9', '/raw/s1/a/x', '/raw/s1/a/3-0-0'):
         assert site.get(path).status_code == 404, path
     assert '<script>alert' not in site.get('/').text
+    store.write('s1', 'p', 'parse', {'c1': EVIL, 'c2': 'one'}, origin='manual', author=EVIL)  # a printed reading
+    text = site.get('/s/s1/p').text
+    assert '<script>alert' not in text and '&lt;script&gt;' in text
 
 
 def test_names_are_escaped_in_the_grid(env):
@@ -581,8 +588,8 @@ def crop_box(html, path):
 def test_exam_page_lists_entries(site):
     r = site.get('/exam')
     assert r.status_code == 200
-    for path in ('a/pages', 'a/require', 'a/fields/x/region', 'a/cues/c1/region', 'a/cues/c1/reads',
-                 'a/cues/c1/ask', 'a/stages/transcript/notes', 'a/stages/transcript/prompt', 'b/pages'):
+    for path in ('a/pages', 'a/fields/x/region', 'p/fields/c1/region', 'p/fields/c1/read/reads',
+                 'p/fields/c1/read/ask', 'a/stages/transcript/notes', 'a/stages/transcript/prompt', 'b/pages'):
         assert f'data-path="{path}"' in r.text, path
     assert '1 = one\n2 = two' in r.text          # a map, one reading per line
     assert 'href="/exam"' in site.get('/').text
@@ -607,18 +614,18 @@ def test_exam_page_of_the_toy_exam(tmp_path):
 
 
 def test_set_and_clear_round_trip(site):
-    path = 'a/cues/c1/ask'
+    path = 'p/fields/c1/read/ask'
     r = site.post('/exam/set', {'path': path, 'value': "the first cue, printed", 'rev': None})
     assert r.status_code == 200, r.text
     rev = r.json()['rev']
-    assert site.exam.questions['a'].cues[0].ask == "the first cue, printed"
+    assert site.exam.questions['p'].fields[0].read.ask == "the first cue, printed"
     assert site.ws.store.overrides()[path].author == 'tester'
     page = site.get('/exam').text
     assert 'package: <code>first cue</code>' in page and f'<code>{path}</code>' in page
-    assert "a/cues/c1/ask: &#39;first cue&#39; -&gt; &#39;the first cue, printed&#39;" in page
+    assert "p/fields/c1/read/ask: &#39;first cue&#39; -&gt; &#39;the first cue, printed&#39;" in page
     r = site.post('/exam/clear', {'path': path, 'rev': rev})
     assert r.status_code == 200 and r.json()['value'] == "first cue" and not r.json()['overridden']
-    assert site.exam.questions['a'].cues[0].ask == "first cue" and not site.ws.store.overrides()
+    assert site.exam.questions['p'].fields[0].read.ask == "first cue" and not site.ws.store.overrides()
 
 
 def test_set_validation_conflict_and_token(site):
@@ -659,10 +666,11 @@ def test_key_override_outdates_and_rechecks(ksite):
     path = 'a/stages/evidence/key/one/x'
     page = ksite.get('/s/s1/a').text
     assert f'data-path="{path}"' in page and 'data-path="a/stages/evidence/key/two/x"' not in page
+    assert '<summary>key <span class="dim">one</span>' in page          # the key the printing picks
     r = ksite.post('/exam/set', {'path': path, 'value': '5', 'rev': None, 'sub': 's2'})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body['questions'] == ['a'] and body['affected'] == 4 and body['variants'] == []
+    assert body['questions'] == ['a'] and body['affected'] == 4
     assert ksite.state('s1', 'a', 'x').state in ('outdated', 'graded')     # the recheck is under way
     info = ksite.wait(body['job'])
     assert info['state'] == 'done' and info['done'] == info['total'] == 2 and not info['outcomes']
@@ -686,36 +694,31 @@ def test_choice_key_from_the_question_page(ksite):
     assert ksite.post('/exam/set', {'path': path, 'value': [], 'rev': r.json()['rev']}).status_code == 400
 
 
-def test_changed_cue_rereads_variants(ksite):
-    path = 'a/cues/c1/region'
-    r = ksite.post('/exam/set', {'path': path, 'value': [1, 0, 0, 1000, 250], 'rev': None})
+def test_changed_printed_field_outdates_nothing(ksite):
+    """How a printed field is read is a definition; its value is a verified parse,
+    so an edit outdates no check: running the parse again reads with it."""
+    r = ksite.post('/exam/set', {'path': 'p/fields/c1/region', 'value': [1, 0, 0, 1000, 250], 'rev': None})
     body = r.json()
-    assert body['questions'] == ['a'] and body['variants'] == ['a']
-    ksite.wait(body['job'])
-    assert ksite.ws.store.get('s1', 'a', 'variant').body['resolved'] is None
-    r = ksite.post('/exam/variants', {'questions': ['a']})
-    assert r.status_code == 200 and r.json()['n'] == 2
-    info = ksite.wait(r.json()['job'])
-    assert info['state'] == 'done' and info['done'] == 2
-    for sid in ('s1', 's2'):
-        assert ksite.ws.store.get(sid, 'a', 'variant').body['resolved'] == 'one'
-        assert ksite.state(sid, 'a', 'x').value is True
-    assert ksite.post('/exam/variants', {'questions': ['b']}).status_code == 400
+    assert r.status_code == 200 and body['questions'] == [] and body['job'] is None and body['affected'] == 0
+    assert ksite.state('s1', 'a', 'x').state == 'graded'
+    assert ksite.post('/exam/set', {'path': 'p/fields/c1/region', 'value': None,
+                                    'rev': body['rev']}).status_code == 400      # a reader needs its region
+    assert ksite.post('/exam/variants', {'questions': ['a']}).status_code == 404
 
 
 def test_overrides_survive_a_new_app(tmp_path):
     exam, ws = keyed_workspace(tmp_path / 'ws')
     runner = Runner(exam, ws)
     site = Site(exam, ws, runner)
-    assert site.post('/exam/set', {'path': 'a/cues/c1/ask', 'value': "again", 'rev': None}).status_code == 200
+    assert site.post('/exam/set', {'path': 'p/fields/c1/read/ask', 'value': "again", 'rev': None}).status_code == 200
     runner.close()
     ws.close()
     exam, ws = keyed_workspace(tmp_path / 'ws')      # a fresh package, nothing applied
-    assert exam.questions['a'].cues[0].ask == "first cue"
+    assert exam.questions['p'].fields[0].read.ask == "first cue"
     runner = Runner(exam, ws)
     try:
         site = Site(exam, ws, runner)
-        assert exam.questions['a'].cues[0].ask == "again"
+        assert exam.questions['p'].fields[0].read.ask == "again"
         assert 'package: <code>first cue</code>' in site.get('/exam').text
     finally:
         runner.close()
@@ -733,11 +736,12 @@ def test_filter_page_and_values(site):
     assert 'href="/filter"' in site.get('/').text                     # in the top bar
     data = site.get('/focus/values').json()
     assert data['subs'] == ['s1', 's2']
-    assert [q['id'] for q in data['questions']] == ['a', 'b']
-    ids = [f['id'] for f in data['questions'][0]['facets']]
-    assert ids[:5] == ['a/grade:x', 'a/state:x', 'a/grade:y', 'a/state:y', 'a/variant']
+    assert [q['id'] for q in data['questions']] == ['p', 'a', 'b']
+    assert [f['id'] for f in data['questions'][0]['facets']] == ['p/field/c1', 'p/field/c2']
+    ids = [f['id'] for f in data['questions'][1]['facets']]
+    assert ids[:4] == ['a/grade:x', 'a/state:x', 'a/grade:y', 'a/state:y']
     assert data['values']['a/state:x'] == {'s1': ['unverified'], 's2': ['not_started']}
-    assert data['values']['a/variant'] == {'s1': ['one'], 's2': ['undecided']}
+    assert data['values']['p/field/c1'] == {'s1': ['one']}
     one = site.get('/focus/values?sub=s2').json()
     assert one['subs'] == ['s2'] and one['values']['a/state:x'] == {'s2': ['not_started']}
     assert site.get('/focus/values?sub=nobody').status_code == 404
@@ -756,10 +760,10 @@ def test_grid_honours_a_focus_in_the_url(site):
     assert shown({'a/state:x': ['unverified']}) == ['s1']
     assert shown({'a/state:x': ['unverified', 'not_started']}) == ['s1', 's2']               # OR within
     assert shown({'a/state:x': ['unverified'], 'b/state': ['in_progress']}) == []            # AND across
-    assert shown({'a/variant': ['undecided']}) == ['s2']
+    assert shown({'p/field/c1': ['one']}) == ['s1']                                         # the printing
     assert shown({'no/such': ['x']}) == ['s1', 's2']                                          # unknown: ignored
     assert site.get('/?focus=%7Bnot json').status_code == 200
-    html = site.get('/?focus=' + quote(json.dumps({'a/variant': ['one']}))).text
+    html = site.get('/?focus=' + quote(json.dumps({'p/field/c1': ['one']}))).text
     assert 'data-action="clear-filter" class="quiet" title="clear the filter">' in html and 'id="f-state"' not in html
 
 

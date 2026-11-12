@@ -91,7 +91,8 @@ class _Timed:
 def regions(ws: Workspace, submission: str, q: Question) -> list[tuple[str, Any]]:
     """What an OCR model is shown, one image at a time: `(label, image)`.
     The answer boxes when the question has any, else its pages."""
-    boxes = [(f.label, ws.crop(submission, f.region)) for f in q.fields if f.region is not None]
+    boxes = [(f.label, ws.crop(submission, f.region)) for f in q.fields
+             if f.region is not None and f.read is None]
     if boxes:
         return boxes
     pages, _ = ws.selected_pages(submission, q)

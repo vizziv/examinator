@@ -1,5 +1,5 @@
 """Asking the model what one region of a page says: the one mechanism behind
-variant cues (`core.variants`), intake landmarks (`core.intake`) and identity
+printed fields (`core.printed`), intake landmarks (`core.intake`) and identity
 boxes (`core.identity`).
 
 Each of those is a region plus a question (`ask`); the model answers with JSON
@@ -54,7 +54,7 @@ def normalize(reading: str) -> str:
 
 
 def basis(thing: Any) -> str:
-    """Digest of what a reading of `thing` (a `Cue`, `Landmark` or `Identity`)
+    """Digest of what a reading of `thing` (a `Landmark` or an `Identity` box)
     depends on: its region and its question."""
     return digest({'region': thing.region, 'ask': thing.ask})
 

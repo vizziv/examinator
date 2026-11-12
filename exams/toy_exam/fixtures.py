@@ -4,16 +4,20 @@ from examinator.synth import Case
 
 def cases():
     return [
-        Case('toy-red', variants={'areas': 'red'},
+        Case('toy-red', printed={'areas': {'side': 'red'}},
              answers={'areas': {'A.1': '4', 'A.2': '4x', 'A.3': 'x**2 * 2'}, 'parity': {'B': 'even'}},
              expect={'areas': 3, 'parity': True}),
-        Case('toy-green', variants={'areas': 'green'},
+        Case('toy-green', printed={'areas': {'side': '3'}},
              answers={'areas': {'A.1': '9', 'A.2': '4*x', 'A.3': '3*x^2'}, 'parity': {'B': 'odd'}},
              expect={'areas': 2, 'parity': False}),
-        Case('toy-blue', variants={'areas': 'blue'},
+        Case('toy-blue', printed={'areas': {'side': 'blue'}},
              answers={'areas': {'A.1': None, 'A.2': None, 'A.3': None}, 'parity': {'B': None}},
              expect={'areas': 'blank', 'parity': 'blank'}),
-        Case('toy-unread', variants={'areas': 'red'}, readings={'areas_side': None},
+        Case('toy-unread', printed={'areas': {'side': None}},
              answers={'areas': {'A.1': '4', 'A.2': '4*x', 'A.3': '2*x**2'}, 'parity': {'B': '(E)'}},
+             expect={'areas': None, 'parity': True}),
+        # A printed side that is none of the expected readings: marked for a person.
+        Case('toy-unexpected', printed={'areas': {'side': '7'}},
+             answers={'areas': {'A.1': '4', 'A.2': '4*x', 'A.3': '2*x**2'}, 'parity': {'B': 'even'}},
              expect={'areas': None, 'parity': True}),
     ]

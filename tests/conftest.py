@@ -2,20 +2,23 @@
 import pytest
 from PIL import Image
 
-from examinator import Bool, Cue, Evidence, Exam, Field, Region, Stage
+from examinator import Bool, Evidence, Exam, Field, Printed, Region, Stage
 from examinator.core.runner import Runner
 from examinator.core.store import Submission
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
+from examinator.std import fields as fields_
 from examinator.std import stages
 
 KEY = {'one': {'x': '1', 'y': '2'}, 'two': {'x': '10', 'y': '20'}}
+PRINTING = fields_.agree(fields_.value('c1', question='p'), fields_.value('c2', question='p'))
 
 
 def check(ctx):
-    """A plain in-process check: exact text match against a per-variant key."""
+    """A plain in-process check: exact text match against the key of the printing
+    that question 'p' reads (its two printed fields must agree)."""
     fields = {}
-    for label, want in KEY[ctx.variant].items():
+    for label, want in KEY[PRINTING(ctx)].items():
         got = ctx.input('parse').get(label)
         outcome = ('blank' if got is None else None if got == '?' else
                    'correct' if got == want else 'incorrect')
@@ -30,14 +33,19 @@ def parse(ctx):
 
 def make_exam(key_salt=""):
     exam = Exam('mini', pages=2)
+    exam.question(          # the printing: no grade, two printed fields that 'a' reads
+        'p', pages=[1],
+        fields=[Field('c1', region=Region(1, 0, 0, 1000, 200),
+                      read=Printed("first cue", reads={'1': 'one', '2': 'two'})),
+                Field('c2', region=Region(1, 0, 200, 1000, 400),
+                      read=Printed("second cue", reads={'i': 'one', 'ii': 'two'}))],
+        stages=[stages.read_fields()])
     exam.question(
-        'a', pages=[1], result={'x': Bool(), 'y': Bool(counts=False)}, variants=['one', 'two'],
-        cues=[Cue('c1', region=Region(1, 0, 0, 1000, 200), ask="first cue", reads={'1': 'one', '2': 'two'}),
-              Cue('c2', region=Region(1, 0, 200, 1000, 400), ask="second cue", reads={'i': 'one', 'ii': 'two'})],
+        'a', pages=[1], result={'x': Bool(), 'y': Bool(counts=False)},
         fields=[Field('x'), Field('y')],
         stages=[stages.transcribe(notes=key_salt),
                 Stage('parse', parse, inputs=('transcript',), uses_model=True, editable=True),
-                stages.check(check, uses_variant=True, isolate=False, accepts_markers=True),
+                stages.check(check, isolate=False, accepts_markers=True),
                 stages.grade(lambda ev: {'x': ev.outcome('x'), 'y': ev.outcome('y')})])
     exam.question(
         'b', pages=[2], result=Bool(), fields=[Field('x'), Field('y')],
@@ -50,7 +58,7 @@ def make_exam(key_salt=""):
 
 
 SCRIPT = {
-    ('a', 'variant'): lambda call: '{"value": "1"}' if "first cue" in call.prompt else '{"value": "i"}',
+    ('p', 'read'): lambda call: '{"value": "1"}' if "first cue" in call.prompt else '{"value": "i"}',
     'transcript': "x: 1\ny: 2",
     ('a', 'parse'): '{"x": "1", "y": "2"}',
     ('b', 'parse'): '{"x": "yes"}',

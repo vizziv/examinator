@@ -3,7 +3,7 @@ none is student work. With `EXAM1_BLANKS` set, each case is drawn on the
 matching blank PDF; without it, on placeholder pages."""
 from examinator.synth import Case
 
-from .versions import VERSIONS, blank
+from .versions import VERSIONS, blank, printed_on
 
 Q2 = [f'2.{part}.{name}' for part in (1, 2, 3) for name in 'mc']
 Q3 = [f'??{n}' for n in range(1, 7)]
@@ -237,8 +237,8 @@ def empty(answers: dict) -> dict:
 
 
 def cases():
-    original = dict(variants=VERSIONS[0], blank=blank(0))
-    alternate = dict(variants=VERSIONS[1], blank=blank(1))
+    original = dict(printed=printed_on(0), blank=blank(0))
+    alternate = dict(printed=printed_on(1), blank=blank(1))
     return [
         Case('alt0', **original, answers=canonical(0), expect=ALL_TRUE),
         Case('alt1', **alternate, answers=canonical(1), expect=ALL_TRUE),
@@ -254,10 +254,12 @@ def cases():
         Case('empty', **alternate,
              answers={**BLANK_CODE, 'q2': empty(ANSWERS['original']['q2']), 'q3': empty(Q3_ANSWERS)},
              expect={q: 'blank' for q in ALL}),
-        # One of questions 1 and 2's cues is unreadable: both wait for a person.
-        Case('cue-unread', **original, readings={'q1_parameter': None}, answers=canonical(0),
-             expect={'q1': None, 'q2': None, 'q3': True, 'q4': True, 'q5': True, 'q6': True}),
-        # Question 6's cue contradicts question 5's: both wait; question 4's two cues still agree.
-        Case('cue-conflict', **original, readings={'q6_sine_frequency': '20'}, answers=canonical(0),
+        # One printed field is unreadable: the printing waits for a person, and with it every
+        # question that reads it. Question 3 reads no printing.
+        Case('unread', printed={'info': {**printed_on(0)['info'], 'q1_parameter': None}}, blank=blank(0),
+             answers=canonical(0), expect={'q1': None, 'q2': None, 'q3': True, 'q4': None, 'q5': None, 'q6': None}),
+        # Question 6's field contradicts question 5's: both are undecided; question 4's two fields agree.
+        Case('disagree', printed={'info': {**printed_on(0)['info'], 'q6_sine_frequency': '20'}},
+             blank=blank(0), answers=canonical(0),
              expect={'q1': True, 'q2': True, 'q3': True, 'q4': True, 'q5': None, 'q6': None}),
     ]

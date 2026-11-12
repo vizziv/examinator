@@ -22,7 +22,7 @@ checker settings). None of it is student data.
 - Eight blank PDFs exist, one per printed version (`alt0` … `alt7`). Ask the
   user for them.
 
-## 2. Variants
+## 2. Printings
 
 The exam was printed in eight versions built from three independent binary
 choices ("bits"). Each bit switches a group of questions between an `original`
@@ -47,13 +47,12 @@ and required them to agree:
 | 4 | First parameter *n* in the expression labelled 8.1 | 17 | 3 | 4 |
 | 4 | Q4's density branch for −1 ≤ r < 0 | 8 | `r+1` | `-r` |
 
-**In the new model, variants are per question.** Exam 3 is expressed by giving
-each of Q1, Q5 and Q9 the same two cues, and likewise for the other groups.
-That reproduces the old behaviour without any cross-question machinery, at the
-cost of reading the same clue for several questions (cache readings by cue name
-within a submission if that matters). Note that some questions' cues are on
-another question's page: the old tool never identified Q1's printing from Q1
-itself.
+**In the new model, the printing is read into printed fields** (`DESIGN.md` §5).
+Exam 3 has one question with no grade, `info`, holding the six clues as printed
+fields; each question's check reads the two fields of its bit, which must agree
+(`std.fields.agree`), and picks its key by their value. A person verifies the
+`info` parse once per submission. Note that some clues are on another
+question's page: the old tool never identified Q1's printing from Q1 itself.
 
 Clue regions were wide horizontal bands across the page with generous margins.
 Converted to printed-page per-mille (top, bottom), approximately: page 10:
@@ -290,20 +289,20 @@ page note. Per-question additions:
   primitive inside `poisson_process()`, separate from the student's own
   `poisson_dist`, which must be kept for 7.2.
 
-Cue prompts asked for the *printed* wording only, ignoring handwriting, with one
+Clue prompts asked for the *printed* wording only, ignoring handwriting, with one
 short evidence quote plus the normalized value, `null` when unreadable, and an
 explicit instruction not to infer one reading from another.
 
 ## 6. Exam 3 in the proposed library
 
-A sketch against the API in [`DESIGN.md`](DESIGN.md). Names are placeholders and
-none of it has run. Notice how much is ordinary Python written in the exam
-package: shared cue lists, box helpers, option helpers.
+A sketch against the API in [`DESIGN.md`](DESIGN.md); the package as built is
+`exams/exam_03/`. Notice how much is ordinary Python written in the exam
+package: the printed fields, box helpers, option helpers.
 
 ```python
 # exam_03/exam.py
-from examiner import Exam, Field, Region, Cue, Bool
-from examiner.std import stages, math, pseudocode
+from examinator import Exam, Field, Printed, Region, Bool
+from examinator.std import fields, stages, math, pseudocode
 
 from . import notes, rectangles, weibullish, point_process, huge_constants
 
@@ -320,8 +319,9 @@ def boxes(page, labels, tops, left, right, height):
 def band(page, top, bottom):
     return Region(page, 0, top, 1000, bottom)
 
-def variants(*cues):
-    return dict(variants=['original', 'alternate'], cues=list(cues))
+def printed(label, region, ask, original, alternate):
+    return Field(label, region=region, read=Printed(ask, reads={
+        **{t: 'original' for t in original}, **{t: 'alternate' for t in alternate}}))
 
 def letter(c):
     n = ord(c) - 64
@@ -339,38 +339,40 @@ def marks(**parts):
                                           for name, label in parts.items()})
 
 
-# --- cues: two printed clues per group of questions -----------------------
+# --- the printing: two printed clues per bit, in a question with no grade ---
 
-BIT1 = variants(
-    Cue('q5_confidence', region=band(10, 208, 474),
-        ask="the overall confidence percent printed in question 5's task sentence",
-        reads={'95': 'original', '90': 'alternate'}),
-    Cue('q9_observations', region=band(18, 318, 649),
-        ask="the three observed numbers printed in question 9, in order, as a JSON list",
-        reads={'[14, 12, 15]': 'original', '[14, 11, 15]': 'alternate'}))
-BIT2 = variants(
-    Cue('q6_option_c', region=band(13, 0, 357),
-        ask="printed explanation C in question 6: 'different primitives' or 'different order'",
-        reads={'different primitives': 'original', 'different order': 'alternate'}),
-    Cue('q3_first_height', region=band(7, 0, 273),
-        ask="whether question 3.1 asks about the 'base' or the 'spike' height",
-        reads={'base': 'original', 'spike': 'alternate'}))
-BIT4 = variants(
-    Cue('q8_first_n', region=band(17, 0, 273),
-        ask="the value labelled n in the expression labelled 8.1",
-        reads={'3': 'original', '4': 'alternate'}),
-    Cue('q4_negative_branch', region=band(8, 0, 487),
-        ask="question 4's density expression for -1 <= r < 0, in plain ASCII",
-        reads={'r+1': 'original', '1+r': 'original', '-r': 'alternate'}))
+exam.question(
+    'info', title="Printing", pages=[7, 8, 10, 13, 17, 18], stages=[stages.read_fields()],
+    fields=[printed('q5_confidence', band(10, 208, 474),
+                    "the overall confidence percent printed in question 5's task sentence", ['95'], ['90']),
+            printed('q9_observations', band(18, 318, 649),
+                    "the three observed numbers printed in question 9, in order, as a JSON list",
+                    ['[14, 12, 15]'], ['[14, 11, 15]']),
+            printed('q6_option_c', band(13, 0, 357),
+                    "printed explanation C in question 6: 'different primitives' or 'different order'",
+                    ['different primitives'], ['different order']),
+            printed('q3_first_height', band(7, 0, 273),
+                    "whether question 3.1 asks about the 'base' or the 'spike' height", ['base'], ['spike']),
+            printed('q8_first_n', band(17, 0, 273),
+                    "the value labelled n in the expression labelled 8.1", ['3'], ['4']),
+            printed('q4_negative_branch', band(8, 0, 487),
+                    "question 4's density expression for -1 <= r < 0, in plain ASCII", ['r+1', '1+r'], ['-r'])])
+
+def bit(a, b):
+    return fields.agree(fields.value(a, question='info'), fields.value(b, question='info'))
+
+BIT1 = bit('q5_confidence', 'q9_observations')
+BIT2 = bit('q6_option_c', 'q3_first_height')
+BIT4 = bit('q8_first_n', 'q4_negative_branch')
 
 
 # --- math and choice questions --------------------------------------------
 
 exam.question(
-    'q1', title="Right right", pages=[3], result=Bool(), **BIT1,
+    'q1', title="Right right", pages=[3], result=Bool(),
     fields=boxes(3, ['1.1', '1.2', '1.3', '1.4'], [96, 207, 318, 430], 500, 885, 100),
     stages=stages.math(
-        symbols={'a': 'positive', 'b': 'positive'}, functions=[],
+        by=BIT1, symbols={'a': 'positive', 'b': 'positive'}, functions=[],
         key={'original':  {'1.1': rectangles.key('0', 'b', 'a', '1'),
                            '1.2': '2*b*(1-a)', '1.3': 'b*(1-a)', '1.4': '1/2'},
              'alternate': {'1.1': rectangles.key('0', 'a', 'b', '1'),
@@ -378,47 +380,47 @@ exam.question(
 
 exam.question(
     'q3', title="A tale of two heights", pages=[7],
-    result=Bool(), **BIT2,
+    result=Bool(),
     fields=boxes(7, ['3.1', '3.2', '3.3', '3.4'], [98, 308, 518, 728], 650, 900, 110),
-    stages=stages.math(key={
+    stages=stages.math(by=BIT2, key={
         'original':  dict(zip(['3.1', '3.2', '3.3', '3.4'], map(option, [2, 2, 2, 1]))),
         'alternate': dict(zip(['3.1', '3.2', '3.3', '3.4'], map(option, [2, 3, 2, 2])))}))
 
 Q4 = [f'4.{part}.{bound}' for part in (1, 2) for bound in 'abcd']
 exam.question(
-    'q4', title="Sawtooth GPS", pages=[9], result=Bool(), **BIT4,
+    'q4', title="Sawtooth GPS", pages=[9], result=Bool(),
     fields=boxes(9, Q4, [99, 199, 298, 397, 519, 618, 718, 817], 500, 885, 92),
-    stages=stages.math(key={
+    stages=stages.math(by=BIT4, key={
         'original':  dict(zip(Q4, ['-1', '-1/2', '0', '1/2', '-1', '-1/4', '0', '3/4'])),
         'alternate': dict(zip(Q4, ['-1/2', '0', '1/2', '1', '-3/4', '0', '1/4', '1']))}))
 
 exam.question(
     'q5', title="Mmm, measuring multiple means", pages=[11],
-    result=Bool(), **BIT1,
+    result=Bool(),
     fields=boxes(11, ['5'], [98], 710, 900, 150),
-    stages=stages.math(key={'original':  {'5': math.Choice('30', 'option 4', 'D')},
+    stages=stages.math(by=BIT1, key={'original':  {'5': math.Choice('30', 'option 4', 'D')},
                             'alternate': {'5': math.Choice('15', 'option 3', 'C')}}))
 
 Q6 = ['6.1', '6.2', '6.3', '6.4']
 exam.question(
     'q6', title="Poisson un, poisson deux, poisson rouge, poisson bleu",
-    pages=[13], result=Bool(), **BIT2,
+    pages=[13], result=Bool(),
     fields=boxes(13, Q6, [295, 456, 617, 777], 710, 900, 110),
-    stages=stages.math(key={'original':  dict(zip(Q6, map(letter, 'CDAB'))),
+    stages=stages.math(by=BIT2, key={'original':  dict(zip(Q6, map(letter, 'CDAB'))),
                             'alternate': dict(zip(Q6, map(letter, 'DCAB')))}))
 
 exam.question(
     'q8', title="Triangular likelihood", pages=[17],
-    result=Bool(), **BIT4,
+    result=Bool(),
     fields=boxes(17, ['8.1', '8.2'], [98, 518], 500, 885, 110),
-    stages=stages.math(key={'original':  {'8.1': '6/25**3', '8.2': '0'},
+    stages=stages.math(by=BIT4, key={'original':  {'8.1': '6/25**3', '8.2': '0'},
                             'alternate': {'8.1': '0', '8.2': '6/25**3'}}))
 
 exam.question(
     'q9', title="Capital L likelihood", pages=[19],
-    result=Bool(), **BIT1,
+    result=Bool(),
     fields=boxes(19, ['9.a', '9.b'], [96, 207], 500, 885, 100),
-    stages=stages.math(key={'original':  {'9.a': '12', '9.b': '16'},
+    stages=stages.math(by=BIT1, key={'original':  {'9.a': '12', '9.b': '16'},
                             'alternate': {'9.a': '11', '9.b': '19'}}))
 
 
@@ -474,8 +476,8 @@ What this port will test in the library:
 - Whether a batch interpreter is needed in the first version. It is a large
   piece of code. Start with the simple interpreter and measure; port the batch
   interpreter only if Q2.2 checks are too slow or hit their budgets.
-- Whether per-question variants with shared cues are pleasant enough, or whether
-  the cross-question layer is needed sooner than planned.
+- Whether one `info` question for the whole printing is pleasant to verify, or
+  whether per-question printed fields serve better.
 
 ## 7. Acceptance checks
 
@@ -489,10 +491,10 @@ roster and no model:
 3. The synthetic pseudocode in §4 reproduces the four recorded results there:
    all correct as written; the `10**1000` literal is rewritten and still passes;
    a wrong `weibull` fails 2.1 only; an off-by-one `poisson_dist` fails 7.2 only.
-4. With scripted cue readings: agreeing readings resolve the variant;
-   disagreeing or missing readings leave it unresolved, and that question's
-   check is undecided until a grader chooses.
-5. A variant resolved as `alternate` selects the alternate key.
+4. With scripted printed readings: agreeing readings pick the key; a missing
+   reading holds the `info` parse back, and disagreeing readings leave the
+   questions of that bit undecided, until a grader corrects and verifies `info`.
+5. A printing read as `alternate` selects the alternate key.
 6. The workflow rules hold on this exam: unverified results do not count;
    editing a verified parse outdates its grade; a manual grade survives a batch
    run.
@@ -501,6 +503,6 @@ roster and no model:
 
 Later, for exports: each student's stub for a question contains any cover
 pages, page 1, both of the question's pages, any pages the grader added, and
-pages 20–22; stubs are grouped by question and variant (16 groups), each with a
+pages 20–22; stubs are grouped by question and printing (16 groups), each with a
 combined PDF, a blank template cut from the matching blank exam, and a manifest
 of page ranges.

@@ -25,23 +25,24 @@ FOCUS_JS = Path(__file__).parents[1] / 'src' / 'examinator' / 'web' / 'static' /
 
 def test_builtin_facets_agree_with_the_workflow(env):
     exam, ws, runner = env
-    for stage in ('variant', 'transcript', 'parse', 'evidence', 'grade'):
+    assert runner.run_stage('s1', 'p', 'parse').ok
+    for stage in ('transcript', 'parse', 'evidence', 'grade'):
         assert runner.run_stage('s1', 'a', stage).ok
     table = focus.values_table(exam, ws.store)
-    rows = {r.submission.id: r for r in grid.load(exam, ws.store)}
     for sid in ('s1', 's2'):
         for qid, q in exam.questions.items():
-            status = question_status(q, ws.store.for_question(sid, qid))
+            status = question_status(q, ws.store.for_question(sid, qid), parses=ws.store.of_kind(sid, 'parse'))
             for part in q.result:
                 suffix = f':{part}' if part else ''
                 assert table[f'{qid}/state{suffix}'][sid] == [status[part].state]
                 assert table[f'{qid}/grade{suffix}'][sid] == [focus.grade_value(status[part])]
-            if q.variants:
-                assert table[f'{qid}/variant'][sid] == [rows[sid].cells[qid].variant or 'undecided']
     assert table['a/state:x']['s1'] == ['unverified'] and table['a/grade:x']['s1'] == ['✓']
-    assert table['a/variant'] == {'s1': ['one'], 's2': ['undecided']}
+    # a printed field's value is a facet of its question (which printing a submission has)
+    assert table['p/field/c1'] == {'s1': ['one']} and table['p/field/c2'] == {'s1': ['one']}
     assert table['b/state']['s2'] == ['not_started'] and table['b/grade']['s2'] == ['undecided']
-    assert 'a/variant' not in [f['id'] for q in focus.describe_facets(exam) if q['id'] == 'b' for f in q['facets']]
+    ids = {q['id']: [f['id'] for f in q['facets']] for q in focus.describe_facets(exam)}
+    assert ids['p'] == ['p/field/c1', 'p/field/c2']               # no result: no grade or state facets
+    assert not any('/field/' in f for f in ids['a'] + ids['b'])
 
 
 def test_table_shape_and_one_submission(env):
@@ -188,8 +189,8 @@ def test_answer_facet_over_check_math(tmp_path):
     assert focus.focused(table, {'q/answer/a': ['2*x']}, ['s1', 's2', 's3', 's4']) == ['s1', 's2']
 
 
-def test_variant_keys_declare_every_label():
-    st = stages.check_math({'v1': {'a': '1', ('b', 'c'): lambda g: 'correct'}, 'v2': {'a': '2', 'd': '3'}})
+def test_keys_per_value_declare_every_label():
+    st = stages.check_math({'v1': {'a': '1', ('b', 'c'): lambda g: 'correct'}, 'v2': {'a': '2', 'd': '3'}}, by='w')
     assert [f.label for f in st.facets] == ['a', 'b', 'c', 'd']
 
 

@@ -427,4 +427,4 @@ def test_group_entries_through_the_stage():
         {'x': 'correct', 'p': 'correct', 'q': 'incorrect'}
     text = str(body['blocks'])
     assert "p, q" in text and "1 then 2" in text
-    assert stages.check_math({'v1': {('p', 'q'): both}, 'v2': {'p': 'a'}}).uses_variant
+    assert stages.check_math({'v1': {('p', 'q'): both}, 'v2': {'p': 'a'}}, by='w').fn.by is not None

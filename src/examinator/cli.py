@@ -32,7 +32,9 @@ def status_table(exam: Exam, ws: Workspace) -> str:
     cols = [(q, part) for q in exam.questions.values() for part in q.result]
     lines = ["\t".join(['submission', *[q.column(p) for q, p in cols], 'total'])]
     for sub in ws.store.submissions():
-        by_q = {qid: question_status(q, ws.store.for_question(sub.id, qid), code_hash=exam.code_hash)
+        parses = ws.store.of_kind(sub.id, 'parse')
+        by_q = {qid: question_status(q, ws.store.for_question(sub.id, qid), parses=parses,
+                                     code_hash=exam.code_hash)
                 for qid, q in exam.questions.items()}
         cells = []
         for q, part in cols:
