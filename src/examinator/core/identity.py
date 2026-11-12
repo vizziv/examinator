@@ -268,9 +268,10 @@ ORDER = ('disagree', 'nobody', 'unread', 'name', 'id', 'agree')     # most doubt
 NAME_CLOSE = 0.8        # a name this similar points to a person ...
 NAME_MARGIN = 0.05      # ... if nobody else is within this of it
 NAME_SOME = 0.6         # below this a name is no evidence at all
-ID_WEIGHT = {0: 1.0, 1: 0.7, 2: 0.45}       # by edit distance
-# Characters a reader confuses with digits, for IDs that are all digits.
-DIGITISH = str.maketrans({'o': '0', 'q': '0', 'd': '0', 'i': '1', 'l': '1', 'z': '2', 's': '5', 'b': '8', 'g': '9'})
+ID_WEIGHT = {0: 1.0, 0.5: 0.9, 1: 0.7, 2: 0.45}       # by distance (0.5: look-alike characters only)
+# Characters a reader confuses with one another, each written as its digit. Both the
+# reading and the roster's ID are compared in this form, so IDs may mix letters and digits.
+ALIKE = str.maketrans({'o': '0', 'q': '0', 'd': '0', 'i': '1', 'l': '1', 'z': '2', 's': '5', 'b': '8', 'g': '9'})
 
 
 def fold(text: str) -> str:
@@ -289,8 +290,9 @@ def id_text(text: str) -> str:
 
 
 def tolerance(id: str) -> int:
-    """How many misread characters an ID of this length may have and still match."""
-    return 2 if len(id) >= 6 else 1 if len(id) >= 3 else 0
+    """How many misread characters an ID of this length may have and still match
+    (look-alike characters do not count as misread)."""
+    return 2 if len(id) >= 8 else 1 if len(id) >= 4 else 0
 
 
 def distance(a: str, b: str, limit: int = 2) -> int:
@@ -334,28 +336,30 @@ class Matcher:
         self.roster = list(roster)
         self._names = [name_tokens(p.get('name') or '') for p in self.roster]
         self._ids = {f: [id_text(p.get(f) or '') for p in self.roster] for f in ('id', 'email')}
+        self._alike = {f: [x.translate(ALIKE) for x in ids] for f, ids in self._ids.items()}
         self._exact = {f: {} for f in self._ids}
         for f, ids in self._ids.items():
             for i, x in enumerate(ids):
                 if x:
                     self._exact[f].setdefault(x, []).append(i)
 
-    def _id_distances(self, field: str, reading: str) -> dict[int, int]:
-        """Roster index -> distance, for entries within tolerance."""
+    def _id_distances(self, field: str, reading: str) -> dict[int, float]:
+        """Roster index -> distance, for entries within tolerance: 0 exact, 0.5 the
+        same but for look-alike characters, else the number of misread characters."""
         r = id_text(reading)
         if not r:
             return {}
         if r in self._exact[field]:
             return {i: 0 for i in self._exact[field][r]}
-        digits = r.translate(DIGITISH)
+        r = r.translate(ALIKE)
         out = {}
-        for i, x in enumerate(self._ids[field]):
+        for i, x in enumerate(self._alike[field]):
             if not x:
                 continue
             limit = tolerance(x)
-            d = distance(digits if x.isdigit() else r, x, limit)
+            d = distance(r, x, limit)
             if d <= limit:
-                out[i] = d
+                out[i] = d or 0.5
         return out
 
     def propose(self, read: Mapping[str, str | None], *, taken: Mapping[str, str] | None = None,
@@ -370,7 +374,7 @@ class Matcher:
         taken = taken or {}
         if not any(read.get(f) for f in ('name', 'id', 'email')):
             return {'doubt': 'unread', 'candidates': []}
-        dist: dict[int, int] = {}
+        dist: dict[int, float] = {}
         for f in ('id', 'email'):
             if read.get(f):
                 for i, d in self._id_distances(f, read[f]).items():
@@ -426,7 +430,7 @@ class Matcher:
             p = self.roster[i]
             why = []
             if i in dist:
-                why.append("ID exact" if dist[i] == 0 else f"ID {dist[i]} off")
+                why.append("ID exact" if dist[i] == 0 else "ID look-alike" if dist[i] == 0.5 else f"ID {dist[i]} off")
             if i in names:
                 s = names[i]
                 why.append("name exact" if s >= 0.999 else "name close" if s >= NAME_CLOSE else f"name {round(s * 100)}%")

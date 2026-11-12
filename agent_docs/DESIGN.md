@@ -514,8 +514,10 @@ submission into `pdfs/`; everything downstream is unchanged.
     without a model or boxes. Accepting a rewritten submission drops its
     reading (and memo), not its pick. No roster text ever reaches a prompt.
   - **Proposing** is pure: `propose(readings by roster field, roster)` ranks
-    candidates (an exact ID first; then IDs within 2 edits for 6+ characters,
-    1 for 3-5, letters read as look-alike digits for all-digit IDs; names by
+    candidates (an exact ID first; then IDs that differ only in look-alike
+    characters such as `l`/`1` and `o`/`0`, compared both ways round so IDs
+    may mix letters and digits; then IDs within 2 edits for 8+ characters,
+    1 for 4-7, none for shorter; names by
     order-insensitive token similarity, accents, case and punctuation folded)
     with a reason, and gives a doubt: `agree`, `id`, `name`, `disagree`,
     `nobody`, `unread`. A person already picked elsewhere is flagged, not

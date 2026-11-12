@@ -85,10 +85,29 @@ def test_an_id_misread_by_a_character_or_two():
     assert r['doubt'] == 'agree' and top(r) == 'alan' and r['candidates'][0]['why'] == "ID 1 off, name exact"
     r = propose({'id': "27128818"}, ROSTER)          # two digits swapped: one edit
     assert r['doubt'] == 'id' and top(r) == 'alan' and r['candidates'][0]['why'] == "ID 1 off"
-    r = propose({'id': "2718281O"}, ROSTER)          # a letter O for a zero
+    r = propose({'id': "2718281O"}, ROSTER)          # a wrong last character
     assert top(r) == 'alan'
+    r = propose({'id': "2718281B"}, ROSTER)          # a letter B for an eight
+    assert top(r) == 'alan' and r['candidates'][0]['why'] == "ID look-alike"
     r = propose({'id': "99182811"}, ROSTER)          # three off: nobody
     assert r['doubt'] == 'nobody' and r['candidates'] == []
+
+
+def test_ids_of_letters_and_digits():
+    roster = [{'key': k, 'name': n, 'id': i} for k, n, i in (
+        ('a', "Ada Lovelace", 'al815'), ('b', "Alan Turing", 'amt54'), ('c', "Kim Park", 'kp7'))]
+    look = lambda id: propose({'id': id}, roster)
+    r = look("AL815")
+    assert top(r) == 'a' and r['candidates'][0]['why'] == "ID exact"
+    for written in ("a1815", "alb15", "al8l5", "AL81S"):        # look-alikes, either way round
+        r = look(written)
+        assert r['doubt'] == 'id' and top(r) == 'a' and r['candidates'][0]['why'] == "ID look-alike"
+    r = look("amt45")                                           # five characters: one may be misread
+    assert top(r) == 'b' and r['candidates'][0]['why'] == "ID 1 off"
+    assert look("axt99")['doubt'] == 'nobody'                   # but not two
+    assert top(look("kp7")) == 'c' and look("kp1")['doubt'] == 'nobody'     # a short ID: exact or nothing
+    r = propose({'name': "Alan Turing", 'id': "al815"}, roster)             # an exact ID outranks a name
+    assert r['doubt'] == 'disagree' and top(r) == 'a'
 
 
 def test_a_misread_name_with_the_id_unread():
