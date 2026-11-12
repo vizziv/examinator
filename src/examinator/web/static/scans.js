@@ -56,7 +56,7 @@
   function strip() {
     const all = Object.values(counts);
     const open = all.reduce((a, c) => a + c.open, 0), write = all.reduce((a, c) => a + c.write, 0);
-    if ($('n-split')) {
+    if (all.length) {
       $('n-split').textContent = `(${[open ? `${open} unverified` : '', write ? `${write} to write` : ''].filter(Boolean).join(' · ') || 'done'})`;
     }
     $('n-names').textContent = names && names.n ? `(${names.left ? `${names.left} unverified` : 'done'})` : '';
