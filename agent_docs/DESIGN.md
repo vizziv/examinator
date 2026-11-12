@@ -249,11 +249,11 @@ the PDF's identity, the page and the resolution.
 
 - **From a question page:** read (the question's fields; not what a person
   settled unless asked), run a check (with optional parameters).
-- **Batch:** a selection of submissions, questions and steps (`read`,
-  `check`). Always previewed first: what will run, what is skipped as
-  protected or present, what is blocked (no model, no region). Refused if
-  anything relevant changed since the preview. Every read finishes before any
-  check runs; a failed read stops that question's checks for that submission.
+- **Batch:** reading only, for a selection of submissions and questions.
+  Always previewed first: what will be read, what is skipped as protected or
+  present, what is blocked (no model, no region). Refused if anything relevant
+  changed since the preview. Checks have no batch: they recompute by
+  themselves, and the batch refreshes each submission once its reads finish.
 - **Missing only** reads only fields with no value, runs only checks that are
   not current. **Include protected** reads again what a person settled.
 - **Cancellation** stops queued work and lets running tasks finish.
@@ -367,7 +367,7 @@ Screens for the first version:
   collapsed; per-field history. The main actions are combinations: **Verify**
   (save edits and verify everything here), **save** (a person who sets a value
   verifies it), **Verify, next** (V).
-- **Runs:** scope, steps (read, check), options, preview, progress, stop.
+- **Read:** scope, options, preview, progress, stop.
 - **Settings:** per-browser keys and appearance first, then workspace defaults (cover pages, print area)
   last.
 

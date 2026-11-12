@@ -114,7 +114,7 @@ class Batch:
         state = 'running' if self.active else 'stale' if self.error == 'stale' else \
             'failed' if self.error else run.state
         failures = [o for o in outcomes if not o.ok]
-        return {'state': state, 'done': len(outcomes), 'total': run.total, 'current': run.current,
+        return {'state': state, 'done': run.done, 'total': run.total, 'current': run.current,
                 'error': self.error if state == 'failed' else '',
                 'failed': len(failures),
                 'failures': [{'submission': o.submission, 'question': o.question, 'step': o.step,

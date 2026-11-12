@@ -31,11 +31,11 @@
     msg.textContent = '';
     const r = await request('/runs/preview', {
       submissions: form.scope.value === 'grid' ? order : null,
-      questions: checked('question'), steps: checked('step'),
+      questions: checked('question'),
       missing_only: flag('missing_only'), include_protected: flag('include_protected')});
     if (!r.ok) { msg.textContent = r.body.error || "failed"; return; }
     token = r.body.plan;
-    const names = {run: "will run", skip_protected: "skipped, protected", skip_present: "skipped, present", blocked: "blocked"};
+    const names = {run: "will read", skip_protected: "skipped, protected", skip_present: "skipped, present", blocked: "blocked"};
     const counts = document.getElementById('counts');
     counts.replaceChildren();
     for (const [action, n] of Object.entries(r.body.counts)) {
@@ -43,11 +43,11 @@
     }
     const table = document.getElementById('groups');
     table.replaceChildren();
-    row(table, ['', 'step', 'question', 'n', 'why', 'submissions'], true);
+    row(table, ['', 'question', 'n', 'why', 'submissions'], true);
     for (const g of r.body.groups) {
       const list = make('details', {}, make('summary', {textContent: g.submissions.slice(0, 3).join(', ') + (g.n > 3 ? ' …' : '')}),
                         g.submissions.join(', ') + (g.n > g.submissions.length ? ` … (${g.n})` : ''));
-      row(table, [names[g.action], g.step, g.question, String(g.n), g.reason, list]);
+      row(table, [names[g.action], g.question, String(g.n), g.reason, list]);
     }
     document.getElementById('plan').hidden = false;
     start.disabled = r.body.counts.run === 0;

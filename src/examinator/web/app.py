@@ -767,7 +767,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     # --- runs ---
 
     def runs_page(request: Request) -> Response:
-        return page('runs.html', steps=batch.STEPS, questions=list(exam.questions.values()),
+        return page('runs.html', questions=list(exam.questions.values()),
                     total=len(store.submissions()))
 
     def runs_preview(request, data):
@@ -776,11 +776,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         subs = tuple(known) if subs is None else _strings(subs, set(known), "submissions")
         questions = data.get('questions')
         questions = tuple(exam.questions) if questions is None else _strings(questions, exam.questions, "questions")
-        chosen = _strings(data.get('steps') or [], batch.STEPS, "steps")
-        if not subs or not questions or not chosen:
+        if not subs or not questions:
             raise Bad("nothing selected")
-        sel = batch.Selection(subs, questions, tuple(n for n in batch.STEPS if n in chosen),
-                              missing_only=bool(data.get('missing_only')),
+        sel = batch.Selection(subs, questions, missing_only=bool(data.get('missing_only')),
                               include_protected=bool(data.get('include_protected')))
         plan = batch.plan(exam, store, sel, model_available=have_model(), regions=ws.fields)
         with lock:
@@ -789,12 +787,12 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 plans.popitem(last=False)
         groups: dict[tuple, list[str]] = {}
         for item in plan.items:
-            groups.setdefault((item.action, item.step, item.question, item.reason), []).append(item.submission)
+            groups.setdefault((item.action, item.question, item.reason), []).append(item.submission)
         rank = {a: i for i, a in enumerate(batch.ACTIONS)}
         return {'plan': plan.token, 'counts': {a: plan.count(a) for a in batch.ACTIONS},
-                'groups': [{'action': a, 'stage': s, 'question': qn, 'reason': r, 'n': len(ids),
+                'groups': [{'action': a, 'question': qn, 'reason': r, 'n': len(ids),
                             'submissions': ids[:200]}
-                           for (a, s, qn, r), ids in sorted(groups.items(), key=lambda kv: (rank[kv[0][0]], kv[0][1:]))]}
+                           for (a, qn, r), ids in sorted(groups.items(), key=lambda kv: (rank[kv[0][0]], kv[0][1:]))]}
 
     def runs_start(request, data):
         with lock:

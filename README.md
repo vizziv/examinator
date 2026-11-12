@@ -45,7 +45,7 @@ pages, an unexpected page number, a first page not recognised.
 
 The Scans page walks through the steps in a strip at its top, each with what is
 left: **1 Scans** (add them), **2 Split**, **3 Roster**, **4 Names**, then
-Runs; the line under the strip says what to do next. On Split you step through
+Read; the line under the strip says what to do next. On Split you step through
 the boundaries one at a time: the guessed first page of the next submission,
 large, between its neighbours.
 

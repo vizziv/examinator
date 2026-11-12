@@ -329,7 +329,7 @@ Workspaces always live **outside** the repository.
 ```sh
 uv run examinator selftest my_exam [WS]                       # fixtures end to end; "ok" or the mismatches
 uv run examinator synth my_exam /tmp/x/ws                     # synthetic workspace with a scripted model
-uv run examinator run my_exam -w /tmp/x/ws --fake             # read, then check (-s SUB, -q Q, --step, --dry-run)
+uv run examinator run my_exam -w /tmp/x/ws --fake             # read; checks follow (-s SUB, -q Q, --dry-run)
 uv run examinator status my_exam -w /tmp/x/ws --fake          # the grade grid
 uv run examinator serve my_exam -w /tmp/x/ws --fake           # the app
 uv run examinator synth my_exam /tmp/x/st --stacks            # stacks of scans for intake

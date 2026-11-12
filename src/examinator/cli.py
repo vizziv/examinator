@@ -157,11 +157,8 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
     runner = Runner(exam, ws, model=model)
     try:
         subs = tuple(args.submission or [s.id for s in ws.store.submissions()])
-        if not args.step:       # results gone outdated (a field or the exam's code changed) first
-            for sub in subs:
-                runner.refresh(sub)
-        sel = batch.Selection(subs, tuple(args.question or exam.questions), tuple(args.step or batch.STEPS),
-                              missing_only=args.missing_only, include_protected=args.include_protected)
+        sel = batch.Selection(subs, tuple(args.question or exam.questions), missing_only=args.missing_only,
+                              include_protected=args.include_protected)
         plan = batch.plan(exam, ws.store, sel, model_available=model is not None, regions=ws.fields)
         for action in batch.ACTIONS:
             print(f"{action}: {plan.count(action)}")
@@ -218,7 +215,6 @@ def main(argv=None) -> int:
     common(p)
     p.add_argument('--submission', '-s', action='append', help="default: all")
     p.add_argument('--question', '-q', action='append', help="default: all")
-    p.add_argument('--step', action='append', choices=batch.STEPS, help="read, check (default: both)")
     p.add_argument('--missing-only', action='store_true',
                    help="read only fields with no value; run only checks whose result is not current")
     p.add_argument('--include-protected', action='store_true',

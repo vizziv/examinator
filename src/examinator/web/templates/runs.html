@@ -1,10 +1,11 @@
 {% extends 'base.html' %}
 {% set nav = 'runs' %}
-{% block title %}Runs · {{ exam.title }}{% endblock %}
+{% block title %}Read · {{ exam.title }}{% endblock %}
 {% block head %}<script src="{{ root }}/static/runs.js" defer></script>{% endblock %}
 {% block body %}
 <main class="narrow" id="runs">
-<h1>Runs</h1>
+<h1>Read</h1>
+<p class="help">Reads fields with the model{% if not model %} (unavailable){% endif %}. Checks need no run: they recompute by themselves, and again after these reads.</p>
 <form id="sel" autocomplete="off">
 <fieldset><legend>submissions</legend>
 <label><input type="radio" name="scope" value="all" checked> all ({{ total }})</label>
@@ -14,23 +15,18 @@
 {% for q in questions %}<label><input type="checkbox" name="question" value="{{ q.id }}" checked> {{ q.id }}</label>{% endfor %}
 <button type="button" class="quiet" data-action="toggle-questions">all / none</button>
 </fieldset>
-<fieldset><legend>steps</legend>
-<label{% if not model %} class="dim"{% endif %}><input type="checkbox" name="step" value="read"> read <span class="dim">model</span></label>
-<label><input type="checkbox" name="step" value="check" checked> check</label>
-<p class="help">Every read finishes before any check runs. Results that a change outdated are recomputed anyway, in the background.</p>
-</fieldset>
 <fieldset><legend>options</legend>
 <label><input type="checkbox" name="missing_only"> missing only</label>
 <label><input type="checkbox" name="include_protected"> include protected</label>
 <label>parallel <input type="number" name="parallel" value="2" min="1" max="16"></label>
 <label><input type="checkbox" name="reasoning"> reasoning</label>
-<p class="help"><b>Missing only</b> reads only fields with no value and runs only checks that are not current.
+<p class="help"><b>Missing only</b> reads only fields with no value.
 <b>Include protected</b> reads again what a person set or verified; the replaced values stay in history.
 Without it, those are skipped. Decisions are never touched.</p>
 </fieldset>
 <div class="bar">
 <button type="button" id="preview" data-action="run-preview" class="primary">Preview</button>
-<button type="button" id="start" data-action="run-start" disabled>run</button>
+<button type="button" id="start" data-action="run-start" disabled>read</button>
 <button type="button" id="stop" data-action="run-stop" class="danger" disabled>stop</button>
 <span id="msg" role="status"></span>
 </div>

@@ -556,8 +556,9 @@ def test_workflow_rules(exam, pkg, env):
     assert (st('q9').state, st('q9').value, st('q9').author) == ('decided', False, 'ta')
     assert (st('q2', 'shiny').state, st('q2', 'shiny').value) == ('decided', False)
     assert text_of(runner, S, 'q9') == f.ANSWERS['alternate']['q9']         # what a person set stays
-    # The batch used no custom value.
-    assert 'huge_constant = 10' in runner.sheet(S).results['q2/shiny'].fields['2.2']['note']
+    # A batch only reads: the result run with a custom value stays until a plain run replaces it.
+    assert 'huge_constant = 20' in runner.sheet(S).results['q2/shiny'].fields['2.2']['note']
+    assert runner.compute(S, 'q2', 'shiny').ok
 
 
 def test_disagreeing_printed_fields_are_undecided_until_a_grader_corrects_info(exam, pkg, tmp_path):

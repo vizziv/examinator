@@ -1,6 +1,6 @@
 'use strict';
 // Scans: from stacks of scans to named submissions, in the steps of the strip at the top:
-// 1 add scans, 2 split them into submissions, 3 the roster, 4 names (names.js), then Runs.
+// 1 add scans, 2 split them into submissions, 3 the roster, 4 names (names.js), then Read.
 // The line under the strip says what to do next.
 //
 // Split: one first page at a time, large, with its neighbours; verify it (V) or move it
@@ -81,7 +81,7 @@
     }
     if (!made) return 'no submissions yet: accept a split first';
     if (!names) return '';
-    if (!names.left) return 'every submission is verified; next: Runs';
+    if (!names.left) return 'every submission is verified; next: Read';
     if (names.unread && FIELDS && MODEL) return 'next: read the name boxes';
     if (!PEOPLE) return 'next: add a roster';
     if (!names.proposal) return MODEL || !FIELDS ? 'type the name, or go to the next' : 'no model: type names';

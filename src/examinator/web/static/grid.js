@@ -1,7 +1,7 @@
 'use strict';
 // The grid is rendered once; the filter (focus.js, set on the filter page), search and
 // sorting happen here. The visible ids, in order, go to sessionStorage so the question
-// page's next/previous and the Runs page follow them.
+// page's next/previous and the Read page follow them.
 (() => {
   const body = document.querySelector('#grid tbody');
   const rows = [...body.rows];

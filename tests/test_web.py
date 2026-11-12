@@ -357,33 +357,34 @@ def wait_batch(site):
 
 def test_batch_preview_run_status(site):
     assert site.get('/runs/status').json() == {'state': 'idle'}
-    r = site.post('/runs/preview', {'steps': ['read', 'check']})
+    r = site.post('/runs/preview', {})
     assert r.status_code == 200
     plan = r.json()
-    assert plan['counts']['run'] == 12 and plan['counts']['blocked'] == 0     # 3 reads, 3 checks, twice
+    assert plan['counts']['run'] == 6 and plan['counts']['blocked'] == 0      # 3 reads, twice
     r = site.post('/runs/start', {'plan': plan['plan'], 'parallel': 2})
     assert r.status_code == 200
     info = wait_batch(site)
-    assert info['state'] == 'done' and info['done'] == info['total'] == 12 and info['failures'] == []
+    # every read, then one refresh per submission: the checks ran without being asked for
+    assert info['state'] == 'done' and info['done'] == info['total'] == 8 and info['failures'] == []
     assert site.state('s2', 'b').state == 'unverified'
-    again = site.post('/runs/preview', {'steps': ['read', 'check'], 'missing_only': True}).json()
+    again = site.post('/runs/preview', {'missing_only': True}).json()
     assert again['counts']['run'] == 0 and again['counts']['skip_present'] > 0
-    assert site.post('/runs/preview', {'steps': []}).status_code == 400
-    assert site.post('/runs/preview', {'steps': ['check'], 'submissions': ['ghost']}).status_code == 400
-    assert site.post('/runs/preview', {'steps': ['check'], 'questions': ['ghost']}).status_code == 400
-    one = site.post('/runs/preview', {'steps': ['check'], 'submissions': ['s2'], 'questions': ['b']}).json()
+    assert site.post('/runs/preview', {'questions': []}).status_code == 400
+    assert site.post('/runs/preview', {'submissions': ['ghost']}).status_code == 400
+    assert site.post('/runs/preview', {'questions': ['ghost']}).status_code == 400
+    one = site.post('/runs/preview', {'submissions': ['s2'], 'questions': ['b']}).json()
     assert one['counts']['run'] == 1 and one['groups'][0]['submissions'] == ['s2']
 
 
 def test_a_batch_never_replaces_what_a_person_set_unless_told(site):
     site.run_all()
     site.runner.set('s1', 'a', 'x', "9", author='ta')
-    plan = site.post('/runs/preview', {'steps': ['read'], 'submissions': ['s1'], 'questions': ['a']}).json()
+    plan = site.post('/runs/preview', {'submissions': ['s1'], 'questions': ['a']}).json()
     assert plan['counts']['run'] == 1                     # y is not settled: it is read
     site.post('/runs/start', {'plan': plan['plan']})
     wait_batch(site)
     assert site.value('s1', 'a/x').text == '9'
-    plan = site.post('/runs/preview', {'steps': ['read'], 'submissions': ['s1'], 'questions': ['a'],
+    plan = site.post('/runs/preview', {'submissions': ['s1'], 'questions': ['a'],
                                        'include_protected': True}).json()
     site.post('/runs/start', {'plan': plan['plan']})
     wait_batch(site)
@@ -392,7 +393,7 @@ def test_a_batch_never_replaces_what_a_person_set_unless_told(site):
 
 def test_stale_preview_is_refused(site):
     site.run_all()
-    plan = site.post('/runs/preview', {'steps': ['check']}).json()
+    plan = site.post('/runs/preview', {}).json()
     site.runner.set('s1', 'a', 'x', "4", author='other')
     r = site.post('/runs/start', {'plan': plan['plan']})
     assert r.status_code == 409 and 'out of date' in r.json()['error']

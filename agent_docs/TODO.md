@@ -27,7 +27,7 @@ field's region may be unset in code; one grade per check, any number of checks.
 - The browser was exercised on a synthetic Exam 2 workspace (verify-next,
   editing a value and the outdated check recomputing, a pseudocode page, the
   grid); never in a browser yet: the per-submission region editor, the
-  restore button, the runs page with steps, the Exam data page's "read again"
+  restore button, the Read page, the Exam data page's "read again"
   message.
 
 ## Future
@@ -39,9 +39,6 @@ field's region may be unset in code; one grade per check, any number of checks.
   new page (actions within a page already swap parts in place). Getting there
   means the question page's scripts start from a function that can run again
   on swapped-in HTML; no library needed.
-- **Runs page is for reading:** checks recompute by themselves, so its "check"
-  step is nearly redundant; dropping it leaves one check runner (automatic)
-  and one planned batch (model reads).
 - **"Work is present" field:** a field a reader fills with whether there is
   work on the page, so a check can give credit for an answer with work. For
   now that credit is a check with no function, decided by a person (Exam 2).
