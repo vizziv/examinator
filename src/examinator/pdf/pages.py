@@ -67,10 +67,9 @@ def write(src: str | Path, sheets: Sequence[tuple[int, Orient]], out: str | Path
                 image = orient.apply(_image(page))
                 if image.mode not in ('RGB', 'L'):
                     image = image.convert('RGB')
-                if orient.swaps:
-                    w, h = h, w
-                # The page takes the image's shape (a scan may sit on a page of another size):
-                # the same width, the height that keeps the pixels square.
+                # The page is as wide as the turned page and takes the image's shape (a scan
+                # may sit on a page of another size): the height that keeps the pixels square.
+                w = h if orient.swaps else w
                 h = w * image.height / image.width
                 buf = io.BytesIO()
                 image.save(buf, 'JPEG', quality=BAKE_QUALITY)
@@ -81,7 +80,8 @@ def write(src: str | Path, sheets: Sequence[tuple[int, Orient]], out: str | Path
                 new.insert_obj(obj)
                 new.gen_content()
             dst.save(str(tmp))
+            os.replace(tmp, out)
         finally:
+            tmp.unlink(missing_ok=True)
             dst.close()
             doc.close()
-    os.replace(tmp, out)
