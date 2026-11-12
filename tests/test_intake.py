@@ -349,3 +349,27 @@ def test_orientation_codes():
     for bad in ('40', '0', '002', '0x', None):
         with pytest.raises(ValueError):
             Orient.from_code(bad)
+
+
+def test_undo_steps_back_one_edit_at_a_time(stacked):
+    ws, paths, _ = stacked
+    src, _ = intake.add_source(ws, paths[0])
+    starts = lambda: [e['start'] for e in intake.plan(ws, src.id).body['entries']]
+    step = lambda op, **kw: intake.edit(ws, src.id, op, expect_rev=intake.plan(ws, src.id).rev, author='t', **kw)
+    undo = lambda: intake.undo(ws, src.id, expect_rev=intake.plan(ws, src.id).rev)
+    first = starts()
+    step('move', k=1, delta=1)
+    second = starts()
+    step('move', k=2, delta=1)
+    assert starts() not in (first, second)
+    undo()
+    assert starts() == second
+    undo()                                  # a second undo goes further back; it does not redo
+    assert starts() == first
+    step('move', k=1, delta=-1)             # a new edit after undoing: undo returns to where it started
+    undo()
+    assert starts() == first
+    while intake.can_undo(ws, src.id):
+        undo()
+    with pytest.raises(ValueError):
+        undo()

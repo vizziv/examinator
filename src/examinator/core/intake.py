@@ -265,6 +265,7 @@ def reguess(ws, id: str, *, model=None, length: int | None = None, fresh: bool =
         if read.failed:
             body['failed'] = len(read.failed)
     body['checked'] = read is not None and not read.all_failed
+    body.pop(UNDONE, None)
     return ws.store.write(id, '', PLAN, body, origin='manual' if author else 'auto', author=author,
                           expect_rev=expect_rev)
 
@@ -337,14 +338,32 @@ def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | 
         body = _turn_entry(cur.body, n, k, _ENTRY_TURNS[op])
     else:
         raise ValueError("unknown edit")
+    body.pop(UNDONE, None)
     return ws.store.write(id, '', PLAN, body, origin='manual', author=author, expect_rev=cur.rev)
 
 
+UNDONE = 'undone'       # in a plan brought back by undo: the revision it was brought back from
+
+
+def _before(ws, id: str, cur: Artifact | None) -> Artifact | None:
+    """The plan one step back: the newest replaced version, or, when the current plan
+    was itself brought back by undo, the newest one older than what it came from
+    (so undoing twice goes back two steps instead of undoing the undo)."""
+    limit = cur.body.get(UNDONE) if cur is not None else None
+    return next((h for h in ws.store.history(id, '', PLAN) if limit is None or h.rev < limit), None)
+
+
+def can_undo(ws, id: str) -> bool:
+    return _before(ws, id, ws.store.get(id, '', PLAN)) is not None
+
+
 def undo(ws, id: str, *, expect_rev: Any) -> Artifact:
-    hist = ws.store.history(id, '', PLAN)
-    if not hist:
+    cur = ws.store.get(id, '', PLAN)
+    old = _before(ws, id, cur)
+    if old is None:
         raise ValueError("nothing to undo")
-    return ws.store.restore(id, '', PLAN, hist[0].rev, expect_rev=expect_rev)
+    body = {**old.body, UNDONE: old.body.get(UNDONE, old.rev)}
+    return ws.store.write(id, '', PLAN, body, origin=old.origin, author=old.author, expect_rev=expect_rev)
 
 
 # --- accepting: writing submissions ---------------------------------------------------
@@ -443,6 +462,7 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
             pdf_pages.write(path, [(i, Orient.from_json(o)) for i, o in zip(pages, orients)], tmps[sid])
         now = _now()
         with ws.store.transaction():
+            body.pop(UNDONE, None)
             cur = ws.store.write(id, '', PLAN, body, origin=art.origin, author=art.author, expect_rev=art.rev)
             if next_n is not None:
                 ws.store.set_setting('intake_next', next_n)

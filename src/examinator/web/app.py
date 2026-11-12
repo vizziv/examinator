@@ -959,7 +959,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'readings': {i: (None if r is None else 'cover' if r < cover else f'p.{r - cover + 1}')
                              for i, r in split.readings(body).items()},
                 'removed': intake.removed(ws, src.id), 'cursor': split.cursor(body),
-                'undo': bool(store.history(src.id, '', intake.PLAN))}
+                'undo': intake.can_undo(ws, src.id)}
 
     def box(layout: Layout, region) -> str:
         return ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad))
