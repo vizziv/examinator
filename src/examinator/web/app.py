@@ -71,10 +71,13 @@ ROSTER_SAMPLE = 5           # people a roster preview shows
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
 RAW_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'"
+# What a person sees of a workflow state: one word per idea (DESIGN.md, Vocabulary). Needs
+# review is shown as unverified (its grade is the undecided glyph ?): a person is asked either way.
 STATE_LABELS = {
     'not_started': "not started", 'in_progress': "in progress", 'unverified': "unverified",
-    'graded': "graded", 'needs_review': "needs review", 'outdated': "outdated",
+    'graded': "graded", 'needs_review': "unverified", 'outdated': "outdated",
     'manual': "manual", 'manual_outdated': "manual, outdated"}
+REASONS = {"by hand": "manual"}       # workflow's words for an undecided grade, as shown
 
 
 class Bad(ValueError):
@@ -163,10 +166,10 @@ def _window(value: Any) -> list[int] | None:
     if isinstance(value, str):
         value = value.replace(',', ' ').split()
     if not isinstance(value, (list, tuple)) or len(value) != 4:
-        raise Bad("scan window: expected left, top, right, bottom")
-    l, t, r, b = (_int(v, "scan window", 0, 1000) for v in value)
+        raise Bad("print area: expected left, top, right, bottom")
+    l, t, r, b = (_int(v, "print area", 0, 1000) for v in value)
     if l >= r or t >= b:
-        raise Bad("scan window: left < right and top < bottom")
+        raise Bad("print area: left < right and top < bottom")
     return [l, t, r, b]
 
 
@@ -423,8 +426,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
                          'complete': row.complete, 'sort': row.points,
                          'hidden': bool(sel) and not focus.matches(table, sel, row.submission.id)})
+        started = any(c.get('state', 'not_started') != 'not_started' or c.get('variant') and not c['open']
+                      for r in rows for c in r['cells'])
         return page('grid.html', rows=rows, columns=columns, questions=list(exam.questions.values()),
-                    focus=focus.active(table, sel))
+                    focus=focus.active(table, sel), started=started)
 
     # --- focus ---
 
@@ -529,6 +534,18 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                     'plots': [b for b in blocks if b['type'] == 'plot'],
                     'rest': [b for b in blocks if b['type'] != 'plot']}
 
+        def todo(st) -> str:
+            """What a person must do for a part, in one phrase without repeated words."""
+            out = []
+            if st.waiting == ('input',):
+                out.append("decide")
+            elif st.waiting:
+                out.append("verify " + ", ".join(w for w in st.waiting if w != 'input'))
+            reason = REASONS.get(st.reason, st.reason) if st.value is None else None
+            if reason and not ('variant' in st.waiting and 'variant' in reason):
+                out.append(reason)
+            return " · ".join(out)
+
         parts = []
         for part, spec in q.result.items():
             st, g = status[part], arts.get(grade_kind(part))
@@ -537,7 +554,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                           'manual': g is not None and g.origin == 'manual',
                           'bool': isinstance(spec, Bool), 'min': getattr(spec, 'min', None),
                           'max': getattr(spec, 'max', None),
-                          'step': 1 if getattr(spec, 'type', None) is int else 'any'})
+                          'step': 1 if getattr(spec, 'type', None) is int else 'any', 'todo': todo(st)})
 
         def replaces(names):
             """What a deliberate run of these stages would overwrite of a grader's work."""
@@ -551,9 +568,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             return ", ".join(out)
 
         names = [s.name for s in q.stages]
-        stages = [{'name': s.name, 'model': s.uses_model, 'replaces': replaces([s.name]),
-                   'replaces_on': replaces(names[i:])} for i, s in enumerate(q.stages)
-                  if have_model() or not s.uses_model]
+        stages = [{'name': s.name, 'model': s.uses_model, 'off': s.uses_model and not have_model(),
+                   'replaces': replaces([s.name]), 'replaces_on': replaces(names[i:])} for i, s in enumerate(q.stages)]
+        # what a person is asked to verify before the grades count, parse first
+        waiting = [w for w in ('parse', 'transcript', 'variant') if any(w in p['st'].waiting for p in parts)]
         history = [{'rev': a.rev, 'at': a.updated_at[:16].replace('T', ' '), 'who': a.author or a.origin,
                     'verified': a.verified,
                     'preview': (a.body if isinstance(a.body, str) else json.dumps(a.body, ensure_ascii=False))[:300]}
@@ -573,7 +591,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return page(
             'question.html', sub=sub, q=q, parts=parts, scans=scans, parse=parse, loose=loose, transcript=transcript,
             variant=variant, evidence=evidence, stages=stages, history=history, count=count,
-            seen=seen_revs(q, arts),
+            seen=seen_revs(q, arts), waiting=waiting,
             pages=pages, note=note, pages_default=q.pages, layout=layout,
             layout_over=over.body if over else None, regions=regions, keys=keys,
             first_page=(q.pages or (1,))[0],
@@ -702,7 +720,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         sub, _ = target(request, need_question=False)
         cover = data.get('cover_pages')
         cover = None if cover in (None, '') else _int(cover, "cover pages", 0, 99)
-        ws.set_layout(sub.id, cover_pages=cover, scan_window=_window(data.get('scan_window')),
+        ws.set_layout(sub.id, cover_pages=cover, scan_window=_window(data.get('print_area')),
                       author=who(request))
 
     # --- pages, raw blocks, jobs ---
@@ -810,9 +828,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                     pages=exam.pages)
 
     def settings_save(request, data):
-        window = _window(data.get('scan_window'))
+        window = _window(data.get('print_area'))
         if window is None:
-            raise Bad("scan window: expected left, top, right, bottom")
+            raise Bad("print area: expected left, top, right, bottom")
         ws.set_defaults(cover_pages=_int(data.get('cover_pages'), "cover pages", 0, 99), scan_window=window)
 
     # --- exam data: overrides of the package's plain data, for every submission ---
@@ -929,7 +947,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         entries = []
         for k, e in enumerate(body['entries']):
             sid = e.get('id')
-            entries.append({'start': e['start'], 'confirmed': bool(e.get('confirmed')), 'id': sid,
+            entries.append({'start': e['start'], 'verified': bool(e.get('confirmed')), 'id': sid,
                             'pages': pages[k], 'doubts': [split.DOUBTS[d] for d in doubts[k]],
                             'state': states[k], 'own': e.get('orient') is not None,
                             'name': identity.who(ws, sid)['name'] if sid in made else ''})
@@ -951,9 +969,18 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         boxes = [{'name': f.name, 'offset': f.region.page - 1, 'box': box(Layout(0, ws.scan_window), f.region)}
                  for f in exam.identity]
         made = store.made()
-        return page('scans.html', sources=store.sources(), people=[identity.label(p) for p in identity.people(ws)],
-                    expected=intake.expected_length(ws), landmarks=bool(exam.landmarks),
-                    idboxes=json.dumps(boxes), fields=exam.identity,
+        sources = store.sources()
+        # per scan, what the workflow strip counts: first pages to verify, submissions to write
+        counts = {}
+        for src in sources:
+            body = intake.plan(ws, src.id).body
+            states = intake.state(ws, src.id)
+            counts[src.id] = {'open': sum(not e.get('confirmed') for e in body['entries']),
+                              'write': sum(st != 'made' for st in states) + len(intake.removed(ws, src.id))}
+        return page('scans.html', sources=sources, counts=json.dumps(counts),
+                    people=[identity.label(p) for p in identity.people(ws)],
+                    expected=intake.expected_length(ws), idboxes=json.dumps(boxes), fields=exam.identity,
+                    widths=json.dumps(SHEET_WIDTHS), made=len(made),
                     handed=sum(1 for s in store.submissions() if s.id not in made))
 
     def scans_plan(request: Request) -> Response:

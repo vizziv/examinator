@@ -158,7 +158,7 @@ class Runner:
         is_check = name == 'evidence'
         try:
             if is_check and stage.uses_variant and q.variants and variant is None:
-                body = undecided("variant unresolved")
+                body = undecided("variant undecided")
             else:
                 body = self._execute(q, stage, ctx)
             if is_check and not (isinstance(body, Mapping) and isinstance(body.get('data'), Mapping)):

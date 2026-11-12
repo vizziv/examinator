@@ -1,14 +1,14 @@
 'use strict';
 // The question page: drafts, actions (buttons and keys, see actions.js), live refresh, and the scan window.
 (() => {
-  const main = document.getElementById('question');
+  const main = $('question');
   const sub = main.dataset.sub, q = main.dataset.q;
   const base = `/s/${encodeURIComponent(sub)}/${encodeURIComponent(q)}`;
-  const busy = document.getElementById('busy');
-  const $ = id => document.getElementById(id);
+  const busy = $('busy');
   const revOf = el => (el.dataset.rev === '' ? null : Number(el.dataset.rev));
 
-  // --- next / previous student, following the grid's order (the focus, search and sort) ---
+  // --- next / previous submission, following the grid's order (the filter, search and sort) ---
+  try { sessionStorage.setItem('gridAt', JSON.stringify({sub, q})); } catch (e) { /* private mode */ }  // the grid's cursor
   const ids = JSON.parse(main.dataset.ids);
   let order = session('order', null);
   if (!Array.isArray(order)) order = ids;
@@ -30,23 +30,24 @@
     return order.some(s => (step > 0 ? rank.get(s) > me : rank.get(s) < me));
   }
 
-  // --- the focus: does this submission still match it; "like this" sets one ---
-  (async () => {
+  // --- the filter: does this submission still match it; the chips set one to its values.
+  // Drawn again whenever the page's data refreshes (a verify or a grade changes the values). ---
+  async function chips() {
     const r = await request('/focus/values?sub=' + encodeURIComponent(sub));
     if (!r.ok) return;
     const sel = Focus.load();
-    $('unfocused').hidden = !Focus.size(sel) || Focus.matches(r.body.values, sel, sub);
-    const like = $('like'), mine = r.body.questions.find(x => x.id === q);
+    $('unfiltered').hidden = !Focus.size(sel) || Focus.matches(r.body.values, sel, sub);
+    const mine = r.body.questions.find(x => x.id === q), links = [];
     for (const f of mine ? mine.facets : []) {
       if (f.kind !== 'choice') continue;
       for (const v of (r.body.values[f.id] || {})[sub] || []) {
-        const a = make('a', {href: `${ROOT}/${Focus.query({[f.id]: [v]})}`, title: `every submission with ${f.label} = ${v}`},
-          `${f.label} `, make('code', {textContent: v}));
-        like.append(a);
+        links.push(make('a', {href: `${ROOT}/${Focus.query({[f.id]: [v]})}`, title: `every submission with ${f.label} = ${v}`},
+          `${f.label} `, make('code', {textContent: v})));
       }
     }
-    if (like.childElementCount) { like.prepend(make('span', {className: 'dim', textContent: 'like this:'})); like.hidden = false; }
-  })();
+    $('chips').replaceChildren(...(links.length ? [make('span', {className: 'dim', textContent: 'filter:'}), ...links] : []));
+    $('chips').hidden = !links.length;
+  }
 
   // --- drafts: an editor is a <form class="draft" data-kind data-mode data-rev> ---
   const editors = () => [...document.querySelectorAll('form.draft')];
@@ -125,6 +126,8 @@
       drawCrops(node);
       Actions.hints(node);
     }
+    ready();
+    chips();
   }
 
   async function settle(body) {          // wait for the background job an action started
@@ -149,18 +152,30 @@
   }
 
   async function save(ed, verify) {
-    if (!ed) return;
+    if (!ed) return false;
     flash('');
     const body = read(ed);
     const r = await request(`${base}/save`, {kind: ed.dataset.kind, body, rev: revOf(ed), verify});
-    if (r.status === 409) { ed.querySelector('.notice').hidden = false; return; }   // the draft stays
-    if (!r.ok) { flash(r.body.error || "failed"); return; }
+    if (r.status === 409) { ed.querySelector('.notice').hidden = false; return false; }   // the draft stays
+    if (!r.ok) { flash(r.body.error || "failed"); return false; }
     try { sessionStorage.removeItem(draftKey(ed)); } catch (e) { /* private mode */ }
     ed.dataset.rev = r.body.rev;
     ed.dataset.orig = JSON.stringify(body);
     ed.classList.remove('dirty');
     ed.querySelector('.notice').hidden = true;
     await settle(r.body);
+    return true;
+  }
+  // Verify whatever waits for a person, parse first, then the variant. False when something
+  // could not be verified (a failed save, an undecided variant), so V stays on this submission.
+  async function verifyWaiting() {
+    const waiting = JSON.parse($('parts').dataset.waiting || '[]'), ed = parseEd();
+    if (editable(ed) && (dirty(ed) || waiting.includes('parse')) && !await save(ed, true)) return false;
+    if (waiting.includes('variant')) {
+      if (!document.querySelector('[data-action="variant-verify"]')) { flash("variant undecided: choose one"); return false; }
+      if (!await act('verify', {kind: 'variant', rev: variantRev()})) return false;
+    }
+    return true;
   }
 
   const parseEd = () => $('ed-parse');
@@ -175,6 +190,24 @@
     return act('decide', {part: box.dataset.part, rev: revOf(box), seen, ...extra});
   };
   const variantRev = () => revOf($('variant'));
+  // Z / X / C / G grade the first undecided part (or the only part): its buttons carry those
+  // actions, so they show the keys; the other parts' buttons keep the plain ones.
+  const GRADES = {'v-t': 'grade-right', 'v-f': 'grade-wrong', 'v-b': 'grade-blank', 'num-set': 'grade-number'};
+  function target(kind) {
+    const boxes = [...document.querySelectorAll('#parts .decide')];
+    const t = boxes.find(b => b.dataset.open) || (boxes.length === 1 ? boxes[0] : null);
+    if (kind !== 'number') return t;
+    return boxes.find(b => b.dataset.open && b.dataset.kind === 'number') || (t && t.dataset.kind === 'number' ? t : null);
+  }
+  const targetButton = (cls, kind) => target(kind)?.querySelector('button.' + cls);
+  function ready() {
+    for (const [cls, name] of Object.entries(GRADES)) {
+      const b = targetButton(cls, cls === 'num-set' ? 'number' : null);
+      if (b) b.dataset.action = name;
+    }
+    Actions.hints($('parts'));
+    Actions.enable(document);
+  }
 
   // --- actions: buttons (data-action) and keys trigger the same ones ---
   const entryOf = ctx => ctx.target?.closest?.('form.entry');
@@ -191,8 +224,19 @@
     // Cmd+S and Cmd+Enter in an exam-data entry (the key panel) save that entry.
     save: {available: ctx => !!entryOf(ctx) || editable(editorOf(ctx)),
            run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx)) : save(editorOf(ctx), false))},
+    // Cmd/Ctrl+Enter: an entry saves; in an editor, save and verify it; elsewhere verify what waits. Stays here.
     verify: {available: ctx => !!entryOf(ctx) || editable(editorOf(ctx)),
-             run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx)) : save(editorOf(ctx), true))},
+             run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx))
+               : ctx.el || ctx.target?.closest?.('form.draft') ? save(editorOf(ctx), true) : verifyWaiting())},
+    // V: verify what waits, then the next submission in the filter (as on Scans and Names: "yes, next").
+    'verify-next': {available: () => canGo(1) || JSON.parse($('parts').dataset.waiting || '[]').length > 0,
+                    run: async () => { if (await verifyWaiting() && canGo(1)) go(1); }},
+    'grade-right': {available: () => !!targetButton('v-t'), run: ({el}) => decide(el || targetButton('v-t'), {value: true})},
+    'grade-wrong': {available: () => !!targetButton('v-f'), run: ({el}) => decide(el || targetButton('v-f'), {value: false})},
+    'grade-blank': {available: () => !!targetButton('v-b'), run: ({el}) => decide(el || targetButton('v-b'), {blank: true})},
+    // G: to the number box (Enter there sets the grade); its set button sets it.
+    'grade-number': {available: () => !!targetButton('num-set', 'number'),
+                     run: ({el}) => (el ? setNumber(el) : target('number').querySelector('input').focus())},
     edit: {available: () => editable(parseEd()),
            run: () => parseEd().querySelector('input:not([readonly]), textarea:not([readonly])').focus()},
     unverify: {run: ({el}) => act('verify', {kind: el.dataset.kind, rev: revOf(el), verified: false})},
@@ -203,11 +247,7 @@
       location.reload();
     }},
     decide: {run: ({el}) => decide(el, {value: el.dataset.value === 'true'})},
-    'decide-number': {run: ({el}) => {
-      const input = el.closest('.decide').querySelector('input');
-      if (input.value.trim() === '') return input.focus();
-      return decide(el, {value: Number(input.value)});
-    }},
+    'decide-number': {run: ({el}) => setNumber(el)},
     'decide-blank': {run: ({el}) => decide(el, {blank: true})},
     undecide: {run: ({el}) => {
       const box = el.closest('.decide');
@@ -223,23 +263,33 @@
       const input = el.closest('.cue').querySelector('input');
       return act('cue', {cue: input.dataset.cue, reading: input.value, rev: variantRev()});
     }},
-    run: {run: ({el}) => ((el.dataset.confirm && !confirm(`Replace ${el.dataset.confirm}?`)) ? null
+    run: {available: ({el}) => !el || !el.dataset.off, run: ({el}) => ((el.dataset.confirm && !confirm(`Replace ${el.dataset.confirm}?`)) ? null
       : act('run', {stage: el.dataset.stage, onward: !!el.dataset.onward,
                     reasoning: !!el.dataset.model && !!$('run-reasoning')?.checked, params: $('run-params').value}))},
     pages: {run: async () => { if (await act('pages', {pages: $('pg-list').value, note: $('pg-note').value})) location.reload(); }},
     layout: {run: async () => {
       const r = await request(`/s/${encodeURIComponent(sub)}/layout`,
-                              {cover_pages: $('lo-cover').value, scan_window: $('lo-window').value});
+                              {cover_pages: $('lo-cover').value, print_area: $('lo-window').value});
       if (r.ok) location.reload(); else flash(r.body.error || "failed");
     }},
     restore: {run: ({el}) => act('restore', {rev: Number(el.dataset.rev), expect: revOf(parseEd())})},
   };
   for (const [name, spec] of Object.entries(actions)) Actions.register(name, spec);
-  for (const [name, step] of [['prev-student', -1], ['next-student', 1]]) {
-    const b = document.querySelector(`button[data-action="${name}"]`);
-    if (b) b.disabled = !canGo(step);
+  function setNumber(el) {
+    const input = el.closest('.decide').querySelector('input');
+    if (input.value.trim() === '') return input.focus();
+    return decide(el, {value: Number(input.value)});
   }
+  // Enter in a number box sets the grade.
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.isComposing || !e.target.matches?.('.decide input.num')) return;
+    e.preventDefault();
+    Actions.trigger('decide-number', {el: e.target, target: e.target});
+  });
   document.addEventListener('submit', e => e.preventDefault());
+  document.addEventListener('DOMContentLoaded', ready);
+  ready();
+  chips();
 
   // --- an exam-data edit (key panel, regions): this submission is rechecked first ---
   document.addEventListener('entry-saved', async e => {
