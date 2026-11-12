@@ -30,7 +30,7 @@ def count_correct(evidence):
 AREAS = ['A.1', 'A.2', 'A.3']
 exam.question(
     'areas', title="Areas", pages=[2], result=Number(int, min=0, max=3),
-    variants=['red', 'green', 'blue'], trust=1,
+    variants=['red', 'green', 'blue'],
     cues=[Cue('areas_side', region=Region(2, 0, 60, 1000, 240),
               ask="the printed side length of the square, as a number",
               reads={'2': 'red', '3': 'green', '5': 'blue'})],

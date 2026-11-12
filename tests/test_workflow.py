@@ -243,7 +243,9 @@ def test_single_cue_variant_needs_confirmation(env):
     run_all(env)
     verify(env)
     assert ws.store.get(S, Q, 'variant').body['resolved'] == 'one'
-    assert status(env).waiting == ('variant',)                   # one cue is below `trust`
+    assert status(env).state == 'graded'                         # the cues agreed as required: it counts
+    exam.questions[Q] = dataclasses.replace(exam.questions[Q], verify_variant=True)
+    assert status(env).waiting == ('variant',)                   # unless the exam has a person verify it
     verify(env, 'variant')
     assert status(env).state == 'graded'
 

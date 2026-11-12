@@ -167,6 +167,8 @@ treats a field containing one as undecided. Graders clear markers by editing.
   The variant is **resolved** when exactly one candidate remains and at least
   `require` cues agree (default: all the question's cues). Otherwise it is
   unresolved and goes to review. Never guess, never pick "the best match".
+  A resolved variant counts; `verify_variant=True` on a question has a person
+  verify every one.
 - The artifact records each cue's reading, the region used and the resulting
   candidates. The review page shows each cue's crop beside its reading with a
   control to correct it. A manual choice is authoritative until removed.

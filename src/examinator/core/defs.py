@@ -253,7 +253,7 @@ class Question:
     variants: tuple[str, ...] = ()
     cues: tuple[Cue, ...] = ()
     require: int | None = None             # cues that must agree to resolve; None = all
-    trust: int = 2                         # agreeing cues needed to count without review
+    verify_variant: bool = False           # True: a resolved variant still waits for a person
     facets: tuple[Any, ...] = field(default=(), metadata={'describe': False})   # question-level facets
     _hashes: dict = field(init=False, default_factory=dict, compare=False, repr=False)
 
@@ -305,7 +305,7 @@ class Exam:
                  fields: Sequence[Field] = (), stages: Sequence[Stage],
                  variants: Sequence[str] = (),
                  cues: Sequence[Cue] = (), require: int | None = None,
-                 trust: int = 2, facets: Sequence[Any] = ()) -> Question:
+                 verify_variant: bool = False, facets: Sequence[Any] = ()) -> Question:
         if id in self.questions:
             raise ValueError(f"duplicate question {id!r}")
         if not isinstance(result, Mapping):
@@ -325,7 +325,7 @@ class Exam:
                     raise ValueError(f"{id}: stage {s.name!r} reads {kind!r}, which no earlier stage writes")
         q = Question(id=id, title=title or id, pages=tuple(pages), result=dict(result),
                      fields=tuple(fields), stages=tuple(stages),
-                     variants=tuple(variants), cues=tuple(cues), require=require, trust=trust,
+                     variants=tuple(variants), cues=tuple(cues), require=require, verify_variant=verify_variant,
                      facets=tuple(facets))
         self._check(q)
         for s in q.stages:              # a stage may check its configuration against the question
@@ -367,7 +367,6 @@ class Exam:
                 raise ValueError(f"{q.id}: cue {c.name!r} reads to none of the variants {list(q.variants)}")
         if not q.cues:
             return
-        # (`trust` above the number of cues is allowed: it means a person verifies every variant.)
         if q.require is not None and q.require > len(q.cues):
             raise ValueError(f"{q.id}: require={q.require} but the question has {len(q.cues)} cue(s): "
                              f"the variant could never resolve; set require={len(q.cues)} or add cues")

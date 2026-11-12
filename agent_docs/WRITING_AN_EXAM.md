@@ -103,7 +103,7 @@ from examinator.core.variants import vote                          # inside a co
 exam = Exam('toy', title="Toy exam", pages=4, scan_window=[50, 40, 950, 900], cover_pages=1,
             landmarks=[...], identity=[...])
 exam.question('areas', title="Areas", pages=[2], result=Number(int, min=0, max=3),
-              variants=[...], cues=[...], trust=1, fields=[...], stages=[...])
+              variants=[...], cues=[...], fields=[...], stages=[...])
 ```
 
 | Argument | Meaning |
@@ -163,11 +163,11 @@ cues=[Cue('areas_side', region=Region(2, 0, 60, 1000, 240),
   resolves when one remains and at least `require` cues agree (default: all of
   them). Nothing is guessed: an undecided variant goes to a person, and a check that
   `uses_variant` stays undecided until then.
-- `trust` (default 2) is how many agreeing cues let a resolved variant count
-  without a person verifying it. **With one cue and the default `trust`, the
-  variant resolves but stays `unverified` until a person verifies it**; set
-  `trust=1` to let one reading count (the toy exam). Real exams use two cues per
-  question, often one from a neighbouring question's pages (Exams 1 and 3).
+- A resolved variant counts without a person looking, so the cues are yours to
+  make reliable: one cue is one piece of information, and two (often one from a
+  neighbouring question's pages, as in Exams 1 and 3) catch a misreading by
+  disagreeing. `verify_variant=True` has a person verify every variant of the
+  question instead.
 - Checked at definition: a map cue reading to a name that is not a variant, a
   variant with fewer cues able to select it than `require` (default: all cues),
   and `require` above the number of cues. A map cue reading only to other names
@@ -510,7 +510,7 @@ number, `blank`), or `-` when there is none or it is undecided (the app shows
 counts, with `+?` while something does not:
 
 - `unverified`: a grade is proposed, but a person has not verified the parse
-  (or the variant, when fewer than `trust` cues agreed). **Normal after `run`**;
+  (or the variant, with `verify_variant=True`). **Normal after `run`**;
   only the self-test and graders verify.
 - `not_started`: nothing written (after `run --fake`: no scripted answer).
   `in_progress`: no grade yet, because a stage failed or was blocked.
@@ -567,8 +567,7 @@ only, writing to a new directory outside the repository.
 - **A cue that cannot tell variants apart:** the same text on every printing,
   or a band that also covers answer boxes with the same letters (comment above
   `BIT2` in `exams/exam_03/exam.py`).
-- **One cue with the default `trust`** (every variant waits for a person), or
-  **a custom check without `uses_variant=True`** (it sees `ctx.variant is None`
+- **A custom check without `uses_variant=True`** (it sees `ctx.variant is None`
   and is not outdated when the variant changes).
 - **Crashing instead of deciding.** A check that raises is undecided, so a
   failing student program shows `?`: catch `Failure` and return `'incorrect'`.

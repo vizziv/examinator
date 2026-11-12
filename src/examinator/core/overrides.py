@@ -3,7 +3,7 @@
 An override replaces one plain-data value of a question, addressed by a path:
 
     <question>/pages                          printed pages holding the answer
-    <question>/require | trust                variant agreement
+    <question>/require | verify_variant       variant agreement; whether a person verifies it
     <question>/fields/<label>/region
     <question>/cues/<name>/region | ask | reads
     <question>/stages/<name>/<field>[/<key>...]   a stage's configuration: a field of
@@ -144,7 +144,7 @@ def _leaves(q: Question) -> dict[tuple[str, ...], tuple[str, bool]]:
         ('pages',): ('pages', False)}
     if q.variants:
         out[('require',)] = ('int', True)
-        out[('trust',)] = ('int', False)
+        out[('verify_variant',)] = ('bool', False)
     for f in q.fields:
         out[('fields', f.label, 'region')] = ('region', True)
     for c in q.cues:
@@ -254,7 +254,7 @@ def _check(exam: Exam, q: Question, segs: tuple[str, ...], kind: str, nullable: 
     if kind == 'int':
         if not _int(value):
             raise ValueError("expected an integer")
-        if segs in (('require',), ('trust',)) and value < 0:
+        if segs == ('require',) and value < 0:
             raise ValueError("expected a count of cues")
         return value
     if kind == 'number':

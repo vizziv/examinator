@@ -186,7 +186,7 @@ def test_batch_runs_a_stage_after_what_precedes_it_in_any_question():
     exam = Exam('order', title="Order", pages=1)
     exam.question('plain', pages=[1], result=Bool(), fields=[Field('a', region=Region(1, 0, 0, 500, 100))],
                   stages=stages.math(key={'a': '1'}))
-    exam.question('varied', pages=[1], result=Bool(), variants=['x', 'y'], trust=1,
+    exam.question('varied', pages=[1], result=Bool(), variants=['x', 'y'],
                   cues=[Cue('c', region=Region(1, 0, 100, 500, 200), ask="the letter", reads={'x': 'x', 'y': 'y'})],
                   fields=[Field('a', region=Region(1, 0, 200, 500, 300))],
                   stages=stages.math(key={'x': {'a': '1'}, 'y': {'a': '2'}}))

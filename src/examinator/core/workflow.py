@@ -59,13 +59,14 @@ def started(arts: Mapping[str, Artifact]) -> bool:
 
 
 def variant_trusted(question: Question, arts: Mapping[str, Artifact]) -> bool:
-    """A resolved variant counts without review if a person chose or verified it,
-    or if at least `question.trust` independent cues agreed. (Who last wrote the
-    row does not matter: correcting one cue's reading is not choosing the variant.)"""
+    """A resolved variant counts: the cues agreed as the question requires, so it is
+    up to the exam to declare cues it can rely on. With `question.verify_variant`
+    it counts only once a person chose or verified it. (Who last wrote the row
+    does not matter: correcting one cue's reading is not choosing the variant.)"""
     v = arts.get('variant')
     if v is None or not (v.body or {}).get('resolved'):
         return False
-    return bool(v.body.get('chosen')) or v.verified or (v.body.get('agree') or 0) >= question.trust
+    return not question.verify_variant or bool(v.body.get('chosen')) or v.verified
 
 
 def variant_current(question: Question, arts: Mapping[str, Artifact]) -> bool:

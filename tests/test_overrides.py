@@ -95,7 +95,7 @@ def test_toy_exam_paths():
 
 def test_mini_exam_paths():
     paths = {e.path for e in overrides.editable(make_exam())}
-    assert {'a/pages', 'a/require', 'a/trust', 'a/fields/x/region', 'a/cues/c1/reads', 'a/cues/c2/ask',
+    assert {'a/pages', 'a/require', 'a/verify_variant', 'a/fields/x/region', 'a/cues/c1/reads', 'a/cues/c2/ask',
             'a/stages/transcript/notes', 'a/stages/variant/prompt', 'b/pages'} <= paths
     assert not any(p.startswith(('a/stages/evidence', 'a/stages/parse', 'a/stages/grade')) for p in paths)
     assert 'b/require' not in paths      # no variants
@@ -157,7 +157,7 @@ def test_validation():
            ('areas/fields/A.1/region', [2, 0, 0, 10]),
            ('areas/cues/areas_side/region', None),
            ('areas/pages', []), ('areas/pages', [5]), ('areas/pages', [2, 2]), ('areas/pages', ['2']),
-           ('areas/trust', True), ('areas/trust', -1),
+           ('areas/verify_variant', 1), ('areas/require', -1),
            ('areas/stages/transcript/notes', 3), ('areas/stages/transcript/crops', 'yes'),
            ('areas/cues/areas_side/reads', {'2': 'purple'}), ('areas/cues/areas_side/reads', ['2']),
            ('parity/stages/evidence/key/B', []), ('parity/stages/evidence/key/B', 'odd'),

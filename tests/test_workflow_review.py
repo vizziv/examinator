@@ -51,11 +51,11 @@ def replace_stage(exam, qid, name, **changes):
 
 
 def one_cue(env):
-    """Question 'a' resolved from a single cue: resolved, but below `trust`."""
+    """Question 'a' resolved from a single cue, on an exam that has a person verify every variant."""
     exam, ws, runner = env
     runner.model.script[('a', 'variant')] = (
         lambda call: '{"value": "1"}' if "first cue" in call.prompt else '{"value": null}')
-    exam.questions[Q] = dataclasses.replace(exam.questions[Q], require=1)
+    exam.questions[Q] = dataclasses.replace(exam.questions[Q], require=1, verify_variant=True)
 
 
 # =============================================================================
@@ -112,7 +112,7 @@ def test_fixed_check_reading_variant_without_uses_variant_still_counts(env):
 
 
 # BUG (wrong grade can count). The lead's rule: an automatically resolved variant
-# is trusted only if a person chose or verified it or `trust` cues agreed.
+# under `verify_variant` is trusted only if a person chose or verified it.
 # `correct_cue` writes origin='manual', which `variant_trusted` reads as "a person
 # chose it", even when the correction adds no information.
 def test_fixed_correct_cue_makes_a_one_cue_variant_trusted(env):
