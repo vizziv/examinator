@@ -49,6 +49,77 @@ def load_cases(exam: Exam) -> list[Case]:
     return list(importlib.import_module(f'{exam.path.name}.fixtures').cases())
 
 
+class BadCase(ValueError):
+    """A fixture case that does not fit the exam."""
+
+
+def check_cases(exam: Exam, cases: list[Case]) -> None:
+    """`BadCase` naming the case and the key for any case that does not fit the exam."""
+    columns = [q.column(p) for q in exam.questions.values() for p in q.result]
+    cue_names = {c.name for q in exam.questions.values() for c in q.cues if c.fn is None}
+    names = [c.name for c in cases]
+    for case in cases:
+        def bad(what):
+            return BadCase(f"case {case.name!r}: {what}")
+        if names.count(case.name) > 1:
+            raise bad("two cases have this name")
+        for qid, body in case.answers.items():
+            q = exam.questions.get(qid)
+            if q is None:
+                raise bad(f"answers: no question {qid!r} (questions: {list(exam.questions)})")
+            parse = q.stage('parse')
+            shape = parse.shape if parse is not None else None
+            if isinstance(body, Mapping):
+                if shape not in (None, 'fields'):
+                    raise bad(f"answers[{qid!r}]: this question's parse is source text, not {{label: text}}")
+                unknown = [k for k in body if k not in q.labels]
+                if unknown:
+                    raise bad(f"answers[{qid!r}]: no field {unknown[0]!r} (fields: {list(q.labels)})")
+            elif body is not None and not isinstance(body, str):
+                raise bad(f"answers[{qid!r}]: expected {{label: text or None}}, source text, or None")
+            elif shape == 'fields':
+                raise bad(f"answers[{qid!r}]: expected {{label: text or None}} for the fields {list(q.labels)}")
+        for qid, variant in case.variants.items():
+            q = exam.questions.get(qid)
+            if q is None:
+                raise bad(f"variants: no question {qid!r}")
+            if variant not in q.variants:
+                raise bad(f"variants[{qid!r}]: {variant!r} is not one of {list(q.variants)}")
+        for col in case.expect:
+            if col not in columns:
+                raise bad(f"expect: no grid column {col!r} (columns: {columns})")
+        for name in case.readings:
+            if name not in cue_names:
+                raise bad(f"readings: no cue {name!r} read by the model (cues: {sorted(cue_names)})")
+
+
+def _new_root(root: Path) -> None:
+    if root.exists() and (not root.is_dir() or any(root.iterdir())):
+        raise FileExistsError(f"{root} already exists and is not empty: give a new directory")
+
+
+class _Building:
+    """Create `root` for a new synthetic workspace; on failure leave nothing behind."""
+
+    def __init__(self, root: Path):
+        _new_root(root)
+        self.root, self.existed = root, root.exists()
+
+    def __enter__(self):
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return self.root
+
+    def __exit__(self, kind, *_):
+        if kind is not None:
+            import shutil
+            if self.existed:
+                for child in self.root.iterdir():
+                    shutil.rmtree(child) if child.is_dir() and not child.is_symlink() else child.unlink()
+            else:
+                shutil.rmtree(self.root, ignore_errors=True)
+        return False
+
+
 def _font(size: int):
     try:
         return ImageFont.load_default(size=size)
@@ -180,12 +251,17 @@ def script_for(exam: Exam, case: Case) -> dict[str, Any]:
 
 
 def generate(exam: Exam, root: str | Path, cases: list[Case]) -> Path:
-    """Create a synthetic workspace at `root` (which must not already hold one)."""
+    """Create a synthetic workspace at `root`, a new or empty directory. Checks
+    the cases first (`check_cases`); a failure leaves no partial workspace."""
     root = Path(root)
+    check_cases(exam, cases)
+    with _Building(root):
+        return _generate(exam, root, cases)
+
+
+def _generate(exam: Exam, root: Path, cases: list[Case]) -> Path:
     pdfs = root / 'pdfs'
-    if pdfs.exists():
-        raise FileExistsError(f"{pdfs} already exists")
-    pdfs.mkdir(parents=True, mode=0o700)
+    pdfs.mkdir(mode=0o700)
     renderer = Renderer(root / 'cache' / 'blanks', dpi=100)
     script = {}
     with (pdfs / 'roster.csv').open('w', newline='') as fh:
@@ -205,10 +281,18 @@ def generate(exam: Exam, root: str | Path, cases: list[Case]) -> Path:
     return root
 
 
+class NoScript(FileNotFoundError):
+    """`--fake` on a workspace that `synth` did not make."""
+
+
 def fake_model(root: str | Path):
-    """The scripted model for a synthetic workspace."""
+    """The scripted model for a synthetic workspace. `NoScript` if `root` has none."""
     from .model.fake import FakeModel
-    script = json.loads((Path(root) / SCRIPT).read_text())
+    path = Path(root) / SCRIPT
+    if not path.is_file():
+        raise NoScript(f"{root} has no scripted model ({SCRIPT}): it was not made by `synth`, "
+                       "or `synth` did not finish")
+    script = json.loads(path.read_text())
 
     def reply(call):
         submission, question, stage = call.tag
@@ -264,8 +348,9 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
 # --- stacks of scans, for intake ---------------------------------------------------
 
 def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> list[Path]:
-    """Synthetic "big bad" scans for intake, in `root/incoming/`, with a roster
-    (`root/roster.csv`) and scripted landmark readings (`root/fake_model.json`).
+    """Synthetic "big bad" scans for intake, in `root/incoming/` (`root` a new or
+    empty directory), with a roster (`root/roster.csv`) and scripted landmark
+    readings (`root/fake_model.json`).
 
     `stack-1.pdf`: six students, one missing printed page 3, one with a stray
     blank sheet after printed page 2, one put in upside down. `stack-2.pdf`:
@@ -278,10 +363,16 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
     character, a misread name, an ID that belongs to someone else, an empty ID
     box, an unreadable name, and a student not on the roster, which also lists
     one person with no exam."""
-    from .pdf.orient import HALF, IDENTITY
     cases = load_cases(exam) if cases is None else cases
     root = Path(root)
-    (root / 'incoming').mkdir(parents=True, exist_ok=True, mode=0o700)
+    check_cases(exam, cases)
+    with _Building(root):
+        return _stacks(exam, root, cases)
+
+
+def _stacks(exam: Exam, root: Path, cases: list[Case]) -> list[Path]:
+    from .pdf.orient import HALF, IDENTITY
+    (root / 'incoming').mkdir(mode=0o700)
     renderer = Renderer(root / 'cache' / 'blanks', dpi=100)
     names = [name for name, _ in STACK_PEOPLE]
 
@@ -307,7 +398,7 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
            + turned(stray(student(2), 2), IDENTITY, 2) + turned(student(3), IDENTITY, 3)
            + turned(student(4), HALF, 4) + turned(student(5), IDENTITY, 5))
     two = [x for k in (6, 7, 8) for x in turned(student(k), HALF, k)] + turned(student(9), HALF, 9)[:2]
-    script = json.loads((root / SCRIPT).read_text()) if (root / SCRIPT).exists() else {}
+    script = {}
     out = []
     for name, sheets in (('stack-1.pdf', one), ('stack-2.pdf', two)):
         path = root / 'incoming' / name
