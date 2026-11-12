@@ -25,7 +25,7 @@ computed from the last confirmed start before them.
 from __future__ import annotations
 
 import copy
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, NamedTuple, Sequence
 
 Reader = Callable[[int], 'int | None']
 
@@ -193,8 +193,11 @@ def _replace(plan: dict, lo: int, hi: int, starts: list[int]) -> dict:
             new.append(e)
             if e.get('id') in ids:
                 ids.remove(e['id'])
-        else:
-            new.append({'start': s, 'confirmed': False, 'id': None, **({'orient': e['orient']} if e and 'orient' in e else {})})
+            continue
+        guess = {'start': s, 'confirmed': False, 'id': None}
+        if e is not None and 'orient' in e:         # a guess at the same sheet keeps its orientation
+            guess['orient'] = e['orient']
+        new.append(guess)
     for e in new:
         if e.get('id') is None and ids:
             e['id'] = ids.pop(0)
@@ -202,22 +205,36 @@ def _replace(plan: dict, lo: int, hi: int, starts: list[int]) -> dict:
     return plan
 
 
+class _Segment(NamedTuple):
+    """Sheets `first..end-1` and the entries `lo..hi-1` that cover them; `fixed`:
+    the first entry is a confirmed start."""
+    first: int
+    end: int
+    fixed: bool
+    lo: int
+    hi: int
+
+
+def _segments(entries: list[dict], n: int) -> list[_Segment]:
+    """The stretches between confirmed starts: one before the first, one from each."""
+    def start(k: int) -> int:
+        return entries[k]['start'] if k < len(entries) else n
+    confirmed = [k for k, e in enumerate(entries) if e.get('confirmed')]
+    bounds = confirmed + [len(entries)]
+    out = [_Segment(0, start(bounds[0]), False, 0, bounds[0])]
+    out += [_Segment(start(k), start(hi), True, k, hi) for k, hi in zip(confirmed, bounds[1:])]
+    return out
+
+
 def refill(plan: Mapping, n: int, read: Reader | None = None) -> dict:
     """Guess every unconfirmed start again, between the confirmed ones."""
     plan = copy.deepcopy(dict(plan))
     get = _reader(plan, read)
-    entries = plan['entries']
-    fixed = [k for k, e in enumerate(entries) if e.get('confirmed')]
-    # segments: (first sheet, end sheet, starts fixed?, entries lo..hi), replaced last to first
-    segs = [(0, entries[fixed[0]]['start'] if fixed else n, False, 0, fixed[0] if fixed else len(entries))]
-    for j, k in enumerate(fixed):
-        hi = fixed[j + 1] if j + 1 < len(fixed) else len(entries)
-        segs.append((entries[k]['start'], entries[hi]['start'] if hi < len(entries) else n, True, k, hi))
-    for first, end, is_fixed, lo, hi in reversed(segs):
-        if first >= end:
+    for seg in reversed(_segments(plan['entries'], n)):     # last to first: indices stay valid
+        if seg.first >= seg.end:
             continue
-        starts = _fill(plan, n, first, end, is_fixed, get)
-        _replace(plan, lo, hi, starts or ([first] if is_fixed else []))
+        starts = _fill(plan, n, seg.first, seg.end, seg.fixed, get)
+        _replace(plan, seg.lo, seg.hi, starts or ([seg.first] if seg.fixed else []))
     return plan
 
 
@@ -232,7 +249,8 @@ def reguess_after(plan: dict, k: int, n: int) -> dict:
     return _replace(plan, k, hi, starts or [entries[k]['start']])
 
 
-def _at(plan: Mapping, k: Any) -> int:
+def entry_index(plan: Mapping, k: Any) -> int:
+    """`k`, if the plan has an entry `k`; else ValueError."""
     if isinstance(k, bool) or not isinstance(k, int) or not 0 <= k < len(plan['entries']):
         raise ValueError("no such submission")
     return k
@@ -241,7 +259,7 @@ def _at(plan: Mapping, k: Any) -> int:
 def confirm(plan: Mapping, k: int, n: int) -> dict:
     """A person says entry `k` starts where it does; later guesses follow from it."""
     plan = copy.deepcopy(dict(plan))
-    plan['entries'][_at(plan, k)]['confirmed'] = True
+    plan['entries'][entry_index(plan, k)]['confirmed'] = True
     return reguess_after(plan, k, n)
 
 
@@ -250,7 +268,7 @@ def move(plan: Mapping, k: int, delta: int, n: int) -> dict:
     start is then a guess again; the guesses after it follow from it."""
     plan = copy.deepcopy(dict(plan))
     entries = plan['entries']
-    _at(plan, k)
+    entry_index(plan, k)
     sheets = kept(n, plan.get('dropped') or ())
     cur = entries[k]['start']
     pos = next((j for j, i in enumerate(sheets) if i >= cur), len(sheets))
@@ -286,7 +304,7 @@ def cut(plan: Mapping, sheet: int, n: int) -> dict:
 def join(plan: Mapping, k: int) -> dict:
     """Entry `k` and the one after it become one submission."""
     plan = copy.deepcopy(dict(plan))
-    if not 0 <= _at(plan, k) < len(plan['entries']) - 1:
+    if not 0 <= entry_index(plan, k) < len(plan['entries']) - 1:
         raise ValueError("nothing after it to join")
     gone = plan['entries'].pop(k + 1)
     if not plan['entries'][k].get('id'):

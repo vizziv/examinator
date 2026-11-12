@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import csv
 import difflib
+import functools
 import io
 import json
 import re
@@ -24,8 +25,8 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from ..pdf.orient import Orient
 from .defs import Identity, digest
+from .reading import ask, basis, memo_key
 from .store import ANY, Artifact, Submission
-from .variants import json_value
 
 WHO = 'who'
 READ = 'identity'
@@ -185,11 +186,6 @@ Answer with exactly this JSON, without Markdown: {{"value": "the text as written
 Copy the handwriting character by character, even where it looks misspelled or incomplete. Use null for the value if the box is empty or unreadable."""
 
 
-def basis(f: Identity) -> str:
-    """Digest of what a reading depends on: the box and the question."""
-    return digest({'region': f.region, 'ask': f.ask})
-
-
 def _tag(ws, sid: str, page: int) -> tuple[str, str, str]:
     """Which scanned sheet a call reads, for the call's tag (diagnostics, and the
     scripted model): a written submission's source sheet and how it was turned."""
@@ -198,7 +194,7 @@ def _tag(ws, sid: str, page: int) -> tuple[str, str, str]:
     if made is not None and 0 <= i < len(made.pages):
         sheets = made.orient.get('sheets') or []
         o = Orient.from_json(sheets[i] if i < len(sheets) else None)
-        return made.source, f'{made.pages[i]}@{o.turn}{int(o.flip)}', READ
+        return made.source, f'{made.pages[i]}@{o.code}', READ
     return sid, str(i), READ
 
 
@@ -212,18 +208,17 @@ def read(ws, sid: str, model, *, fresh: bool = False, prompt: str = IDENTITY_PRO
     layout = ws.layout(sid)
     values, failed = {}, []
     for f in fields:
-        key = f'identity:{f.name}:{basis(f)}:{list(layout.window)}:{layout.cover_pages}'
+        key = memo_key('identity', f.name, basis(f), list(layout.window), layout.cover_pages)
         hit = None if fresh else ws.store.memo(sid, key)
         if hit is None:
             try:
-                image = ws.crop(sid, f.region)
-                out = model.complete(prompt.format(ask=f.ask), images=[image], expect='json',
-                                     tag=_tag(ws, sid, f.region.page))
+                complete = functools.partial(model.complete, tag=_tag(ws, sid, f.region.page))
+                got = ask(complete, prompt, f.ask, ws.crop(sid, f.region))
             except Exception:
                 values[f.name] = None
                 failed.append(f.name)
                 continue
-            hit = json.dumps(json_value(out))
+            hit = json.dumps(got)
             ws.store.set_memo(sid, key, hit)
         values[f.name] = json.loads(hit)
     body = {'fields': values, 'basis': {f.name: basis(f) for f in fields}}
@@ -241,6 +236,15 @@ def readings(fields: Sequence[Identity], body: Mapping | None) -> dict[str, str 
     made = body.get('basis') or {}
     got = body.get('fields') or {}
     return {f.name: got.get(f.name) for f in fields if f.name in got and made.get(f.name) == basis(f)}
+
+
+def unread(ws) -> list[str]:
+    """Written submissions whose boxes still need reading: some box has no reading
+    under its current declaration, or a call failed last time."""
+    fields = ws.exam.identity
+    reads = {a.submission: a.body for a in ws.store.all(kinds=[READ])}
+    return [s for s in sorted(ws.store.made())
+            if len(readings(fields, reads.get(s))) < len(fields) or (reads.get(s) or {}).get('failed')]
 
 
 def by_roster(fields: Sequence[Identity], read: Mapping[str, str | None]) -> dict[str, str | None]:
@@ -263,6 +267,7 @@ ORDER = ('disagree', 'nobody', 'unread', 'name', 'id', 'agree')     # most doubt
 NAME_CLOSE = 0.8        # a name this similar points to a person ...
 NAME_MARGIN = 0.05      # ... if nobody else is within this of it
 NAME_SOME = 0.6         # below this a name is no evidence at all
+NAME_EXACT = 0.999      # a name this similar is the same name
 ID_WEIGHT = {0: 1.0, 0.5: 0.9, 1: 0.7, 2: 0.45}       # by distance (0.5: look-alike characters only)
 # Characters a reader confuses with one another, each written as its digit. Both the
 # reading and the roster's ID are compared in this form, so IDs may mix letters and digits.
@@ -428,7 +433,7 @@ class Matcher:
                 why.append("ID exact" if dist[i] == 0 else "ID look-alike" if dist[i] == 0.5 else f"ID {dist[i]} off")
             if i in names:
                 s = names[i]
-                why.append("name exact" if s >= 0.999 else "name close" if s >= NAME_CLOSE else f"name {round(s * 100)}%")
+                why.append("name exact" if s >= NAME_EXACT else "name close" if s >= NAME_CLOSE else f"name {round(s * 100)}%")
             cands.append({'key': p.get('key'), 'name': p.get('name', ''), 'id': p.get('id', ''),
                           'label': label(p), 'score': round(scores[i], 3), 'why': ", ".join(why),
                           'taken': taken.get(p.get('key'))})
@@ -443,6 +448,8 @@ def propose(read: Mapping[str, str | None], roster: Sequence[Mapping], *,
 
 # --- everything at once, for the page and the command line ----------------------------
 
+CACHE_LIMIT = 20_000        # proposals an overview cache holds before it starts again
+
 def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None) -> dict:
     """Every written submission (or `subs`) with what was read, the proposal and
     the pick, most doubtful unconfirmed first, then the confirmed ones; and the
@@ -453,7 +460,7 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
     rkey = digest(roster)
     matcher = None
     cache = {} if cache is None else cache
-    if len(cache) > 20_000:
+    if len(cache) > CACHE_LIMIT:
         cache.clear()
     made = ws.store.made()
     ids = sorted(made) if subs is None else [s for s in subs if s in made]
@@ -464,11 +471,15 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
         key = (a.body or {}).get('key')
         if key:
             taken.setdefault(key, []).append(sid)
+
+    def other(key: str | None, sid: str) -> str | None:
+        """Another submission the person `key` is picked for, if any."""
+        return next((s for s in taken.get(key, ()) if s != sid), None)
+
     rows = []
     for sid in ids:
         r = reads.get(sid)
         got = readings(fields, r.body if r else None)
-        others = {k: next(s for s in v if s != sid) for k, v in taken.items() if any(s != sid for s in v)}
         ck = (sid, r.rev if r else None, rkey)
         prop = cache.get(ck)
         if prop is None:
@@ -479,7 +490,7 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
                 prop = {'doubt': 'nobody' if any(got.values()) else 'unread', 'candidates': []}
             cache[ck] = prop
         prop = {'doubt': prop['doubt'],
-                'candidates': [{**c, 'taken': others.get(c['key'])} for c in prop['candidates']]}
+                'candidates': [{**c, 'taken': other(c['key'], sid)} for c in prop['candidates']]}
         pick = picks.get(sid)
         body = pick.body if pick is not None and isinstance(pick.body, dict) else None
         twice = bool(body and body.get('key') and len(taken.get(body['key'], ())) > 1)

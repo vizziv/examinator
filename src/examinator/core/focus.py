@@ -74,15 +74,22 @@ class Facet:
 
 # --- built-in facets: from the workflow rules, never from evidence contents ---------
 
-def grade_value(st) -> str:
-    """What a grade is, as a facet value: '✓', '✗', 'blank', 'undecided' or the number."""
+def grade_text(st, *, blank: bool = True) -> str | None:
+    """What a grade is, as text: None (undecided), 'blank' (unless `blank` is
+    False), '✓', '✗' or the number. Every other rendering of a grade is built on this."""
     if st.value is None:
-        return 'undecided'
-    if 'blank' in st.flags:
+        return None
+    if blank and 'blank' in st.flags:
         return 'blank'
     if isinstance(st.value, bool):
         return '✓' if st.value else '✗'
     return f'{st.value:g}'
+
+
+def grade_value(st) -> str:
+    """What a grade is, as a facet value: '✓', '✗', 'blank', 'undecided' or the number."""
+    text = grade_text(st)
+    return 'undecided' if text is None else text
 
 
 def builtin_facets(question: Question) -> list[Facet]:
@@ -233,4 +240,4 @@ def counts(table, selection: Selection, fid: str, submissions: Iterable[str]) ->
 
 
 __all__ = ['BLANK', 'Facet', 'STATUS', 'active', 'builtin_facets', 'counts', 'describe_facets',
-           'facet_id', 'facets', 'focused', 'grade_value', 'matches', 'values_table']
+           'facet_id', 'facets', 'focused', 'grade_text', 'grade_value', 'matches', 'values_table']

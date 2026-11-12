@@ -193,14 +193,14 @@ def written(tmp_path):
     ws = Workspace(root, toy, create=True)
     model = synth.fake_model(root)
     one, _ = intake.add_source(ws, paths[0])
-    art = intake.propose(ws, one.id, model=model)
+    art = intake.reguess(ws, one.id, model=model)
     art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')
     intake.accept(ws, one.id)
     two, _ = intake.add_source(ws, paths[1])
     art = intake.plan(ws, two.id)
     for _ in range(2):
         art = intake.edit(ws, two.id, 'turn_source', expect_rev=art.rev, author='t')
-    intake.propose(ws, two.id, model=model)
+    intake.reguess(ws, two.id, model=model)
     intake.accept(ws, two.id)
     identity.set_roster(ws, (root / 'roster.csv').read_text())
     yield ws, model

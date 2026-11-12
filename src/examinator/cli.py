@@ -7,7 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .core import batch, overrides
+from .core import batch, focus, overrides
 from .core.defs import Exam, load_exam
 from .core.runner import Runner
 from .core.workflow import question_status, total
@@ -37,7 +37,7 @@ def status_table(exam: Exam, ws: Workspace) -> str:
         cells = []
         for q, part in cols:
             st = by_q[q.id][part]
-            shown = '-' if st.value is None else str(st.value)
+            shown = focus.grade_text(st) or '-'
             cells.append(f"{shown} ({st.state})" if not st.counts else shown)
         points, complete = total(exam, by_q)
         lines.append("\t".join([sub.id, *cells, f"{points:g}{'' if complete else '+?'}"]))
@@ -93,7 +93,7 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
         print("model unavailable: proposals are every N pages, unchecked", file=sys.stderr)
     targets = added or ws.store.sources()
     for src in targets:
-        art = intake.propose(ws, src.id, model=model, length=args.length)
+        art = intake.reguess(ws, src.id, model=model, length=args.length)
         doubts = split.doubts(art.body, src.pages)
         parts = split.pages(art.body, src.pages)
         flagged = [(k, p, d) for k, (p, d) in enumerate(zip(parts, doubts)) if d]
@@ -115,7 +115,7 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
         if model is None or not exam.identity:
             print("names: needs the model and identity boxes (Exam(identity=[...]))", file=sys.stderr)
         else:
-            for sid in sorted(ws.store.made()):
+            for sid in identity.unread(ws):
                 identity.read(ws, sid, model)
             view = identity.overview(ws)
             print(f"names: {view['left']} of {len(view['rows'])} to confirm (Scans page, Names)")

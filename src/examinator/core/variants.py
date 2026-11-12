@@ -14,31 +14,25 @@ can be layered on later:
 question, not its `reads`). When cue definitions change, the variant is
 narrowed again from the stored readings whose basis still matches; a reading
 of a different crop or question is dropped, leaving that cue unread.
+
+Reading a cue is `core.reading`, shared with intake's landmarks and identity boxes.
 """
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Iterable, Mapping
 
 from .context import Context
-from .defs import Cue, Question, Stage, digest
+from .defs import Cue, Exam, Question, Stage, digest
+from .reading import ask, basis, memo_key, normalize
+from .workflow import variant_current
 
 CUE_PROMPT = """\
 Read the PRINTED text in this image of an exam page region. Ignore all handwriting.
 Report: {ask}.
 Answer with exactly this JSON, without Markdown: {{"quote": "a short quote of the printed text you relied on", "value": "the value"}}
 Use null for the value if the printed text is unreadable or absent. Do not infer the value from anything other than the printed text in this image."""
-
-
-def normalize(reading: str) -> str:
-    """Fold away what a model varies when reporting the same printed value:
-    case, whitespace, one layer of brackets or quotes, a trailing '.' or '%'."""
-    s = re.sub(r'\s+', '', reading).lower().rstrip('.%')
-    if len(s) >= 2 and (s[0], s[-1]) in (('[', ']'), ('(', ')'), ('"', '"'), ("'", "'"), ('{', '}')):
-        s = s[1:-1]
-    return s
 
 
 def match(cue: Cue, reading: str | None) -> str | None:
@@ -49,11 +43,6 @@ def match(cue: Cue, reading: str | None) -> str | None:
         return reading
     table = {normalize(k): v for k, v in cue.reads.items()}
     return table.get(normalize(reading))
-
-
-def basis(cue: Cue) -> str:
-    """Digest of what a cue's reading depends on: its crop and its question."""
-    return digest({'region': cue.region, 'ask': cue.ask})
 
 
 def stored_readings(question: Question, body: Mapping | None) -> dict[str, str | None]:
@@ -104,15 +93,33 @@ def resolved(body: Mapping | None) -> str | None:
     return (body or {}).get('resolved')
 
 
-def reading(ctx: Context, cue: Cue) -> str | None:
+def to_read_again(exam: Exam, store, questions: Iterable[str]) -> list[tuple[str, str]]:
+    """(submission, question) pairs whose variant a model should read again: not
+    protected, and outdated by changed cue definitions or still unresolved."""
+    out = []
+    for sid in (s.id for s in store.submissions()):
+        for qid in questions:
+            arts = store.for_question(sid, qid)
+            art = arts.get('variant')
+            if art is None or art.protected:
+                continue
+            body = art.body if isinstance(art.body, dict) else {}
+            if not variant_current(exam.questions[qid], arts) or resolved(body) is None:
+                out.append((sid, qid))
+    return out
+
+
+def reading(ctx: Context, cue: Cue, prompt: str = CUE_PROMPT) -> str | None:
     """What a cue reads for this submission. A model reading is made once per
     submission and shared by every question that uses the same cue (a rerun of
     the variant stage reads again). Public so that a computed cue (`Cue.fn`) can
     build on other cues' readings."""
     if cue.fn is not None:
         return cue.fn(ctx)
-    return json.loads(ctx.remember(f'cue:{cue.name}:{digest(cue)}',
-                                   lambda: _ask(ctx, cue), refresh=ctx.rerun))
+
+    def read() -> str:      # `reads` names printings; never an answer key
+        return json.dumps(ask(ctx.model, prompt, cue.ask, ctx.crop(cue.region), cue.reads))
+    return json.loads(ctx.remember(memo_key('cue', cue.name, digest(cue)), read, refresh=ctx.rerun))
 
 
 def vote(ctx: Context, cue: Cue) -> str | None:
@@ -120,40 +127,13 @@ def vote(ctx: Context, cue: Cue) -> str | None:
     return match(cue, reading(ctx, cue))
 
 
-def json_value(out: str) -> str | None:
-    """The `value` of a model's JSON reply (cues, landmarks, identity boxes), as
-    text; None if absent, null or not JSON."""
-    try:
-        value: Any = json.loads(out).get('value')
-    except (ValueError, AttributeError):
-        return None
-    if value is not None and not isinstance(value, str):
-        value = json.dumps(value)
-    return value
-
-
-def _ask(ctx: Context, cue: Cue, prompt: str = CUE_PROMPT) -> str:
-    prompt = prompt.format(ask=cue.ask)
-    if cue.reads:       # readings identify the printing; they are not answer keys
-        prompt += "\nThe value is expected to be one of: " + " | ".join(cue.reads) + "."
-    return json.dumps(json_value(ctx.model(prompt, images=[ctx.crop(cue.region)], expect='json')))
-
-
 @dataclass(frozen=True)
 class ReadVariant:
-    """The standard variant stage: read each cue, then narrow."""
+    """The standard variant stage: read each cue (`reading`), then narrow."""
     prompt: str = CUE_PROMPT
 
     def __call__(self, ctx: Context) -> dict:
-        readings: dict[str, str | None] = {}
-        for cue in ctx.question.cues:
-            if cue.fn is not None:
-                readings[cue.name] = cue.fn(ctx)
-            else:
-                readings[cue.name] = json.loads(ctx.remember(
-                    f'cue:{cue.name}:{digest(cue)}',
-                    lambda cue=cue: _ask(ctx, cue, self.prompt), refresh=ctx.rerun))
-        return narrow(ctx.question, readings)
+        return narrow(ctx.question, {cue.name: reading(ctx, cue, self.prompt) for cue in ctx.question.cues})
 
 
 def read_variant(prompt: str = CUE_PROMPT) -> Stage:

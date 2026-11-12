@@ -21,6 +21,7 @@ grader picks are `core.identity`.
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import json
 import os
@@ -28,20 +29,21 @@ import shutil
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from PIL import Image
 
-from ..pdf import pages as pdf_pages
+from ..pdf import pages as pdf_pages, render
 from ..pdf.layout import Layout
 from ..pdf.orient import HALF, MIRROR, QUARTER, Orient
-from . import identity, split
+from . import identity, reading, split
 from .defs import Landmark, digest
 from .store import ANY, Artifact, Conflict, Made, Source
-from .variants import CUE_PROMPT, json_value, normalize
+from .variants import CUE_PROMPT
+from .workflow import NOT_WORK
 
 PLAN = 'split'
-NO_WORK = (identity.WHO, identity.READ, 'layout')       # kinds that are not grading work
+LANDMARK_PROMPT = CUE_PROMPT        # a landmark, like a cue, is printed text
 
 
 class Busy(Conflict):
@@ -93,7 +95,7 @@ def add_source(ws, path: str | Path, name: str | None = None, *, move: bool = Fa
             path.unlink(missing_ok=True)
         return have, False
     try:
-        n = pdf_pages.page_count(path)
+        n = render.page_count(path)
     except Exception:
         if move:
             path.unlink(missing_ok=True)
@@ -109,7 +111,7 @@ def add_source(ws, path: str | Path, name: str | None = None, *, move: bool = Fa
     os.chmod(dest, 0o600)
     src = Source(id, dest.name, (name or path.name)[:200], sha, n, _now())
     ws.store.add_source(src)
-    propose(ws, src.id)
+    reguess(ws, src.id)
     return src, True
 
 
@@ -164,25 +166,16 @@ def page(ws, src: Source, sheet: int, body: Mapping | None = None) -> Image.Imag
     return im if o.identity else o.apply(im)
 
 
-def page_of(lm: Landmark, reading: str | None) -> int | None:
+def page_of(lm: Landmark, text: str | None) -> int | None:
     """The printed page a landmark reading points to."""
-    if reading is None:
+    normalize = reading.normalize
+    if text is None:
         return None
     if lm.reads:
         table = {normalize(k): v for k, v in lm.reads.items()}
-        return table.get(normalize(reading))
-    digits = ''.join(ch for ch in normalize(reading) if ch.isdigit())
+        return table.get(normalize(text))
+    digits = ''.join(ch for ch in normalize(text) if ch.isdigit())
     return int(digits) if digits and len(digits) <= 4 else None
-
-
-LANDMARK_PROMPT = CUE_PROMPT
-
-
-def _ask(model, image: Image.Image, lm: Landmark, tag: tuple[str, str, str]) -> str | None:
-    prompt = LANDMARK_PROMPT.format(ask=lm.ask)
-    if lm.reads:
-        prompt += "\nThe value is expected to be one of: " + " | ".join(lm.reads) + "."
-    return json_value(model.complete(prompt, images=[image], expect='json', tag=tag))
 
 
 class LandmarkReader:
@@ -205,20 +198,21 @@ class LandmarkReader:
         image = None
         failed = False
         for lm in exam.landmarks:
-            key = f'landmark:{lm.name}:{digest(lm)}:{list(ws.scan_window)}:{o.turn}{int(o.flip)}:{i}'
+            key = reading.memo_key('landmark', lm.name, digest(lm), list(ws.scan_window), o.code, i)
             hit = ws.store.memo(self.src.id, key)
             if hit is None:
                 if image is None:
                     image = page(ws, self.src, i, self.body)
                 self.calls += 1
+                complete = functools.partial(self.model.complete, tag=(self.src.id, f'{i}@{o.code}', 'landmark'))
                 try:
-                    reading = _ask(self.model, self.layout.crop(image, lm.region, exam.crop_pad), lm,
-                                   (self.src.id, f'{i}@{o.turn}{int(o.flip)}', 'landmark'))
+                    got = reading.ask(complete, LANDMARK_PROMPT, lm.ask,
+                                      self.layout.crop(image, lm.region, exam.crop_pad), lm.reads or ())
                 except Exception:
                     self.failures += 1
                     failed = True
                     continue
-                hit = json.dumps(reading)
+                hit = json.dumps(got)
                 ws.store.set_memo(self.src.id, key, hit)
             p = page_of(lm, json.loads(hit))
             if p is not None:
@@ -239,28 +233,30 @@ def reader(ws, src: Source, body: Mapping, model) -> LandmarkReader | None:
     return LandmarkReader(ws, src, body, model)
 
 
-def propose(ws, id: str, *, model=None, length: int | None = None, fresh: bool = False,
+def reguess(ws, id: str, *, model=None, length: int | None = None, fresh: bool = False,
             author: str | None = None, expect_rev: Any = ANY) -> Artifact:
-    """Guess the plan again: every unconfirmed start (all of them with `fresh`),
-    checked with the landmarks when there is a model. A person's confirmed
-    starts and dropped sheets stay. `length` changes the expected length.
-    `failed` in the plan counts the sheets a failed model call left unread;
-    a check where every call failed does not count as checked."""
+    """Guess the plan again and write it: every unconfirmed start (all of them with
+    `fresh`), checked with the landmarks when there is a model. A person's
+    confirmed starts and dropped sheets stay. `length` changes the expected length.
+    `failed` in the plan counts the sheets a failed model call left unread; a
+    check where every call failed does not count as checked."""
     src = source(ws, id)
     cur = plan(ws, id)
-    body = dict(cur.body) if cur is not None and not fresh else {}
-    if not body:
+    if cur is None or fresh or not cur.body:
         body = split.new_plan(src.pages, length or expected_length(ws), anchor=anchor(ws))
         if cur is not None:
             body['orient'] = cur.body.get('orient', body['orient'])
-    if length:
-        if length != body['length']:
-            body['readings'] = {}
+    else:
+        body = dict(cur.body)
+    resized = bool(length) and int(length) != body['length']
+    if resized:
         body['length'] = int(length)
     body['anchor'] = anchor(ws, cover(ws, body))
     read = reader(ws, src, body, model)
-    if read is not None:
-        body['readings'] = {}       # read again (cheap: the model's answers are memoised)
+    # Readings are positions within a submission: a new length makes them meaningless,
+    # and a check reads every sheet again (cheaply: the model's answers are memoised).
+    if resized or read is not None:
+        body['readings'] = {}
     body = split.refill(body, src.pages, read)
     body.pop('failed', None)
     if read is not None:
@@ -273,13 +269,52 @@ def propose(ws, id: str, *, model=None, length: int | None = None, fresh: bool =
                           expect_rev=expect_rev)
 
 
-EDITS = ('confirm', 'move', 'cut', 'join', 'drop', 'restore', 'turn_source', 'flip_source',
-         'turn', 'flip', 'upright')
+# The plain split edits: (plan, n, k, sheet, delta) -> new plan.
+_SPLIT_EDITS: dict[str, Callable[..., dict]] = {
+    'confirm': lambda body, n, k, sheet, delta: split.confirm(body, k, n),
+    'move': lambda body, n, k, sheet, delta: split.move(body, k, _step(delta), n),
+    'cut': lambda body, n, k, sheet, delta: split.cut(body, sheet, n),
+    'join': lambda body, n, k, sheet, delta: split.join(body, k),
+    'drop': lambda body, n, k, sheet, delta: split.drop(body, sheet, n),
+    'restore': lambda body, n, k, sheet, delta: split.restore(body, sheet, n),
+}
+_SOURCE_TURNS = {'turn_source': QUARTER, 'flip_source': MIRROR}
+_ENTRY_TURNS = {'turn': HALF, 'flip': MIRROR, 'upright': None}
+EDITS = (*_SPLIT_EDITS, *_SOURCE_TURNS, *_ENTRY_TURNS)
+
+
+def _step(delta: Any) -> int:
+    if delta not in (-1, 1):
+        raise ValueError("move by one page")
+    return delta
 
 
 def _clear_readings(body: dict, sheets) -> None:
     sheets = {str(i) for i in sheets}
     body['readings'] = {k: v for k, v in (body.get('readings') or {}).items() if k not in sheets}
+
+
+def _turn_source(body: Mapping, n: int, by: Orient) -> dict:
+    """The whole source turned `by` more; every reading is stale."""
+    body = copy.deepcopy(dict(body))
+    body['orient'] = Orient.from_json(body.get('orient')).then(by).to_json()
+    _clear_readings(body, range(n))
+    return body
+
+
+def _turn_entry(body: Mapping, n: int, k: Any, by: Orient | None) -> dict:
+    """Submission `k` turned `by` more, or back to the source's orientation (None)."""
+    body = copy.deepcopy(dict(body))
+    e = body['entries'][split.entry_index(body, k)]
+    base = Orient.from_json(body.get('orient'))
+    mine = Orient.from_json(e['orient']) if e.get('orient') is not None else base
+    new = base if by is None else mine.then(by)
+    if new == base:
+        e.pop('orient', None)
+    else:
+        e['orient'] = new.to_json()
+    _clear_readings(body, split.pages(body, n)[k])
+    return body
 
 
 def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | None = None,
@@ -293,39 +328,13 @@ def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | 
         raise KeyError(id)
     if expect_rev is not ANY and cur.rev != expect_rev:
         raise Conflict("the plan changed")
-    n, body = src.pages, cur.body
-    if op == 'confirm':
-        body = split.confirm(body, k, n)
-    elif op == 'move':
-        if delta not in (-1, 1):
-            raise ValueError("move by one page")
-        body = split.move(body, k, delta, n)
-    elif op == 'cut':
-        body = split.cut(body, sheet, n)
-    elif op == 'join':
-        body = split.join(body, k)
-    elif op == 'drop':
-        body = split.drop(body, sheet, n)
-    elif op == 'restore':
-        body = split.restore(body, sheet, n)
-    elif op in ('turn_source', 'flip_source'):
-        body = json.loads(json.dumps(body))
-        body['orient'] = Orient.from_json(body.get('orient')).then(
-            QUARTER if op == 'turn_source' else MIRROR).to_json()
-        _clear_readings(body, range(n))
-    elif op in ('turn', 'flip', 'upright'):
-        body = json.loads(json.dumps(body))
-        if not isinstance(k, int) or not 0 <= k < len(body['entries']):
-            raise ValueError("no such submission")
-        e = body['entries'][k]
-        base = Orient.from_json(body.get('orient'))
-        mine = Orient.from_json(e['orient']) if e.get('orient') is not None else base
-        new = base if op == 'upright' else mine.then(HALF if op == 'turn' else MIRROR)
-        if new == base:
-            e.pop('orient', None)
-        else:
-            e['orient'] = new.to_json()
-        _clear_readings(body, split.pages(body, n)[k])
+    n = src.pages
+    if op in _SPLIT_EDITS:
+        body = _SPLIT_EDITS[op](cur.body, n, k, sheet, delta)
+    elif op in _SOURCE_TURNS:
+        body = _turn_source(cur.body, n, _SOURCE_TURNS[op])
+    elif op in _ENTRY_TURNS:
+        body = _turn_entry(cur.body, n, k, _ENTRY_TURNS[op])
     else:
         raise ValueError("unknown edit")
     return ws.store.write(id, '', PLAN, body, origin='manual', author=author, expect_rev=cur.rev)
@@ -404,8 +413,8 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
     entries = body['entries']
     sheets = _sheets_of(body, src.pages)
     busy = [e['id'] for e, st, (pages, _) in zip(entries, states, sheets)
-            if st == 'changed' and pages and ws.store.has_work(e['id'], ignore=NO_WORK)]
-    busy += [s for s in gone if ws.store.has_work(s, ignore=NO_WORK)]
+            if st == 'changed' and pages and ws.store.has_work(e['id'], ignore=NOT_WORK)]
+    busy += [s for s in gone if ws.store.has_work(s, ignore=NOT_WORK)]
     if busy and not force:
         raise Busy(busy)
     fresh = _next_ids(ws, {s.id for s in ws.store.submissions()} | set(made))

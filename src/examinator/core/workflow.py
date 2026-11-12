@@ -30,8 +30,11 @@ STATES = ('not_started', 'in_progress', 'unverified', 'graded', 'needs_review',
           'outdated', 'manual', 'manual_outdated')
 COUNTING = ('graded', 'manual')
 
-# Per-submission overrides stored beside the artifacts; they are not work on the answer.
-OVERRIDE_KINDS = ('pages',)
+# Artifact kinds that are not grading work: per-submission settings (a question's
+# page selection, the scan layout) and intake's records of who wrote it (the
+# model's reading of the name and ID boxes, the person picked; `core.identity`).
+# They do not start a question, and do not stop intake rewriting a submission.
+NOT_WORK = ('pages', 'layout', 'identity', 'who')
 
 
 @dataclass(frozen=True)
@@ -52,7 +55,7 @@ class Status:
 
 
 def started(arts: Mapping[str, Artifact]) -> bool:
-    return any(k not in OVERRIDE_KINDS for k in arts)
+    return any(k not in NOT_WORK for k in arts)
 
 
 def variant_trusted(question: Question, arts: Mapping[str, Artifact]) -> bool:

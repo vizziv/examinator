@@ -319,7 +319,7 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
         for i, (_, page, o, k) in enumerate(sheets):
             # the model reads a sheet only when it is shown the right way up: undoing `o`
             up = HALF if o == HALF else IDENTITY
-            replies[f'{i}@{up.turn}{int(up.flip)}|landmark'] = {
+            replies[f'{i}@{up.code}|landmark'] = {
                 lm.ask: json.dumps({'quote': "synthetic", 'value': landmark_text(lm, page) if page else None})
                 for lm in exam.landmarks}
             if up != IDENTITY:      # shown as scanned, it reads as nothing
@@ -328,7 +328,7 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
             boxes = [f for f in exam.identity if f.region.page == page]
             if boxes:
                 said = STACK_READS[k]
-                replies[f'{i}@{up.turn}{int(up.flip)}|identity'] = {
+                replies[f'{i}@{up.code}|identity'] = {
                     f.ask: json.dumps({'value': said.get(f.roster or f.name)}) for f in boxes}
                 if up != IDENTITY:
                     replies[f'{i}@00|identity'] = {f.ask: json.dumps({'value': None}) for f in boxes}

@@ -23,6 +23,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from .orient import CLOCKWISE
+
 _PDFIUM_LOCK = threading.Lock()   # PDFium itself is process-global
 
 
@@ -37,16 +39,11 @@ class Renderer:
         return hashlib.sha1(f'{pdf.resolve()}|{st.st_size}|{st.st_mtime_ns}'.encode()).hexdigest()[:20]
 
     def page_count(self, pdf: str | Path) -> int:
+        """`page_count`, remembered while the file is unchanged."""
         pdf = Path(pdf)
         key = self._key(pdf)
         if key not in self._counts:
-            import pypdfium2
-            with _PDFIUM_LOCK:
-                doc = pypdfium2.PdfDocument(str(pdf))
-                try:
-                    self._counts[key] = len(doc)
-                finally:
-                    doc.close()
+            self._counts[key] = page_count(pdf)
         return self._counts[key]
 
     def page_path(self, pdf: str | Path, index: int) -> Path:
@@ -85,6 +82,17 @@ class Renderer:
             return im
 
 
+def page_count(pdf: str | Path) -> int:
+    """How many pages a PDF has."""
+    import pypdfium2
+    with _PDFIUM_LOCK:
+        doc = pypdfium2.PdfDocument(str(pdf))
+        try:
+            return len(doc)
+        finally:
+            doc.close()
+
+
 def scan_image(page) -> Image.Image | bytes | None:
     """The page's one embedded image, or None if the page is not a plain scan.
 
@@ -106,7 +114,7 @@ def scan_image(page) -> Image.Image | bytes | None:
     ops = _upright(a, b, c, d)
     if ops is None:
         return None
-    ops = ops + _TURNS[page.get_rotation() % 360]
+    ops = ops + _BY_ROTATE[page.get_rotation() % 360]
     if not ops and obj.get_filters() == ['DCTDecode']:
         data = bytes(obj.get_data())
         with Image.open(io.BytesIO(data)) as probe:
@@ -119,7 +127,8 @@ def scan_image(page) -> Image.Image | bytes | None:
 
 
 _T = Image.Transpose
-_TURNS = {0: (), 90: (_T.ROTATE_270,), 180: (_T.ROTATE_180,), 270: (_T.ROTATE_90,)}   # /Rotate is clockwise
+# The transposes that undo a page's /Rotate (degrees clockwise), as a tuple to append to others.
+_BY_ROTATE = {90 * t: (CLOCKWISE[t],) if t else () for t in range(4)}
 
 
 def _upright(a: float, b: float, c: float, d: float) -> tuple | None:

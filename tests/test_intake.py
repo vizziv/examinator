@@ -76,31 +76,31 @@ def test_not_a_pdf_is_refused(tmp_path, toy):
 def test_check_with_landmarks_flags_the_awkward_cases(stacked):
     ws, paths, model = stacked
     one, _ = intake.add_source(ws, paths[0])
-    art = intake.propose(ws, one.id, model=model)
+    art = intake.reguess(ws, one.id, model=model)
     assert starts(art) == [0, 4, 7, 12, 16, 20]
     assert split.doubts(art.body, one.pages) == [[], ['short'], ['long', 'number'], [], ['start'], []]
     calls = len(model.calls)
-    intake.propose(ws, one.id, model=model)
+    intake.reguess(ws, one.id, model=model)
     assert len(model.calls) == calls                 # memoised: a re-run reads nothing again
 
 
 def test_orientation_source_and_submission(stacked):
     ws, paths, model = stacked
     two, _ = intake.add_source(ws, paths[1])
-    art = intake.propose(ws, two.id, model=model)
+    art = intake.reguess(ws, two.id, model=model)
     assert all('start' in d for d in split.doubts(art.body, two.pages))   # upside down: nothing reads
     for _ in range(2):
         art = intake.edit(ws, two.id, 'turn_source', expect_rev=art.rev, author='t')
     assert Orient.from_json(art.body['orient']) == HALF and art.body['readings'] == {}
-    art = intake.propose(ws, two.id, model=model)
+    art = intake.reguess(ws, two.id, model=model)
     assert starts(art) == [0, 4, 8, 12]
     assert split.doubts(art.body, two.pages) == [[], [], [], ['short']]
 
     one, _ = intake.add_source(ws, paths[0])
-    art = intake.propose(ws, one.id, model=model)
+    art = intake.reguess(ws, one.id, model=model)
     art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')   # one exam upside down
     assert intake.sheet_orient(art.body, 17) == HALF and intake.sheet_orient(art.body, 21) == Orient()
-    art = intake.propose(ws, one.id, model=model)
+    art = intake.reguess(ws, one.id, model=model)
     assert split.doubts(art.body, one.pages)[4] == []
     # the submission's own orientation wins over the source's
     art = intake.edit(ws, one.id, 'turn_source', expect_rev=art.rev, author='t')
@@ -122,11 +122,11 @@ def test_landmark_crops_come_from_the_oriented_page(tmp_path):
         return json.dumps({'value': '1' if dark else None})
     model = FakeModel(reply)
     src, _ = intake.add_source(ws, pdf)
-    assert intake.propose(ws, src.id, model=model).body['readings'] == {'0': 0}
+    assert intake.reguess(ws, src.id, model=model).body['readings'] == {'0': 0}
     art = intake.plan(ws, src.id)
     art = intake.edit(ws, src.id, 'turn_source', expect_rev=art.rev, author='t')
     intake.edit(ws, src.id, 'turn_source', expect_rev=art.rev, author='t')
-    assert intake.propose(ws, src.id, model=model).body['readings'] == {'0': None}
+    assert intake.reguess(ws, src.id, model=model).body['readings'] == {'0': None}
     ws.close()
 
 
@@ -159,7 +159,7 @@ def test_accept_copies_pages_untouched_and_the_fast_path_applies(stacked, monkey
 def test_a_longer_plan_means_cover_sheets(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
-    art = intake.propose(ws, one.id, length=ws.exam.pages + 1)
+    art = intake.reguess(ws, one.id, length=ws.exam.pages + 1)
     assert intake.cover(ws, art.body) == 1 and art.body['anchor'] == 1
     intake.accept(ws, one.id)
     assert ws.layout('s0001').cover_pages == 1
@@ -205,7 +205,7 @@ def test_writing_a_pdf_that_fails_leaves_no_temporary_file(tmp_path, monkeypatch
 def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     ws, paths, model = stacked
     one, _ = intake.add_source(ws, paths[0])
-    intake.propose(ws, one.id, model=model)
+    intake.reguess(ws, one.id, model=model)
     intake.accept(ws, one.id)
     before = {s: (ws.pdfs / f'{s}.pdf').stat().st_mtime_ns for s in ws.store.made()}
     # grading work on the third submission (the one with the stray sheet)
@@ -285,11 +285,11 @@ def test_handed_pdfs_still_need_their_roster(tmp_path, toy):
 def test_failed_landmark_calls_are_counted_not_read_as_nothing(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
-    art = intake.propose(ws, one.id, model=FakeModel(lambda call: None))     # every call fails
+    art = intake.reguess(ws, one.id, model=FakeModel(lambda call: None))     # every call fails
     assert art.body['failed'] > 0 and not art.body['checked']
     assert art.body['readings'] == {}                       # failed sheets are unread, not read as None
     assert split.doubts(art.body, one.pages) == [[]] * 6
-    assert intake.propose(ws, one.id).body.get('failed') is None
+    assert intake.reguess(ws, one.id).body.get('failed') is None
 
 
 def test_a_submission_whose_pages_are_all_dropped_is_removed(stacked):
@@ -331,3 +331,21 @@ def test_a_plan_edit_during_accept_leaves_pdfs_alone(stacked, monkeypatch):
     assert {p.name: p.read_bytes() for p in ws.pdfs.glob('*.pdf')} == before
     assert not [p for p in ws.pdfs.iterdir() if p.suffix == '.part']
     assert ws.store.setting('intake_next') == counter
+
+
+def test_a_page_selection_does_not_hold_a_submission(stacked):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    intake.accept(ws, one.id)
+    ws.set_pages('s0003', ws.exam.questions['parity'], [1, 2], "", author='t')
+    intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
+    assert intake.accept(ws, one.id)['rewritten'] == ['s0003']        # not Busy: settings are not work
+
+
+def test_orientation_codes():
+    for o in (Orient(), HALF, QUARTER, Orient(3, True)):
+        assert Orient.from_code(o.code) == o
+    assert HALF.code == '20' and Orient(1, True).code == '11'
+    for bad in ('40', '0', '002', '0x', None):
+        with pytest.raises(ValueError):
+            Orient.from_code(bad)

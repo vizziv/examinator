@@ -3,7 +3,7 @@ import pytest
 
 from examinator.core import batch
 from examinator.core.store import Conflict
-from examinator.core.workflow import part_status, question_status, total
+from examinator.core.workflow import NOT_WORK, part_status, question_status, total
 from conftest import make_exam
 
 S, Q = 's1', 'a'
@@ -31,6 +31,18 @@ def verify(env, kind='parse', sub=S, q=Q):
 def test_nothing_exists(env):
     st = status(env)
     assert st.state == 'not_started' and not st.counts
+
+
+def test_a_page_selection_alone_is_not_work(env):
+    """Row 'nothing exists': per-submission settings are not artifacts of the answer,
+    and the same list keeps intake free to rewrite the submission."""
+    exam, ws, _ = env
+    ws.set_pages(S, exam.questions[Q], [1, 2], "spills over", author='t')
+    assert set(ws.store.for_question(S, Q)) == {'pages'}
+    assert status(env).state == 'not_started'
+    assert not ws.store.has_work(S, ignore=NOT_WORK)
+    ws.store.write(S, Q, 'parse', {'x': '1'}, origin='manual', author='t')
+    assert ws.store.has_work(S, ignore=NOT_WORK)
 
 
 def test_unverified_parse_shows_proposed_grade_but_does_not_count(env):

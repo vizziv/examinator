@@ -25,16 +25,6 @@ BAKE_DPI = 200          # rasterizing a page that is not a plain scan
 BAKE_QUALITY = 95
 
 
-def page_count(pdf: str | Path) -> int:
-    import pypdfium2
-    with render._PDFIUM_LOCK:
-        doc = pypdfium2.PdfDocument(str(pdf))
-        try:
-            return len(doc)
-        finally:
-            doc.close()
-
-
 def _image(page) -> Image.Image:
     got = render.scan_image(page)
     if got is None:

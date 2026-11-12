@@ -52,8 +52,9 @@ from ..core import batch, focus, grid, identity, intake, overrides, split
 from ..core.defs import Bool, Exam, Question, grade_kind, has_marker
 from ..core.runner import Runner
 from ..core.store import Conflict
+from ..core import variants
 from ..core.variants import resolved
-from ..core.workflow import evidence_current, question_status, seen_revs, variant_current, variant_trusted
+from ..core.workflow import evidence_current, question_status, seen_revs, variant_trusted
 from ..core.workspace import Workspace
 from ..pdf.layout import Layout
 from ..pdf.orient import Orient
@@ -64,6 +65,9 @@ LOOPBACK = ('127.0.0.1', 'localhost', '[::1]')
 MAX_BODY = 400_000          # characters of an edited artifact
 MAX_UPLOAD = 4 << 30        # bytes of one scanned PDF
 SHEET_WIDTHS = (140, 360, 1000)   # pixel widths a sheet is served at (0: as rendered)
+MAX_ROSTER = 2_000_000      # characters of roster text
+ROSTER_PROBLEMS = 20        # problems a roster preview lists
+ROSTER_SAMPLE = 5           # people a roster preview shows
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
 RAW_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'"
@@ -204,34 +208,22 @@ def selection(text: str | None) -> dict:
             if isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, (str, int, float)) for x in v))}
 
 
-def glyph(spec, st) -> str:
+def glyph(st) -> str:
     """What the grade is, as one glyph. Where it is in the workflow is `st.state`."""
-    if st.value is None:
+    text = focus.grade_text(st)
+    if text is None:
         return {'needs_review': '?', 'unverified': '?', 'in_progress': '·'}.get(st.state, '')
-    if 'blank' in st.flags:
-        return '∅'
-    if isinstance(st.value, bool):
-        return '✓' if st.value else '✗'
-    return f'{st.value:g}'
+    return '∅' if text == 'blank' else text
 
 
 def value_class(st) -> str:
-    if st.value is None:
-        return 'v-n'
-    if 'blank' in st.flags:
-        return 'v-b'
-    if isinstance(st.value, bool):
-        return 'v-t' if st.value else 'v-f'
-    return 'v-num'
+    return {None: 'v-n', 'blank': 'v-b', '✓': 'v-t', '✗': 'v-f'}.get(focus.grade_text(st), 'v-num')
 
 
 def value_key(st) -> str:
-    """The value as the grid's sort key."""
-    if st.value is None:
-        return ''
-    if isinstance(st.value, bool):
-        return 't' if st.value else 'f'
-    return f'{st.value:g}'
+    """The value as the grid's sort key (a blank sorts by its value)."""
+    text = focus.grade_text(st, blank=False)
+    return {None: '', '✓': 't', '✗': 'f'}.get(text, text)
 
 
 def prepare_blocks(blocks: Any, prefix: str = '') -> list[dict]:
@@ -423,10 +415,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 if q.variants:
                     cells.append({'variant': True, 'qid': q.id, 'text': cell.variant or '?',
                                   'open': cell.variant is None})
-                for part, spec in q.result.items():
+                for part in q.result:
                     st = cell.status[part]
                     cells.append({'qid': q.id, 'col': q.column(part), 'state': st.state,
-                                  'glyph': glyph(spec, st), 'cls': value_class(st), 'v': value_key(st),
+                                  'glyph': glyph(st), 'cls': value_class(st), 'v': value_key(st),
                                   'blank': 'blank' in st.flags, 'counts': st.counts})
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
                          'complete': row.complete, 'sort': row.points,
@@ -540,7 +532,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         parts = []
         for part, spec in q.result.items():
             st, g = status[part], arts.get(grade_kind(part))
-            parts.append({'part': part, 'name': q.column(part), 'st': st, 'glyph': glyph(spec, st),
+            parts.append({'part': part, 'name': q.column(part), 'st': st, 'glyph': glyph(st),
                           'cls': value_class(st), 'rev': g.rev if g else '',
                           'manual': g is not None and g.origin == 'manual',
                           'bool': isinstance(spec, Bool), 'min': getattr(spec, 'min', None),
@@ -913,16 +905,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise Bad("model unavailable")
         qids = _strings(data.get('questions') or [], [k for k, q in exam.questions.items() if q.variants],
                         "questions")
-        items = []
-        for sid in (s.id for s in store.submissions()):
-            for qid in qids:
-                arts = store.for_question(sid, qid)
-                art = arts.get('variant')
-                if art is None or art.protected:
-                    continue
-                body = art.body if isinstance(art.body, dict) else {}
-                if not variant_current(exam.questions[qid], arts) or resolved(body) is None:
-                    items.append((sid, qid))
+        items = variants.to_read_again(exam, store, qids)
 
         def reread(sid, qid):
             out = runner.run_stage(sid, qid, 'variant')
@@ -938,9 +921,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise HTTPException(404)
         return src
 
-    def code(o: Orient) -> str:
-        return f'{o.turn}{int(o.flip)}'
-
     def plan_view(src) -> dict:
         art = intake.plan(ws, src.id)
         body, n, cover = art.body, src.pages, intake.cover(ws, art.body)
@@ -955,8 +935,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                             'name': identity.who(ws, sid)['name'] if sid in made else ''})
         so = Orient.from_json(body.get('orient'))
         return {'id': src.id, 'name': src.name, 'n': n, 'rev': art.rev, 'length': body['length'],
-                'checked': bool(body.get('checked')), 'failed': body.get('failed', 0), 'o': code(so), 'orient': so.label(),
-                'sheet_o': [code(intake.sheet_orient(body, i)) for i in range(n)],
+                'checked': bool(body.get('checked')), 'failed': body.get('failed', 0), 'o': so.code, 'orient': so.label(),
+                'sheet_o': [intake.sheet_orient(body, i).code for i in range(n)],
                 'cover': cover, 'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
                 'readings': {i: (None if r is None else 'cover' if r < cover else f'p.{r - cover + 1}')
                              for i, r in split.readings(body).items()},
@@ -1035,9 +1015,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 raise Bad("the exam declares no landmarks")
 
             def work():
-                intake.propose(ws, src.id, model=runner.model, **kw)
+                intake.reguess(ws, src.id, model=runner.model, **kw)
             return {'job': jobs.start(work)}
-        intake.propose(ws, src.id, **kw)
+        intake.reguess(ws, src.id, **kw)
         return {'plan': plan_view(src)}
 
     def scans_undo(request, data):
@@ -1056,11 +1036,12 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         """A roster as text (a CSV file's contents or pasted lines). `dry`: only
         say what would be read: how many people, the first few, the problems."""
         text = data.get('text', data.get('csv'))
-        if not isinstance(text, str) or len(text) > 2_000_000:
+        if not isinstance(text, str) or len(text) > MAX_ROSTER:
             raise Bad("expected roster text")
         people, problems = identity.read_roster(text)
-        out = {'people': len(people), 'problems': problems[:20], 'more': max(0, len(problems) - 20),
-               'sample': [{'name': p['name'], 'id': p['id'], 'email': p['email']} for p in people[:5]]}
+        out = {'people': len(people), 'problems': problems[:ROSTER_PROBLEMS],
+               'more': max(0, len(problems) - ROSTER_PROBLEMS),
+               'sample': [{'name': p['name'], 'id': p['id'], 'email': p['email']} for p in people[:ROSTER_SAMPLE]]}
         if not data.get('dry'):
             identity.set_roster(ws, text)
         return out
@@ -1096,11 +1077,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         if not exam.identity:
             raise Bad("the exam declares no identity boxes")
         fresh = bool(data.get('fresh'))
-        subs = sorted(store.made())
-        if not fresh:       # only what has not been read under the boxes as declared now
-            reads = {a.submission: a.body for a in store.all(kinds=[identity.READ])}
-            subs = [s for s in subs if len(identity.readings(exam.identity, reads.get(s))) < len(exam.identity)
-                    or (reads.get(s) or {}).get('failed')]
+        subs = sorted(store.made()) if fresh else identity.unread(ws)
 
         def read(sid):
             identity.read(ws, sid, runner.model, fresh=fresh)
@@ -1111,19 +1088,21 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         shrunk to one of a few widths, cached; the source and the renderer are untouched."""
         src = the_source(request)
         index = request.path_params['index']
-        o = request.query_params.get('o', '00')
         w = request.query_params.get('w', '0')
-        if not 0 <= index < src.pages or len(o) != 2 or o[0] not in '0123' or o[1] not in '01' \
-                or not w.isdigit() or int(w) not in (0, *SHEET_WIDTHS):
+        try:
+            o = Orient.from_code(request.query_params.get('o', '00'))
+        except ValueError:
+            raise HTTPException(404) from None
+        if not 0 <= index < src.pages or not w.isdigit() or int(w) not in (0, *SHEET_WIDTHS):
             raise HTTPException(404)
         cache = (ws.root / 'cache').resolve()
-        out = cache / 'sheets' / src.id / f'{index:04d}-{o}-{int(w)}.jpg'
+        out = cache / 'sheets' / src.id / f'{index:04d}-{o.code}-{int(w)}.jpg'
         if not out.exists():
             try:
                 im = ws.renderer.page(intake.source_path(ws, src), index)
             except (KeyError, IndexError, OSError):
                 raise HTTPException(404) from None
-            im = Orient(int(o[0]), o[1] == '1').apply(im)
+            im = o.apply(im)
             if int(w) and im.width > int(w):
                 im = im.resize((int(w), max(1, round(im.height * int(w) / im.width))))
             out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
