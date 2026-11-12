@@ -171,7 +171,7 @@ def test_cues_combine_into_a_printing(exam, pkg, tmp_path):
         assert body['resolved'] is None and body['candidates'] == []
         assert body['cues']['q5_second']['variant'] == 'means/distance'
         st = part_status(q, '', ws.store.for_question('split', 'q5'))
-        assert (st.value, st.counts, st.reason) == (None, False, "variant unresolved")
+        assert (st.value, st.counts, st.reason) == (None, False, "variant undecided")
         runner.choose_variant('split', 'q5', 'means/coordinate', author='ta')
         runner.recheck('split', 'q5')
         st = part_status(q, '', ws.store.for_question('split', 'q5'))

@@ -126,7 +126,8 @@ def test_theme_and_actions_are_static_and_controls_declare_actions(site):
     assert 'class="c cell s-' in grid and '+?' not in grid          # '?' only means "a person must decide"
     assert 'title="incomplete' in grid and '>?</a>' in grid         # s2's variant is open
     settings = site.get('/settings').text
-    assert all(f'id="{i}"' in settings for i in ('theme', 'pk-accent', 'pk-accent2', 'k-single', 'k-preset', 'keymap'))
+    assert all(f'id="{i}"' in settings for i in ('theme', 'pk-accent', 'pk-accent2', 'k-single', 'keymap'))
+    assert 'k-preset' not in settings                               # one key map: no presets
     assert 'aria-current="page"' in settings
 
 
@@ -313,7 +314,7 @@ def test_variant_choice_and_cue_correction(site):
     body = site.ws.store.get('s1', 'a', 'variant').body
     assert body['resolved'] is None and body['cues']['c1'] == {'reading': '2', 'variant': 'two'}
     html = site.get('/s/s1/a').text
-    assert 'unresolved' in html and 'variant unresolved' in html
+    assert '</b> undecided</span>' in html and 'variant unresolved' not in html
     r = site.post('/s/s1/a/variant', {'variant': 'two', 'rev': site.rev('s1', 'a', 'variant')})
     assert r.status_code == 200
     site.wait(r.json()['job'])
@@ -367,7 +368,8 @@ def test_model_stages_refused_without_a_model(env):
     site = Site(exam, ws, offline)
     html = site.get('/s/s1/a').text
     assert 'no model' in html
-    assert 'data-stage="transcript"' not in html and 'data-stage="evidence"' in html
+    assert 'data-stage="transcript" data-off="1" title="no model" disabled' in html     # shown, dimmed
+    assert 'data-stage="evidence" data-off' not in html
     for stage in ('variant', 'transcript', 'parse'):
         r = site.post('/s/s1/a/run', {'stage': stage, 'onward': True})
         assert r.status_code == 400 and 'model' in r.json()['error']
@@ -438,26 +440,26 @@ def test_pages_and_layout_overrides(site):
     assert site.post('/s/s1/a/pages', {'pages': 'x'}).status_code == 400
     assert site.post('/s/s1/a/pages', {'pages': ''}).status_code == 200
     assert site.ws.selected_pages('s1', site.exam.questions['a'])[0] == (1,)
-    r = site.post('/s/s1/layout', {'cover_pages': 1, 'scan_window': '100 100 900 900'})
+    r = site.post('/s/s1/layout', {'cover_pages': 1, 'print_area': '100 100 900 900'})
     assert r.status_code == 200
     layout = site.ws.layout('s1')
     assert layout.cover_pages == 1 and layout.window == (100, 100, 900, 900)
     assert site.ws.layout('s2').cover_pages == 0
     assert site.ws.store.get('s1', '', 'layout').author == 'tester'
-    assert site.post('/s/s1/layout', {'scan_window': [900, 0, 100, 1000]}).status_code == 400
-    assert site.post('/s/s1/layout', {'cover_pages': '', 'scan_window': ''}).status_code == 200
+    assert site.post('/s/s1/layout', {'print_area': [900, 0, 100, 1000]}).status_code == 400
+    assert site.post('/s/s1/layout', {'cover_pages': '', 'print_area': ''}).status_code == 200
     assert site.ws.layout('s1').cover_pages == 0
 
 
 def test_settings(site):
-    r = site.post('/settings', {'cover_pages': 1, 'scan_window': [50, 40, 950, 900]})
+    r = site.post('/settings', {'cover_pages': 1, 'print_area': [50, 40, 950, 900]})
     assert r.status_code == 200
     assert site.ws.cover_pages == 1 and site.ws.scan_window == (50, 40, 950, 900)
     html = site.get('/settings').text
     assert 'value="950"' in html
-    assert site.post('/settings', {'cover_pages': -1, 'scan_window': [0, 0, 1000, 1000]}).status_code == 400
-    assert site.post('/settings', {'cover_pages': 0, 'scan_window': [0, 0, 1000]}).status_code == 400
-    assert site.post('/settings', {'cover_pages': 0, 'scan_window': [0, 0, 2000, 1000]}).status_code == 400
+    assert site.post('/settings', {'cover_pages': -1, 'print_area': [0, 0, 1000, 1000]}).status_code == 400
+    assert site.post('/settings', {'cover_pages': 0, 'print_area': [0, 0, 1000]}).status_code == 400
+    assert site.post('/settings', {'cover_pages': 0, 'print_area': [0, 0, 2000, 1000]}).status_code == 400
     assert site.ws.cover_pages == 1
 
 
@@ -735,7 +737,7 @@ def test_filter_page_and_values(site):
     ids = [f['id'] for f in data['questions'][0]['facets']]
     assert ids[:5] == ['a/grade:x', 'a/state:x', 'a/grade:y', 'a/state:y', 'a/variant']
     assert data['values']['a/state:x'] == {'s1': ['unverified'], 's2': ['not_started']}
-    assert data['values']['a/variant'] == {'s1': ['one'], 's2': ['unresolved']}
+    assert data['values']['a/variant'] == {'s1': ['one'], 's2': ['undecided']}
     one = site.get('/focus/values?sub=s2').json()
     assert one['subs'] == ['s2'] and one['values']['a/state:x'] == {'s2': ['not_started']}
     assert site.get('/focus/values?sub=nobody').status_code == 404
@@ -754,16 +756,16 @@ def test_grid_honours_a_focus_in_the_url(site):
     assert shown({'a/state:x': ['unverified']}) == ['s1']
     assert shown({'a/state:x': ['unverified', 'not_started']}) == ['s1', 's2']               # OR within
     assert shown({'a/state:x': ['unverified'], 'b/state': ['in_progress']}) == []            # AND across
-    assert shown({'a/variant': ['unresolved']}) == ['s2']
+    assert shown({'a/variant': ['undecided']}) == ['s2']
     assert shown({'no/such': ['x']}) == ['s1', 's2']                                          # unknown: ignored
     assert site.get('/?focus=%7Bnot json').status_code == 200
     html = site.get('/?focus=' + quote(json.dumps({'a/variant': ['one']}))).text
-    assert 'data-action="clear-focus" class="quiet" title="clear the focus">' in html and 'id="f-state"' not in html
+    assert 'data-action="clear-filter" class="quiet" title="clear the filter">' in html and 'id="f-state"' not in html
 
 
 def test_question_page_has_focus_slots(site):
     r = site.get('/s/s1/a')
-    assert 'id="unfocused"' in r.text and 'id="like"' in r.text and '/static/focus.js' in r.text
+    assert 'id="unfiltered"' in r.text and 'id="chips"' in r.text and '/static/focus.js' in r.text
 
 
 def test_focus_values_follow_decisions(site):

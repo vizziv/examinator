@@ -1,12 +1,12 @@
 'use strict';
-// The grid is rendered once; the focus (focus.js, set on the filter page), search and
+// The grid is rendered once; the filter (focus.js, set on the filter page), search and
 // sorting happen here. The visible ids, in order, go to sessionStorage so the question
 // page's next/previous and the Runs page follow them.
 (() => {
   const body = document.querySelector('#grid tbody');
   const rows = [...body.rows];
   const text = document.getElementById('f-text');
-  const sum = document.getElementById('focus-sum'), clearFocus = document.querySelector('[data-action=clear-focus]');
+  const sum = $('filter-sum'), clearFilter = document.querySelector('[data-action=clear-filter]');
   const saved = session('grid', {});
   let sort = saved.sort || null;      // {index, dir}
   let sel = {}, data = null;
@@ -24,14 +24,14 @@
 
   function summary() {
     const n = Focus.size(sel);
-    clearFocus.hidden = !n;
+    clearFilter.hidden = !n;
     sum.classList.toggle('on', !!n);
-    if (!n) { sum.textContent = 'filter'; sum.title = 'the focus: open the filter page'; return; }
+    if (!n) { sum.textContent = 'filter'; sum.title = 'the filter: open the filter page'; return; }
     const labels = {};
     for (const q of (data ? data.questions : [])) for (const f of q.facets) labels[f.id] = `${q.id} ${f.label}`;
     const parts = Object.entries(sel).map(([fid, want]) =>
       `${labels[fid] || fid}: ${Array.isArray(want) ? want.join(' | ') : `“${want}”`}`);
-    sum.textContent = `focus (${n}): ${parts.join(' · ')}`;
+    sum.textContent = `filter (${n}): ${parts.join(' · ')}`;
     sum.title = parts.join('\n');
   }
 
@@ -44,10 +44,10 @@
 
   function apply() {
     const q = text.value.trim().toLowerCase();
-    const inFocus = data && Focus.size(sel) ? new Set(Focus.focused(data.values, sel, data.subs)) : null;
+    const inFilter = data && Focus.size(sel) ? new Set(Focus.focused(data.values, sel, data.subs)) : null;
     const visible = [];
     for (const row of rows) {
-      const show = (!inFocus || inFocus.has(row.dataset.id)) &&
+      const show = (!inFilter || inFilter.has(row.dataset.id)) &&
         (!q || row.cells[0].textContent.toLowerCase().includes(q) || row.cells[1].textContent.toLowerCase().includes(q) ||
          (row.cells[1].dataset.student || '').toLowerCase().includes(q));
       row.hidden = !show;
@@ -86,7 +86,7 @@
     body.append(...rows);
     apply();
   }});
-  Actions.register('clear-focus', {available: () => Focus.size(sel) > 0, run: () => { sel = {}; Focus.save(sel); apply(); }});
+  Actions.register('clear-filter', {available: () => Focus.size(sel) > 0, run: () => { sel = {}; Focus.save(sel); apply(); }});
   Actions.register('search', {run: () => { text.focus(); text.select(); }});
   document.querySelector('#grid thead').addEventListener('click', e => {
     const th = e.target.closest('th');
@@ -96,16 +96,47 @@
     if (!sort) body.append(...rows);
     apply();
   });
-  // Follow the focus set elsewhere (another tab, or the filter page and back).
+  // Follow the filter set elsewhere (another tab, or the filter page and back).
   async function refresh() {
     sel = Focus.load();
     if (Focus.size(sel) && !data) {
-      // Until the values arrive, the server's rendering (if a link carried the focus) stands.
+      // Until the values arrive, the server's rendering (if a link carried the filter) stands.
       const r = await request('/focus/values');
-      if (r.ok) data = r.body; else flash('focus: ' + (r.body.error || 'failed to load'));
+      if (r.ok) data = r.body; else flash('filter: ' + (r.body.error || 'failed to load'));
     }
     apply();
   }
+  // --- a keyboard cursor: the arrows or W A S D move it, Enter or V opens the cell; coming
+  // back (Q on the question page) it starts on the cell you came from ---
+  let cur = null;
+  const shown = () => [...body.rows].filter(r => !r.hidden);
+  const cellsOf = row => [...row.querySelectorAll('td.cell')];
+  function place(td) {
+    cur?.classList.remove('cur');
+    cur = td || null;
+    if (!cur) return;
+    cur.classList.add('cur');
+    cur.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  }
+  function move(dr, dc) {
+    const list = shown();
+    if (!cur || cur.closest('tr').hidden) return place(cellsOf(list[0])[0]);
+    const row = cur.closest('tr'), c = cellsOf(row).indexOf(cur);
+    const next = cellsOf(list[Math.max(0, Math.min(list.length - 1, list.indexOf(row) + dr))]);
+    place(next[Math.max(0, Math.min(next.length - 1, c + dc))]);
+  }
+  const step = (dr, dc) => ({available: () => shown().some(r => cellsOf(r).length), run: () => move(dr, dc)});
+  Actions.register('cell-left', step(0, -1));
+  Actions.register('cell-right', step(0, 1));
+  Actions.register('cell-up', step(-1, 0));
+  Actions.register('cell-down', step(1, 0));
+  Actions.register('cell-open', {available: () => !!cur && !cur.closest('tr').hidden, run: () => cur.querySelector('a').click()});
+  const came = session('gridAt', null);
+  if (came) {
+    const row = [...body.rows].find(r => r.dataset.id === came.sub);
+    place(row && [...row.querySelectorAll('td.c')].find(td => td.dataset.q === came.q));
+  }
+
   // The legend closes on a click elsewhere.
   const legend = document.querySelector('details.legend');
   document.addEventListener('click', e => { if (legend?.open && !legend.contains(e.target)) legend.open = false; });

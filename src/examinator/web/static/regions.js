@@ -3,7 +3,7 @@
 // to drag and resize, saved as exam-wide overrides (/exam/set).
 //
 // A region is [page, left, top, right, bottom] in per-mille of the printed page.
-// The scan shows the printed page inside the submission's scan window (per-mille
+// The scan shows the printed page inside the submission's print area (per-mille
 // of the scan), after its cover pages; so, as in pdf/layout.py `Layout.box`:
 //   scan fraction x = (wl + (wr - wl) * v / 1000) / 1000, and back
 //   v = (1000 * x - wl) * 1000 / (wr - wl).

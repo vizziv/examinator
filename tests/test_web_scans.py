@@ -205,5 +205,24 @@ def test_names_read_confirm_cycle_skip(site):
 
 def test_reading_names_needs_a_model(make_site):
     client, token, ws, paths = make_site(model=False)
-    assert 'data-action="names-read"' not in client.get('/scans').text
+    html = client.get('/scans').text
+    assert 'data-model=""' in html and 'data-action="names-read" title="no model"' in html    # shown, dimmed
     assert post(client, token, '/scans/names/read', {}).status_code == 400
+
+
+def test_serve_starts_a_new_workspace_on_the_scans_page(tmp_path, monkeypatch, capsys):
+    """`serve` on a folder that does not exist yet makes the empty workspace (the README
+    says to start from the Scans page) and says to open Scans."""
+    import uvicorn
+    from examinator import cli
+    pages = {}
+
+    def run(app, **kw):        # while the workspace is open
+        client = TestClient(app, base_url=BASE)
+        pages.update({path: client.get(path).status_code for path in ('/', '/scans')})
+    monkeypatch.setattr(uvicorn, 'run', run)
+    root = tmp_path / 'new' / 'ws'
+    assert cli.main(['serve', str(TOY), '-w', str(root), '--port', '8599']) == 0
+    assert (root / 'pdfs').is_dir()
+    assert capsys.readouterr().out.startswith('http://127.0.0.1:8599/scans')
+    assert pages == {'/': 200, '/scans': 200}

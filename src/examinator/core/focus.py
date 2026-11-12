@@ -103,8 +103,8 @@ def builtin_facets(question: Question) -> list[Facet]:
                          lambda b, p=part: [b[STATUS].status[p].state],
                          reads=(STATUS,), group='result', order=STATES))
     if question.variants:
-        out.append(Facet('variant', 'variant', lambda b: [b[STATUS].variant or 'unresolved'],
-                         reads=(STATUS,), group='result', order=(*question.variants, 'unresolved')))
+        out.append(Facet('variant', 'variant', lambda b: [b[STATUS].variant or 'undecided'],
+                         reads=(STATUS,), group='result', order=(*question.variants, 'undecided')))
     return out
 
 

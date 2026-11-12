@@ -65,6 +65,6 @@ const Focus = (() => {
   }
   const size = sel => Object.keys(clean(sel)).length;
 
-  return {active, matches, focused, counts, clean, fromUrl, load, save, query, size};
+  return {active, matches, focused, counts, load, save, query, size};
 })();
-if (typeof module !== 'undefined') module.exports = Focus;
+if (typeof module !== 'undefined') module.exports = Focus;     // tests/test_focus.py runs it under node

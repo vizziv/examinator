@@ -4,24 +4,13 @@
 {% block head %}<script src="{{ root }}/static/settings.js" defer></script>{% endblock %}
 {% block body %}
 <main class="narrow" id="settings">
+<h1>Settings</h1>
 <form id="defaults" autocomplete="off">
-<fieldset><legend>scan layout (workspace default)</legend>
-<label>cover pages <input type="number" id="cover" min="0" max="99" value="{{ cover }}"></label>
-<label>left <input type="number" class="win" min="0" max="1000" value="{{ window[0] }}"></label>
-<label>top <input type="number" class="win" min="0" max="1000" value="{{ window[1] }}"></label>
-<label>right <input type="number" class="win" min="0" max="1000" value="{{ window[2] }}"></label>
-<label>bottom <input type="number" class="win" min="0" max="1000" value="{{ window[3] }}"></label>
-<button type="button" data-action="save-defaults" class="primary">Save</button> <span id="msg" role="status"></span>
-<p class="help">Cover pages are scanned pages before printed page 1. The scan window is where the printed page
-sits on the scanned page, in per-mille of the scan. Changing either moves every crop; it does not rerun anything.
-A submission that differs gets its own override on a question page, under “pages”.</p>
-</fieldset>
-<fieldset><legend>preview</legend>
-<div class="bar row">
-<label>submission <select id="pv-sub">{% for s in subs %}<option>{{ s.id }}</option>{% endfor %}</select></label>
-<label>printed page <input type="number" id="pv-page" min="1" max="{{ pages }}" value="1"></label>
-</div>
-<div id="pv"><img id="pv-img" alt="scanned page"><div id="pv-rect"></div></div>
+<fieldset id="keyboard"><legend>keyboard <span class="dim">(this browser)</span></legend>
+<div class="bar row"><label><input type="checkbox" id="k-single"> single-key shortcuts</label>
+<button type="button" id="k-reset" class="quiet" title="drop your own bindings">reset to defaults</button></div>
+<table id="keymap"><tbody></tbody></table>
+<p class="help">Single keys are ignored while typing in a field. ⌘/Ctrl combinations work anywhere.</p>
 </fieldset>
 <fieldset><legend>appearance <span class="dim">(this browser)</span></legend>
 <label>theme <select id="theme"><option value="system">follow system</option><option value="light">light</option><option value="dark">dark</option></select></label>
@@ -44,12 +33,21 @@ A submission that differs gets its own override on a question page, under “pag
 <label><input type="checkbox" id="invert-scans"> invert scans in dark mode</label>
 <label>crop width <input type="range" id="crop-size" min="160" max="1000" step="20"> <span id="crop-n" class="dim"></span></label>
 </fieldset>
-<fieldset id="keyboard"><legend>keyboard <span class="dim">(this browser)</span></legend>
-<label><input type="checkbox" id="k-single"> single-key shortcuts</label>
-<label>layout <select id="k-preset"><option value="left">left hand (mouse right)</option><option value="right">right hand (mirrored)</option></select></label>
-<button type="button" id="k-reset" class="quiet" title="drop your own bindings">reset to layout</button>
-<table id="keymap"><tbody></tbody></table>
-<p class="help">Single keys are ignored while typing in a field. ⌘/Ctrl combinations work anywhere.</p>
+<fieldset><legend>print area <span class="dim">(workspace default)</span></legend>
+<label>cover pages <input type="number" id="cover" min="0" max="99" value="{{ cover }}"></label>
+<label>left <input type="number" class="win" min="0" max="1000" value="{{ window[0] }}"></label>
+<label>top <input type="number" class="win" min="0" max="1000" value="{{ window[1] }}"></label>
+<label>right <input type="number" class="win" min="0" max="1000" value="{{ window[2] }}"></label>
+<label>bottom <input type="number" class="win" min="0" max="1000" value="{{ window[3] }}"></label>
+<button type="button" data-action="save-defaults" class="primary">Save</button> <span id="msg" role="status"></span>
+<p class="help">Cover pages are scanned pages before printed page 1. The print area is where the printed page
+sits on the scanned page, in per-mille of the scan. Changing either moves every crop; it does not rerun anything.
+A submission that differs gets its own override on a question page, under “pages”.</p>
+<div class="bar row">
+<label>preview <select id="pv-sub" aria-label="submission">{% for s in subs %}<option>{{ s.id }}</option>{% endfor %}</select></label>
+<label>printed page <input type="number" id="pv-page" min="1" max="{{ pages }}" value="1"></label>
+</div>
+<div id="pv"><img id="pv-img" alt="scanned page"><div id="pv-rect"></div></div>
 </fieldset>
 </form>
 </main>

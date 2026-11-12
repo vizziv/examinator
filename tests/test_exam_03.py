@@ -478,7 +478,7 @@ def test_unresolved_variant_is_undecided_until_a_grader_chooses(exam, pkg, tmp_p
         assert variant['resolved'] is None and variant['candidates'] == []
         runner.verify(S, 'q5', 'parse', author='ta', expect_rev=ws.store.get(S, 'q5', 'parse').rev)
         st = part_status(q, '', ws.store.for_question(S, 'q5'))
-        assert (st.value, st.counts, st.reason) == (None, False, "variant unresolved")
+        assert (st.value, st.counts, st.reason) == (None, False, "variant undecided")
         runner.choose_variant(S, 'q5', 'original', author='ta')
         runner.recheck(S, 'q5')
         st = part_status(q, '', ws.store.for_question(S, 'q5'))

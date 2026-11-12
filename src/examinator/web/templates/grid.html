@@ -4,25 +4,27 @@
 {% block nav %}
 <input type="search" id="f-text" placeholder="search" aria-label="search">
 <button type="button" data-action="clear-search" title="clear search and sort">×</button>
-<a id="focus-sum" href="{{ root }}/filter" title="the focus: open the filter page">filter</a>
-<button type="button" data-action="clear-focus" class="quiet" title="clear the focus"{% if not focus %} hidden{% endif %}>clear focus</button>
+<a id="filter-sum" href="{{ root }}/filter" title="the filter: open the filter page">filter</a>
+<button type="button" data-action="clear-filter" class="quiet" title="clear the filter"{% if not focus %} hidden{% endif %}>clear filter</button>
 <span id="shown" class="dim"></span>
 <details class="legend">
 <summary title="what the cells mean">legend</summary>
 <div class="legend-body">
 <h3>glyph: the grade</h3>
-<span class="lrow"><span class="sw cell" data-v="t"><a>✓</a></span>correct <span class="sw cell" data-v="f"><a>✗</a></span>incorrect <span class="sw cell" data-v="0" data-b="1"><a>∅</a></span>blank <span class="sw cell" data-v="2"><a>2</a></span>points <span class="sw cell s-unverified" data-v=""><a>?</a></span>not determined</span>
-<h3>background: the grading</h3>
-<span class="lrow"><span class="sw cell s-unverified" data-v="t"><a>✓</a></span>needs verification <span class="sw cell s-graded" data-v="t"><a>✓</a></span>counts (verified or by hand) <span class="sw cell s-not_started" data-v=""><a>·</a></span>not started</span>
+<span class="lrow"><span class="sw cell" data-v="t"><a>✓</a></span>correct <span class="sw cell" data-v="f"><a>✗</a></span>incorrect <span class="sw cell" data-v="0" data-b="1"><a>∅</a></span>blank <span class="sw cell" data-v="2"><a>2</a></span>points <span class="sw cell s-unverified" data-v=""><a>?</a></span>undecided</span>
+<h3>background</h3>
+<span class="lrow"><span class="sw cell s-unverified" data-v="t"><a>✓</a></span>unverified: a person is asked <span class="sw cell s-graded" data-v="t"><a>✓</a></span>needs nobody</span>
 <h3>marks</h3>
-<span class="lrow"><span class="sw cell s-outdated" data-v="t"><a>✓</a></span>outdated <span class="sw cell var"><a>1</a></span>variant (index) <span class="sw cell var open"><a>?</a></span>variant open <span class="sw">12…</span>total so far</span>
+<span class="lrow"><span class="sw cell s-outdated" data-v="t"><a>✓</a></span>outdated <span class="sw cell var"><a>1</a></span>variant (index) <span class="sw cell var open"><a>?</a></span>variant undecided <span class="sw">12…</span>total so far</span>
 </div>
 </details>
 {% endblock %}
 {% block body %}
 {% set vindex = {} %}{% for q in questions %}{% if q.variants and vindex.update({q.id: q.variants|list}) %}{% endif %}{% endfor %}
 <div id="grid-wrap">
-<table id="grid">
+{% if not rows %}<p class="help">No submissions yet → <a href="{{ root }}/scans">Scans</a></p>
+{% elif not started %}<p class="help">Nothing run yet → <a href="{{ root }}/runs">Runs</a></p>{% endif %}
+<table id="grid"{% if not rows %} hidden{% endif %}>
 <thead><tr>
 <th data-sort="text">id</th><th data-sort="text">name</th>
 {% for q in questions %}
@@ -37,9 +39,9 @@
 <td class="id">{{ r.sub.id }}</td><td class="name"{% if r.sub.student %} title="{{ r.sub.student }}" data-student="{{ r.sub.student }}"{% endif %}>{{ r.sub.name }}</td>
 {% for c in r.cells %}
 {% if c.variant %}
-<td class="cell var{% if c.open %} open{% endif %}"><a href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ c.text if not c.open else 'variant unresolved' }}">{% if c.open %}?{% else %}{{ vindex[c.qid].index(c.text) if c.text in vindex[c.qid] else c.text }}{% endif %}</a></td>
+<td class="cell var{% if c.open %} open{% endif %}" data-q="{{ c.qid }}"><a href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ c.text if not c.open else 'variant undecided' }}">{% if c.open %}?{% else %}{{ vindex[c.qid].index(c.text) if c.text in vindex[c.qid] else c.text }}{% endif %}</a></td>
 {% else %}
-<td class="c cell s-{{ c.state }}" data-col="{{ c.col }}" data-s="{{ c.state }}" data-v="{{ c.v }}"{% if c.blank %} data-b="1"{% endif %}{% if c.counts %} data-c="1"{% endif %}><a class="{{ c.cls }}" href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ labels[c.state] }}">{{ c.glyph }}</a></td>
+<td class="c cell s-{{ c.state }}" data-q="{{ c.qid }}" data-col="{{ c.col }}" data-s="{{ c.state }}" data-v="{{ c.v }}"{% if c.blank %} data-b="1"{% endif %}{% if c.counts %} data-c="1"{% endif %}><a class="{{ c.cls }}" href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ labels[c.state] }}">{{ c.glyph }}</a></td>
 {% endif %}
 {% endfor %}
 <td class="total{% if not r.complete %} open{% endif %}" data-n="{{ r.sort }}">{{ r.points }}{% if not r.complete %}<span class="dim" title="incomplete: some grades do not count yet">…</span>{% endif %}</td>

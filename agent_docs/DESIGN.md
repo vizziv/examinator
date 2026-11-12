@@ -437,13 +437,40 @@ Screens for the first version:
   run controls; the answer key for the resolved variant, collapsed.
 - **Variant review:** each cue's crop, reading and a correction control.
 - **Runs:** scope, stage checkboxes, options, preview, progress, stop.
-- **Settings:** workspace defaults (cover pages, scan window), per-browser
-  preferences.
+- **Settings:** per-browser keys and appearance first, then workspace defaults (cover pages, print area)
+  last.
 
 Details that graders relied on and should survive: keyboard navigation between
 students that keeps the current question; keys for verify, edit and save; a
 separate PDF window that follows the current student and question; drafts that
 are never silently discarded; an adjustable crop size.
+
+### Words and colours on screen
+
+One word per idea, everywhere a person can see it (labels, titles, messages,
+docs). Internal names (`needs_review`, `core/focus.py`) may differ.
+
+- **submission**: one student's paper. Never "exam" for that; the exam is the exam itself.
+- **verify**: a person agrees with a proposal; before, **unverified**; after, **verified**.
+- **manual**: decided or entered by a person (never "by hand"); one plain look everywhere ("manual · who").
+- **undecided**: no grade yet, the glyph `?` (never "not determined", "needs review", "unresolved", "open").
+- **filter**: the narrowed set of submissions (never "focus", "like this").
+- **print area**: where the printed page sits on the scanned page (Settings, a question's pages panel).
+- **read pages** / **read names**: what the model does on Scans; **pages read** after; **N failed** when a call fails.
+- **not read yet** (nothing asked), **empty** (asked, the box had nothing), **N lines unclear** (a roster).
+- **put back** (a dropped page), **unverify**, **guess again**, **join with next**, **type name**.
+
+Buttons: only the one primary button of a panel is capitalised; the rest are
+lowercase. Key hints come from the live key map, never from text.
+
+Colour: a person is asked for exactly one thing, and **one yellow** (`--unv-bg`)
+means it: unverified, wherever it appears (a grid cell, the state pill, a tag,
+a needs-review cell, which shows as unverified with `?`). Tags: **red** = a
+problem; **yellow** = unverified or otherwise waiting on a person (Split's "to
+write"); **plain** = information and finished states (verified, written,
+manual, turned, pages read). No green tags. A grid cell that needs nobody is its
+glyph on the plain background. The second accent is only "here / selected" and
+key hints; the blue `--ask` is only the `?` glyph. Success messages are not red.
 
 ## 14. Security posture
 

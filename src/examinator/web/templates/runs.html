@@ -3,7 +3,8 @@
 {% block title %}Runs · {{ exam.title }}{% endblock %}
 {% block head %}<script src="{{ root }}/static/runs.js" defer></script>{% endblock %}
 {% block body %}
-<main class="narrow" id="runs" data-total="{{ total }}">
+<main class="narrow" id="runs">
+<h1>Runs</h1>
 <form id="sel" autocomplete="off">
 <fieldset><legend>submissions</legend>
 <label><input type="radio" name="scope" value="all" checked> all ({{ total }})</label>
@@ -28,8 +29,8 @@ Without it, protected work is skipped.</p>
 </fieldset>
 <div class="bar">
 <button type="button" id="preview" data-action="run-preview" class="primary">Preview</button>
-<button type="button" id="start" data-action="run-start" disabled>Run</button>
-<button type="button" id="stop" data-action="run-stop" class="danger" disabled>Stop</button>
+<button type="button" id="start" data-action="run-start" disabled>run</button>
+<button type="button" id="stop" data-action="run-stop" class="danger" disabled>stop</button>
 <span id="msg" role="status"></span>
 </div>
 </form>

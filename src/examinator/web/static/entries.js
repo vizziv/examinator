@@ -122,14 +122,14 @@
     await follow(b.job, `${b.affected} outdated · rechecked`);
   });
   Actions.register('reread-cues', {run: async () => {
-    if (!confirm("Read the changed cues again with the model, for every submission whose variant is open?")) return;
+    if (!confirm("Read the changed cues again with the model, for every submission whose variant is undecided?")) return;
     $('ch-variants').hidden = true;
     const r = await request('/exam/variants', {questions: variants});
     if (!r.ok) { $('ch-fail').textContent = r.body.error || "failed"; return; }
     await follow(r.body.job, `cues reread`);
   }});
   Actions.register('copy-lines', {available: () => !!$('lines'), run: async () => {
-    try { await navigator.clipboard.writeText($('lines').textContent); flash("copied"); }
+    try { await navigator.clipboard.writeText($('lines').textContent); flash("copied", 'ok'); }
     catch (err) { getSelection().selectAllChildren($('lines')); }
   }});
 })();

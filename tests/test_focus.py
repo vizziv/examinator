@@ -37,9 +37,9 @@ def test_builtin_facets_agree_with_the_workflow(env):
                 assert table[f'{qid}/state{suffix}'][sid] == [status[part].state]
                 assert table[f'{qid}/grade{suffix}'][sid] == [focus.grade_value(status[part])]
             if q.variants:
-                assert table[f'{qid}/variant'][sid] == [rows[sid].cells[qid].variant or 'unresolved']
+                assert table[f'{qid}/variant'][sid] == [rows[sid].cells[qid].variant or 'undecided']
     assert table['a/state:x']['s1'] == ['unverified'] and table['a/grade:x']['s1'] == ['✓']
-    assert table['a/variant'] == {'s1': ['one'], 's2': ['unresolved']}
+    assert table['a/variant'] == {'s1': ['one'], 's2': ['undecided']}
     assert table['b/state']['s2'] == ['not_started'] and table['b/grade']['s2'] == ['undecided']
     assert 'a/variant' not in [f['id'] for q in focus.describe_facets(exam) if q['id'] == 'b' for f in q['facets']]
 

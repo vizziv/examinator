@@ -149,7 +149,9 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
         runner = Runner(exam, ws, model=model)
         app = create_app(exam, ws, runner, author=args.author or getpass.getuser(),
                          public_url=args.public_url)
-        print(f"http://127.0.0.1:{args.port}/" + ("" if model else "   (model unavailable: model stages are off)"))
+        # A new or empty workspace opens on Scans, where submissions come from.
+        start = '' if ws.store.submissions() else 'scans'
+        print(f"http://127.0.0.1:{args.port}/{start}" + ("" if model else "   (model unavailable: model stages are off)"))
         try:
             uvicorn.run(app, host='127.0.0.1', port=args.port, log_level='warning')
         finally:
@@ -275,7 +277,7 @@ def main(argv=None) -> int:
         print("ok" if not problems else f"{len(problems)} mismatches")
         return 1 if problems else 0
 
-    ws = Workspace(args.workspace, exam, create=args.cmd == 'intake')
+    ws = Workspace(args.workspace, exam, create=args.cmd in ('intake', 'serve'))
     try:
         return workspace_cmd(args, exam, ws)
     finally:
