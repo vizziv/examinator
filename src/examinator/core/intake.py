@@ -38,6 +38,7 @@ from ..pdf.layout import Layout
 from ..pdf.orient import HALF, MIRROR, QUARTER, Orient
 from . import identity, reading, split
 from .defs import Landmark, digest
+from .reading import normalize
 from .store import ANY, Artifact, Conflict, Made, Source
 from .variants import CUE_PROMPT
 from .workflow import NOT_WORK
@@ -168,7 +169,6 @@ def page(ws, src: Source, sheet: int, body: Mapping | None = None) -> Image.Imag
 
 def page_of(lm: Landmark, text: str | None) -> int | None:
     """The printed page a landmark reading points to."""
-    normalize = reading.normalize
     if text is None:
         return None
     if lm.reads:
@@ -245,7 +245,7 @@ def reguess(ws, id: str, *, model=None, length: int | None = None, fresh: bool =
     if cur is None or fresh or not cur.body:
         body = split.new_plan(src.pages, length or expected_length(ws), anchor=anchor(ws))
         if cur is not None:
-            body['orient'] = cur.body.get('orient', body['orient'])
+            body['orient'] = (cur.body or {}).get('orient', body['orient'])
     else:
         body = dict(cur.body)
     resized = bool(length) and int(length) != body['length']
