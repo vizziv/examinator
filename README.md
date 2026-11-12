@@ -37,41 +37,45 @@ uv run examinator serve path/to/my_exam -w WORKSPACE      # then the Scans page
 unchanged under `WORKSPACE/sources/`; adding the same file twice is noticed.
 Examinator proposes a split, every N pages (N = the exam's pages: a raw stack has no cover sheets; set a larger N on the page if yours does), and
 if the exam declares landmarks (`Exam(landmarks=[...])`: a printed title on
-page 1, a page-number footer) and the model is up, **check** reads them only
+page 1, a page-number footer) and the model is up, **read pages** reads them only
 at the expected boundaries and their neighbours, moving each boundary to where
 a first page really is and flagging what looks wrong: too few or too many
 pages, an unexpected page number, a first page not recognised.
 
-On the Scans page you step through the boundaries one at a time: the guessed
-first page of the next exam, large, between its neighbours.
+The Scans page walks through the steps in a strip at its top, each with what is
+left: **1 Scans** (add them), **2 Split**, **3 Roster**, **4 Names**, then
+Runs; the line under the strip says what to do next. On Split you step through
+the boundaries one at a time: the guessed first page of the next submission,
+large, between its neighbours.
 
-| Key (left hand) | Right hand | |
-| --- | --- | --- |
-| `V` | `N` | this is the first page; go to the next guess |
-| `A` / `D` (or arrows) | `J` / `L` | the guess is a page too late / too early |
-| `W` / `S` | `I` / `K` | previous / next boundary |
-| `Shift+V` | `Shift+N` | a new exam starts at the page shown (when it is not a first page) |
-| `X` | `M` | drop this page (blank or stray) |
-| `R` | `U` | turn this exam 180° |
-| `Shift+R` | `Shift+U` | turn the whole scan 90° (also: mirror, as a button) |
+| Key | |
+| --- | --- |
+| `V` | verify: this is the first page; go to the next unverified one |
+| `A` / `D` (or arrows) | the guess is a page too late / too early |
+| `W` / `S` | previous / next submission |
+| `Shift+V` | a new submission starts at the page shown (when it is not a first page) |
+| `X` | drop this page (blank or stray) |
+| `R` | turn this submission 180° |
+| `Shift+R` | turn the whole scan 90° (also: mirror, as a button) |
+| `⌘Z` / `Ctrl+Z` | undo |
 
 Clicking any small page shows it large in the same view. On a page that is
-not a first page, `A` / `D` look at its neighbours and `Shift+V` starts an exam
-there. The scan image itself opens from "full size" under the large page.
+not a first page, `A` / `D` look at its neighbours and `Shift+V` starts a
+submission there. The scan image itself opens from "full size" under the large page.
 
-A confirmed first page is your decision: it outranks the every-N guess and any
+A verified first page is your decision: it outranks the every-N guess and any
 landmark reading, and later guesses follow from it. Turn a stack fed in
-sideways or upside down before checking: landmarks are read on the turned page.
-The overview below lists every exam (doubtful ones first) with its pages, where
-pages are dropped, an exam is started at a page or joined with the next.
+sideways or upside down before reading pages: landmarks are read on the turned page.
+The overview below lists every submission (doubtful ones first) with its pages, where
+pages are dropped, a submission is started at a page or joined with the next.
 
-**Accept** writes one PDF per exam into `pdfs/`, named by an opaque id
+**Accept** writes one PDF per submission into `pdfs/`, named by an opaque id
 (`s0001`, ...) that never changes, with pages upright (turned pages are written
 as new single-image pages; others are copied untouched). Accepting again after
-a fix rewrites only the exams whose pages or turning changed; one that already
+a fix rewrites only the submissions whose pages or turning changed; one that already
 has grading work is not changed unless you insist.
 
-**Names.** Then say who wrote each exam, on the Scans page's **Names** tab.
+**Names.** Then say who wrote each submission, on the **Names** step.
 The roster comes from **Roster** (paste, or load a file) or `--roster`: either
 a CSV or tab-separated table with a header (`Name`, or `First Name` and
 `Last Name`; `Student ID`; optionally `Email`), or plain lines, one person per
@@ -82,25 +86,33 @@ and any line it could not read, before you save.
 
 If the exam declares where students write who they are
 (`Exam(identity=[Identity('name', Region(...), ask=..., roster='name'),
-Identity('id', ..., roster='id')])`), **read** asks the model what is
-written in each box (once per exam; reading again is free) and each exam gets
+Identity('id', ..., roster='id')])`), **read names** asks the model what is
+written in each box (once per submission; reading again is free) and each submission gets
 ranked proposals from the roster, with why ("ID exact, name close", "ID 1
 off") and how sure: *both agree*, *ID only*, *name only*, *they disagree*,
-*nobody close*, *not read*. Nothing is named until a person says so. One
-exam at a time, its boxes large beside the best proposal:
+*nobody close*, *empty*, *not read yet*. Nothing is named until a person verifies it. One
+submission at a time, its boxes large beside the best proposal:
 
-| Key (left hand) | Right hand | |
-| --- | --- | --- |
-| `V` | `N` | this person; go to the next unnamed exam |
-| `A` / `D` (or arrows) | `J` / `L` | previous / next proposal |
-| `W` / `S` | `I` / `K` | previous exam / skip |
-| `E` | `U` | type a name or ID (the roster picker); `↵` names the exam, also someone not on the roster |
+| Key | |
+| --- | --- |
+| `V` | verify this person; go to the next unverified submission |
+| `A` / `D` (or arrows) | previous / next submission |
+| `W` / `S` (or arrows) | previous / next proposal |
+| `E` | type name, starting from what was read; `↵` names the submission, also someone not on the roster |
 
-Unnamed and doubtful exams come first; a person named for two exams is
-flagged *name twice*. Below: every exam, and the roster entries no exam is
-named for (**No exam**). The name and ID then show wherever the submission's
+Unverified and doubtful submissions come first; a person named for two submissions is
+flagged *name twice*. Below: every submission, and the roster entries no submission is
+named for (**Not named**). The name and ID then show wherever the submission's
 name does (the grid's name column searches the ID too). `intake --names`
 reads the boxes from the command line and lists the proposals.
+
+On the grid, the arrows or `W A S D` move a cursor and `Enter` or `V` opens the
+cell; on a question page `A` / `D` are the previous / next submission (in the
+grid's filter, search and sort), `W` / `S` the previous / next question, `Z` /
+`X` / `C` grade the first undecided part blank / incorrect / correct, `G` goes to
+its number box (`↵` sets it), `V` verifies what waits and goes to the next
+submission (`⌘↵` verifies and stays), and `Q` goes back to the grid. Every key
+can be rebound in Settings.
 
 Try it on synthetic stacks (a missing page, a stray page, an upside-down exam,
 an upside-down stack, a length that is not a multiple of N; and for names: an

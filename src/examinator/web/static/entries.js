@@ -129,7 +129,7 @@
     await follow(r.body.job, `cues reread`);
   }});
   Actions.register('copy-lines', {available: () => !!$('lines'), run: async () => {
-    try { await navigator.clipboard.writeText($('lines').textContent); flash("copied"); }
+    try { await navigator.clipboard.writeText($('lines').textContent); flash("copied", 'ok'); }
     catch (err) { getSelection().selectAllChildren($('lines')); }
   }});
 })();

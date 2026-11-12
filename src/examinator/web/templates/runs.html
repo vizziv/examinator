@@ -3,7 +3,8 @@
 {% block title %}Runs · {{ exam.title }}{% endblock %}
 {% block head %}<script src="{{ root }}/static/runs.js" defer></script>{% endblock %}
 {% block body %}
-<main class="narrow" id="runs" data-total="{{ total }}">
+<main class="narrow" id="runs">
+<h1>Runs</h1>
 <form id="sel" autocomplete="off">
 <fieldset><legend>submissions</legend>
 <label><input type="radio" name="scope" value="all" checked> all ({{ total }})</label>
