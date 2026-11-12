@@ -125,7 +125,7 @@
       if (c.taken) why.push(' ', tag('warn', `name twice: ${c.taken}`, 'already named for another exam'));
       if (r.candidates.length > 1) why.push(make('span', {className: 'dim', textContent: ` · ${ci % r.candidates.length + 1} of ${r.candidates.length}`}));
     }
-    if (!c && !named) why.push(make('span', {className: 'dim', textContent: 'E type a name · S skip'}));
+    if (!c && !named) why.push(make('span', {className: 'dim', textContent: 'no proposal: type a name, or go to the next'}));
     $('w-why').replaceChildren(...why);
     const next = view.byId[order[k + 1]];
     if (next) for (const x of next.crops) { const im = new Image(); im.src = page(next.sub, x.index); }
