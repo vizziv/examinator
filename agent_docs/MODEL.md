@@ -1,0 +1,139 @@
+# The model (proposal, 2026-11-12)
+
+Not built yet. This is the model the next rewrite of the core would implement.
+Everything here is per exam; "stored" means per submission, in the workspace.
+
+## In one paragraph
+
+Paper is read into **fields**. **Checks** compute results from field values.
+People **settle** field values and, where a check cannot decide, make
+**decisions**. A **question** only groups fields and a check for the page, the
+grid and the totals; it has no state. All state is on fields, results and
+decisions, and every action in the app is a combination of a few small changes
+to those.
+
+## Defined in code
+
+| Object | What it is |
+| --- | --- |
+| **Field** | A named slot for one value read from paper: where to look (pages, region) and which reader reads it. |
+| **Reader** | How values get from page images into fields: handwriting (model), printed text (model, from a closed set of expected readings), later a barcode. One read fills one or more fields. A reader may **vouch** for a value it read. |
+| **Check** | A function from field values to a **result**: evidence to show, and a proposed grade for each part. It may read any field in the exam. Nothing reads a check. |
+| **Question** | A group: some fields, at most one check, the result parts and their points. The page a grader sees and a set of grid columns. |
+
+Anything in a definition may be left unset in code and set in the app (a
+region, pages, a printed field's expected readings), exam-wide or for one
+submission. A field that cannot be read yet is simply not read.
+
+## Stored per submission
+
+There are three kinds of stored thing. Each has a revision that changes only
+when its content changes, and keeps its history.
+
+### 1. Field value
+
+One per field. Its content is text (a number, an expression, source code, a
+printed word; possibly with a `[REVIEW: ...]` marker).
+
+| State | Meaning |
+| --- | --- |
+| **not read** | No value yet. |
+| **unsettled** | Has a value nobody stands behind. Shown with the "unverified" badge. |
+| **settled** | Someone stands behind the value: a person, or the reader that vouched for it. No badge. |
+
+One attribute, `settled by`: nobody, the reader, or a named person. That is the
+whole state. Choices made here:
+
+- **"Typed by a person" and "read, then verified by a person" are the same
+  state.** A person who sets a value settles it. Who wrote a value is history,
+  not state.
+- **Settled by a reader and settled by a person are the same to a check.** They
+  differ in one thing only: reading again replaces a value the reader settled,
+  never one a person settled.
+- **A value with a review marker cannot be settled.** A marker is not a state.
+- **Blank is a value** (empty text, read as such). It differs from not read.
+- **Reading again and getting the same value changes nothing**: same revision,
+  still settled, nothing downstream moves.
+- **No transcript.** Whatever a reader does on the way to the value is not
+  stored.
+
+### 2. Result
+
+One per check. Content: the evidence, a proposed grade per part (a grade, or
+"undecided" with a reason), **which fields it read and at which revisions**,
+and which definition of the check computed it.
+
+A result is a cache of a pure function. Its states are derived, never stored:
+
+| State | Meaning |
+| --- | --- |
+| **not run** | No result. |
+| **current** | Every field it read is at the revision it read, under the current check. |
+| **outdated** | Otherwise. Recomputed automatically; visible only until that finishes. |
+
+### 3. Decision
+
+One per result part, only where a person decided the grade by hand. Content:
+the grade, a reason, who, and **the revisions of the fields on the page when
+they decided**. It is outdated when any of those fields has changed since.
+
+## The grade of a part (derived)
+
+In order; the first that applies:
+
+| Status | When | Counts |
+| --- | --- | --- |
+| **decided** | A decision exists and its fields are unchanged. | Yes |
+| **decided, outdated** | A decision exists, a field changed since. | No |
+| **to decide** | No check; or the result is current, its fields settled, and the proposal is undecided. | No |
+| **not run** | No result. | No |
+| **outdated** | The result is outdated. | No |
+| **unverified** | The result is current and some field it read is not settled. The proposal is shown. | No |
+| **graded** | The result is current, every field it read is settled, the proposal is a grade. | Yes |
+
+A check that read no field at all never counts by itself ("to decide").
+
+## The small changes
+
+Everything the app or a batch run does is one or more of these.
+
+| On | Change | By |
+| --- | --- | --- |
+| Field value | **read**: a reader sets the value; settled by the reader if it vouches, else unsettled. Skips values a person settled. | run |
+| Field value | **set**: a new value, settled by that person. | person |
+| Field value | **verify**: settle the value as it stands. | person |
+| Field value | **unverify**: back to unsettled, value kept. | person |
+| Result | **compute**: run the check on the current values. | automatic |
+| Decision | **decide**, **clear**. | person |
+| Definition | **set**, **clear** an override, exam-wide or for one submission. | person |
+
+Changing how a field is read changes no value. The app then offers to read
+again the values no person settled.
+
+Larger actions are combinations: "verify all here" verifies every unsettled
+field on the page; "save and verify" is one set; "read again" is a read of one
+question's fields; a batch run is reads, then computes.
+
+## What the interface does with it (not part of the model)
+
+- A question's page shows its own fields and the fields its check read from
+  elsewhere, so "verify all here" settles everything the grade rests on.
+- A field shows a badge only when unsettled.
+- The grid shows one cell per result part, by the table above.
+
+## What goes away
+
+- Stages with inputs (transcribe, parse, evidence, grade) as stored steps:
+  what remains is field values, results, decisions.
+- The difference between a check's own question and other questions.
+- "Waits on another question", the trusted-fields list, verification per
+  question, and the special no-grade question: it is fields with no check.
+- Names and IDs are unaffected: they stay their own hard-coded thing.
+
+## Open, to settle by trying
+
+- **One read per field or per question?** The model allows both (a read fills
+  one or more fields). Which reads handwriting more reliably is a live-model
+  question; see `compare`.
+- Whether the grid needs a column for a question with no check, once its
+  fields show on the pages of the questions that read them.
