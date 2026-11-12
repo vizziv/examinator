@@ -10,7 +10,7 @@ from examinator.std import prompts, stages
 
 from . import blanks, cone, exponential, ice_cream, language, notes, rules, spire
 
-exam = Exam('exam_01', title="Exam 1", pages=16, front=[1], extra=[14, 15, 16],
+exam = Exam('exam_01', title="Exam 1", pages=16,
             scan_window=[60, 55, 920, 825], cover_pages=1)
 
 SHINY = Bool(counts=False)      # the course's "shiny" questions do not count toward the total
@@ -36,7 +36,7 @@ def variants(*cues):
 def sampler(module, entries, *, language, parse_notes="", timeout=60):
     """A pseudocode question with one answer, whose check depends on the printing."""
     return [stages.transcribe(prompts.TRANSCRIBE_PSEUDOCODE, notes=parse_notes),
-            stages.parse_pseudocode(entries, language=language, notes=parse_notes),
+            stages.parse_pseudocode(entries, language=language, notes=f"{parse_notes} {notes.FORMULAS}".strip()),
             stages.check(module.check, uses_variant=True, timeout=timeout),
             stages.grade(rules.single(module.LABEL))]
 
@@ -69,14 +69,14 @@ SINE_FREQUENCY = Cue(
 # --- questions, in printed order -------------------------------------------------------
 
 exam.question(
-    'q1', title="Exponential sampling", pages=[3], export_pages=[2, 3], result=Bool(),
+    'q1', title="Exponential sampling", pages=[3], result=Bool(),
     **variants(MEAN_OR_RATE, SMALLEST_OR_LARGEST),
     fields=[Field('1', region=band(3, 90, 930))],
     stages=sampler(exponential, ['exponential'], language=language.SCALAR, parse_notes=notes.SCALAR))
 
 Q2 = [f'2.{part}.{name}' for part in (1, 2, 3) for name in 'mc']
 exam.question(
-    'q2', title="Comprehensive coverage", pages=[5], export_pages=[4, 5], result=Bool(),
+    'q2', title="Comprehensive coverage", pages=[5], result=Bool(),
     **variants(MEAN_OR_RATE, SMALLEST_OR_LARGEST),
     fields=boxes(5, Q2, [91, 188, 371, 468, 652, 749]),
     stages=stages.math(notes=notes.NUMBERS, grade_rule=rules.at_least(5), key={
@@ -85,7 +85,7 @@ exam.question(
 
 Q3 = [f'??{n}' for n in range(1, 7)]
 exam.question(
-    'q3', title="Weighty choices", pages=[7], export_pages=[6, 7], result=Bool(),
+    'q3', title="Weighty choices", pages=[7], result=Bool(),
     fields=boxes(7, Q3, [91, 188, 285, 381, 479, 575]),
     stages=[stages.transcribe(notes=notes.SUBSCRIPTS),
             stages.parse_math(notes=notes.SUBSCRIPTS),
@@ -97,20 +97,20 @@ exam.question(
             stages.grade(rules.at_least(5, required=('??6',)))])
 
 exam.question(
-    'q4', title="For which we all scream", pages=[9], export_pages=[8, 9], result=Bool(),
+    'q4', title="For which we all scream", pages=[9], result=Bool(),
     **variants(TOP_OF_FIGURE, CONE_NAME),
     fields=[Field('4', region=band(9, 90, 930))],
     stages=sampler(ice_cream, ['ice_cream'], language=language.POINTS, parse_notes=notes.POINTS))
 
 exam.question(
-    'q5', title="Radical acceptance... in space!", pages=[11], export_pages=[10, 11], result=SHINY,
+    'q5', title="Radical acceptance... in space!", pages=[11], result=SHINY,
     **variants(CONE_NAME, SINE_FREQUENCY),
     fields=[Field('5', region=band(11, 90, 930))],
     stages=sampler(cone, list(cone.ENTRIES.values()), language=language.POINTS,
                    parse_notes=notes.POINTS))
 
 exam.question(
-    'q6', title="Sample the spire", pages=[13], export_pages=[12, 13], result=SHINY,
+    'q6', title="Sample the spire", pages=[13], result=SHINY,
     **variants(SINE_FREQUENCY, CONE_NAME),
     fields=[Field('6', region=band(13, 90, 930))],
     stages=sampler(spire, ['spire'], language=language.COLLECTIONS,

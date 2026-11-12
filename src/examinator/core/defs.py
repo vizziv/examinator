@@ -238,7 +238,6 @@ class Question:
     result: Mapping[str, ResultSpec]       # part name -> spec; '' for a single result
     fields: tuple[Field, ...]
     stages: tuple[Stage, ...]
-    export_pages: tuple[int, ...] = ()
     variants: tuple[str, ...] = ()
     cues: tuple[Cue, ...] = ()
     require: int | None = None             # cues that must agree to resolve; None = all
@@ -262,15 +261,12 @@ class Exam:
     """One printed exam: its pages and its questions."""
 
     def __init__(self, id: str, *, title: str = "", pages: int,
-                 front: Sequence[int] = (), extra: Sequence[int] = (),
                  scan_window: Sequence[int] = (0, 0, 1000, 1000), cover_pages: int = 0,
                  crop_pad: int = 12, landmarks: Sequence[Landmark] = (),
                  identity: Sequence[Identity] = ()):
         self.id = id
         self.title = title or id
         self.pages = pages
-        self.front = tuple(front)
-        self.extra = tuple(extra)
         self.scan_window = tuple(scan_window)   # initial default; the workspace may override
         self.cover_pages = cover_pages          # likewise
         self.crop_pad = crop_pad                # per-mille of the printed page around every crop
@@ -292,7 +288,7 @@ class Exam:
     def question(self, id: str, *, title: str = "", pages: Sequence[int],
                  result: ResultSpec | Mapping[str, ResultSpec],
                  fields: Sequence[Field] = (), stages: Sequence[Stage],
-                 export_pages: Sequence[int] = (), variants: Sequence[str] = (),
+                 variants: Sequence[str] = (),
                  cues: Sequence[Cue] = (), require: int | None = None,
                  trust: int = 2, facets: Sequence[Any] = ()) -> Question:
         if id in self.questions:
@@ -314,7 +310,6 @@ class Exam:
                     raise ValueError(f"{id}: stage {s.name!r} reads {kind!r}, which no earlier stage writes")
         q = Question(id=id, title=title or id, pages=tuple(pages), result=dict(result),
                      fields=tuple(fields), stages=tuple(stages),
-                     export_pages=tuple(export_pages) or tuple(pages),
                      variants=tuple(variants), cues=tuple(cues), require=require, trust=trust,
                      facets=tuple(facets))
         from .focus import facets as all_facets

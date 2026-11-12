@@ -48,7 +48,7 @@ containing [REVIEW: reason]."""
 PARSE_PSEUDOCODE = """\
 Convert the supplied final pseudocode to the restricted interpreter language below. \
 Preserve the student's algorithm and all mistakes. Do not repair missing steps, \
-constants, probability formulas, helpers, or off-by-one mistakes. You may normalize \
+constants, helpers, or off-by-one mistakes. You may normalize \
 syntax (e.g. ^ to **); preserve semantics. Keep every requested function and all \
 referenced student helpers. Leave a missing/blank function absent, instead of adding \
 a solution or pass stub. Return plain pseudocode, no Markdown. Use \

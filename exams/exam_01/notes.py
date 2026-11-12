@@ -21,6 +21,9 @@ one less than the student did (x[1] becomes x[0], x[k] becomes x[k - 1]). Write 
 
 SCALAR = "Write `x^y` as `x**y`."
 
+# For every sampler's parse: the library's parse prompt leaves this to the exam.
+FORMULAS = "Do not repair missing probability formulas."
+
 GIVEN_F = """\
 The printed definition of `f(x)` is provided by the checker: do not include it \
 unless the student changed it. `[X, Y] = g()` assigns two results."""

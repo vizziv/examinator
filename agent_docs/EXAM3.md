@@ -307,7 +307,7 @@ from examiner.std import stages, math, pseudocode
 
 from . import notes, rectangles, weibullish, point_process, huge_constants
 
-exam = Exam('exam_03', title="Exam 3", pages=22, front=[1], extra=[20, 21, 22],
+exam = Exam('exam_03', title="Exam 3", pages=22,
             scan_window=[60, 55, 920, 825], cover_pages=1)
 
 
@@ -367,7 +367,7 @@ BIT4 = variants(
 # --- math and choice questions --------------------------------------------
 
 exam.question(
-    'q1', title="Right right", pages=[3], export_pages=[2, 3], result=Bool(), **BIT1,
+    'q1', title="Right right", pages=[3], result=Bool(), **BIT1,
     fields=boxes(3, ['1.1', '1.2', '1.3', '1.4'], [96, 207, 318, 430], 500, 885, 100),
     stages=stages.math(
         symbols={'a': 'positive', 'b': 'positive'}, functions=[],
@@ -377,7 +377,7 @@ exam.question(
                            '1.2': '2*a*(1-b)', '1.3': 'a*(1-b)', '1.4': '1/2'}}))
 
 exam.question(
-    'q3', title="A tale of two heights", pages=[7], export_pages=[6, 7],
+    'q3', title="A tale of two heights", pages=[7],
     result=Bool(), **BIT2,
     fields=boxes(7, ['3.1', '3.2', '3.3', '3.4'], [98, 308, 518, 728], 650, 900, 110),
     stages=stages.math(key={
@@ -386,14 +386,14 @@ exam.question(
 
 Q4 = [f'4.{part}.{bound}' for part in (1, 2) for bound in 'abcd']
 exam.question(
-    'q4', title="Sawtooth GPS", pages=[9], export_pages=[8, 9], result=Bool(), **BIT4,
+    'q4', title="Sawtooth GPS", pages=[9], result=Bool(), **BIT4,
     fields=boxes(9, Q4, [99, 199, 298, 397, 519, 618, 718, 817], 500, 885, 92),
     stages=stages.math(key={
         'original':  dict(zip(Q4, ['-1', '-1/2', '0', '1/2', '-1', '-1/4', '0', '3/4'])),
         'alternate': dict(zip(Q4, ['-1/2', '0', '1/2', '1', '-3/4', '0', '1/4', '1']))}))
 
 exam.question(
-    'q5', title="Mmm, measuring multiple means", pages=[11], export_pages=[10, 11],
+    'q5', title="Mmm, measuring multiple means", pages=[11],
     result=Bool(), **BIT1,
     fields=boxes(11, ['5'], [98], 710, 900, 150),
     stages=stages.math(key={'original':  {'5': math.Choice('30', 'option 4', 'D')},
@@ -402,20 +402,20 @@ exam.question(
 Q6 = ['6.1', '6.2', '6.3', '6.4']
 exam.question(
     'q6', title="Poisson un, poisson deux, poisson rouge, poisson bleu",
-    pages=[13], export_pages=[12, 13], result=Bool(), **BIT2,
+    pages=[13], result=Bool(), **BIT2,
     fields=boxes(13, Q6, [295, 456, 617, 777], 710, 900, 110),
     stages=stages.math(key={'original':  dict(zip(Q6, map(letter, 'CDAB'))),
                             'alternate': dict(zip(Q6, map(letter, 'DCAB')))}))
 
 exam.question(
-    'q8', title="Triangular likelihood", pages=[17], export_pages=[16, 17],
+    'q8', title="Triangular likelihood", pages=[17],
     result=Bool(), **BIT4,
     fields=boxes(17, ['8.1', '8.2'], [98, 518], 500, 885, 110),
     stages=stages.math(key={'original':  {'8.1': '6/25**3', '8.2': '0'},
                             'alternate': {'8.1': '0', '8.2': '6/25**3'}}))
 
 exam.question(
-    'q9', title="Capital L likelihood", pages=[19], export_pages=[18, 19],
+    'q9', title="Capital L likelihood", pages=[19],
     result=Bool(), **BIT1,
     fields=boxes(19, ['9.a', '9.b'], [96, 207], 500, 885, 100),
     stages=stages.math(key={'original':  {'9.a': '12', '9.b': '16'},
@@ -427,7 +427,7 @@ exam.question(
 TWO_MARKS = {'check': Bool(), 'shiny': Bool(counts=False)}
 
 exam.question(
-    'q2', title="Feeling Weibullish", pages=[4, 5], export_pages=[4, 5], result=TWO_MARKS,
+    'q2', title="Feeling Weibullish", pages=[4, 5], result=TWO_MARKS,
     fields=[Field('2.1', region=band(4, 290, 930)), Field('2.2', region=band(5, 300, 930))],
     stages=[
         stages.transcribe(notes=notes.KEEP_CONSTANTS),
@@ -438,7 +438,7 @@ exam.question(
     ])
 
 exam.question(
-    'q7', title="It's v Poisson", pages=[14, 15], export_pages=[14, 15], result=TWO_MARKS,
+    'q7', title="It's v Poisson", pages=[14, 15], result=TWO_MARKS,
     fields=[Field('7.1', region=band(14, 320, 930)), Field('7.2', region=band(15, 235, 930))],
     stages=[
         stages.transcribe(),

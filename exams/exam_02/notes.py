@@ -20,10 +20,13 @@ option's printed text in plain ASCII, using <=, >= and the word delta."""
 
 BOXED = "Only the boxed final answers are answers. Work elsewhere on the page is not transcribed."
 
+# For samplers: the library's parse prompt leaves this to the exam.
+FORMULAS = "Do not repair missing probability formulas."
+
 SNOW_CONE = """\
 Points are lists [x, y]. Keep arithmetic on points exactly as written, such as \
-adding two lists or scaling one, and keep calls to `rotate` and `die`."""
+adding two lists or scaling one, and keep calls to `rotate` and `die`. """ + FORMULAS
 
 NORMAL = """\
 The printed helper `g(t)` may be called. Keep the student's constants exactly as \
-written."""
+written. """ + FORMULAS

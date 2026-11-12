@@ -4,7 +4,7 @@ variants, and one boolean question with no variants."""
 from examinator import Bool, Cue, Exam, Field, Grade, Identity, Landmark, Number, Region
 from examinator.std import math, stages
 
-exam = Exam('toy', title="Toy exam", pages=4, front=[1], extra=[4],
+exam = Exam('toy', title="Toy exam", pages=4,
             scan_window=[50, 40, 950, 900], cover_pages=1,
             # intake: how to tell a scanned sheet's printed page, and where students write who they are
             landmarks=[Landmark('title', region=Region(1, 300, 90, 700, 150),

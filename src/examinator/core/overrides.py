@@ -3,7 +3,6 @@
 An override replaces one plain-data value of a question, addressed by a path:
 
     <question>/pages                          printed pages holding the answer
-    <question>/export_pages
     <question>/require | trust                variant agreement
     <question>/fields/<label>/region
     <question>/cues/<name>/region | ask | reads
@@ -142,7 +141,7 @@ def _map_leaves(prefix: tuple[str, ...], m: Mapping):
 def _leaves(q: Question) -> dict[tuple[str, ...], tuple[str, bool]]:
     """Every editable value of a question: {segments after the id: (kind, nullable)}."""
     out: dict[tuple[str, ...], tuple[str, bool]] = {
-        ('pages',): ('pages', False), ('export_pages',): ('pages', False)}
+        ('pages',): ('pages', False)}
     if q.variants:
         out[('require',)] = ('int', True)
         out[('trust',)] = ('int', False)

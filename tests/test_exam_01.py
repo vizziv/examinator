@@ -75,7 +75,7 @@ def test_definition(exam):
         if qid in VARIED:
             assert q.variants == ('original', 'alternate') and len(q.cues) == 2
             assert q.stage('evidence').uses_variant
-            assert any(c.region.page in q.export_pages for c in q.cues)  # one cue from its own pages
+            assert any(c.region.page in (q.pages[0] - 1, q.pages[0]) for c in q.cues)  # one cue from its own pages
         else:
             assert not q.variants
         for f in q.fields:

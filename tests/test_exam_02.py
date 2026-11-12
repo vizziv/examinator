@@ -23,6 +23,13 @@ EXAM = ROOT / 'exams' / 'exam_02'
 BLANKS = os.environ.get('EXAM2_BLANKS')
 needs_blanks = pytest.mark.skipif(not BLANKS, reason="EXAM2_BLANKS is not set")
 S = 'synthetic'
+FRONT, EXTRA = (1,), (26, 27, 28)       # the cover page and the extra-space pages
+
+
+def extent(qid):
+    """A question's printed pages: question k is on pages 2k and 2k + 1."""
+    k = int(qid[1:])
+    return {2 * k, 2 * k + 1}
 
 
 @pytest.fixture(scope='module')
@@ -68,7 +75,7 @@ def test_definition(exam):
     assert not any(spec.counts for qid in ('q10', 'q11', 'q12') for spec in q[qid].result.values())
     for question in q.values():
         used = {f.region.page for f in question.fields}
-        assert used <= set(question.pages) <= set(question.export_pages), question.id
+        assert used <= set(question.pages) <= extent(question.id), question.id
         if question.variants:       # two cues that can agree, however many are declared
             voting = [c for c in question.cues if c.fn is not None] or list(question.cues)
             assert len(voting) == 2, question.id
@@ -130,11 +137,11 @@ def test_versions_match_the_printed_blanks(exam, pkg):
     for qid, q in exam.questions.items():
         seen = {}
         for alt in v.VERSIONS:
-            look = tuple(pages[alt][p] for p in q.export_pages)
+            look = tuple(pages[alt][p] for p in sorted(extent(qid)))
             seen.setdefault(v.VERSIONS[alt].get(qid), set()).add(look)
         assert all(len(looks) == 1 for looks in seen.values()), qid
         assert len({next(iter(looks)) for looks in seen.values()}) == len(seen), qid
-    assert len({pages[alt][p] for alt in v.VERSIONS for p in exam.front + exam.extra}) == len(exam.front + exam.extra)
+    assert len({pages[alt][p] for alt in v.VERSIONS for p in FRONT + EXTRA}) == len(FRONT + EXTRA)
 
 
 def test_cues_combine_into_a_printing(exam, pkg, tmp_path):
