@@ -97,3 +97,14 @@ def test_isolated_checks_time_out_and_crash_as_undecided(tmp_path):
     finally:
         runner.close()
         ws.close()
+
+
+def test_no_browser_function_is_declared_twice():
+    """In JavaScript a later `function f` silently replaces an earlier one in the same scope.
+    Nothing runs the browser code in tests, so this catches it by reading: a name declared
+    twice at the same depth in one file."""
+    declared = re.compile(r'^(\s*)(?:async\s+)?function\s+(\w+)\s*\(', re.M)
+    for f in (ROOT / 'src' / 'examinator' / 'web' / 'static').glob('*.js'):
+        seen = [m.groups() for m in declared.finditer(f.read_text())]
+        twice = sorted({name for depth, name in seen if seen.count((depth, name)) > 1})
+        assert not twice, f"{f.name}: {', '.join(twice)}"

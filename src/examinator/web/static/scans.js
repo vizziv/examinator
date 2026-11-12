@@ -44,11 +44,11 @@
   async function preview() {
     const mine = ++asked;
     const value = text.value;
-    if (!value.trim()) { show(null); return; }
+    if (!value.trim()) { showRoster(null); return; }
     const r = await request('/scans/roster', {text: value, dry: true});
-    if (mine === asked) show(r.ok ? r.body : {error: r.body.error || 'failed'});
+    if (mine === asked) showRoster(r.ok ? r.body : {error: r.body.error || 'failed'});
   }
-  function show(b) {
+  function showRoster(b) {
     const ok = !!b && !b.error && b.people > 0 && !b.problems.length;
     $('roster-save').disabled = !ok;
     const bad = b && !b.error ? b.problems.length + b.more : 0;
@@ -72,7 +72,7 @@
   });
   $('roster-save').addEventListener('click', async () => {
     const r = await request('/scans/roster', {text: text.value});
-    if (!r.ok) { show({error: r.body.error || 'failed'}); return; }
+    if (!r.ok) { showRoster({error: r.body.error || 'failed'}); return; }
     location.reload();
   });
   const pick = $('src');
