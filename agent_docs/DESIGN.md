@@ -28,9 +28,9 @@ names are placeholders.
 ```text
 src/examinator/           the library and app (this repository)
   core/                   definitions, store, runner, workflow rules, overrides, focus;
-                          intake (split, intake, identity) and reading a region (reading)
+                          printed fields (printed); intake (split, intake, identity); reading a region (reading)
   pdf/  model/            rendering, scan layout, orientation, writing PDFs; loopback model client
-  std/                    the standard library: stages, prompts, math, pseudocode, blocks
+  std/                    the standard library: stages, prompts, fields, math, pseudocode, blocks
   web/                    server and browser interface
 src/examinator_kits/
   stochastic/             optional kit for sampler questions (primitives, fit tests, checks)
