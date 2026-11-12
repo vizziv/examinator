@@ -1,5 +1,4 @@
 """The focused set: facets, the values table, filter semantics. All synthetic."""
-import dataclasses
 import json
 import shutil
 import subprocess
@@ -7,14 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from examinator import Bool, Evidence, Exam, Field, Stage
+from examinator import Exam, Field
 from examinator.core import focus, grid
-from examinator.core.defs import stage_hash
 from examinator.core.focus import BLANK, Facet
 from examinator.core.store import Store, Submission
-from examinator.core.workflow import question_status
 from examinator.std import math as m
-from examinator.std import stages
+from examinator.std import readers
 from examinator.std.pseudocode import comment_facet, comments
 
 CASES = json.loads((Path(__file__).parent / 'focus_cases.json').read_text())
@@ -23,25 +20,28 @@ FOCUS_JS = Path(__file__).parents[1] / 'src' / 'examinator' / 'web' / 'static' /
 
 # --- built-in facets and the table ---------------------------------------------------
 
-def test_builtin_facets_agree_with_the_workflow(env):
+def test_builtin_facets_agree_with_the_status_rules(env):
     exam, ws, runner = env
-    assert runner.run_stage('s1', 'p', 'parse').ok
-    for stage in ('transcript', 'parse', 'evidence', 'grade'):
-        assert runner.run_stage('s1', 'a', stage).ok
+    for qid in ('p', 'a'):
+        runner.read('s1', qid)
+    runner.refresh('s1', questions=['a'])
     table = focus.values_table(exam, ws.store)
+    rows = {r.submission.id: r for r in grid.load(exam, ws.store)}
     for sid in ('s1', 's2'):
         for qid, q in exam.questions.items():
-            status = question_status(q, ws.store.for_question(sid, qid), parses=ws.store.of_kind(sid, 'parse'))
-            for part in q.result:
-                suffix = f':{part}' if part else ''
-                assert table[f'{qid}/state{suffix}'][sid] == [status[part].state]
-                assert table[f'{qid}/grade{suffix}'][sid] == [focus.grade_value(status[part])]
+            several = len(q.checks) > 1
+            for c in q.checks:
+                st = rows[sid].status[(qid, c.name)]
+                suffix = f':{c.name}' if several else ''
+                assert table[f'{qid}/state{suffix}'][sid] == [st.state]
+                assert table[f'{qid}/grade{suffix}'][sid] == [focus.grade_value(st)]
     assert table['a/state:x']['s1'] == ['unverified'] and table['a/grade:x']['s1'] == ['✓']
     # a printed field's value is a facet of its question (which printing a submission has)
     assert table['p/field/c1'] == {'s1': ['one']} and table['p/field/c2'] == {'s1': ['one']}
-    assert table['b/state']['s2'] == ['not_started'] and table['b/grade']['s2'] == ['undecided']
+    assert table['p/state'] == {'s1': ['unverified'], 's2': ['not_read']}       # no checks: how its fields stand
+    assert table['b/state']['s2'] == ['not_run'] and table['b/grade']['s2'] == ['undecided']
     ids = {q['id']: [f['id'] for f in q['facets']] for q in focus.describe_facets(exam)}
-    assert ids['p'] == ['p/field/c1', 'p/field/c2']               # no result: no grade or state facets
+    assert ids['p'] == ['p/state', 'p/field/c1', 'p/field/c2']
     assert not any('/field/' in f for f in ids['a'] + ids['b'])
 
 
@@ -58,74 +58,47 @@ def test_table_shape_and_one_submission(env):
 
 
 def _facets_exam():
-    def check(ctx):
-        return Evidence({'fields': {'x': {'outcome': 'correct'}}, 'words': ['b', 'a', 'b']},
-                        [{'type': 'plot', 'data': list(range(1000))}])
     exam = Exam('f', pages=1)
-    exam.question('q', pages=[1], result=Bool(), fields=[Field('x')],
-                  stages=[Stage('parse', lambda ctx: {}, editable=True),
-                          Stage('evidence', check, inputs=('parse',),
-                                facets=(Facet('words', "words", lambda b: b['evidence'],
-                                              reads={'evidence': '$.data.words'}),)),
-                          stages.grade(lambda ev: ev.outcome('x'))],
-                  facets=[Facet('size', "size", lambda b: [len(b['parse'])], reads=('parse',), group='mine')])
+    exam.question('q', pages=[1], fields=[Field('x'), Field('y')], check=lambda ctx: 'correct',
+                  facets=[Facet('size', "size", lambda v: [len(v.value('x') or '')], group='mine'),
+                          Facet('words', "words", lambda v: (v.value('y') or '').split())])
     return exam
 
 
-def test_stage_and_question_facets(tmp_path):
+def test_question_facets(tmp_path):
     exam = _facets_exam()
-    names = [f.name for f in focus.facets(exam.questions['q'])]
-    assert names == ['grade', 'state', 'words', 'size']
+    assert [f.name for f in focus.facets(exam.questions['q'])] == ['grade', 'state', 'size', 'words']
     store = Store(tmp_path / 's.sqlite')
     store.put_submissions([Submission(s, s, '', '') for s in ('s1', 's2')])
-    store.write('s1', 'q', 'parse', {'x': '1', 'y': '2'}, origin='auto')
-    store.write('s1', 'q', 'evidence', exam.questions['q'].stage('evidence').fn(None).to_json(), origin='auto')
+    store.write('s1', 'q/x', 'value', {'text': '12'}, origin='auto')
+    store.write('s1', 'q/y', 'value', {'text': 'b a b'}, origin='auto')
     table = focus.values_table(exam, store)
     assert table['q/words'] == {'s1': ['b', 'a']}           # deduplicated, in order
-    assert table['q/size'] == {'s1': ['2']}                 # values become strings
-    assert table['q/state']['s2'] == ['not_started']
-
-
-def test_facets_do_not_change_stage_hash():
-    exam = _facets_exam()
-    q = exam.questions['q']
-    bare = dataclasses.replace(q, stages=tuple(dataclasses.replace(s, facets=()) for s in q.stages), facets=())
-    for s, b in zip(q.stages, bare.stages):
-        assert stage_hash(q, s) == stage_hash(bare, b)
-    km = stages.check_math({'x': '1'})
-    assert km.facets and stage_hash(q, km) == stage_hash(q, dataclasses.replace(km, facets=()))
+    assert table['q/size'] == {'s1': ['2'], 's2': ['0']}    # values become strings
+    assert table['q/state']['s2'] == ['not_run']
 
 
 def test_facet_names_are_checked():
     exam = Exam('d', pages=1)
     with pytest.raises(ValueError, match='duplicate facet'):
-        exam.question('q', pages=[1], result=Bool(), stages=[stages.transcribe()],
-                      facets=[Facet('grade', "mine", lambda b: [])])
+        exam.question('q', pages=[1], check=lambda ctx: None, facets=[Facet('grade', "mine", lambda v: [])])
     with pytest.raises(ValueError):
-        Facet('x', "x", lambda b: [], kind='list')
-    with pytest.raises(ValueError):
-        Facet('x', "x", lambda b: [], reads={'evidence': 'data.fields'})
+        Facet('x', "x", lambda v: [], kind='list')
 
 
-def test_path_read_skips_plot_blocks_and_queries_are_few(tmp_path):
+def test_the_table_is_one_query_and_never_loads_plot_blocks(tmp_path):
     exam = _facets_exam()
     store = Store(tmp_path / 's.sqlite')
     store.put_submissions([Submission(s, s, '', '') for s in ('s1', 's2', 's3')])
-    body = exam.questions['q'].stage('evidence').fn(None).to_json()
     for s in ('s1', 's2', 's3'):
-        store.write(s, 'q', 'evidence', body, origin='auto')
-    got = store.bodies('q', 'evidence', '$.data.words')
-    assert got == {s: ['b', 'a', 'b'] for s in ('s1', 's2', 's3')}
-    assert store.bodies('q', 'evidence', '$.data.missing') == {}
-    assert store.bodies('q', 'evidence', '$.data', submission='s2') == {'s2': body['data']}
+        store.write(s, 'q/check', 'result', {'grade': {'value': True}, 'blocks': [{'type': 'plot'}]}, origin='auto')
     seen = []
     store._db.set_trace_callback(seen.append)
     focus.values_table(exam, store)
     store._db.set_trace_callback(None)
     selects = [s for s in seen if s.lstrip().lower().startswith('select')]
-    assert len(selects) == 3 + 2      # the grid's (artifacts twice, submissions), then one per (kind, path)
-    assert not any('blocks' in s for s in selects)
-    assert any("body -> '$.data.words'" in s for s in selects)
+    assert len(selects) == 2                    # every row (blocks left out), the submissions
+    assert any("json_remove(body, '$.blocks')" in s for s in selects)
 
 
 # --- filter semantics, shared with focus.js -------------------------------------------
@@ -169,29 +142,32 @@ def test_normal_form_groups_equivalent_answers():
     assert m.normal_form('10^2000') == '10^2000'                           # too long: the text
 
 
-def test_answer_facet_over_check_math(tmp_path):
+def test_answer_facet_over_the_keyed_check(tmp_path):
     exam = Exam('m', pages=1)
-    exam.question('q', pages=[1], result=Bool(), fields=[Field('a'), Field('b')],
-                  stages=[stages.transcribe(), stages.parse_math(), stages.check_math({'a': '2*x', 'b': m.Choice('yes')}, symbols=['x']),
-                          stages.grade(m.all_correct)])
+    exam.question('q', pages=[1], fields=[Field('a'), Field('b')], read=readers.answers(),
+                  check=m.keyed({'a': '2*x', 'b': m.Choice('yes')}, symbols=['x']))
     assert [f.name for f in focus.facets(exam.questions['q'])][-2:] == ['answer/a', 'answer/b']
     store = Store(tmp_path / 's.sqlite')
-    answers = {'s1': {'a': '2x', 'b': 'Yes.'}, 's2': {'a': 'x+x', 'b': None}, 's3': {'a': 'x ??', 'b': 'no'}}
+    answers = {'s1': {'a': '2x', 'b': 'Yes.'}, 's2': {'a': 'x+x', 'b': ''}, 's3': {'a': 'x ??', 'b': 'no'}}
     store.put_submissions([Submission(s, s, '', '') for s in [*answers, 's4']])
     for s, a in answers.items():
-        data = m.check_answers(a, {'a': '2*x', 'b': m.Choice('yes')}, symbols=['x'])
-        store.write(s, 'q', 'evidence', Evidence(data, [{'type': 'plot'}]).to_json(), origin='auto')
-    store.write('s4', 'q', 'evidence', {'data': {'fields': {'a': {'answer': '2x', 'outcome': 'correct'}}}},
-                origin='auto')                                    # from before normal forms: no value
-    table = focus.values_table(exam, store)
-    assert table['q/answer/a'] == {'s1': ['2*x'], 's2': ['2*x'], 's3': ['x ??']}
+        for label, text in a.items():
+            store.write(s, f'q/{label}', 'value', {'text': text}, origin='auto')
+    memo = {}
+    table = focus.values_table(exam, store, memo=memo)
+    assert table['q/answer/a'] == {'s1': ['2*x'], 's2': ['2*x'], 's3': ['x ??']}     # s4: not read
     assert table['q/answer/b'] == {'s1': ['yes'], 's2': [BLANK], 's3': ['no']}
     assert focus.focused(table, {'q/answer/a': ['2*x']}, ['s1', 's2', 's3', 's4']) == ['s1', 's2']
+    assert memo and focus.values_table(exam, store, memo=memo) == table
 
 
-def test_keys_per_value_declare_every_label():
-    st = stages.check_math({'v1': {'a': '1', ('b', 'c'): lambda g: 'correct'}, 'v2': {'a': '2', 'd': '3'}}, by='w')
-    assert [f.label for f in st.facets] == ['a', 'b', 'c', 'd']
+def test_keys_per_value_offer_every_label_once():
+    exam = Exam('m', pages=1)
+    exam.question('q', pages=[1], fields=[Field(x) for x in 'abcdw'], checks={
+        'one': m.keyed({'v1': {'a': '1', ('b', 'c'): lambda g: 'correct'}, 'v2': {'a': '2', 'd': '3'}}, by='w'),
+        'two': m.keyed({'a': '1'})})
+    names = [f.name for f in focus.facets(exam.questions['q'])]
+    assert [n for n in names if n.startswith('answer/')] == ['answer/a', 'answer/b', 'answer/c', 'answer/d']
 
 
 # --- comments in pseudocode ----------------------------------------------------------
@@ -218,13 +194,19 @@ def test_comments_in_incomplete_source():
     assert [c.text for c in comments('if x:\n  # a\n bad\n# b\n')] == ['a', 'b']
 
 
-def test_comment_facet_and_parse_pseudocode_default():
-    f = comment_facet()
-    assert f.kind == 'text' and f.reads == (('parse', None),)
-    vals = f.values({'parse': SOURCE})
-    assert vals[1].split('\n')[0] == 'add them up' and '    # add them up' in vals[1].split('\n')
-    assert [x.name for x in stages.parse_pseudocode(['f']).facets] == ['comments']
-    assert stages.parse_pseudocode(['f'], facets=()).facets == ()
+def test_comment_facet_and_the_code_reader():
+    f = comment_facet('code')
+
+    class View:
+        def value(self, label):
+            return SOURCE if label == 'code' else None
+    vals = f.values(View())
+    assert f.kind == 'text' and vals[1].split('\n')[0] == 'add them up' and '    # add them up' in vals[1].split('\n')
+    exam = Exam('c', pages=1)
+    exam.question('one', pages=[1], fields=[Field('code')], read=readers.code(['f']))
+    exam.question('two', pages=[1], fields=[Field('1'), Field('2')], read=readers.code({'1': ['f'], '2': ['g']}))
+    assert [x.name for x in focus.facets(exam.questions['one'])][-1:] == ['comments']
+    assert [x.name for x in focus.facets(exam.questions['two'])][-2:] == ['comments/1', 'comments/2']
 
 
 def test_store_version_follows_every_change(tmp_path):
@@ -235,13 +217,12 @@ def test_store_version_follows_every_change(tmp_path):
         seen.append(store.version())
         assert seen[-1] != seen[-2]
 
-    a = store.write('s1', 'q', 'parse', {'x': '1'}, origin='auto')
+    a = store.write('s1', 'q/x', 'value', {'text': '1', 'settled': None}, origin='auto')
     changed()
-    store.verify('s1', 'q', 'parse', expect_rev=a.rev, author='t')
+    store.write('s1', 'q/x', 'value', {'text': '1', 'settled': 'person'}, origin='auto', keep_rev=True,
+                expect_rev=a.rev)
     changed()
-    store.verify('s1', 'q', 'parse', expect_rev=a.rev, author='t', verified=False)
-    changed()
-    store.delete('s1', 'q', 'parse')
+    store.delete('s1', 'q/x', 'value')
     changed()
     store.set_override('q/x', 1, author='t')
     changed()

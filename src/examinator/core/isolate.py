@@ -24,6 +24,9 @@ from pathlib import Path
 from typing import Any
 
 
+LOAD_TIMEOUT = 120.0     # seconds for a new worker to import the exam package
+
+
 class CheckTimeout(Exception):
     pass
 
@@ -75,9 +78,17 @@ class Pool:
         self._closed = False
 
     def _spawn(self) -> subprocess.Popen:
-        return subprocess.Popen(
+        """A new worker, once it has loaded the exam (loading is not the check's time)."""
+        proc = subprocess.Popen(
             [sys.executable, '-m', 'examinator.core.isolate', self.exam_path],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        try:
+            _recv(proc.stdout.fileno(), time.monotonic() + LOAD_TIMEOUT)
+        except (CheckTimeout, EOFError, OSError):
+            proc.kill()
+            proc.wait()
+            raise CheckCrash("the exam package did not load in a worker")
+        return proc
 
     def call(self, question: str, check: str, payload: dict, timeout: float, reads: dict) -> dict:
         """Run one check in a worker and return its stored form (`result.settle`).
@@ -135,6 +146,7 @@ def _worker(exam_path: str) -> None:
     sys.stdout = sys.stderr            # stray prints must not corrupt the protocol
     inp = sys.stdin.buffer.fileno()
     exam = load_exam(exam_path)
+    _send(out, {'ready': True})
     applied: dict = {}
     while True:
         try:

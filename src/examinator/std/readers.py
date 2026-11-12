@@ -1,7 +1,7 @@
 """Handwriting readers: how a question's handwritten fields are read.
 
-    exam.question('q2', ..., read=readers.answers(notes=NUMBERS))          # short answers
-    exam.question('q5', ..., read=readers.code(['sampler'], language=LANG))  # pseudocode
+    exam.question('sum', ..., read=readers.answers(notes=NUMBERS))          # short answers
+    exam.question('sampler', ..., read=readers.code(['sampler'], language=LANG))  # pseudocode
 
 A reader reads all the fields it is given in one go and returns one value per
 field (text; '' is blank). Inside, it may make two model calls: one to

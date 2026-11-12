@@ -4,7 +4,6 @@ from pathlib import Path
 
 from examinator import load_exam, synth
 from examinator.core.runner import Runner
-from examinator.core.workflow import part_status
 from examinator.core.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,8 +38,9 @@ def test_no_answer_key_in_any_prompt(tmp_path):
     runner = Runner(exam, ws, model=model)
     try:
         for sub in ws.store.submissions():
-            for qid, q in exam.questions.items():
-                runner.run_from(sub.id, qid, q.stages[0].name)
+            for qid in exam.questions:
+                runner.read(sub.id, qid)
+            runner.refresh(sub.id, questions=list(exam.questions))
     finally:
         runner.close()
         ws.close()
@@ -52,8 +52,8 @@ def test_no_answer_key_in_any_prompt(tmp_path):
 
 EXAM = '''
 import time
-from examinator import Bool, Exam, Field, Stage, Evidence
-from examinator.std import stages
+from examinator import Check, Exam, Field
+from examinator.std import math
 
 def slow(ctx):
     time.sleep(30)
@@ -63,13 +63,11 @@ def boom(ctx):
 
 def fine(ctx):
     print("stray output must not break the worker protocol")
-    return Evidence({'fields': {'x': {'outcome': 'correct'}}})
+    return math.keyed({'x': '1'})(ctx)
 
 exam = Exam('iso', pages=1)
 for name, fn in [('slow', slow), ('boom', boom), ('fine', fine)]:
-    exam.question(name, pages=[1], result=Bool(), fields=[Field('x')],
-                  stages=[Stage('parse', lambda ctx: {}, editable=True),
-                          stages.check(fn, timeout=1.0), stages.grade(lambda ev: ev.outcome('x'))])
+    exam.question(name, pages=[1], fields=[Field('x')], check=Check(fn, timeout=1.0))
 '''
 
 
@@ -83,17 +81,19 @@ def test_isolated_checks_time_out_and_crash_as_undecided(tmp_path):
     runner = Runner(exam, ws)
     try:
         for qid in exam.questions:
-            ws.store.write('s', qid, 'parse', {}, origin='manual', author='t', verified=True)
-            assert runner.run_stage('s', qid, 'evidence').ok
+            runner.set('s', qid, 'x', "1", author='t')
+            assert runner.compute('s', qid, 'check').ok
 
         def st(qid):
-            return part_status(exam.questions[qid], '', ws.store.for_question('s', qid))
+            q = exam.questions[qid]
+            return runner.sheet('s').status(exam, q, q.check('check'))
 
-        assert (st('slow').state, st('slow').value) == ('needs_review', None)
+        assert (st('slow').state, st('slow').value) == ('to_decide', None)
         assert 'timed out' in st('slow').reason
-        assert (st('boom').state, st('boom').value) == ('needs_review', None)
-        assert 'kaboom' in str(ws.store.get('s', 'boom', 'evidence').body)     # traceback kept for graders
+        assert (st('boom').state, st('boom').value) == ('to_decide', None)
+        assert 'kaboom' in str(ws.store.get('s', 'boom/check', 'result').body)     # traceback kept for graders
         assert (st('fine').state, st('fine').value) == ('graded', True)
+        assert set(ws.store.get('s', 'fine/check', 'result').body['reads']) == {'fine/x'}   # recorded in the worker
     finally:
         runner.close()
         ws.close()
@@ -176,23 +176,13 @@ def test_no_two_actions_of_a_group_share_a_single_key():
     assert not shared, shared
 
 
-def test_batch_runs_a_stage_after_what_precedes_it_in_any_question():
-    """The printing is a question with only a parse; every question's parse still
-    comes before any check, so a check that reads the printing finds it."""
-    from examinator import Bool, Exam, Field, Printed, Region
+def test_a_batch_reads_everything_before_any_check(env):
+    """A check that reads the printing (another question) finds it."""
     from examinator.core import batch
-    from examinator.std import fields, stages
-
-    exam = Exam('order', title="Order", pages=1)
-    exam.question('plain', pages=[1], result=Bool(), fields=[Field('a', region=Region(1, 0, 0, 500, 100))],
-                  stages=stages.math(key={'a': '1'}))
-    exam.question('info', pages=[1], stages=[stages.read_fields()],
-                  fields=[Field('c', region=Region(1, 0, 100, 500, 200),
-                                read=Printed("the letter", reads={'x': 'x', 'y': 'y'}))])
-    exam.question('varied', pages=[1], result=Bool(), fields=[Field('a', region=Region(1, 0, 200, 500, 300))],
-                  stages=stages.math(key={'x': {'a': '1'}, 'y': {'a': '2'}}, by=fields.value('c', question='info')))
-    order = batch.stage_order(exam)
-    assert order.index('parse') < order.index('evidence')
-    assert sorted(order) == sorted({s.name for q in exam.questions.values() for s in q.stages})
-
-
+    exam, ws, runner = env
+    plan = batch.plan(exam, ws.store, batch.Selection(('s1',), tuple(exam.questions)), model_available=True)
+    run = batch.BatchRun(runner, plan, parallel=1)
+    outs = run.run()
+    steps = [o.step for o in outs]
+    assert steps.index('x') > max(i for i, s in enumerate(steps) if s == 'read')
+    assert all(o.ok for o in outs)

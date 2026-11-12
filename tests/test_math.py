@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 import sympy
 
-from examinator.core.evidence import EvidenceView
 from examinator.std import math as m
 from examinator.std.math import Approx, Choice, Unsupported, check_answers, check_field, equal, parse_expr
 
@@ -285,26 +284,18 @@ def test_check_answers_shape():
            '4': lambda s: ('correct', "ok") if s == 'yes' else 'incorrect', '5': 'a', '6': 'b'}
     answers = {'6': '', '2': '(b)', '1': 'ba', '3': '1/4', '4': 'yes', 'extra': 'ignored'}
     out = check_answers(answers, key, symbols=POS)
-    assert list(out) == ['fields']
-    assert list(out['fields']) == ['1', '2', '3', '4', '5', '6']
-    assert out['fields']['1'] == {'answer': 'ba', 'outcome': 'correct', 'note': '', 'normal': 'a*b'}
-    assert out['fields']['4'] == {'answer': 'yes', 'outcome': 'correct', 'note': 'ok', 'normal': 'yes'}
-    assert out['fields']['5'] == {'answer': None, 'outcome': 'blank', 'note': '', 'normal': None}
-    assert out['fields']['6'] == {'answer': None, 'outcome': 'blank', 'note': '', 'normal': None}
-    assert out['fields']['2']['normal'] == 'b' and out['fields']['3']['normal'] == '0.25'
-    assert [f['outcome'] for f in out['fields'].values()] == ['correct'] * 4 + ['blank'] * 2
-    assert m.all_correct(EvidenceView({'data': out})) == 'incorrect'
-
+    assert list(out) == ['1', '2', '3', '4', '5', '6']
+    assert out['1'] == ('correct', '') and out['4'] == ('correct', 'ok')
+    assert out['5'] == out['6'] == ('blank', '')
+    assert [o for o, _ in out.values()] == ['correct'] * 4 + ['blank'] * 2
+    assert m.all_correct({k: o for k, (o, _) in out.items()}) == 'incorrect'
     out = check_answers({'1': 'a b [REVIEW: b or 6]', '2': 'D'}, {'1': 'a*b', '2': Choice('B')}, symbols=POS)
-    assert out['fields']['1'] == {'answer': 'a b [REVIEW: b or 6]', 'outcome': None, 'note': 'review',
-                                  'normal': 'a b [review: b or 6]'}
-    assert out['fields']['2']['outcome'] == 'incorrect'
+    assert out == {'1': (None, 'review'), '2': ('incorrect', '')}
 
 
-def test_check_answers_through_the_stage_types():
-    import json
-    out = check_answers({'1': None}, {'1': 'a'}, symbols=('a',), functions=('sqrt',))
-    assert json.loads(json.dumps(out)) == out
+def test_normal_forms():
+    assert m.normal_form('ba', symbols=POS) == 'a*b' and m.normal_form('1/4') == '0.25'
+    assert m.normal_form('(b)', text=True) == 'b' and m.normal_form('  ') is None
 
 
 @pytest.mark.parametrize('outcomes, expected', [
@@ -322,12 +313,25 @@ def test_check_answers_through_the_stage_types():
     ([], None),
 ])
 def test_all_correct(outcomes, expected):
-    data = {'fields': {str(i): {'answer': 'x', 'outcome': o} for i, o in enumerate(outcomes)}}
-    assert m.all_correct(EvidenceView({'data': data})) == expected
+    assert m.all_correct({str(i): o for i, o in enumerate(outcomes)}) == expected
+    assert m.all_correct(outcomes) == expected
 
 
-def test_all_correct_on_a_check_that_did_not_run():
-    assert m.all_correct(EvidenceView({'data': {'undecided': "timeout"}})) is None
+def test_at_least():
+    five, with_f = m.at_least(5), m.at_least(5, required=('f',))
+    six = dict.fromkeys('abcdef', 'correct')
+    assert five(six) == 'correct'
+    assert five({**six, 'a': 'incorrect'}) == 'correct'
+    assert five({**six, 'a': 'blank'}) == 'correct'
+    assert five({**six, 'a': None}) == 'correct'                    # already enough
+    assert five({**six, 'a': 'incorrect', 'b': 'blank'}) == 'incorrect'
+    assert five(dict.fromkeys('abcdef', 'blank')) == 'blank'
+    assert five({**six, 'a': 'incorrect', 'b': None}) is None
+    assert five({**six, 'a': 'incorrect', 'b': 'incorrect', 'c': None}) == 'incorrect'   # out of reach
+    assert with_f({**six, 'a': 'incorrect'}) == 'correct'
+    assert with_f({**six, 'f': 'incorrect'}) == 'incorrect'
+    assert with_f({**six, 'f': 'blank'}) == 'incorrect'
+    assert with_f({**six, 'f': None}) is None
 
 
 # --- indexed symbols ----------------------------------------------------------
@@ -376,34 +380,32 @@ def either_order(answers):
 
 def test_group_entries():
     key = {'x': 'a', ('p', 'q'): either_order}
-    out = check_answers({'x': 'a', 'p': '2', 'q': '1'}, key, symbols=POS)['fields']
+    out = check_answers({'x': 'a', 'p': '2', 'q': '1'}, key, symbols=POS)
     assert list(out) == ['x', 'p', 'q']
-    assert out['p'] == {'answer': '2', 'outcome': 'correct', 'note': '', 'normal': '2'} and out['q']['outcome'] == 'correct'
-    assert [f['outcome'] for f in check_answers({'p': '3', 'q': '1'}, key)['fields'].values()] == \
-        ['blank', 'incorrect', 'incorrect']
+    assert out['p'] == ('correct', '') and out['q'][0] == 'correct'
+    assert [o for o, _ in check_answers({'p': '3', 'q': '1'}, key).values()] == ['blank', 'incorrect', 'incorrect']
 
     seen = []
 
     def one(answers):                   # one result for every field, with a note
         seen.append(answers)
         return 'incorrect', "sum is wrong"
-    out = check_answers({'p': '1', 'q': '  '}, {('p', 'q'): one})['fields']
+    out = check_answers({'p': '1', 'q': '  '}, {('p', 'q'): one})
     assert seen == [('1', None)]                                     # a blank arrives as None
-    assert out['p'] == {'answer': '1', 'outcome': 'incorrect', 'note': 'sum is wrong', 'normal': '1'}
-    assert out['q'] == {'answer': None, 'outcome': 'blank', 'note': '', 'normal': None}   # blank stays blank
+    assert out['p'] == ('incorrect', 'sum is wrong') and out['q'] == ('blank', '')   # blank stays blank
 
-    out = check_answers({}, {('p', 'q'): one})['fields']              # all blank: not called
-    assert len(seen) == 1 and [f['outcome'] for f in out.values()] == ['blank', 'blank']
+    out = check_answers({}, {('p', 'q'): one})              # all blank: not called
+    assert len(seen) == 1 and [o for o, _ in out.values()] == ['blank', 'blank']
 
-    out = check_answers({'p': '1 [REVIEW: 1 or 7]', 'q': '2'}, {('p', 'q'): one})['fields']
-    assert len(seen) == 1 and [(f['outcome'], f['note']) for f in out.values()] == [(None, 'review')] * 2
-    out = check_answers({'p': '1 [REVIEW: 1 or 7]'}, {('p', 'q'): one})['fields']
-    assert [f['outcome'] for f in out.values()] == [None, 'blank']
+    out = check_answers({'p': '1 [REVIEW: 1 or 7]', 'q': '2'}, {('p', 'q'): one})
+    assert len(seen) == 1 and list(out.values()) == [(None, 'review')] * 2
+    out = check_answers({'p': '1 [REVIEW: 1 or 7]'}, {('p', 'q'): one})
+    assert [o for o, _ in out.values()] == [None, 'blank']
 
     def unreadable(answers):
         raise Unsupported("unknown symbol: z")
-    out = check_answers({'p': 'z'}, {('p', 'q'): unreadable})['fields']
-    assert [(f['outcome'], f['note']) for f in out.values()] == [(None, "unknown symbol: z"), ('blank', "")]
+    out = check_answers({'p': 'z'}, {('p', 'q'): unreadable})
+    assert list(out.values()) == [(None, "unknown symbol: z"), ('blank', "")]
 
     for bad in (lambda a: 'maybe', lambda a: ['correct'], lambda a: ['correct', 'nope']):
         with pytest.raises(ValueError):
@@ -412,19 +414,23 @@ def test_group_entries():
         check_answers({'p': '1'}, {('p', 'q'): 'a'})
 
 
-def test_group_entries_through_the_stage():
-    from examinator import Context
-    from examinator.core.evidence import body_of
-    from examinator.std import stages
+def test_keyed_check():
+    from examinator import Exam, Field
+    from examinator.core.runner import try_check
 
     def both(answers):
         return ['correct', ('incorrect', "no")]
     both.label = "1 then 2"
-    stage = stages.check_math({'x': 'a', ('p', 'q'): both}, symbols=POS)
-    body = body_of(stage.fn(Context(submission='s', question=None, stage='evidence',
-                                    inputs={'parse': {'x': 'a', 'p': '1', 'q': '3'}})))
-    assert {k: f['outcome'] for k, f in body['data']['fields'].items()} == \
-        {'x': 'correct', 'p': 'correct', 'q': 'incorrect'}
-    text = str(body['blocks'])
-    assert "p, q" in text and "1 then 2" in text
-    assert stages.check_math({'v1': {('p', 'q'): both}, 'v2': {'p': 'a'}}, by='w').fn.by is not None
+    exam = Exam('k', pages=1)
+    exam.question('q', pages=[1], fields=[Field(x) for x in 'xpqz'],
+                  check=m.keyed({'x': 'a', ('p', 'q'): both, 'z': 'b'}, symbols=POS))
+    body = try_check(exam, 'q', 'check', {'q/x': 'a', 'q/p': '1', 'q/q': '3', 'q/z': '[REVIEW: b?]'})
+    assert {k: f['outcome'] for k, f in body['fields'].items()} == \
+        {'x': 'correct', 'p': 'correct', 'q': 'incorrect', 'z': None}
+    assert body['fields']['p']['expected'] == "1 then 2" and 'expected' not in body['fields']['q']
+    assert body['fields']['z']['note'] == "z has a review marker"
+    assert body['grade']['value'] is False                     # a mistake outranks an undecided field
+    assert set(body['reads']) == {'q/x', 'q/p', 'q/q', 'q/z'}
+    exam.question('r', pages=[1], fields=[Field('x'), Field('z')], check=m.keyed({'x': 'a', 'z': 'b'}, symbols=POS))
+    body = try_check(exam, 'r', 'check', {'r/x': 'a'})
+    assert body['grade'] == {'value': None, 'flags': [], 'reason': "undecided: z not read"}

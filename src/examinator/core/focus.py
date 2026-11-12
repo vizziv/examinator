@@ -104,10 +104,10 @@ def builtin_facets(question: Question) -> list[Facet]:
     out = []
     several = len(question.checks) > 1
     for c in question.checks:
-        suffix, shown = (f':{c.name}', f' {c.name}') if several else ('', '')
-        out.append(Facet('grade' + suffix, 'grade' + shown, lambda v, n=c.name: [grade_value(v.status(n))],
+        suffix, named = (f':{c.name}', f' {c.name}') if several else ('', '')
+        out.append(Facet('grade' + suffix, 'grade' + named, lambda v, n=c.name: [grade_value(v.status(n))],
                          group='grade', order=GRADES))
-        out.append(Facet('state' + suffix, 'state' + shown, lambda v, n=c.name: [v.status(n).state],
+        out.append(Facet('state' + suffix, 'state' + named, lambda v, n=c.name: [v.status(n).state],
                          group='grade', order=STATES))
     if not question.checks:
         out.append(Facet('state', 'state', lambda v: [v.fields_state()], group='grade', order=FIELD_STATES))

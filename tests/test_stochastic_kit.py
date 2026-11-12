@@ -5,7 +5,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from examinator.core.evidence import body_of
+from examinator.core.defs import Bool
+from examinator.core.result import settle
 from examinator.std import pseudocode
 from examinator_kits.stochastic import checks, primitives
 from examinator_kits.stochastic.fit import Fit
@@ -109,27 +110,28 @@ def test_parts_and_evidence():
     assert part.note == ""
     other = checks.Part('2').stop("g(1)", checks.Stop('incorrect', "line 2: boom"))
     assert (other.outcome, other.note) == ('incorrect', "g(1): line 2: boom")
-    body = body_of(checks.evidence([part, other], "def f():\n    pass\n"))
-    assert body['data'] == {'fields': {'1': {'outcome': 'correct', 'note': ''},
-                                       '2': {'outcome': 'incorrect', 'note': "g(1): line 2: boom"}}}
+    body = settle(Bool(), checks.result(other, "def f():\n    pass\n"))
+    assert body['grade']['value'] is False
+    assert body['fields'] == {'2': {'outcome': 'incorrect', 'note': "g(1): line 2: boom"}}
+    body = settle(Bool(), checks.result(part, "src", ran="run"))
+    assert body['grade']['value'] is True and body['fields'] == {'1': {'outcome': 'correct'}}
     shown = str(body['blocks'])
-    assert "1 tests" in shown and "2 tests" in shown and "Samples" in shown and "Source" in shown
-    one = str(body_of(checks.evidence(part, "src", ran="run"))['blocks'])
-    assert "'Tests'" in one and "As run" in one
+    assert "'Tests'" in shown and "Samples" in shown and "Source" in shown and "As run" in shown
+    undecided = settle(Bool(), checks.result(checks.Part('3').settle(None, "why"), "src"))
+    assert undecided['grade'] == {'value': None, 'flags': [], 'reason': "why"}
 
 
 def test_check_source():
     def judge(program):
         part = checks.Part('a')
         return part.settle('blank') if program.is_blank('f') else part.settle('correct')
-    data = body_of(checks.check_source("def f():\n    pass\n", LANGUAGE, 'a', judge))['data']
-    assert data['fields']['a']['outcome'] == 'blank'
-    data = body_of(checks.check_source("def f():\n    import os\n", LANGUAGE, ['a', 'b'], judge))['data']
-    assert [f['outcome'] for f in data['fields'].values()] == [None, None] and 'line 2' in data['fields']['a']['note']
+    r = checks.check_source("def f():\n    pass\n", LANGUAGE, 'a', judge)
+    assert r.grade == 'blank' and r.fields['a'].outcome == 'blank'
+    r = checks.check_source("def f():\n    import os\n", LANGUAGE, 'a', judge)
+    assert r.grade is None and r.fields['a'].outcome is None and 'line 2' in r.fields['a'].note and r.reason
     # `ran` is what runs; the evidence shows the source as written too.
-    body = body_of(checks.check_source("def f():\n    return 2 ^ 3\n", LANGUAGE, 'a', judge,
-                                       ran="def f():\n    return 2 ** 3\n"))
-    assert body['data']['fields']['a']['outcome'] == 'correct' and "As run" in str(body['blocks'])
+    r = checks.check_source("def f():\n    return 2 ^ 3\n", LANGUAGE, 'a', judge, ran="def f():\n    return 2 ** 3\n")
+    assert r.grade == 'correct' and "As run" in str([b.to_json() for b in r.blocks])
 
 
 def test_kit_knows_no_exam_and_the_core_never_imports_it():
