@@ -108,6 +108,25 @@ def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields:
     return out
 
 
+def try_check(exam: Exam, qid: str, check: str, values: Mapping[str, str], *,
+              params: Mapping | None = None) -> dict:
+    """Run one check in-process on given values (`{'question/label': text}`; a
+    field left out is not read) and return its result as it would be stored:
+    `{'grade', 'fields', 'blocks', 'reads'}`. For an exam's own tests. A check
+    that raises `Undecided` is an undecided result; anything else raises."""
+    q = exam.questions[qid]
+    c = q.check(check)
+    ctx = CheckContext(submission='test', question=q, check=check,
+                       values={k: (i + 1, v) for i, (k, v) in enumerate(values.items())},
+                       params=dict(params or {}),
+                       fields=frozenset(key(x.id, f.label) for x in exam.questions.values() for f in x.fields))
+    try:
+        body = settle(c.points, c.fn(ctx))
+    except Undecided as e:
+        body = settle(c.points, undecided(str(e)))
+    return {**body, 'reads': dict(ctx.reads)}
+
+
 class Runner:
     def __init__(self, exam: Exam, workspace: Workspace, *, model: Model | None = None,
                  pool: Pool | None = None):

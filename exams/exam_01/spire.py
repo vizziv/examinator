@@ -93,4 +93,4 @@ def check_program(program: pseudocode.Program, density: Density) -> checks.Part:
 
 def check(ctx):
     density = DENSITIES[PRINTING['q6'](ctx)]
-    return checks.check_source(ctx.input('parse'), COLLECTIONS, LABEL, lambda program: check_program(program, density))
+    return checks.check_source(ctx.read(LABEL), COLLECTIONS, LABEL, lambda program: check_program(program, density))

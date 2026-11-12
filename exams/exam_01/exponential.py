@@ -47,4 +47,4 @@ def check_program(program: pseudocode.Program, meaning: str) -> checks.Part:
 
 def check(ctx):
     meaning = MEANING[PRINTING['q1'](ctx)]       # undecided until the printing agrees
-    return checks.check_source(ctx.input('parse'), SCALAR, LABEL, lambda program: check_program(program, meaning))
+    return checks.check_source(ctx.read(LABEL), SCALAR, LABEL, lambda program: check_program(program, meaning))
