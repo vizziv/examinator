@@ -125,7 +125,7 @@ def test_naming_and_a_forced_accept(site):
     assert ws.store.submission('s0005').name == "Emery Sampleton"
     assert post(client, token, '/scans/who', {'sub': 'nobody', 'text': label}).status_code == 400
     # changing a written submission that has work: refused, then forced
-    ws.store.write('s0002', 'parity', 'parse', {'B': 'odd'}, origin='manual', author='t')
+    ws.store.write('s0002', 'parity/B', 'value', {'text': 'odd'}, origin='manual', author='t')
     plan = client.get(f'/scans/{src}/plan').json()
     plan = post(client, token, f'/scans/{src}/edit', {'op': 'drop', 'sheet': 6, 'rev': plan['rev']}).json()['plan']
     r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})

@@ -169,8 +169,8 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 .g-n.idle { color: var(--muted); }
 .g-num { color: var(--fg); background: var(--panel-2); border-color: var(--line); font-variant-numeric: tabular-nums; }
 .st { font-weight: 500; color: var(--muted); background: transparent; border-color: var(--line-strong); }
-.st-unverified, .st-needs_review { color: var(--unv-ink); background: var(--unv-bg); border-color: transparent; }
-.st-outdated, .st-manual_outdated { border-color: var(--stale); border-style: dashed; }
+.st-unverified, .st-to_decide { color: var(--unv-ink); background: var(--unv-bg); border-color: transparent; }
+.st-outdated, .st-decided_outdated { border-color: var(--stale); border-style: dashed; }
 
 /* grade glyphs outside the grid (decide buttons) */
 .v-t { color: var(--ok-ink); } .v-f { color: var(--no-ink); } .v-b { color: var(--blank); } .v-n { color: var(--ask); }
@@ -186,13 +186,13 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 .cell:where([data-v]:not([data-v=t], [data-v=f], [data-v=""])) { --ink: var(--fg); }
 .cell[data-b] { --ink: var(--blank-faded); }
 .cell[data-b] > a { font-weight: 400; }
-.cell.s-unverified[data-v=""], .cell.s-needs_review[data-v=""] { --ink: var(--ask); }
-.cell.s-unverified[data-v=""] > a, .cell.s-needs_review[data-v=""] > a { font-weight: 900; }
+.cell.s-unverified[data-v=""], .cell.s-to_decide[data-v=""] { --ink: var(--ask); }
+.cell.s-unverified[data-v=""] > a, .cell.s-to_decide[data-v=""] > a { font-weight: 900; }
 /* background: yellow when a person is asked (unverified, needs review); else plain */
-.cell.s-unverified, .cell.s-needs_review { --tint: var(--unv-bg); }
+.cell.s-unverified, .cell.s-to_decide { --tint: var(--unv-bg); }
 /* mark: outdated (does not count until rechecked) */
-.cell.s-outdated > a, .cell.s-manual_outdated > a { text-decoration: line-through; text-decoration-thickness: 1px; }
-.cell.s-outdated::after, .cell.s-manual_outdated::after { content: ''; position: absolute; top: 0; right: 0;
+.cell.s-outdated > a, .cell.s-decided_outdated > a { text-decoration: line-through; text-decoration-thickness: 1px; }
+.cell.s-outdated::after, .cell.s-decided_outdated::after { content: ''; position: absolute; top: 0; right: 0;
   border-style: solid; border-width: 0 7px 7px 0; border-color: transparent var(--stale) transparent transparent; }
 
 /* --- panels --- */
@@ -227,7 +227,7 @@ details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var
 #grid td.c { text-align: center; min-width: 30px; }
 #grid td.c a { display: block; padding: 0 6px; line-height: 20px; font-size: 13.5px; font-weight: 600; text-decoration: none; }
 /* ? stands out: heavier and a little larger than the other glyphs (the row keeps its height) */
-#grid td.cell.s-unverified[data-v=""] a, #grid td.cell.s-needs_review[data-v=""] a { font-weight: 900; font-size: 15px; line-height: 18px; }
+#grid td.cell.s-unverified[data-v=""] a, #grid td.cell.s-to_decide[data-v=""] a { font-weight: 900; font-size: 15px; line-height: 18px; }
 #grid td.c a:hover { outline: 2px solid var(--ring); outline-offset: -2px; }
 #grid td.c { border-left: 1px solid var(--panel); }     /* a hairline between tinted squares */
 #grid td.total { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -275,28 +275,30 @@ a.navbtn.off { visibility: hidden; }
 .decide button.v-b:hover { background: var(--blank-bg); border-color: var(--blank); }
 .decide .num { width: 6em; }
 .fields { display: grid; gap: 4px; }
-.field { display: grid; grid-template-columns: minmax(3em, max-content) minmax(8em, 22em) auto; gap: 6px; align-items: center; }
+.field { display: grid; grid-template-columns: minmax(3em, max-content) minmax(8em, 22em) minmax(5em, max-content) auto; gap: 6px; align-items: center; }
+.field.code { grid-template-columns: minmax(3em, max-content) minmax(16em, 1fr) minmax(5em, max-content); align-items: start; }
+.field.code .crop { grid-column: 2 / -1; }
+.field textarea { width: 100%; tab-size: 4; white-space: pre; line-height: 1.45; }
 .flabel { color: var(--muted); font-family: var(--mono); font-size: 12px; }
 .field input { width: 100%; }
-.field.marked input { background: var(--unv-bg); }
+.field.marked :is(input, textarea) { background: var(--unv-bg); }
+.field.dirty :is(input, textarea) { border-color: var(--warn); }
+.field.elsewhere .flabel a { color: var(--muted); }               /* read by a check, from another question */
+.fstate { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.judged { font-weight: 700; font-size: 12px; }
+.judged.o-correct { color: var(--ok-ink); } .judged.o-incorrect { color: var(--no-ink); }
+.judged.o-none { color: var(--ask); } .judged.o-blank { color: var(--blank); }
+.jnote { font-weight: 400; color: var(--muted); }
+button.tiny { padding: 0 4px; font-size: 11px; line-height: 16px; }
 form.draft > .bar { margin-top: 5px; }
 form.draft.dirty .bar button[data-action=save] { border-color: var(--warn); color: var(--warn); }
 .notice { color: var(--bad); }
-.codeedit { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
-.codeedit textarea, #transcript textarea { flex: 1 1 24em; width: 100%; tab-size: 4; white-space: pre; line-height: 1.45; }
 .crops { display: flex; flex-direction: column; gap: 4px; }
 .crop { display: block; overflow: hidden; border: 1px solid var(--line); border-radius: 3px; background: var(--panel-2); min-height: 18px; line-height: 0; }
 .crop img { display: block; max-width: none; }
 .ftag { font-family: system-ui, sans-serif; font-size: 10.5px; }   /* a field read from the printing */
-.waits { color: var(--fg); }
-.pair { display: inline-flex; }
-button.guard { border-color: var(--warn); color: var(--warn); border-style: dashed; }
-.pair button:first-child { border-radius: 4px 0 0 4px; }
-.pair button:last-child { border-radius: 0 4px 4px 0; border-left: 0; padding: 2px 5px; }
-#evidence:empty { display: none; }
-#evidence.stale > :not(.tag) { opacity: .55; }
-#work.has-key #evidence details.ev-key { display: none; }   /* the key panel shows (and edits) the key */
-#key .scope { margin: 0 0 3px; font-size: 12px; }
+.evidence.stale > :not(.tag) { opacity: .55; }
+details.key .scope { margin: 0 0 3px; font-size: 12px; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 12px; }
 .chips a code { font-size: 12px; }
 
@@ -391,8 +393,8 @@ form.entry.dirty button[data-action=entry-save] { border-color: var(--warn); col
 .emsg { color: var(--muted); }
 .emsg.notice { color: var(--bad); }
 .ebase { flex-basis: 100%; color: var(--muted); padding-left: 14.5em; font-size: 12px; white-space: pre-wrap; }
-#key form.entry .elabel { min-width: 6em; }
-#key form.entry .ebase { padding-left: 0; }
+details.key form.entry .elabel { min-width: 6em; }
+details.key form.entry .ebase { padding-left: 0; }
 #changes { position: sticky; top: calc(var(--head) + 4px); z-index: 4; }
 form.entry input[type=text] { flex: 0 1 28em; min-width: 8em; }
 form.entry.k-region input[type=text], form.entry.k-pages input[type=text] { flex: 0 1 14em; }
