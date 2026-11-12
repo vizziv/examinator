@@ -17,17 +17,39 @@ BASE = 'http://127.0.0.1:8580'
 
 
 @pytest.fixture
-def site(tmp_path):
-    exam = load_exam(TOY)
-    root = tmp_path / 'ws'
-    paths = synth.stacks(exam, root)
-    ws = Workspace(root, exam, create=True)
-    runner = Runner(exam, ws, model=synth.fake_model(root))
-    client = TestClient(create_app(exam, ws, runner, author='tester'), base_url=BASE)
-    token = re.search(r'<meta name="token" content="([^"]+)"', client.get('/scans').text).group(1)
-    yield client, token, ws, paths
-    runner.close()
-    ws.close()
+def make_site(tmp_path):
+    """`make_site(model=True)`: the app over a workspace with synthetic stacks, with
+    the scripted model or none. Returns (client, token, workspace, stacks)."""
+    opened = []
+
+    def make(model=True):
+        exam = load_exam(TOY)
+        root = tmp_path / 'ws'
+        paths = synth.stacks(exam, root)
+        ws = Workspace(root, exam, create=True)
+        runner = Runner(exam, ws, model=synth.fake_model(root) if model else None)
+        opened.append((runner, ws))
+        client = TestClient(create_app(exam, ws, runner, author='tester'), base_url=BASE)
+        token = re.search(r'<meta name="token" content="([^"]+)"', client.get('/scans').text).group(1)
+        return client, token, ws, paths
+    yield make
+    for runner, ws in opened:
+        runner.close()
+        ws.close()
+
+
+@pytest.fixture
+def site(make_site):
+    return make_site()
+
+
+def wait(client, job):
+    for _ in range(500):
+        state = client.get(f'/jobs/{job}').json()
+        if state['state'] != 'running':
+            return state
+        time.sleep(0.02)
+    raise AssertionError("job did not finish")
 
 
 def post(client, token, path, data):
@@ -54,7 +76,16 @@ def test_upload_needs_the_token_and_a_pdf(site):
     assert 'stack-1.pdf' in client.get('/scans').text
 
 
-def test_step_through_and_accept(site):
+def check_and_accept(client, token, src):
+    """Check the plan with the (scripted) model, turn the upside-down exam, accept."""
+    plan = client.get(f'/scans/{src}/plan').json()
+    wait(client, post(client, token, f'/scans/{src}/propose', {'check': True, 'rev': plan['rev']}).json()['job'])
+    plan = client.get(f'/scans/{src}/plan').json()
+    plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'k': 4, 'rev': plan['rev']}).json()['plan']
+    return plan, post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
+
+
+def test_step_through_edits_and_undo(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
     plan = client.get(f'/scans/{src}/plan').json()
@@ -70,22 +101,24 @@ def test_step_through_and_accept(site):
     assert post(client, token, f'/scans/{src}/edit', {'op': 'nope', 'rev': plan['rev']}).status_code == 400
     plan = post(client, token, f'/scans/{src}/undo', {'rev': plan['rev']}).json()['plan']
     assert [e['start'] for e in plan['entries']][:2] == [0, 4]
-    # check with the (scripted) model in the background
-    r = post(client, token, f'/scans/{src}/propose', {'check': True, 'rev': plan['rev']})
-    for _ in range(300):
-        if client.get(f"/jobs/{r.json()['job']}").json()['state'] != 'running':
-            break
-        time.sleep(0.02)
-    plan = client.get(f'/scans/{src}/plan').json()
-    assert plan['checked'] and [e['start'] for e in plan['entries']] == [0, 4, 7, 12, 16, 20]
-    assert plan['entries'][0]['confirmed'] and plan['readings']['4'] == 'p.1'
-    plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'k': 4, 'rev': plan['rev']}).json()['plan']
+
+
+def test_check_turn_and_accept(site):
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    plan, r = check_and_accept(client, token, src)
+    assert plan['checked'] and plan['failed'] == 0 and [e['start'] for e in plan['entries']] == [0, 4, 7, 12, 16, 20]
+    assert plan['readings']['4'] == 'p.1'
     assert plan['sheet_o'][17] == '20' and plan['entries'][4]['own']
-    r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
     assert r.status_code == 200 and len(r.json()['report']['new']) == 6
     assert len(list(ws.pdfs.glob('*.pdf'))) == 6
     assert client.get('/').status_code == 200 and 's0005' in client.get('/').text
-    # names
+
+
+def test_naming_and_a_forced_accept(site):
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    check_and_accept(client, token, src)
     post(client, token, '/scans/roster', {'csv': (ws.root / 'roster.csv').read_text()})
     label = identity.label(identity.people(ws)[4])
     assert post(client, token, '/scans/who', {'sub': 's0005', 'text': label}).json()['who']['name'] == "Emery Sampleton"
@@ -115,15 +148,6 @@ def test_sheet_images(site):
 
 # --- who wrote each submission ---
 
-def wait(client, job):
-    for _ in range(500):
-        state = client.get(f'/jobs/{job}').json()
-        if state['state'] != 'running':
-            return state
-        time.sleep(0.02)
-    raise AssertionError("job did not finish")
-
-
 def test_roster_paste_preview_then_save(site):
     client, token, ws, paths = site
     text = "Ada Lovelace, 31415926\n27182818\tAlan Turing\nGrace Hopper\n"
@@ -145,12 +169,7 @@ def test_roster_paste_preview_then_save(site):
 def test_names_read_confirm_cycle_skip(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
-    plan = client.get(f'/scans/{src}/plan').json()
-    r = post(client, token, f'/scans/{src}/propose', {'check': True, 'rev': plan['rev']})
-    wait(client, r.json()['job'])
-    plan = client.get(f'/scans/{src}/plan').json()
-    plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'k': 4, 'rev': plan['rev']}).json()['plan']
-    post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
+    check_and_accept(client, token, src)
     post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text()})
     view = client.get('/scans/names').json()
     assert view['left'] == 6 and {r['doubt'] for r in view['rows']} == {'unread'}
@@ -184,16 +203,7 @@ def test_names_read_confirm_cycle_skip(site):
     assert "93681724" in client.get('/s/s0004/parity').text
 
 
-def test_reading_names_needs_a_model(tmp_path):
-    exam = load_exam(TOY)
-    root = tmp_path / 'ws'
-    synth.stacks(exam, root)
-    ws = Workspace(root, exam, create=True)
-    runner = Runner(exam, ws, model=None)
-    client = TestClient(create_app(exam, ws, runner, author='tester'), base_url=BASE)
-    page = client.get('/scans').text
-    token = re.search(r'<meta name="token" content="([^"]+)"', page).group(1)
-    assert 'data-action="names-read"' not in page
+def test_reading_names_needs_a_model(make_site):
+    client, token, ws, paths = make_site(model=False)
+    assert 'data-action="names-read"' not in client.get('/scans').text
     assert post(client, token, '/scans/names/read', {}).status_code == 400
-    runner.close()
-    ws.close()
