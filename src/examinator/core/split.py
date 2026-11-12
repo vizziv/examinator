@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 Reader = Callable[[int], 'int | None']
 
+REACH = 3        # how many sheets either side of an expected boundary a proposal looks at
 DOUBTS = {'short': "too few pages", 'long': "too many pages",
           'start': "first page not recognised", 'number': "unexpected page number"}
 
@@ -42,7 +43,7 @@ def every(n: int, length: int) -> list[int]:
     return list(range(0, n, length))
 
 
-def propose(n: int, length: int, read: Reader | None = None, *, anchor: int = 0, reach: int = 3,
+def propose(n: int, length: int, read: Reader | None = None, *, anchor: int = 0, reach: int = REACH,
             fixed_first: bool = False) -> list[int]:
     """Starts of the submissions in sheets `0..n-1`.
 
@@ -141,13 +142,13 @@ def doubts(plan: Mapping, n: int) -> list[list[str]]:
 
 # --- building and editing plans (each returns a new plan) --------------------------
 
-def new_plan(n: int, length: int, *, anchor: int = 0, read: Reader | None = None, reach: int = 3) -> dict:
+def new_plan(n: int, length: int, *, anchor: int = 0, read: Reader | None = None) -> dict:
     plan = {'length': length, 'anchor': anchor, 'checked': read is not None, 'entries': [],
             'dropped': [], 'readings': {}, 'orient': {'turn': 0, 'flip': False}}
-    return refill(plan, n, read, reach=reach)
+    return refill(plan, n, read)
 
 
-def _reader(plan: dict, read: Reader | None, n: int) -> Reader:
+def _reader(plan: dict, read: Reader | None = None) -> Reader:
     """Stored readings first; `read` (if any) for the rest, recorded in the plan."""
     store = plan.setdefault('readings', {})
 
@@ -162,11 +163,11 @@ def _reader(plan: dict, read: Reader | None, n: int) -> Reader:
     return get
 
 
-def _fill(plan: dict, n: int, first: int, end: int, fixed: bool, read: Reader, reach: int) -> list[int]:
+def _fill(plan: dict, n: int, first: int, end: int, fixed: bool, read: Reader) -> list[int]:
     """Starts proposed for sheets `first..end-1`, counting only sheets kept."""
     sheets = [i for i in kept(n, plan.get('dropped') or ()) if first <= i < end]
     found = propose(len(sheets), plan['length'], lambda j: read(sheets[j]),
-                    anchor=plan.get('anchor', 0), reach=reach, fixed_first=fixed)
+                    anchor=plan.get('anchor', 0), fixed_first=fixed)
     if end < n:
         # The segment ends at a confirmed start: a last guess that would leave too short a
         # tail, with no reading behind it, is no guess (the one before it runs long instead).
@@ -201,10 +202,10 @@ def _replace(plan: dict, lo: int, hi: int, starts: list[int]) -> dict:
     return plan
 
 
-def refill(plan: Mapping, n: int, read: Reader | None = None, *, reach: int = 3) -> dict:
+def refill(plan: Mapping, n: int, read: Reader | None = None) -> dict:
     """Guess every unconfirmed start again, between the confirmed ones."""
     plan = copy.deepcopy(dict(plan))
-    get = _reader(plan, read, n)
+    get = _reader(plan, read)
     entries = plan['entries']
     fixed = [k for k, e in enumerate(entries) if e.get('confirmed')]
     # segments: (first sheet, end sheet, starts fixed?, entries lo..hi), replaced last to first
@@ -215,18 +216,19 @@ def refill(plan: Mapping, n: int, read: Reader | None = None, *, reach: int = 3)
     for first, end, is_fixed, lo, hi in reversed(segs):
         if first >= end:
             continue
-        starts = _fill(plan, n, first, end, is_fixed, get, reach)
+        starts = _fill(plan, n, first, end, is_fixed, get)
         _replace(plan, lo, hi, starts or ([first] if is_fixed else []))
     return plan
 
 
-def reguess_after(plan: dict, k: int, n: int, read: Reader | None, reach: int) -> dict:
-    """Guess again the unconfirmed starts after entry `k`, up to the next confirmed one."""
-    get = _reader(plan, read, n)
+def reguess_after(plan: dict, k: int, n: int) -> dict:
+    """Guess again the unconfirmed starts after entry `k`, up to the next confirmed
+    one, from the readings the plan holds (an edit reads nothing new)."""
+    get = _reader(plan)
     entries = plan['entries']
     hi = next((j for j in range(k + 1, len(entries)) if entries[j].get('confirmed')), len(entries))
     end = entries[hi]['start'] if hi < len(entries) else n
-    starts = _fill(plan, n, entries[k]['start'], end, True, get, reach)
+    starts = _fill(plan, n, entries[k]['start'], end, True, get)
     return _replace(plan, k, hi, starts or [entries[k]['start']])
 
 
@@ -236,14 +238,14 @@ def _at(plan: Mapping, k: Any) -> int:
     return k
 
 
-def confirm(plan: Mapping, k: int, n: int, *, read: Reader | None = None, reach: int = 3) -> dict:
+def confirm(plan: Mapping, k: int, n: int) -> dict:
     """A person says entry `k` starts where it does; later guesses follow from it."""
     plan = copy.deepcopy(dict(plan))
     plan['entries'][_at(plan, k)]['confirmed'] = True
-    return reguess_after(plan, k, n, read, reach)
+    return reguess_after(plan, k, n)
 
 
-def move(plan: Mapping, k: int, delta: int, n: int, *, read: Reader | None = None, reach: int = 3) -> dict:
+def move(plan: Mapping, k: int, delta: int, n: int) -> dict:
     """Move entry `k`'s start `delta` kept sheets later (negative: earlier). The
     start is then a guess again; the guesses after it follow from it."""
     plan = copy.deepcopy(dict(plan))
@@ -264,10 +266,10 @@ def move(plan: Mapping, k: int, delta: int, n: int, *, read: Reader | None = Non
     entries[k]['confirmed'] = False
     # unconfirmed guesses the move passed over are dropped; they are guessed again below
     plan['entries'] = entries[:k + 1] + [e for e in entries[k + 1:] if e['start'] > new or e.get('confirmed')]
-    return reguess_after(plan, k, n, read, reach)
+    return reguess_after(plan, k, n)
 
 
-def cut(plan: Mapping, sheet: int, n: int, *, read: Reader | None = None, reach: int = 3) -> dict:
+def cut(plan: Mapping, sheet: int, n: int) -> dict:
     """A person says a submission starts at `sheet` (confirmed)."""
     plan = copy.deepcopy(dict(plan))
     if not 0 <= sheet < n:
@@ -275,13 +277,13 @@ def cut(plan: Mapping, sheet: int, n: int, *, read: Reader | None = None, reach:
     entries = plan['entries']
     if any(e['start'] == sheet for e in entries):
         k = next(j for j, e in enumerate(entries) if e['start'] == sheet)
-        return confirm(plan, k, n, read=read, reach=reach)
+        return confirm(plan, k, n)
     k = sum(e['start'] < sheet for e in entries)
     entries.insert(k, {'start': sheet, 'confirmed': True, 'id': None})
-    return reguess_after(plan, k, n, read, reach)
+    return reguess_after(plan, k, n)
 
 
-def join(plan: Mapping, k: int, n: int) -> dict:
+def join(plan: Mapping, k: int) -> dict:
     """Entry `k` and the one after it become one submission."""
     plan = copy.deepcopy(dict(plan))
     if not 0 <= _at(plan, k) < len(plan['entries']) - 1:
@@ -292,24 +294,24 @@ def join(plan: Mapping, k: int, n: int) -> dict:
     return plan
 
 
-def drop(plan: Mapping, sheet: int, n: int, *, read: Reader | None = None, reach: int = 3) -> dict:
+def drop(plan: Mapping, sheet: int, n: int) -> dict:
     """Set a sheet aside (a blank or stray page). Guesses after it follow."""
     plan = copy.deepcopy(dict(plan))
     if not 0 <= sheet < n:
         raise ValueError("no such page")
     plan['dropped'] = sorted(set(plan.get('dropped') or ()) | {sheet})
-    return _after_sheet(plan, sheet, n, read, reach)
+    return _after_sheet(plan, sheet, n)
 
 
-def restore(plan: Mapping, sheet: int, n: int, *, read: Reader | None = None, reach: int = 3) -> dict:
+def restore(plan: Mapping, sheet: int, n: int) -> dict:
     plan = copy.deepcopy(dict(plan))
     plan['dropped'] = [i for i in plan.get('dropped') or () if i != sheet]
-    return _after_sheet(plan, sheet, n, read, reach)
+    return _after_sheet(plan, sheet, n)
 
 
-def _after_sheet(plan: dict, sheet: int, n: int, read, reach) -> dict:
+def _after_sheet(plan: dict, sheet: int, n: int) -> dict:
     k = sum(e['start'] <= sheet for e in plan['entries']) - 1
-    return reguess_after(plan, k, n, read, reach) if k >= 0 else plan
+    return reguess_after(plan, k, n) if k >= 0 else plan
 
 
 def cursor(plan: Mapping) -> int | None:

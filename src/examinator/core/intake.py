@@ -28,7 +28,7 @@ import shutil
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 from PIL import Image
 
@@ -303,7 +303,7 @@ def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | 
     elif op == 'cut':
         body = split.cut(body, sheet, n)
     elif op == 'join':
-        body = split.join(body, k, n)
+        body = split.join(body, k)
     elif op == 'drop':
         body = split.drop(body, sheet, n)
     elif op == 'restore':

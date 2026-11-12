@@ -176,7 +176,7 @@ def test_drop_restore_join_and_ids_survive():
     assert split.loose(plan, n) == [2]
     plan = split.restore(plan, 2, n)
     assert split.loose(plan, n) == []
-    plan = split.join(plan, 0, n)
+    plan = split.join(plan, 0)
     assert plan['entries'][0]['id'] == 's1' and 's2' not in [e['id'] for e in plan['entries']]
 
 
