@@ -197,3 +197,22 @@ def test_the_right_hand_preset_keeps_keys_apart():
             images.setdefault(mirror(c), []).append(c)
         clashes = {k: sorted(v) for k, v in images.items() if len(v) > 1}
         assert not clashes, (group, clashes)
+
+
+def test_batch_runs_a_stage_after_what_precedes_it_in_any_question():
+    """Only the second question reads a variant; its 'variant' stage must still come
+    before the stages that use it."""
+    from examinator import Bool, Cue, Exam, Field, Region
+    from examinator.core import batch
+    from examinator.std import stages
+
+    exam = Exam('order', title="Order", pages=1)
+    exam.question('plain', pages=[1], result=Bool(), fields=[Field('a', region=Region(1, 0, 0, 500, 100))],
+                  stages=stages.math(key={'a': '1'}))
+    exam.question('varied', pages=[1], result=Bool(), variants=['x', 'y'], trust=1,
+                  cues=[Cue('c', region=Region(1, 0, 100, 500, 200), ask="the letter", reads={'x': 'x', 'y': 'y'})],
+                  fields=[Field('a', region=Region(1, 0, 200, 500, 300))],
+                  stages=stages.math(key={'x': {'a': '1'}, 'y': {'a': '2'}}))
+    order = batch.stage_order(exam)
+    assert order.index('variant') < order.index('evidence')
+    assert sorted(order) == sorted({s.name for q in exam.questions.values() for s in q.stages})

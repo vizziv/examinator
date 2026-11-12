@@ -55,12 +55,22 @@ class Plan:
 
 
 def stage_order(exam: Exam) -> list[str]:
-    """Stage names in pipeline order across all questions."""
-    order: list[str] = []
+    """Stage names in pipeline order across all questions: a name comes after every
+    name that precedes it in some question's own list (so a stage one question adds
+    in front, like reading the variant, still runs before what depends on it).
+    Ties, and orders that contradict each other, fall back to first appearance."""
+    seen: list[str] = []
+    before: dict[str, set[str]] = {}
     for q in exam.questions.values():
-        for s in q.stages:
-            if s.name not in order:
-                order.append(s.name)
+        names = [s.name for s in q.stages]
+        for i, name in enumerate(names):
+            if name not in seen:
+                seen.append(name)
+            before.setdefault(name, set()).update(names[:i])
+    order: list[str] = []
+    while len(order) < len(seen):
+        left = [n for n in seen if n not in order]
+        order.append(next((n for n in left if before[n] <= set(order)), left[0]))
     return order
 
 
