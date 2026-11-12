@@ -24,17 +24,22 @@ from examinator.core.workflow import part_status, question_status, total
 from examinator.std import stages
 from conftest import make_exam
 
-S, Q = 's1', 'a'
+S, Q, P = 's1', 'a', 'p'      # question 'a' reads the printing, question 'p' (no grade)
 
 
 def status(env, part='x', sub=S, q=Q, exam=None):
     exam0, ws, _ = env
     exam = exam or exam0
-    return part_status(exam.questions[q], part, ws.store.for_question(sub, q))
+    return part_status(exam.questions[q], part, ws.store.for_question(sub, q),
+                       parses=ws.store.of_kind(sub, 'parse'))
 
 
 def run_all(env, sub=S, q=Q):
+    """Run a question's stages; for 'a', first read the printing ('p') and verify it."""
     exam, ws, runner = env
+    if q == Q and ws.store.get(sub, P, 'parse') is None:
+        assert runner.run_stage(sub, P, 'parse').ok
+        verify(env, sub=sub, q=P)
     outs = runner.run_from(sub, q, exam.questions[q].stages[0].name)
     assert all(o.ok for o in outs), outs
 
@@ -48,14 +53,6 @@ def replace_stage(exam, qid, name, **changes):
     q = exam.questions[qid]
     exam.questions[qid] = dataclasses.replace(q, stages=tuple(
         dataclasses.replace(s, **changes) if s.name == name else s for s in q.stages))
-
-
-def one_cue(env):
-    """Question 'a' resolved from a single cue, on an exam that has a person verify every variant."""
-    exam, ws, runner = env
-    runner.model.script[('a', 'variant')] = (
-        lambda call: '{"value": "1"}' if "first cue" in call.prompt else '{"value": null}')
-    exam.questions[Q] = dataclasses.replace(exam.questions[Q], require=1, verify_variant=True)
 
 
 # =============================================================================
@@ -94,70 +91,6 @@ def test_fixed_include_protected_replaces_manual_grades_not_in_the_preview(env):
     assert [(i.stage, i.action) for i in plan.items] == [('evidence', 'run')]   # nothing about grades
     batch.BatchRun(runner, plan).run()
     assert ws.store.get(S, Q, 'grade:x').origin == 'manual'
-
-
-# BUG (wrong grade can count). `ctx.variant` is handed to every stage, but the
-# variant revision is recorded, guarded and required to be trusted only when the
-# stage declares `uses_variant` (default False in `stages.check`). A check that
-# reads `ctx.variant` without the flag yields a grade that still counts after
-# the variant changes, and that never waited for the variant to be trusted.
-def test_fixed_check_reading_variant_without_uses_variant_still_counts(env):
-    # Fixed: a stage that does not declare `uses_variant` is not shown the variant,
-    # so a check that forgot the flag fails as undecided instead of counting.
-    exam, ws, runner = env
-    replace_stage(exam, Q, 'evidence', uses_variant=False)
-    run_all(env)
-    verify(env)
-    assert (status(env).state, status(env).value) == ('needs_review', None)
-
-
-# BUG (wrong grade can count). The lead's rule: an automatically resolved variant
-# under `verify_variant` is trusted only if a person chose or verified it.
-# `correct_cue` writes origin='manual', which `variant_trusted` reads as "a person
-# chose it", even when the correction adds no information.
-def test_fixed_correct_cue_makes_a_one_cue_variant_trusted(env):
-    exam, ws, runner = env
-    one_cue(env)
-    run_all(env)
-    verify(env)
-    assert status(env).waiting == ('variant',)
-    runner.correct_cue(S, Q, 'c2', None, author='t')      # "c2 is unreadable": says nothing about which variant
-    runner.recheck(S, Q)
-    v = ws.store.get(S, Q, 'variant')
-    assert (v.body['resolved'], v.body['agree']) == ('one', 1)
-    assert status(env).waiting == ('variant',)
-
-
-# BUG (wrong grade can count). `Store.restore` rewrites any old version as
-# origin='manual'. Undoing a manual choice back to the one-cue automatic reading
-# therefore yields a "manual" variant, which is trusted.
-def test_fixed_restoring_an_automatic_variant_makes_it_trusted(env):
-    exam, ws, runner = env
-    one_cue(env)
-    run_all(env)
-    verify(env)
-    auto = ws.store.get(S, Q, 'variant')
-    runner.choose_variant(S, Q, 'two', author='t')
-    ws.store.restore(S, Q, 'variant', auto.rev)   # undo
-    runner.recheck(S, Q)
-    assert ws.store.get(S, Q, 'variant').body['agree'] == 1
-    assert 'variant' in status(env).waiting
-
-
-# BUG (wrong grade can count). Nothing checks the variant artifact against the
-# current cue definitions: `stage_hash` leaves out `cues`/`require`, and
-# `evidence_current` compares only the variant's revision. Correcting a cue map
-# leaves grades counting under the variant the old map picked.
-def test_fixed_changed_cue_map_does_not_outdate(env):
-    run_all(env)
-    verify(env)
-    assert status(env).state == 'graded'
-    changed = make_exam()
-    q = changed.questions[Q]
-    swapped = tuple(dataclasses.replace(c, reads={k: ('two' if v == 'one' else 'one') for k, v in c.reads.items()})
-                    for c in q.cues)
-    changed.questions[Q] = dataclasses.replace(q, cues=swapped)
-    assert not status(env, exam=changed).counts
 
 
 # BUG (wrong grade can count). `waiting` and `evidence_current` look one level up
@@ -287,12 +220,12 @@ def test_OK_verify_with_a_stale_revision_is_rejected(env):
     assert not ws.store.get(S, Q, 'parse').verified
 
 
-@pytest.mark.parametrize('kind', ['parse', 'evidence', 'variant'])
-def test_OK_deleting_an_artifact_stops_the_grade_counting(env, kind):
+@pytest.mark.parametrize('q, kind', [(Q, 'parse'), (Q, 'evidence'), (P, 'parse')])
+def test_OK_deleting_an_artifact_stops_the_grade_counting(env, q, kind):
     exam, ws, runner = env
     run_all(env)
     verify(env)
-    ws.store.delete(S, Q, kind)
+    ws.store.delete(S, q, kind)
     st = status(env)
     assert st.state == 'outdated' and st.value is True
 
@@ -303,31 +236,6 @@ def test_OK_deleting_the_parse_outdates_a_manual_grade(env):
     runner.decide(S, Q, 'x', True, author='ta')
     ws.store.delete(S, Q, 'parse')
     assert status(env).state == 'manual_outdated'
-
-
-def test_OK_removing_a_manual_variant_choice_outdates_and_then_waits(env):
-    exam, ws, runner = env
-    one_cue(env)
-    run_all(env)
-    verify(env)
-    runner.choose_variant(S, Q, 'one', author='t')
-    runner.recheck(S, Q)
-    assert status(env).state == 'graded'
-    runner.choose_variant(S, Q, None, author='t')    # back to what one cue says
-    assert status(env).state == 'outdated'
-    runner.recheck(S, Q)
-    assert status(env).waiting == ('variant',)
-
-
-def test_OK_unverifying_the_variant_makes_the_grade_wait(env):
-    exam, ws, runner = env
-    one_cue(env)
-    run_all(env)
-    verify(env)
-    verify(env, 'variant')
-    assert status(env).state == 'graded'
-    runner.verify(S, Q, 'variant', author='t', expect_rev=ws.store.get(S, Q, 'variant').rev, verified=False)
-    assert status(env).waiting == ('variant',)
 
 
 def test_OK_markers_cannot_be_verified_by_any_runner_path(env):
@@ -469,15 +377,16 @@ def test_OK_decision_made_while_the_grade_rule_runs_survives(env):
     assert (status(env).state, status(env).value) == ('manual', False)
 
 
-def test_OK_variant_changed_while_a_check_runs_discards_the_result(env):
+def test_OK_a_parse_it_read_changed_while_a_check_runs_discards_the_result(env):
     exam, ws, runner = env
     run_all(env)
     verify(env)
     real = exam.questions[Q].stage('evidence').fn
 
     def choose_midway(ctx):
-        runner.choose_variant(S, Q, 'two', author='t')
-        return real(ctx)
+        out = real(ctx)                           # it has read the printing
+        runner.save(S, P, 'parse', {'c1': 'two', 'c2': 'two'}, author='t')
+        return out
 
     replace_stage(exam, Q, 'evidence', fn=choose_midway)
     assert runner.run_stage(S, Q, 'evidence').status == 'discarded'
@@ -489,13 +398,13 @@ def test_OK_batch_without_include_protected_keeps_manual_grades_and_verified_par
     run_all(env)
     verify(env)
     runner.decide(S, Q, 'x', False, author='ta')
-    chosen = runner.choose_variant(S, Q, 'one', author='t')
-    sel = batch.Selection((S,), (Q,), tuple(batch.stage_order(exam)))
+    printing = ws.store.get(S, P, 'parse')
+    sel = batch.Selection((S,), (P, Q), tuple(batch.stage_order(exam)))
     plan = batch.plan(exam, ws.store, sel, model_available=True)
-    actions = {i.stage: i.action for i in plan.items}
-    assert actions['parse'] == actions['variant'] == 'skip_protected'
+    actions = {(i.question, i.stage): i.action for i in plan.items}
+    assert actions[(Q, 'parse')] == actions[(P, 'parse')] == 'skip_protected'
     batch.BatchRun(runner, plan).run()
-    assert ws.store.get(S, Q, 'parse').verified and ws.store.get(S, Q, 'variant').rev == chosen.rev
+    assert ws.store.get(S, Q, 'parse').verified and ws.store.get(S, P, 'parse') == printing
     assert (status(env).state, status(env).value) == ('manual', False)
     assert status(env, 'y').state == 'graded'
 
@@ -506,7 +415,8 @@ def test_OK_multi_part_only_the_manual_part_counts(env):
         exam.questions[Q], result={'x': exam.questions[Q].result['x'], 'y': exam.questions[Q].result['x']})
     run_all(env)
     runner.decide(S, Q, 'x', True, author='ta')
-    by_q = {Q: question_status(exam.questions[Q], ws.store.for_question(S, Q))}
+    by_q = {Q: question_status(exam.questions[Q], ws.store.for_question(S, Q),
+                               parses=ws.store.of_kind(S, 'parse'))}
     assert (by_q[Q]['x'].state, by_q[Q]['y'].state) == ('manual', 'unverified')
     assert total(exam, by_q) == (1.0, False)
 
@@ -527,7 +437,8 @@ def test_OK_grid_agrees_with_part_status(env):
     for sub, row in rows.items():
         by_q = {}
         for qid, q in exam.questions.items():
-            by_q[qid] = question_status(q, ws.store.for_question(sub, qid), code_hash=exam.code_hash)
+            by_q[qid] = question_status(q, ws.store.for_question(sub, qid),
+                                        parses=ws.store.of_kind(sub, 'parse'), code_hash=exam.code_hash)
             assert row.cells[qid].status == by_q[qid]
             seen |= {st.state for st in by_q[qid].values()}
         assert (row.points, row.complete) == total(exam, by_q)

@@ -16,13 +16,14 @@ def toy():
 
 @pytest.mark.parametrize('case, said', [
     (Case('c', answers={'sum': {'1': '2'}}), "case 'c': answers: no question 'sum'"),
-    (Case('c', answers={'parity': {'C': 'even'}}), "case 'c': answers['parity']: no field 'C'"),
+    (Case('c', answers={'parity': {'C': 'even'}}), "case 'c': answers['parity']: no written field 'C'"),
     (Case('c', answers={'parity': 'even'}), "case 'c': answers['parity']: expected {label"),
-    (Case('c', variants={'parity': 'red'}), "case 'c': variants['parity']: 'red' is not one of []"),
-    (Case('c', variants={'areas': 'pink'}), "case 'c': variants['areas']: 'pink'"),
-    (Case('c', variants={'sum': 'red'}), "case 'c': variants: no question 'sum'"),
+    (Case('c', printed={'parity': {'B': 'red'}}), "case 'c': printed['parity']: no printed field 'B'"),
+    (Case('c', printed={'areas': {'A.1': '2'}}), "case 'c': printed['areas']: no printed field 'A.1'"),
+    (Case('c', printed={'sum': {'side': '2'}}), "case 'c': printed: no question 'sum'"),
+    (Case('c', answers={'areas': {'side': '2'}}), "case 'c': answers['areas']: no written field 'side'"),
     (Case('c', expect={'areas.1': 3}), "case 'c': expect: no grid column 'areas.1'"),
-    (Case('c', readings={'side': None}), "case 'c': readings: no cue 'side'")])
+])
 def test_a_case_that_does_not_fit_names_itself_and_the_key(toy, tmp_path, case, said):
     with pytest.raises(synth.BadCase) as e:
         synth.generate(toy, tmp_path / 'ws', [case])

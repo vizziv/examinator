@@ -27,8 +27,11 @@ def test_expect_rev_and_guard(store):
     with pytest.raises(Conflict):
         store.write('s', 'q', 'evidence', {}, origin='auto', guard={'parse': a.rev + 1})
     with pytest.raises(Conflict):
-        store.write('s', 'q', 'evidence', {}, origin='auto', guard={'variant': 3})
-    store.write('s', 'q', 'evidence', {}, origin='auto', guard={'parse': a.rev, 'variant': None})
+        store.write('s', 'q', 'evidence', {}, origin='auto', guard={'transcript': 3})
+    with pytest.raises(Conflict, match="other parse changed"):        # another question's parse
+        store.write('s', 'q', 'evidence', {}, origin='auto', guard={('other', 'parse'): 3})
+    store.write('s', 'q', 'evidence', {}, origin='auto',
+                guard={'parse': a.rev, 'transcript': None, ('other', 'parse'): None})
     assert store.get('s', 'q', 'parse').body == "p"
 
 

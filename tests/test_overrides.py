@@ -5,15 +5,15 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from examinator import Bool, Cue, Exam, Field, Region, Stage, load_exam
-from examinator.core import overrides, variants
+from examinator import Bool, Exam, Field, Printed, Region, Stage, load_exam
+from examinator.core import overrides
 from examinator.core.defs import stage_hash
 from examinator.core.runner import Runner
 from examinator.core.store import Conflict, Submission
 from examinator.core.workflow import part_status
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
-from examinator.std import math, stages
+from examinator.std import fields, math, stages
 
 from conftest import SCRIPT, make_exam, parse
 
@@ -28,13 +28,18 @@ def make_keyed_exam():
     """Like the mini exam, but its checks hold their keys as data."""
     exam = Exam('keyed', pages=2)
     exam.question(
-        'a', pages=[1], result={'x': Bool(), 'y': Bool(counts=False)}, variants=['one', 'two'],
-        cues=[Cue('c1', region=Region(1, 0, 0, 1000, 200), ask="first cue", reads={'1': 'one', '2': 'two'}),
-              Cue('c2', region=Region(1, 0, 200, 1000, 400), ask="second cue", reads={'i': 'one', 'ii': 'two'})],
+        'p', pages=[1],
+        fields=[Field('c1', region=Region(1, 0, 0, 1000, 200), read=Printed("first cue", reads={'1': 'one', '2': 'two'})),
+                Field('c2', region=Region(1, 0, 200, 1000, 400),
+                      read=Printed("second cue", reads={'i': 'one', 'ii': 'two'}))],
+        stages=[stages.read_fields()])
+    exam.question(
+        'a', pages=[1], result={'x': Bool(), 'y': Bool(counts=False)},
         fields=[Field('x', region=Region(1, 0, 500, 1000, 600)), Field('y')],
         stages=[stages.transcribe(),
                 Stage('parse', parse, inputs=('transcript',), uses_model=True, editable=True),
-                stages.check_math(key={'one': {'x': '1', 'y': '2'}, 'two': {'x': '10', 'y': '20'}}),
+                stages.check_math(key={'one': {'x': '1', 'y': '2'}, 'two': {'x': '10', 'y': '20'}},
+                                  by=fields.agree(fields.value('c1', question='p'), fields.value('c2', question='p'))),
                 stages.grade(lambda ev: {'x': ev.outcome('x'), 'y': ev.outcome('y')})])
     exam.question(
         'b', pages=[2], result=Bool(), fields=[Field('x')],
@@ -67,7 +72,7 @@ def kenv(tmp_path):
 
 
 def status(exam, ws, sid, qid, part=''):
-    st = part_status(exam.questions[qid], part, ws.store.for_question(sid, qid))
+    st = part_status(exam.questions[qid], part, ws.store.for_question(sid, qid), parses=ws.store.of_kind(sid, 'parse'))
     return st.state, st.value
 
 
@@ -79,26 +84,27 @@ def test_toy_exam_paths():
     assert entries['areas/pages'].kind == 'pages' and entries['areas/pages'].base == [2]
     assert entries['areas/fields/A.1/region'].kind == 'region'
     assert entries['areas/fields/A.1/region'].base == [2, 400, 300, 900, 420]
-    assert entries['areas/cues/areas_side/region'].base == [2, 0, 60, 1000, 240]
-    assert entries['areas/cues/areas_side/ask'].kind == 'text'
-    assert entries['areas/cues/areas_side/reads'].kind == 'map'
+    assert entries['areas/fields/side/region'].base == [2, 0, 60, 1000, 240]
+    assert not entries['areas/fields/side/region'].nullable          # a printed field needs its region
+    assert entries['areas/fields/side/read/ask'].kind == 'text'
+    assert entries['areas/fields/side/read/reads'].kind == 'map'
     assert entries['areas/stages/evidence/key/red/A.2'].base == '4*x'
     assert entries['areas/stages/transcript/notes'].kind == 'text'
     assert entries['areas/stages/parse/prompt'].kind == 'text'
     assert entries['parity/stages/evidence/key/B'].kind == 'choice'
     assert entries['parity/stages/evidence/key/B'].base == ['even', 'E', 'option 1']
     assert not any(e.overridden for e in entries.values())
-    # functions, names, variants and stage wiring are not data to edit
-    assert not any('/grade/' in p or p.endswith(('/fn', '/name', '/label', '/variants', '/inputs'))
+    # functions, names and stage wiring are not data to edit
+    assert not any('/grade/' in p or p.endswith(('/fn', '/name', '/label', '/inputs', '/by', '/prompt/read'))
                    for p in entries)
 
 
 def test_mini_exam_paths():
     paths = {e.path for e in overrides.editable(make_exam())}
-    assert {'a/pages', 'a/require', 'a/verify_variant', 'a/fields/x/region', 'a/cues/c1/reads', 'a/cues/c2/ask',
-            'a/stages/transcript/notes', 'a/stages/variant/prompt', 'b/pages'} <= paths
+    assert {'a/pages', 'a/fields/x/region', 'p/fields/c1/read/reads', 'p/fields/c2/read/ask',
+            'a/stages/transcript/notes', 'p/pages', 'b/pages'} <= paths
     assert not any(p.startswith(('a/stages/evidence', 'a/stages/parse', 'a/stages/grade')) for p in paths)
-    assert 'b/require' not in paths      # no variants
+    assert not any('/read/' in p for p in paths if not p.startswith('p/'))     # only printed fields have one
 
 
 def test_escaping():
@@ -125,15 +131,15 @@ def test_apply_and_clear_restore_the_base_exactly():
                                      'areas/pages': [2, 3]})
     assert skipped == []
     q = exam.questions['areas']
-    assert q.fields[0].region == Region(2, 400, 310, 900, 430) and q.pages == (2, 3)
+    assert q.fields[1].region == Region(2, 400, 310, 900, 430) and q.pages == (2, 3)
     assert q.stage('evidence').fn.key['red']['A.2'] == '2*2*x'
     assert list(q.stage('evidence').fn.key) == ['red', 'green', 'blue']       # order kept
     assert exam.questions['parity'].stage('evidence').fn.key['B'].accepted == ('odd',)
     assert exam.base['parity'].stage('evidence').fn.key['B'].accepted == ('even', 'E', 'option 1')
-    assert base['areas'].fields[0].region == Region(2, 400, 300, 900, 420)    # nothing mutated
+    assert base['areas'].fields[1].region == Region(2, 400, 300, 900, 420)    # nothing mutated
     after = hashes(exam)
     assert after['areas']['evidence'] != before['areas']['evidence']
-    assert after['areas']['variant'] == before['areas']['variant']
+    assert after['areas']['parse'] == before['areas']['parse']
     entries = {e.path: e for e in overrides.editable(exam)}
     assert entries['areas/pages'].overridden and entries['areas/pages'].current == [2, 3]
     assert entries['areas/pages'].base == [2]
@@ -150,18 +156,19 @@ def test_validation():
     exam = load_exam(TOY)
     ok = overrides.validate
     assert ok(exam, 'areas/fields/A.1/region', (2, 1, 2, 3, 4)) == [2, 1, 2, 3, 4]
-    assert ok(exam, 'areas/require', None) is None
+    assert ok(exam, 'areas/fields/A.1/region', None) is None              # a written field may have none
+    assert ok(exam, 'areas/fields/side/read/reads', {'2': 'purple'}) == {'2': 'purple'}
     bad = [('areas/fields/A.1/region', [2, 500, 0, 400, 100]),      # left >= right
            ('areas/fields/A.1/region', [2, 0, 0, 1001, 100]),
            ('areas/fields/A.1/region', [9, 0, 0, 10, 10]),           # no such page
            ('areas/fields/A.1/region', [2, 0, 0, 10]),
-           ('areas/cues/areas_side/region', None),
+           ('areas/fields/side/region', None),
            ('areas/pages', []), ('areas/pages', [5]), ('areas/pages', [2, 2]), ('areas/pages', ['2']),
-           ('areas/verify_variant', 1), ('areas/require', -1),
+           ('areas/fields/side/read/ask', 3), ('areas/fields/side/read/prompt', "x"),
            ('areas/stages/transcript/notes', 3), ('areas/stages/transcript/crops', 'yes'),
-           ('areas/cues/areas_side/reads', {'2': 'purple'}), ('areas/cues/areas_side/reads', ['2']),
+           ('areas/fields/side/read/reads', {'2': 3}), ('areas/fields/side/read/reads', ['2']),
            ('parity/stages/evidence/key/B', []), ('parity/stages/evidence/key/B', 'odd'),
-           ('areas/stages/grade/fn', 'x'), ('areas/variants', ['a']), ('areas/stages/evidence/key/red/Z', '1'),
+           ('areas/stages/grade/fn', 'x'), ('areas/stages/evidence/by', 'x'), ('areas/stages/evidence/key/red/Z', '1'),
            ('nope/pages', [1])]
     for path, value in bad:
         with pytest.raises(ValueError):
@@ -206,17 +213,19 @@ def test_set_and_describe_changes(env):
     assert ws.store.overrides() == {}
     change = overrides.set(exam, ws.store, 'a/fields/x/region', [1, 400, 310, 900, 430], author='ta')
     assert change.questions == ()          # a crop region is not part of any stage's definition
-    overrides.set(exam, ws.store, 'a/cues/c1/reads', {'1': 'one'}, author='ta')
+    change = overrides.set(exam, ws.store, 'p/fields/c1/read/reads', {'1': 'one'}, author='ta')
+    assert change.questions == ()          # nor how a printed field is read: its value is in a parse
     lines = overrides.describe_changes(exam, ws.store)
-    assert lines[0] == ("a/cues/c1/reads: {'1': 'one', '2': 'two'} -> {'1': 'one'}  (ta, "
-                        + ws.store.overrides()['a/cues/c1/reads'].updated_at[:10] + ")")
-    assert lines[1].startswith('a/fields/x/region: None -> Region(1, 400, 310, 900, 430)  (ta, ')
+    assert lines[0].startswith('a/fields/x/region: None -> Region(1, 400, 310, 900, 430)  (ta, ')
+    assert lines[1] == ("p/fields/c1/read/reads: {'1': 'one', '2': 'two'} -> {'1': 'one'}  (ta, "
+                        + ws.store.overrides()['p/fields/c1/read/reads'].updated_at[:10] + ")")
     # a fresh session sees the same exam once it refreshes from the store
     fresh = make_exam()
     assert overrides.refresh(fresh, ws.store) == []
     assert hashes(fresh) == hashes(exam)
-    overrides.clear(exam, ws.store, 'a/cues/c1/reads')
-    assert exam.questions['a'].cues[0].reads == {'1': 'one', '2': 'two'}
+    assert exam.questions['p'].fields[0].read.reads == {'1': 'one'}
+    overrides.clear(exam, ws.store, 'p/fields/c1/read/reads')
+    assert exam.questions['p'].fields[0].read.reads == {'1': 'one', '2': 'two'}
 
 
 def test_choice_described_as_python(tmp_path):
@@ -273,61 +282,49 @@ def test_region_and_notes_overrides_do_not_outdate_checks(kenv):
     assert status(exam, ws, 's1', 'a', 'x') == ('graded', True)
 
 
-# --- cues -------------------------------------------------------------------------------
+# --- printed fields -------------------------------------------------------------------------
 
-def variant_body(ws, sid='s1'):
-    return ws.store.get(sid, 'a', 'variant').body
-
-
-def test_changed_reads_renarrow_from_stored_readings(kenv):
+def test_a_changed_printed_field_applies_when_its_parse_is_run_again(kenv):
+    """How a printed field is read is a definition; its value is a verified parse. An edit
+    changes no check; the parse, run again, reads with it, and its readers are rechecked."""
     exam, ws, runner = kenv
-    assert variant_body(ws)['resolved'] == 'one'
-    model_calls = len(runner.model.calls)
-    overrides.set(exam, ws.store, 'a/cues/c1/reads', {'1': 'two', '2': 'one'}, author='ta')
-    overrides.set(exam, ws.store, 'a/cues/c2/reads', {'i': 'two', 'ii': 'one'}, author='ta')
-    runner.recheck('s1', 'a')
-    body = variant_body(ws)
-    assert body['resolved'] == 'two'
-    assert {n: c['reading'] for n, c in body['cues'].items()} == {'c1': '1', 'c2': 'i'}
-    assert len(runner.model.calls) == model_calls       # no new reading
-    assert status(exam, ws, 's1', 'a', 'x') == ('graded', False)     # checked against variant two's key
+    assert ws.store.get('s1', 'p', 'parse').body == {'c1': 'one', 'c2': 'one'}
+    for f in ('c1', 'c2'):
+        flipped = {k: ('two' if v == 'one' else 'one') for k, v in exam.questions['p'].fields[int(f[1]) - 1].read.reads.items()}
+        assert overrides.set(exam, ws.store, f'p/fields/{f}/read/reads', flipped, author='ta').questions == ()
+    assert status(exam, ws, 's1', 'a', 'x') == ('graded', True)
+    assert runner.run_stage('s1', 'p', 'parse', deliberate=True).ok        # replaces the verified parse
+    assert ws.store.get('s1', 'p', 'parse').body == {'c1': 'two', 'c2': 'two'}
+    assert status(exam, ws, 's1', 'a', 'x')[0] == 'outdated'
+    runner.recheck('s1', 'p')
+    st = part_status(exam.questions['a'], 'x', ws.store.for_question('s1', 'a'), parses=ws.store.of_kind('s1', 'parse'))
+    assert (st.state, st.value, st.waiting_on) == ('unverified', False, ('p',))   # the other printing's key
 
 
-@pytest.mark.parametrize('path, value', [('a/cues/c1/region', [1, 0, 0, 1000, 250]),
-                                         ('a/cues/c1/ask', "the first cue, printed")])
-def test_changed_crop_or_question_leaves_the_cue_unread(kenv, path, value):
+def test_a_key_per_value_override(kenv):
     exam, ws, runner = kenv
-    overrides.set(exam, ws.store, path, value, author='ta')
+    change = overrides.set(exam, ws.store, 'a/stages/evidence/key/one/x', '7', author='ta')
+    assert change.questions == ('a',)
     runner.recheck('s1', 'a')
-    body = variant_body(ws)
-    assert body['resolved'] is None
-    assert {n: c['reading'] for n, c in body['cues'].items()} == {'c1': None, 'c2': 'i'}
-    assert status(exam, ws, 's1', 'a', 'x')[1] is None
-    assert variant_body(ws, 's2')['resolved'] == 'one'          # not rechecked yet
-    # a rerun of the variant stage reads the cue again
-    assert runner.run_stage('s1', 'a', 'variant').ok
-    assert variant_body(ws)['resolved'] == 'one'
-
-
-def test_only_readings_of_the_same_crop_and_question_still_apply():
-    q = make_exam().questions['a']
-    old = {'cues': {'c1': {'reading': '1', 'variant': 'one'}, 'c2': {'reading': 'i', 'variant': 'one'}}}
-    assert variants.stored_readings(q, old) == {}                   # no basis: nothing to trust
-    moved = dataclasses.replace(q, cues=(dataclasses.replace(q.cues[0], ask="other"), q.cues[1]))
-    fresh = variants.narrow(q, {'c1': '1', 'c2': 'i'})
-    assert variants.stored_readings(moved, fresh) == {'c2': 'i'}
+    assert status(exam, ws, 's1', 'a', 'x') == ('graded', False)
 
 
 # --- isolated workers --------------------------------------------------------------------
 
 EXAM = '''
-from examinator import Bool, Exam, Field
-from examinator.std import math, stages
+from examinator import Bool, Exam, Field, Printed, Region
+from examinator.std import fields, math, stages
 
 exam = Exam('ovr', pages=1)
+exam.question('info', pages=[1], stages=[stages.read_fields()],
+              fields=[Field('w', region=Region(1, 0, 0, 1000, 100), read=Printed("the letter"))])
 exam.question('k', pages=[1], result=Bool(), fields=[Field('x')],
               stages=[stages.transcribe(), stages.parse_math(),
                       stages.check_math(key={'x': '2'}), stages.grade(math.all_correct)])
+exam.question('m', pages=[1], result=Bool(), fields=[Field('x')],
+              stages=[stages.transcribe(), stages.parse_math(),
+                      stages.check_math(key={'a': {'x': '1'}, 'b': {'x': '2'}}, by=fields.value('w', question='info')),
+                      stages.grade(math.all_correct)])
 '''
 
 
@@ -355,6 +352,16 @@ def test_isolated_worker_sees_overrides(tmp_path):
         runner.recheck('s', 'k')
         assert status(exam, ws, 's', 'k') == ('graded', True)
         assert [p.pid for p in runner.pool._idle] == pids        # same warm worker throughout
+
+        # a check in a worker reads another question's parse; the read is recorded
+        ws.store.write('s', 'm', 'parse', {'x': '2'}, origin='manual', author='t', verified=True)
+        assert runner.run_stage('s', 'm', 'evidence').ok
+        ev = ws.store.get('s', 'm', 'evidence')
+        assert ev.reads == {'info': None} and ev.body['data'] == {'undecided': "no parse of info yet"}
+        info = ws.store.write('s', 'info', 'parse', {'w': 'b'}, origin='manual', author='t', verified=True)
+        runner.recheck('s', 'info')
+        assert ws.store.get('s', 'm', 'evidence').reads == {'info': info.rev}
+        assert status(exam, ws, 's', 'm') == ('graded', True)
     finally:
         runner.close()
         ws.close()
