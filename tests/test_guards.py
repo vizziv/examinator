@@ -127,26 +127,12 @@ def _catalog() -> dict[str, str]:
     return {m[1]: m[2] or '' for m in re.finditer(r"\['([\w-]+)',\s*\"[^\"]*\"(?:,\s*'(\w+)')?\]", body)}
 
 
-def _left() -> dict[str, list[str]]:
-    """The left-hand preset: action name -> combos."""
+def _keys() -> dict[str, list[str]]:
+    """The default key map: action name -> combos."""
     js = _actions_js()
-    start = js.index('const LEFT = {')
+    start = js.index('const KEYS = {')
     body = js[start:js.index('};', start)]
     return {m[1]: re.findall(r"'([^']*)'", m[2]) for m in re.finditer(r"'?([\w-]+)'?\s*:\s*\[([^\]]*)\]", body)}
-
-
-def _mirror():
-    """The right-hand preset's mapping of one combo, as actions.js computes it."""
-    js = _actions_js()
-    table = dict(re.findall(r"(\w):\s*'(\w)'", re.search(r'const MIRROR = \{([^}]*)\}', js)[1]))
-
-    def mirror(c: str) -> str:
-        if c in table:
-            return table[c]
-        if c.startswith('Shift+') and c[6:] in table:
-            return 'Shift+' + table[c[6:]]
-        return c
-    return mirror
 
 
 def _registered() -> set[str]:
@@ -156,7 +142,7 @@ def _registered() -> set[str]:
     for f in STATIC.glob('*.js'):
         js = f.read_text()
         names |= set(re.findall(r"register\(\s*'([\w-]+)'", js))
-        names |= set(re.findall(r"(?:^|[\s{,])'?([\w-]+)'?\s*:\s*\{\s*(?:available|run)\b", js, re.M))
+        names |= set(re.findall(r"(?:^|[\s{,])'?([\w-]+)'?\s*:\s*(?:\{\s*(?:available|run)\b|follow\()", js, re.M))
     return names
 
 
@@ -168,32 +154,23 @@ def test_every_data_action_names_an_action():
     assert not unknown, "\n".join(unknown)
 
 
-def test_every_preset_key_names_a_catalog_action():
+def test_every_default_key_names_a_catalog_action():
     catalog = _catalog()
-    assert catalog and _left()
-    assert sorted(set(_left()) - set(catalog)) == []
+    assert catalog and _keys()
+    assert sorted(set(_keys()) - set(catalog)) == []
+    assert 'MIRROR' not in _actions_js() and 'preset' not in _actions_js()      # one key map
+
+
+def test_every_catalog_action_is_registered_somewhere():
+    assert sorted(set(_catalog()) - _registered()) == []
 
 
 def test_no_two_actions_of_a_group_share_a_single_key():
-    catalog, left = _catalog(), _left()
+    catalog, keys = _catalog(), _keys()
     by_group: dict[tuple[str, str], list[str]] = {}
-    for name, combos in left.items():
+    for name, combos in keys.items():
         for c in combos:
             if not c.startswith(('Mod+', 'Alt+')):
                 by_group.setdefault((catalog.get(name, ''), c), []).append(name)
     shared = {k: v for k, v in by_group.items() if len(v) > 1}
     assert not shared, shared
-
-
-def test_the_right_hand_preset_keeps_keys_apart():
-    """Mirroring never sends two different left-hand keys of one group to the same key."""
-    catalog, left, mirror = _catalog(), _left(), _mirror()
-    groups: dict[str, set[str]] = {}
-    for name, combos in left.items():
-        groups.setdefault(catalog.get(name, ''), set()).update(combos)
-    for group, combos in groups.items():
-        images: dict[str, list[str]] = {}
-        for c in combos:
-            images.setdefault(mirror(c), []).append(c)
-        clashes = {k: sorted(v) for k, v in images.items() if len(v) > 1}
-        assert not clashes, (group, clashes)

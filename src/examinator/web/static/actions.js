@@ -6,58 +6,62 @@
 //   the key map {combo: name}          a key triggers it (ctx.el is null)
 //
 // `available` decides for both, so a key and its button always agree. The key map is
-// data: a preset (left or right hand) plus the grader's own rebindings, per browser in
-// localStorage 'keys' = {preset, single, custom: {name: [combo, ...]}}. Each control's
+// data: the defaults (KEYS) plus the grader's own rebindings, per browser in
+// localStorage 'keys' = {single, custom: {name: [combo, ...]}}. Each control's
 // <kbd> hint is rendered from the active map, so a hint cannot disagree with its key.
 //
 // Combos: a lower-case character ("a", "/") or a key name ("ArrowLeft", "Escape",
-// "Enter"), optionally prefixed "Mod+" (Cmd on a Mac, Ctrl elsewhere) and/or "Alt+".
-// Keys without a modifier ("single keys") are ignored while typing in a field, on
-// auto-repeat, during composition and with Shift; Escape is the exception (it leaves
-// a field). Combos with Mod work while typing.
+// "Enter"), optionally prefixed "Mod+" (Cmd on a Mac, Ctrl elsewhere), "Alt+" and/or
+// "Shift+" ("Shift+v"). Combos without Mod or Alt ("single keys", Shift ones included)
+// are ignored while typing in a field, on auto-repeat and during composition; Escape is
+// the exception (it leaves a field). Combos with Mod work while typing.
 const Actions = (() => {
   const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
   // Every action that can carry a key, for the settings page; pages supply `run`.
+  // The third element is the group: one page's keys; groups never share a page, so they may share keys.
   const CATALOG = [
-    ['prev-student', "previous student"], ['next-student', "next student"],
+    ['prev-student', "previous submission"], ['next-student', "next submission"],
     ['prev-question', "previous question"], ['next-question', "next question"],
-    ['verify', "verify (saves edits)"], ['edit', "edit: first field"], ['save', "save"],
-    ['grid', "grid"], ['scan', "scan window"], ['regions', "regions on/off"],
+    ['verify-next', "verify, next submission"], ['verify', "verify (saves edits)"],
+    ['grade-right', "grade: correct"], ['grade-wrong', "grade: incorrect"], ['grade-blank', "grade: blank"],
+    ['grade-number', "grade: number box"],
+    ['edit', "edit: first field"], ['save', "save"],
+    ['grid', "grid"], ['scan', "scan in its own window"], ['regions', "regions on/off"],
     ['search', "search"], ['leave-field', "leave field"], ['run-preview', "runs: preview"],
-    // The scans page has its own group: the same keys mean "earlier / later / confirm" there.
-    ['split-confirm', "scans: confirm first page, next", 'scans'], ['split-earlier', "scans: a page earlier", 'scans'],
-    ['split-later', "scans: a page later", 'scans'], ['split-back', "scans: previous boundary", 'scans'],
-    ['split-next', "scans: next boundary", 'scans'], ['split-drop', "scans: drop this page", 'scans'],
-    ['split-cut', "scans: a new exam starts here", 'scans'],
-    ['split-turn', "scans: turn this exam 180°", 'scans'], ['split-turn-source', "scans: turn whole scan 90°", 'scans'],
-    // Names (the scans page's other tab): the same shapes again; one tab's keys work at a time.
-    ['who-confirm', "names: this person, next", 'names'], ['who-prev', "names: previous proposal", 'names'],
-    ['who-next', "names: next proposal", 'names'], ['who-back', "names: previous exam", 'names'],
-    ['who-skip', "names: next exam", 'names'], ['who-search', "names: type a name or ID", 'names'],
+    ['cell-left', "grid: cell left", 'grid'], ['cell-right', "grid: cell right", 'grid'],
+    ['cell-up', "grid: cell up", 'grid'], ['cell-down', "grid: cell down", 'grid'],
+    ['cell-open', "grid: open cell", 'grid'],
+    // Split (the scans page): first pages are a horizontal strip, submissions go up and down.
+    ['split-verify', "split: verify first page, next", 'split'], ['split-earlier', "split: a page earlier", 'split'],
+    ['split-later', "split: a page later", 'split'], ['split-back', "split: previous submission", 'split'],
+    ['split-next', "split: next submission", 'split'], ['split-drop', "split: drop this page", 'split'],
+    ['split-cut', "split: new submission here", 'split'],
+    ['split-turn', "split: turn submission 180°", 'split'], ['split-turn-source', "split: turn whole scan 90°", 'split'],
+    ['split-mirror', "split: mirror whole scan", 'split'], ['split-undo', "split: undo", 'split'],
+    ['split-guess', "split: guess again", 'split'], ['split-read', "split: read pages", 'split'],
+    ['split-accept', "split: accept", 'split'],
+    // Names (the scans page's other tab): submissions left and right, proposals up and down.
+    ['names-verify', "names: verify, next", 'names'], ['names-back', "names: previous submission", 'names'],
+    ['names-skip', "names: next submission", 'names'], ['names-up', "names: previous proposal", 'names'],
+    ['names-down', "names: next proposal", 'names'], ['names-type', "names: type name", 'names'],
+    ['names-read', "names: read name boxes", 'names'],
   ];
-  const LEFT = {
+  const KEYS = {
     'prev-student': ['a', 'ArrowLeft'], 'next-student': ['d', 'ArrowRight'],
     'prev-question': ['w'], 'next-question': ['s'],
-    verify: ['v', 'Mod+Enter'], edit: ['e'], save: ['Mod+s'],
+    'verify-next': ['v'], verify: ['Mod+Enter'], edit: ['e'], save: ['Mod+s'],
+    'grade-right': ['c'], 'grade-wrong': ['x'], 'grade-blank': ['z'], 'grade-number': ['g'],
     grid: ['q'], scan: ['f'], search: ['/'], 'leave-field': ['Escape'],
-    'split-confirm': ['v'], 'split-earlier': ['a', 'ArrowLeft'], 'split-later': ['d', 'ArrowRight'],
+    'cell-left': ['a', 'ArrowLeft'], 'cell-right': ['d', 'ArrowRight'], 'cell-up': ['w', 'ArrowUp'],
+    'cell-down': ['s', 'ArrowDown'], 'cell-open': ['v', 'Enter'],
+    'split-verify': ['v'], 'split-earlier': ['a', 'ArrowLeft'], 'split-later': ['d', 'ArrowRight'],
     'split-back': ['w'], 'split-next': ['s'], 'split-drop': ['x'],
-    'split-cut': ['Shift+v'], 'split-turn': ['r'], 'split-turn-source': ['Shift+r'],
-    'who-confirm': ['v'], 'who-prev': ['a', 'ArrowLeft'], 'who-next': ['d', 'ArrowRight'],
-    'who-back': ['w'], 'who-skip': ['s'], 'who-search': ['e'],
+    'split-cut': ['Shift+v'], 'split-turn': ['r'], 'split-turn-source': ['Shift+r'], 'split-undo': ['Mod+z'],
+    'names-verify': ['v'], 'names-back': ['a', 'ArrowLeft'], 'names-skip': ['d', 'ArrowRight'],
+    'names-up': ['w', 'ArrowUp'], 'names-down': ['s', 'ArrowDown'], 'names-type': ['e'],
   };
-  // The same shapes for the right hand: students and questions on I J K L as on W A S D;
-  // grid on the outer top key (P for Q), edit on the inner top key (U for E), scan on the
-  // inner stretch (H for F), verify below the index finger (N for V); on the scans page
-  // drop is M (for X) and turning is U (for R).
-  const MIRROR = {a: 'j', d: 'l', w: 'i', s: 'k', q: 'p', e: 'u', f: 'h', v: 'n', x: 'm', r: 'u'};
-  const mirror = c => MIRROR[c] || (c.startsWith('Shift+') && MIRROR[c.slice(6)] ? 'Shift+' + MIRROR[c.slice(6)] : c);
-  const RIGHT = Object.fromEntries(Object.entries(LEFT).map(
-    ([name, combos]) => [name, combos.map(mirror)]));
-  // Actions in different groups never share a page, so they may share keys.
   const group = name => (CATALOG.find(c => c[0] === name) || [])[2] || '';
-  const PRESETS = {left: LEFT, right: RIGHT};
 
   const registry = new Map();
 
@@ -66,8 +70,7 @@ const Actions = (() => {
     let s = null;
     try { s = JSON.parse(localStorage.getItem('keys')); } catch (e) { /* private mode */ }
     s = s && typeof s === 'object' ? s : {};
-    return {preset: s.preset === 'right' ? 'right' : 'left', single: s.single !== false,
-            custom: s.custom && typeof s.custom === 'object' ? s.custom : {}};
+    return {single: s.single !== false, custom: s.custom && typeof s.custom === 'object' ? s.custom : {}};
   }
   function saveSettings(s) {
     try { localStorage.setItem('keys', JSON.stringify(s)); } catch (e) { /* private mode */ }
@@ -76,13 +79,13 @@ const Actions = (() => {
   function bindings(name, s) {
     s = s || settings();
     const own = s.custom[name];
-    return Array.isArray(own) ? own.map(String) : (PRESETS[s.preset][name] || []);
+    return Array.isArray(own) ? own.map(String) : (KEYS[name] || []);
   }
   // combo -> the actions bound to it (at most one per group)
   function keymap(s) {
     s = s || settings();
     const map = {};
-    for (const name of new Set([...Object.keys(PRESETS[s.preset]), ...Object.keys(s.custom)])) {
+    for (const name of new Set([...Object.keys(KEYS), ...Object.keys(s.custom)])) {
       for (const c of bindings(name, s)) {
         const names = map[c] || (map[c] = []);
         if (!names.some(n => group(n) === group(name))) names.push(name);
@@ -192,7 +195,7 @@ const Actions = (() => {
   // Buttons under `root` whose action cannot run now are disabled, so a key that would do
   // nothing looks it. For pages that call this whenever their state changes.
   function enable(root) {
-    for (const el of root.querySelectorAll('button[data-action]')) {
+    for (const el of (root || document).querySelectorAll('button[data-action]')) {
       if (registry.has(el.dataset.action)) el.disabled = !available(el.dataset.action, {el, target: el});
     }
   }
@@ -205,6 +208,6 @@ const Actions = (() => {
     available: () => !!document.getElementById('home') && !document.getElementById('grid'),
     run: () => document.getElementById('home').click()});
 
-  return {register, has, trigger, available, hints, enable, settings, saveSettings, bindings, keymap, rebind,
-          comboOf, display, isSingle, typing, CATALOG, PRESETS};
+  return {register, has, trigger, available, hints, enable, settings, saveSettings, bindings, rebind,
+          comboOf, display, typing, CATALOG};
 })();

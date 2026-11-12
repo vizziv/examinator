@@ -1,6 +1,5 @@
 'use strict';
 (() => {
-  const $ = id => document.getElementById(id);
   const wins = [...document.querySelectorAll('.win')], cover = $('cover');
   const img = $('pv-img'), rect = $('pv-rect');
   const sub = $('pv-sub'), page = $('pv-page');
@@ -22,8 +21,9 @@
   for (const w of wins) w.addEventListener('input', preview);
   for (const el of [sub, page, cover]) el.addEventListener('input', load);
   Actions.register('save-defaults', {run: async () => {
-    const r = await request('/settings', {cover_pages: Number(cover.value), scan_window: wins.map(w => Number(w.value))});
+    const r = await request('/settings', {cover_pages: Number(cover.value), print_area: wins.map(w => Number(w.value))});
     msg.textContent = r.ok ? "saved" : r.body.error || "failed";
+    msg.className = r.ok ? 'ok' : '';
   }});
   const size = $('crop-size'), n = $('crop-n');
   const shown = () => { n.textContent = size.value + ' px'; };
@@ -83,13 +83,12 @@
     paint();
   }
 
-  // --- keyboard (this browser): single keys on/off, layout preset, own bindings ---
-  const single = $('k-single'), preset = $('k-preset'), table = $('keymap').tBodies[0];
+  // --- keyboard (this browser): single keys on/off, own bindings ---
+  const single = $('k-single'), table = $('keymap').tBodies[0];
   let listening = null;      // the action waiting for a key
   function render() {
     const s = Actions.settings();
     single.checked = s.single;
-    preset.value = s.preset;
     table.replaceChildren();
     for (const [name, label] of Actions.CATALOG) {
       const own = Array.isArray(s.custom[name]);
@@ -105,7 +104,7 @@
       const none = make('button', {type: 'button', className: 'quiet', textContent: 'none', title: 'no key'});
       none.addEventListener('click', () => { Actions.rebind(name, null); render(); });
       const tr = make('tr', {}, make('td', {textContent: label}), keys,
-                      make('td', {}, set, none, own ? make('span', {className: 'tag accent2', textContent: 'own'}) : ''));
+                      make('td', {}, set, none, own ? tag('', 'own') : ''));
       if (listening === name) tr.className = 'listening';
       table.append(tr);
     }
@@ -122,12 +121,6 @@
     render();
   }, true);
   single.addEventListener('change', () => { const s = Actions.settings(); s.single = single.checked; Actions.saveSettings(s); });
-  preset.addEventListener('change', () => {
-    const s = Actions.settings();
-    s.preset = preset.value;
-    Actions.saveSettings(s);
-    render();
-  });
   $('k-reset').addEventListener('click', () => {
     const s = Actions.settings();
     s.custom = {};
