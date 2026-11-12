@@ -1,5 +1,4 @@
 """examinator_kits.stochastic: random primitives and sampler-check scaffolding. Synthetic programs only."""
-import dataclasses
 import re
 from pathlib import Path
 

@@ -6,7 +6,6 @@ variants).
 """
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -20,7 +19,6 @@ from .workflow import Status, question_status, total
 class Cell:
     status: Mapping[str, Status]      # part -> status
     variant: str | None               # resolved variant, if the question has variants
-    flags: tuple[str, ...] = ()       # e.g. 'markers' is left to facets later
 
 
 @dataclass(frozen=True)

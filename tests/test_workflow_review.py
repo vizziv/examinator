@@ -11,7 +11,6 @@ Two groups:
 Everything here is synthetic (fixtures from `conftest.py`).
 """
 import dataclasses
-import inspect
 
 import pytest
 

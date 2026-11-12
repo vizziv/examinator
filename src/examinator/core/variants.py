@@ -58,13 +58,13 @@ def basis(cue: Cue) -> str:
 
 def stored_readings(question: Question, body: Mapping | None) -> dict[str, str | None]:
     """The readings in a stored variant body that still apply to the question's
-    current cues. A body written before readings carried a basis is trusted."""
+    current cues: those made from the same crop and question."""
     out = {}
     by_name = {c.name: c for c in question.cues}
     made = (body or {}).get('basis') or {}
     for name, c in ((body or {}).get('cues') or {}).items():
         cue = by_name.get(name)
-        if cue is not None and made.get(name, basis(cue)) == basis(cue):
+        if cue is not None and made.get(name) == basis(cue):
             out[name] = c.get('reading')
     return out
 

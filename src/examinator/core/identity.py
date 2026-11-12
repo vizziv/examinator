@@ -131,12 +131,7 @@ def set_roster(ws, text: str) -> int:
 
 
 def people(ws) -> list[dict]:
-    out = []
-    for p in ws.store.setting('people', []):
-        p = dict(p)
-        p.setdefault('id', p.pop('sid', ''))       # rosters stored before IDs were called 'id'
-        out.append(p)
-    return out
+    return [dict(p) for p in ws.store.setting('people', [])]
 
 
 def label(person: Mapping) -> str:

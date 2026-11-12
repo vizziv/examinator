@@ -13,7 +13,6 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Sequence
 
 from .defs import Exam, grade_kind
 from .runner import Outcome, Runner

@@ -2,7 +2,7 @@ import threading
 
 import pytest
 
-from examinator.core.store import ANY, Conflict, Store
+from examinator.core.store import Conflict, Store
 
 
 @pytest.fixture

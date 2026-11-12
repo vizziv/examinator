@@ -166,9 +166,6 @@ class Store:
         self._db.execute('pragma journal_mode = wal')
         self._db.execute('pragma busy_timeout = 5000')
         self._db.executescript(SCHEMA)
-        cols = {r[1] for r in self._db.execute('pragma table_info(submission)')}
-        if 'student' not in cols:       # a workspace made before submissions carried a student ID
-            self._db.execute("alter table submission add column student text")
 
     def close(self) -> None:
         with self._lock:

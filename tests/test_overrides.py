@@ -309,10 +309,10 @@ def test_changed_crop_or_question_leaves_the_cue_unread(kenv, path, value):
     assert variant_body(ws)['resolved'] == 'one'
 
 
-def test_readings_without_a_basis_are_trusted():
+def test_only_readings_of_the_same_crop_and_question_still_apply():
     q = make_exam().questions['a']
     old = {'cues': {'c1': {'reading': '1', 'variant': 'one'}, 'c2': {'reading': 'i', 'variant': 'one'}}}
-    assert variants.stored_readings(q, old) == {'c1': '1', 'c2': 'i'}
+    assert variants.stored_readings(q, old) == {}                   # no basis: nothing to trust
     moved = dataclasses.replace(q, cues=(dataclasses.replace(q.cues[0], ask="other"), q.cues[1]))
     fresh = variants.narrow(q, {'c1': '1', 'c2': 'i'})
     assert variants.stored_readings(moved, fresh) == {'c2': 'i'}

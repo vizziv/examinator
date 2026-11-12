@@ -16,16 +16,15 @@ instead, and need no roster file.
 from __future__ import annotations
 
 import csv
-import os
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
-from ..pdf.layout import DEFAULT_PAD, Layout
+from ..pdf.layout import Layout
 from ..pdf.render import Renderer
 from .defs import Exam, Question, Region
-from .store import ANY, Store, Submission
+from .store import Store, Submission
 
 
 class RosterError(ValueError):

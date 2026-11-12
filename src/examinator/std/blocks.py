@@ -20,7 +20,7 @@ For 'bars', x holds bin edges (len(y) + 1) or bar centres (len(y)).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
 import numpy as np

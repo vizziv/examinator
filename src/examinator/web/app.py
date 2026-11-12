@@ -973,7 +973,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         made = store.made()
         return page('scans.html', sources=store.sources(), people=[identity.label(p) for p in identity.people(ws)],
                     expected=intake.expected_length(ws), landmarks=bool(exam.landmarks),
-                    idboxes=json.dumps(boxes), fields=exam.identity, made=len(made),
+                    idboxes=json.dumps(boxes), fields=exam.identity,
                     handed=sum(1 for s in store.submissions() if s.id not in made))
 
     def scans_plan(request: Request) -> Response:
@@ -1183,9 +1183,5 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     ]
     app = Starlette(routes=routes)
     app.add_middleware(Guard, public_url=public_url)
-    app.state.token = token
-    app.state.jobs = jobs
     app.state.batch = None
-    app.state.author = author
-    app.state.public_url = public_url
     return app

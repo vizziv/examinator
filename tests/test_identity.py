@@ -280,7 +280,7 @@ def test_rewriting_a_submission_drops_what_was_read_but_keeps_the_pick(written):
     identity.read(ws, 's0001', model)
     identity.set_who(ws, 's0001', identity.people(ws)[0]['key'], author='t')
     one = ws.store.made()['s0001'].source
-    art = intake.edit(ws, one, 'drop', sheet=3, expect_rev=intake.plan(ws, one).rev, author='t')
+    intake.edit(ws, one, 'drop', sheet=3, expect_rev=intake.plan(ws, one).rev, author='t')
     assert intake.accept(ws, one)['rewritten'] == ['s0001']               # names are not grading work
     assert ws.store.get('s0001', '', identity.READ) is None
     assert ws.store.submission('s0001').name == "Avery Testwell"
@@ -298,10 +298,3 @@ def test_a_failed_call_is_no_reading_and_not_remembered(tmp_path):
     assert identity.read(ws, 's0001', synth.fake_model(root)).body['fields']['id'] == "90412873"
     ws.close()
 
-
-def test_legacy_rosters_still_read(tmp_path):
-    toy = load_exam(TOY)
-    ws = Workspace(tmp_path / 'ws', toy, create=True)
-    ws.store.set_setting('people', [{'name': "Ada", 'email': '', 'sid': '123', 'key': '123'}])
-    assert identity.people(ws)[0]['id'] == '123' and identity.label(identity.people(ws)[0]) == "Ada <123>"
-    ws.close()

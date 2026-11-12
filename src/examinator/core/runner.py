@@ -19,7 +19,7 @@ from . import variants
 from .context import BadOutput, Blocked, Context, Unavailable
 from .defs import Exam, Grade, Question, Stage, grade_kind, has_marker, stage_hash
 from .evidence import body_of, undecided
-from .isolate import Pool, PoolClosed, StageCrash, StageTimeout
+from .isolate import Pool, PoolClosed, StageTimeout
 from .store import ANY, Artifact, Conflict
 from .workflow import (_derived, evidence_current, grade_current, recheck_wanted, seen_revs,
                        variant_current)

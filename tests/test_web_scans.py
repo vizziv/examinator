@@ -7,7 +7,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from examinator import load_exam, synth
-from examinator.core import identity, intake
+from examinator.core import identity
 from examinator.core.runner import Runner
 from examinator.core.workspace import Workspace
 from examinator.web.app import create_app
