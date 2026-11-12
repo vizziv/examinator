@@ -127,12 +127,22 @@ def parse_pseudocode(entries: Sequence[str], *, language: Any = None,
 
 # --- check --------------------------------------------------------------------
 
+def per_variant(key: Mapping[Any, Any]) -> bool:
+    """A key whose every value is itself a mapping is one key per variant."""
+    return bool(key) and all(isinstance(v, Mapping) for v in key.values())
+
+
 @dataclass(frozen=True)
 class CheckMath:
     key: Mapping[Any, Any]               # {label or (label, ...): entry}, or {variant: {...}}
     symbols: Mapping[str, str] | tuple[str, ...] = ()
     functions: tuple[str, ...] | None = None
-    by_variant: bool = field(default=False, metadata={'override': False})   # derived from the key's shape
+    # Derived from the key's shape whatever is passed (an override of the key keeps it right);
+    # still a field, so it stays in the stage's description and hash as before.
+    by_variant: bool = field(default=False, metadata={'override': False})
+
+    def __post_init__(self):
+        object.__setattr__(self, 'by_variant', per_variant(self.key))
 
     def __call__(self, ctx: Context) -> Evidence:
         from . import math
@@ -172,14 +182,14 @@ def check_math(key: Mapping[str, Any], *, symbols: Mapping[str, str] | Sequence[
     lists names. `functions=[]` means no function calls, so juxtaposition is
     multiplication. A field carrying a review marker is undecided.
     """
-    by_variant = bool(key) and all(isinstance(v, Mapping) for v in key.values())
+    by_variant = per_variant(key)
     if not isinstance(symbols, Mapping):
         symbols = tuple(symbols)
     from . import math as m
     labels: list[str] = []
     for k in (k for sub in (key.values() if by_variant else [key]) for k in sub):
         labels += [x for x in (k if isinstance(k, tuple) else (k,)) if x not in labels]
-    return Stage('evidence', CheckMath(key, symbols, None if functions is None else tuple(functions), by_variant),
+    return Stage('evidence', CheckMath(key, symbols, None if functions is None else tuple(functions)),
                  inputs=('parse',), isolate=True, timeout=timeout, uses_variant=by_variant,
                  accepts_markers=True, facets=tuple(m.answer_facet(label) for label in labels))
 
