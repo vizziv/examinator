@@ -33,19 +33,49 @@ function session(key, fallback) {
   try { return JSON.parse(sessionStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; }
 }
 
-function flash(text) {
+// A message in the header: a problem (red) unless the tone is 'ok' ("saved", "copied").
+function flash(text, tone) {
   const el = document.getElementById('flash');
   if (!el) return;
   el.textContent = text || '';
+  el.className = tone === 'ok' ? 'ok' : '';
   clearTimeout(flash.timer);
   if (text) flash.timer = setTimeout(() => { el.textContent = ''; }, 8000);
 }
 
+const $ = id => document.getElementById(id);
 function make(tag, props, ...children) {
   const el = document.createElement(tag);
   Object.assign(el, props || {});
   el.append(...children);
   return el;
+}
+// A pill: cls '' (information, finished), 'unv' (waits on a person) or 'bad' (a problem).
+const tag = (cls, text, title) => make('span', {className: 'tag ' + (cls || ''), textContent: text, title: title || ''});
+// The first index after `from` (wrapping around) whose item is open, else the list's length.
+function nextOpen(list, from, open) {
+  for (let j = from + 1; j < list.length; j++) if (open(list[j])) return j;
+  for (let j = 0; j <= from && j < list.length; j++) if (open(list[j])) return j;
+  return list.length;
+}
+
+// Steps that change server state, from keys and buttons alike: keys come faster than
+// replies, so they run one after another, each on the state the last left. A long step
+// (a model job, Accept) makes every step unavailable until it ends, so keys pressed
+// meanwhile are dropped, not replayed against a moved cursor. Errors are flashed.
+function steps(live, changed) {
+  let chain = Promise.resolve(), busy = 0;
+  const oops = err => { console.error(err); flash(`failed: ${(err && err.message) || err}`); };
+  const enqueue = (fn, ctx) => (chain = chain.then(() => fn(ctx)).catch(oops));
+  async function long(fn, ctx) {
+    busy++;
+    changed();
+    try { await enqueue(fn, ctx); } finally { busy--; changed(); }
+  }
+  const register = (name, spec) => Actions.register(name, {
+    available: ctx => live() && !busy && (!spec.available || spec.available(ctx)),
+    run: ctx => (spec.long ? long(spec.run, ctx) : enqueue(spec.run, ctx))});
+  return {register, enqueue, busy: () => busy > 0};
 }
 
 // A crop is a window onto the cached full-page image: <span class="crop" data-src data-box="l,t,r,b">,
@@ -83,6 +113,8 @@ function fillRange(el) {
   el.style.setProperty('--fill', ((Number(el.value) - min) / (max - min || 1)) * 100 + '%');
 }
 document.addEventListener('input', e => { if (e.target.matches?.('input[type=range]')) fillRange(e.target); });
+// A choice made in a select gives the keys back (single keys are off while a field has focus).
+document.addEventListener('change', e => { if (e.target.matches?.('select')) e.target.blur(); });
 document.addEventListener('DOMContentLoaded', () => {
   sizeHeader();
   document.querySelectorAll('input[type=range]').forEach(fillRange);

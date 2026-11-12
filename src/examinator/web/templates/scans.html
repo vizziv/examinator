@@ -4,23 +4,36 @@
 {% block head %}<script src="{{ root }}/static/scans.js" defer></script>
 <script src="{{ root }}/static/names.js" defer></script>{% endblock %}
 {% block body %}
-<main class="narrow" id="scans" data-landmarks="{{ 1 if landmarks else 0 }}" data-idboxes="{{ idboxes }}">
-<div class="bar">
-<label class="btn primary" title="scanned PDFs, many exams each">Add scans <input type="file" id="up" accept="application/pdf,.pdf" multiple hidden></label>
-<button type="button" id="roster-open" aria-expanded="false" title="who sits the exam: paste or load a file">Roster</button>
-<span class="dim">{{ people|length }} people</span>
+<main class="narrow" id="scans" data-idboxes="{{ idboxes }}" data-widths="{{ widths }}" data-counts="{{ counts }}"
+ data-made="{{ made }}" data-people="{{ people|length }}" data-model="{{ 1 if model else '' }}"
+ data-landmarks="{{ 1 if exam.landmarks else '' }}" data-fields="{{ 1 if fields else '' }}">
+<nav class="flow" role="tablist" aria-label="steps">
+<button type="button" role="tab" data-tab="add" title="add the scanned PDFs">1 Scans <span class="n">({{ sources|length }})</span></button>
+<button type="button" role="tab" data-tab="split" title="{{ 'cut the scans into submissions' if sources else 'add scans first' }}"{% if not sources %} class="off"{% endif %}>2 Split <span class="n" id="n-split"></span></button>
+<button type="button" role="tab" data-tab="roster" title="who sits the exam">3 Roster <span class="n">({{ people|length }} people)</span></button>
+<button type="button" role="tab" data-tab="names" title="{{ 'who wrote each submission' if made else 'Names needs accepted submissions' }}"{% if not made %} class="off"{% endif %}>4 Names <span class="n" id="n-names"></span></button>
+<span class="dim">→</span>
+<a href="{{ root }}/runs">Runs</a>
+</nav>
+<p id="next" class="dim"></p>
+<p id="msg" role="status" hidden></p>
+
+<section id="add" class="panel" hidden>
+<div class="bar"><h2>Scans</h2>
+<label class="btn primary" title="scanned PDFs, many submissions each">Add scans <input type="file" id="up" accept="application/pdf,.pdf" multiple hidden></label></div>
 {% if sources %}
-<span class="sep"></span>
-<span class="tabs" role="tablist">
-<button type="button" role="tab" data-tab="split" aria-selected="true">Split</button>
-<button type="button" role="tab" data-tab="names" aria-selected="false" title="who wrote each exam">Names <span id="names-left" class="dim"></span></button>
-</span>
-<select id="src" aria-label="scan">{% for s in sources %}<option value="{{ s.id }}">{{ s.name }} · {{ s.pages }} pages</option>{% endfor %}</select>
+<table class="wrows">
+<thead><tr><th>scan</th><th>pages</th><th></th></tr></thead>
+{% for s in sources %}<tr><td><button type="button" class="quiet" data-src="{{ s.id }}" title="split this scan">{{ s.name }}</button></td><td class="dim">{{ s.pages }}</td><td id="sc-{{ s.id }}"></td></tr>{% endfor %}
+</table>
 {% endif %}
-<span id="msg" role="status"></span>
-</div>
+<p class="help">Scanned PDFs, a stack of submissions each, {{ expected }} pages per submission. They are kept unchanged;
+each submission becomes its own PDF when you accept the split.
+{% if handed %}This workspace also has {{ handed }} submissions handed in already split.{% endif %}</p>
+</section>
 
 <section id="roster-box" class="panel" hidden>
+<div class="bar"><h2>Roster</h2> <span class="dim">{{ people|length }} people</span></div>
 <textarea id="roster-text" rows="6" spellcheck="false" aria-label="roster"
  placeholder="one per line: name and ID, comma or tab between, either order&#10;Ada Lovelace, 31415926&#10;or a CSV with a header: Name (or First Name, Last Name), Student ID, Email"></textarea>
 <div class="bar">
@@ -33,97 +46,96 @@
 <ul id="roster-problems" hidden></ul>
 </section>
 
-{% if not sources %}
-<p class="help">No scans yet. Add the scanned PDFs (a stack of exams each, {{ expected }} pages per exam).
-They are kept unchanged; each exam becomes its own submission when you accept the split.
-{% if handed %}This workspace also has {{ handed }} submissions handed in already split.{% endif %}</p>
-{% else %}
-<div id="split">
-<section id="srcbar" class="panel bar" hidden>
-<b id="s-name"></b> <span id="s-info" class="dim"></span>
+{% if sources %}
+<div id="split" hidden>
+<section id="srcbar" class="panel bar">
+<select id="src" aria-label="scan">{% for s in sources %}<option value="{{ s.id }}">{{ s.name }} · {{ s.pages }} pages</option>{% endfor %}</select>
+<span id="s-info" class="dim"></span>
 <span class="sep"></span>
 <span id="s-orient" class="tag"></span>
 <button type="button" data-action="split-turn-source">turn scan 90°</button>
-<button type="button" data-action="split-flip-source" class="quiet">mirror</button>
+<button type="button" data-action="split-mirror" class="quiet">mirror</button>
 <span class="sep"></span>
-<label>pages per exam <input type="number" id="s-length" min="1" max="999"></label>
-<button type="button" data-action="split-guess" title="guess the unconfirmed first pages again">re-guess</button>
-{% if model and landmarks %}<button type="button" data-action="split-check" title="read page landmarks with the model where needed">check</button>{% endif %}
+<label>pages per submission <input type="number" id="s-length" min="1" max="999"></label>
+<button type="button" data-action="split-guess" title="guess the unverified first pages again">guess again</button>
+{% if exam.landmarks %}<button type="button" data-action="split-read" title="{{ 'read page landmarks with the model where needed' if model else 'no model' }}">read pages</button>{% endif %}
 <button type="button" data-action="split-undo" class="quiet">undo</button>
 <span class="grow"></span>
 <span id="s-sum"></span>
 <button type="button" data-action="split-accept" class="primary">Accept</button>
 </section>
 
-<section id="step" class="panel" hidden>
+<section id="step" class="panel">
 <div class="bar"><b id="st-k"></b> <span id="st-tags"></span><span class="grow"></span><span id="st-prev" class="dim"></span></div>
-<div id="st-done" hidden><p>Every first page is confirmed. <span id="st-done-sum" class="dim"></span></p></div>
+<div id="st-done" hidden><p>Every first page is verified. <span id="st-done-sum" class="dim"></span></p></div>
 <div id="st-pages">
 <figure class="ctx" id="st-a"><img alt="page before"><figcaption></figcaption></figure>
-<figure class="main" id="st-b"><img alt="guessed first page"><figcaption></figcaption></figure>
+<figure class="main" id="st-b"><img alt="first page?"><figcaption></figcaption></figure>
 <figure class="ctx" id="st-c"><img alt="page after"><figcaption></figcaption></figure>
 </div>
 <div class="bar">
 <button type="button" data-action="split-earlier">◀ earlier</button>
-<button type="button" data-action="split-confirm" class="primary">first page ✓</button>
+<button type="button" data-action="split-verify" class="primary">Verify first page</button>
 <button type="button" data-action="split-later">later ▶</button>
 <span class="sep"></span>
 <button type="button" data-action="split-back" class="quiet">prev</button>
 <button type="button" data-action="split-next" class="quiet">next</button>
 <span class="sep"></span>
-<button type="button" data-action="split-cut" title="the page shown is the first page of an exam the plan does not have">new exam here</button>
+<button type="button" data-action="split-cut" title="the page shown is the first page of a submission the plan does not have">new submission here</button>
 <button type="button" data-action="split-drop">drop page</button>
-<button type="button" data-action="split-turn">turn exam 180°</button>
+<button type="button" data-action="split-turn">turn submission 180°</button>
 </div>
 </section>
 
-<section id="over" class="panel" hidden>
+<section id="over" class="panel">
 <div class="bar"><h2>Submissions</h2> <span class="dim">to look at first</span></div>
 <div id="rows"></div>
-<div id="loose" hidden><h2>Not in a submission</h2><div class="sheets" id="loose-sheets"></div></div>
+<div id="loose" hidden><h2>In no submission</h2><div class="sheets" id="loose-sheets"></div></div>
 </section>
 </div>
+{% endif %}
 
 <div id="names" hidden>
 <section id="w-bar" class="panel bar">
-<b>Names</b> <span id="w-sum"></span>
-{% if model and fields %}<button type="button" data-action="names-read" title="read the name and ID boxes with the model (only those not read yet)">read</button>{% endif %}
-{% if not fields %}<span class="dim" title="Exam(identity=[...])">no name or ID boxes declared: pick by hand</span>{% endif %}
+<h2>Names</h2> <span id="w-sum"></span>
+{% if fields %}<button type="button" data-action="names-read" title="{{ 'read the name and ID boxes with the model (only those not read yet)' if model else 'no model' }}">read names</button>
+{% else %}<span class="dim" title="Exam(identity=[...])">no name or ID boxes declared: type names</span>{% endif %}
 <span class="grow"></span>
 <span id="w-roster" class="dim"></span>
 </section>
 
 <section id="w-step" class="panel">
 <div class="bar"><b id="w-sub"></b> <span id="w-tags"></span><span class="grow"></span><span id="w-pos" class="dim"></span></div>
-<div id="w-done" hidden><p>Every exam is named.</p></div>
+<div id="w-done" hidden><p>Every submission is verified. <a href="{{ root }}/runs">next: Runs</a></p></div>
 <div id="w-main">
 <div id="w-crops"></div>
 <div id="w-prop">
 <div id="w-name"></div>
 <div id="w-id" class="mono"></div>
 <div id="w-why" class="dim"></div>
-<input type="text" id="w-pick" list="people" placeholder="type a name or ID, ↵" autocomplete="off" spellcheck="false" aria-label="pick from the roster">
+<div id="w-other"></div>
+<input type="text" id="w-pick" list="people" placeholder="name or ID, ↵" autocomplete="off" spellcheck="false" aria-label="type name">
 </div>
 </div>
 <div class="bar">
-<button type="button" data-action="who-prev" title="previous proposal">◀</button>
-<button type="button" data-action="who-confirm" class="primary">this one ✓</button>
-<button type="button" data-action="who-next" title="next proposal">▶</button>
+<button type="button" data-action="names-up" title="previous proposal">▲</button>
+<button type="button" data-action="names-verify" class="primary">Verify</button>
+<button type="button" data-action="names-down" title="next proposal">▼</button>
 <span class="sep"></span>
-<button type="button" data-action="who-back" class="quiet">prev</button>
-<button type="button" data-action="who-skip" class="quiet">next</button>
+<button type="button" data-action="names-back" class="quiet">prev</button>
+<button type="button" data-action="names-skip" class="quiet">next</button>
 <span class="sep"></span>
-<button type="button" data-action="who-search">type</button>
+<button type="button" data-action="names-type">type name</button>
+<span id="w-said" class="dim"></span>
 </div>
 </section>
 
-<section class="panel">
-<div class="bar"><h2>All</h2> <span class="dim">unnamed first, most doubtful first</span></div>
-<table id="w-rows" class="wrows"></table>
-<div id="w-nobody" hidden><h2>No exam</h2> <span class="dim">on the roster, named for no exam</span><p id="w-nobody-list"></p></div>
+<section id="w-all" class="panel">
+<div class="bar"><h2>All</h2> <span class="dim">unverified first, most doubtful first</span></div>
+<table id="w-rows" class="wrows"><thead><tr><th>submission</th><th></th><th>read</th><th>person</th><th></th></tr></thead><tbody></tbody></table>
+<div id="w-nobody" hidden><h2>Not named</h2> <span class="dim">on the roster, named for no submission</span><p id="w-nobody-list"></p></div>
 </section>
 </div>
 <datalist id="people">{% for p in people %}<option value="{{ p }}">{% endfor %}</datalist>
-{% endif %}
 </main>
 {% endblock %}

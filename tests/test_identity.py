@@ -272,6 +272,13 @@ def test_picks_confirm_flag_twice_and_name_submissions(written):
     assert ws.store.submission('s0006').name == "Finley Dummond" and ws.store.submission('s0006').student == ''
     identity.set_who(ws, 's0006', "", author='t')
     assert ws.store.submission('s0006').name == ""
+    # "Name, ID" as the page starts typing from what was read: the roster person when both
+    # match, else kept as typed with its ID
+    assert identity.set_who(ws, 's0006', "gray placeholt, 96174385", author='t')['key'] == gray['key']
+    body = identity.set_who(ws, 's0006', "Finley Dummond, 95830142", author='t')
+    assert (body['name'], body['id']) == ("Finley Dummond", "95830142")
+    assert identity.set_who(ws, 's0006', "Dummond, Finley", author='t')['name'] == "Dummond, Finley"
+    identity.set_who(ws, 's0006', "", author='t')
     assert ws.sync_roster() == 10 and ws.store.submission('s0007').student == "96174385"
 
 

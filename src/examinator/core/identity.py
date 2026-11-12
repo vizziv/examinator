@@ -169,9 +169,15 @@ def set_who(ws, sid: str, text: str, *, author: str | None, expect_rev: Any = AN
         body = {'name': "", 'id': "", 'email': ""}
         rev = None
     else:
-        person = next((p for p in people(ws) if text in (label(p), p['key'])), None)
+        roster = people(ws)
+        person = next((p for p in roster if text in (label(p), p['key'])), None)
+        # "Name, ID" (what the page starts typing from): that person if both match, else kept as typed
+        name, comma, id = text.rpartition(',')
+        name, id = (name.strip(), id.strip()) if comma and looks_like_id(id.strip()) else (text, "")
+        if person is None and id:
+            person = next((p for p in roster if p['id'] == id and fold(p['name']) == fold(name)), None)
         body = ({'name': person['name'], 'id': person['id'], 'email': person['email'], 'key': person['key']}
-                if person else {'name': text, 'id': "", 'email': ""})
+                if person else {'name': name, 'id': id, 'email': ""})
         rev = ws.store.write(sid, '', WHO, body, origin='manual', author=author, expect_rev=expect_rev).rev
     ws.store.put_submissions([Submission(s.id, body['name'], body['email'], s.pdf, body['id'])])
     return {**body, 'rev': rev}
@@ -262,8 +268,8 @@ def by_roster(fields: Sequence[Identity], read: Mapping[str, str | None]) -> dic
 # --- proposing: pure ------------------------------------------------------------------
 
 DOUBTS = {'agree': "both agree", 'id': "ID only", 'name': "name only", 'disagree': "they disagree",
-          'nobody': "nobody close", 'unread': "not read"}
-ORDER = ('disagree', 'nobody', 'unread', 'name', 'id', 'agree')     # most doubtful first
+          'nobody': "nobody close", 'empty': "empty", 'unread': "not read yet"}
+ORDER = ('disagree', 'nobody', 'empty', 'unread', 'name', 'id', 'agree')     # most doubtful first
 NAME_CLOSE = 0.8        # a name this similar points to a person ...
 NAME_MARGIN = 0.05      # ... if nobody else is within this of it
 NAME_SOME = 0.6         # below this a name is no evidence at all
@@ -487,7 +493,9 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
                 matcher = matcher or Matcher(roster)
                 prop = matcher.propose(by_roster(fields, got))
             else:
-                prop = {'doubt': 'nobody' if any(got.values()) else 'unread', 'candidates': []}
+                # every box read and none had anything: empty, not unread
+                blank = r is not None and len(got) == len(fields) and not (r.body or {}).get('failed')
+                prop = {'doubt': 'nobody' if any(got.values()) else 'empty' if blank else 'unread', 'candidates': []}
             cache[ck] = prop
         prop = {'doubt': prop['doubt'],
                 'candidates': [{**c, 'taken': other(c['key'], sid)} for c in prop['candidates']]}

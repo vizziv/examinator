@@ -205,7 +205,8 @@ def test_names_read_confirm_cycle_skip(site):
 
 def test_reading_names_needs_a_model(make_site):
     client, token, ws, paths = make_site(model=False)
-    assert 'data-action="names-read"' not in client.get('/scans').text
+    html = client.get('/scans').text
+    assert 'data-model=""' in html and 'data-action="names-read" title="no model"' in html    # shown, dimmed
     assert post(client, token, '/scans/names/read', {}).status_code == 400
 
 
