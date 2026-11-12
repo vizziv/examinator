@@ -161,6 +161,7 @@
     renderStep();
     renderRows();
     Actions.hints();
+    Actions.enable($('names'));
   }
 
   tab(pref('scansTab', 'split') === 'names' ? 'names' : 'split');

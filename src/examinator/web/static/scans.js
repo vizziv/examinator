@@ -170,18 +170,27 @@
       if (i >= 0 && i < plan.n) { const im = new Image(); im.src = sheet(i, w); }
     }
   }
+  // One exam's badges, the same wherever it is shown.
+  const STATE = {made: ['good', 'written', 'on disk as planned'], changed: ['warn', 'to rewrite', 'on disk, but the plan has changed since: Accept rewrites it'],
+                 new: ['warn', 'to write', 'not on disk yet: Accept writes it']};
+  function badges(e) {
+    const tag = (cls, text, title) => make('span', {className: 'tag ' + cls, textContent: text, title: title || ''});
+    const [cls, text, title] = STATE[e.state];
+    return [e.confirmed ? tag('good', 'confirmed', 'its first page is confirmed') : tag('ask', 'guess', 'its first page is a guess'),
+            tag(cls, text, title), ...e.doubts.map(d => tag('bad', d)), e.own ? tag('accent2', 'turned') : ''];
+  }
   function renderStep() {
     const E = plan.entries, finished = done();
     $('st-done').hidden = !finished;
     $('st-pages').hidden = finished;
     $('st-k').textContent = finished ? 'done' : `exam ${k + 1} of ${E.length}`;
-    $('st-done-sum').textContent = finished ? `${E.length} exams` : '';
+    const towrite = E.filter(e => e.state !== 'made').length + plan.removed.length;
+    $('st-done-sum').textContent = !finished ? '' : towrite ? `Accept writes them (${towrite} to write).` : 'All written.';
     const tags = [];
     let before = '';
     if (!finished) {
       const e = E[k], s = firstOf(e);
-      tags.push(make('span', {className: e.confirmed ? 'tag good' : 'tag ask', textContent: e.confirmed ? 'confirmed' : 'guess'}));
-      if (e.own) tags.push(make('span', {className: 'tag accent2', textContent: 'turned'}));
+      tags.push(...badges(e));
       figure($('st-a'), s - 1, 360, 'before');
       figure($('st-b'), s, 1000, 'first page?');
       figure($('st-c'), s + 1, 360, 'after');
@@ -235,7 +244,8 @@
   function renderRows() {
     const E = plan.entries;
     const order = E.map((e, j) => j);
-    const look = j => (E[j].doubts.length || E[j].state === 'changed' ? 0 : 1);
+    const look = j => (E[j].doubts.length || !E[j].confirmed ? 0 : 1);
+    const here = done() ? -1 : k;
     order.sort((a, b) => look(a) - look(b) || a - b);
     const names = {};
     for (const e of E) if (e.name) names[e.name] = (names[e.name] || 0) + 1;
@@ -244,10 +254,7 @@
       const head = make('div', {className: 'rhead'},
         button(`#${j + 1}`, 'step through from here', () => { k = j; render(); $('step').scrollIntoView({block: 'nearest'}); }),
         e.id ? make('code', {textContent: e.id}) : '',
-        make('span', {className: 'tag ' + {made: 'good', changed: 'warn', new: ''}[e.state], textContent: {made: 'written', changed: 'changed', new: 'new'}[e.state]}),
-        e.confirmed ? '' : make('span', {className: 'tag ask', textContent: 'guess'}),
-        ...e.doubts.map(d => make('span', {className: 'tag bad', textContent: d})),
-        e.own ? make('span', {className: 'tag accent2', textContent: 'turned'}) : '',
+        ...badges(e),
         e.name && names[e.name] > 1 ? make('span', {className: 'tag warn', textContent: 'name twice'}) : '',
         make('span', {className: 'grow'}),
         whoInput(e),
@@ -259,7 +266,7 @@
         if (!n) fig.classList.add('first');
         return fig;
       }), ...nameCrops(e));
-      const row = make('div', {className: 'srow' + (look(j) ? '' : ' look')}, head, sheets);
+      const row = make('div', {className: 'srow' + (look(j) ? '' : ' look') + (j === here ? ' here' : '')}, head, sheets);
       return row;
     });
     $('rows').replaceChildren(...rows);
@@ -286,6 +293,7 @@
     renderStep();
     renderRows();
     Actions.hints();
+    Actions.enable($('split'));
   }
 
   pick.addEventListener('change', () => load(pick.value));

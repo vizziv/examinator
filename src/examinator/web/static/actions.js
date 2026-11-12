@@ -188,6 +188,13 @@ const Actions = (() => {
       kbd.textContent = display(combos[0]);
     }
   }
+  // Buttons under `root` whose action cannot run now are disabled, so a key that would do
+  // nothing looks it. For pages that call this whenever their state changes.
+  function enable(root) {
+    for (const el of root.querySelectorAll('button[data-action]')) {
+      if (registry.has(el.dataset.action)) el.disabled = !available(el.dataset.action, {el, target: el});
+    }
+  }
   document.addEventListener('DOMContentLoaded', () => hints());
   addEventListener('storage', e => { if (e.key === 'keys') hints(); });
 
@@ -197,6 +204,6 @@ const Actions = (() => {
     available: () => !!document.getElementById('home') && !document.getElementById('grid'),
     run: () => document.getElementById('home').click()});
 
-  return {register, has, trigger, available, hints, settings, saveSettings, bindings, keymap, rebind,
+  return {register, has, trigger, available, hints, enable, settings, saveSettings, bindings, keymap, rebind,
           comboOf, display, isSingle, typing, CATALOG, PRESETS};
 })();
