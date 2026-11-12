@@ -30,6 +30,11 @@ One list, kept current. Design background is in [`DESIGN.md`](DESIGN.md); its
   `reads`, `verify=`) changes nothing until the parse is run again. Outdating
   is still per parse: editing one field of a shared information question
   outdates every check that read any of its fields (a recheck settles it).
+- **Leave it unset in code, set it in the app.** A handwritten field's region
+  may already be absent in code and drawn in the app. A printed field's may
+  not (the exam fails to load): allow it, with the field simply not read until
+  its region is set. Check the same for other things worth punting (pages,
+  `reads`). Setting them in code stays the normal way.
 - The guide's code blocks are checked by hand, not by a test.
 
 ## Future
