@@ -132,7 +132,7 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
     """The commands that work on an open workspace."""
     if args.cmd == 'intake':
         return intake_cmd(args, exam, ws)
-    ws.sync_roster()
+    ws.sync()
     for s in overrides.refresh(exam, ws.store):
         print(f"override not applied: {s.path}: {s.reason}", file=sys.stderr)
     if args.cmd == 'compare':

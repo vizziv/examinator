@@ -2,23 +2,18 @@
 
     workspace/
       sources/     scanned PDFs as added, many submissions each (intake: `core.intake`)
-      pdfs/        ID.pdf per submission, plus (for PDFs handed in already split) one roster file
+      pdfs/        ID.pdf per submission
       exam.sqlite
       cache/       rendered pages
       exports/
 
-Every submission is named the same way: by its pick (`core.identity`), made on
-the scans page. PDFs handed in already split may come with a roster file, either
-the scanning service's YAML metadata (file name to a list of submitters with
-names and emails) or a CSV with `Submission ID`, `First Name`, `Last Name`,
-`Email`. It is one more way in: `sync_roster` turns its names into picks for
-submissions that never had one. At most one such file may be present.
+Every submission is named by its pick (`core.identity`), made on the scans
+page. For PDFs handed in already split there is one programmatic way in: a file
+name that carries a roster ID (`identity.by_file`).
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
-from typing import Any
 
 from PIL import Image
 
@@ -26,40 +21,6 @@ from ..pdf.layout import Layout
 from ..pdf.render import Renderer
 from .defs import Exam, Question, Region
 from .store import Store, Submission
-
-
-class RosterError(ValueError):
-    pass
-
-
-def _get(d: dict, key: str) -> Any:
-    return d.get(key, d.get(':' + key))
-
-
-def read_submitters(pdfs: Path) -> dict[str, tuple[str, str]]:
-    """Submission id -> (name, email), from the roster file in `pdfs` if there is
-    one (the scanning service's list of who submitted which PDF)."""
-    files = sorted(p for p in pdfs.iterdir() if p.suffix.lower() in ('.yml', '.yaml', '.csv'))
-    if len(files) > 1:
-        raise RosterError(f"expected at most one roster file (YAML or CSV) in {pdfs}, found {len(files)}")
-    out: dict[str, tuple[str, str]] = {}
-    if not files:
-        return out
-    f = files[0]
-    if f.suffix.lower() == '.csv':
-        with f.open(newline='', encoding='utf-8-sig') as fh:
-            for row in csv.DictReader(fh):
-                name = f"{row.get('First Name', '').strip()} {row.get('Last Name', '').strip()}".strip()
-                out[row['Submission ID'].strip()] = (name, row.get('Email', '').strip())
-    else:
-        import yaml
-        data = yaml.safe_load(f.read_text(encoding='utf-8')) or {}
-        for filename, entry in data.items():
-            people = _get(entry or {}, 'submitters') or []
-            names = "; ".join(str(_get(p, 'name') or "") for p in people)
-            emails = "; ".join(str(_get(p, 'email') or "") for p in people)
-            out[Path(str(filename)).stem] = (names, emails)
-    return out
 
 
 class Workspace:
@@ -79,16 +40,13 @@ class Workspace:
     def close(self) -> None:
         self.store.close()
 
-    def sync_roster(self) -> int:
-        """Record every PDF in `pdfs/` as a submission, named by its pick. A name in
-        the roster file becomes the pick of a submission that never had one."""
+    def sync(self) -> int:
+        """Record every PDF in `pdfs/` as a submission, named by its pick."""
         from . import identity
         pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink()]
         known = {s.id for s in self.store.submissions()}
         self.store.put_submissions([Submission(p.stem, "", "", p.name) for p in pdfs if p.stem not in known])
-        for sid, (name, email) in read_submitters(self.pdfs).items():
-            if sid in {p.stem for p in pdfs} and (name or email):
-                identity.take(self, sid, name, email)
+        identity.by_file(self)
         self.store.put_submissions([identity.submission(self, p.stem, p.name) for p in pdfs])
         return len(pdfs)
 

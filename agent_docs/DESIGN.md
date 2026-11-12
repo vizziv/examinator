@@ -41,7 +41,7 @@ my_exam/                  an exam package (lives wherever the user keeps exams)
 
 workspace/                one exam's data (never in a repository)
   sources/  scanned stacks as added (intake)
-  pdfs/  ID.pdf, plus roster metadata for PDFs handed in already split
+  pdfs/  ID.pdf per submission
   exam.sqlite
   cache/  exports/
 ```
@@ -577,11 +577,12 @@ submission into `pdfs/`; everything downstream is unchanged.
     dropped. Computed on read, cached by reading revision and roster.
   - **Picking**: every submission is named by its pick `(submission, '', 'who')`
     (`{'name', 'id', 'email', 'key'}`), written by a person against the
-    revision they saw. One other way in: PDFs handed in already split may sit
-    beside a roster file (who submitted which PDF); `sync_roster` turns its
-    names into picks (`identity.take`, origin `'auto'`) for submissions that
-    never had one, so they show on the Names tab as verified and are changed
-    there like any other. The
+    revision they saw. One programmatic way in, for PDFs handed in already
+    split: a file name carrying exactly one roster ID as a whole run of
+    letters and digits (`identity.by_file`, on `sync` and when the roster is
+    saved) becomes the pick (origin `'auto'`) of a submission that never had
+    one; it shows on the Names tab as verified and is changed there like any
+    other. The
     submission row carries the name, email and the student ID (`student`).
     The Names tab steps through unnamed exams, most doubtful first (V take,
     A/D other proposals, W/S back/skip, E type), and lists roster entries

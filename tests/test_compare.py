@@ -25,7 +25,7 @@ def test_compare_runs_both_modes_and_leaves_the_store_alone(tmp_path):
     exam = load_exam(TOY)
     root = synth.generate(exam, tmp_path / 'ws', synth.load_cases(exam))
     ws = Workspace(root, exam)
-    ws.sync_roster()
+    ws.sync()
     subs = [s.id for s in ws.store.submissions()][:2]
     qid = next(q.id for q in exam.questions.values() if any(f.region for f in q.fields))
     boxes = sum(1 for f in exam.questions[qid].fields if f.region)
@@ -54,7 +54,7 @@ def test_compare_runs_both_modes_and_leaves_the_store_alone(tmp_path):
 def test_compare_reports_failures_without_model_text(tmp_path):
     exam = load_exam(TOY)
     ws = Workspace(synth.generate(exam, tmp_path / 'ws', synth.load_cases(exam)), exam)
-    ws.sync_roster()
+    ws.sync()
 
     class Broken:
         def complete(self, prompt, **kw):

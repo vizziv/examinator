@@ -34,7 +34,7 @@ def test_no_answer_key_in_any_prompt(tmp_path):
     exam = load_exam(TOY)
     root = synth.generate(exam, tmp_path / 'ws', synth.load_cases(exam))
     ws = Workspace(root, exam)
-    ws.sync_roster()
+    ws.sync()
     model = synth.fake_model(root)
     runner = Runner(exam, ws, model=model)
     try:

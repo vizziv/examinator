@@ -396,7 +396,7 @@ def env(exam, pkg, tmp_path):
     case = synth.Case('synthetic', variants=pkg('versions').VERSIONS[0], answers=f.canonical(0))
     root = synth.generate(exam, tmp_path / 'ws', [case])
     ws = Workspace(root, exam)
-    ws.sync_roster()
+    ws.sync()
     runner = Runner(exam, ws, model=synth.fake_model(root))
     yield ws, runner
     runner.close()
@@ -469,7 +469,7 @@ def test_unresolved_variant_is_undecided_until_a_grader_chooses(exam, pkg, tmp_p
                       readings={'q9_observations': '[14, 11, 15]'})        # disagrees with the other cue
     root = synth.generate(exam, tmp_path / 'ws', [case])
     ws = Workspace(root, exam)
-    ws.sync_roster()
+    ws.sync()
     runner = Runner(exam, ws, model=synth.fake_model(root))
     try:
         q = exam.questions['q5']
@@ -495,7 +495,7 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
     cases = [synth.Case(f'v{alt}', variants=versions.VERSIONS[alt], answers=f.canonical(alt)) for alt in (0, 7)]
     root = synth.generate(exam, tmp_path / 'ws', cases)
     ws = Workspace(root, exam)
-    ws.sync_roster()
+    ws.sync()
     model = synth.fake_model(root)
     runner = Runner(exam, ws, model=model)
     try:

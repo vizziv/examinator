@@ -153,7 +153,7 @@ def test_cues_combine_into_a_printing(exam, pkg, tmp_path):
                         readings={**v.readings(5), 'q7_quantile': 'median'})]
     root = synth.generate(exam, tmp_path / 'ws', cases)
     ws = Workspace(root, exam)
-    ws.sync_roster()
+    ws.sync()
     runner = Runner(exam, ws, model=synth.fake_model(root))
     try:
         q = exam.questions['q5']
@@ -375,7 +375,7 @@ def test_work_is_decided_by_a_person(exam, pkg, tmp_path):
     case = synth.Case(S, variants=v.VERSIONS[0], answers={'q7': f.ANSWERS['q7']['original']}, readings=v.readings(0))
     root = synth.generate(exam, tmp_path / 'ws', [case])
     ws = Workspace(root, exam)
-    ws.sync_roster()
+    ws.sync()
     runner = Runner(exam, ws, model=synth.fake_model(root))
     try:
         q = exam.questions['q7']
@@ -536,7 +536,7 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
              for alt in (0, 7)]
     root = synth.generate(exam, tmp_path / 'ws', cases)
     ws = Workspace(root, exam)
-    ws.sync_roster()
+    ws.sync()
     model = synth.fake_model(root)
     runner = Runner(exam, ws, model=model)
     try:

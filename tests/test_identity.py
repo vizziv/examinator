@@ -279,7 +279,7 @@ def test_picks_confirm_flag_twice_and_name_submissions(written):
     assert (body['name'], body['id']) == ("Finley Dummond", "95830142")
     assert identity.set_who(ws, 's0006', "Dummond, Finley", author='t')['name'] == "Dummond, Finley"
     identity.set_who(ws, 's0006', "", author='t')
-    assert ws.sync_roster() == 10 and ws.store.submission('s0007').student == "96174385"
+    assert ws.sync() == 10 and ws.store.submission('s0007').student == "96174385"
 
 
 def test_rewriting_a_submission_drops_what_was_read_but_keeps_the_pick(written):

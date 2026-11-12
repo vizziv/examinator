@@ -130,7 +130,7 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
     cases = [synth.Case(f'v{alt}', variants=versions.VERSIONS[alt], answers=f.canonical(alt)) for alt in (0, 1)]
     root = synth.generate(exam, tmp_path / 'ws', cases)
     ws = Workspace(root, exam)
-    ws.sync_roster()
+    ws.sync()
     model = synth.fake_model(root)
     runner = Runner(exam, ws, model=model)
     try:

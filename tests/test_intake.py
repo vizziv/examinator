@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 from examinator import Exam, Landmark, Region, load_exam, synth
 from examinator.core import identity, intake, split
 from examinator.core.store import Conflict
-from examinator.core.workspace import Workspace, RosterError
+from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
 from examinator.pdf import pages as pdf_pages, render
 from examinator.pdf.orient import HALF, QUARTER, Orient
@@ -149,7 +149,7 @@ def test_accept_copies_pages_untouched_and_the_fast_path_applies(stacked, monkey
     assert taken
     # downstream: a submission like any other, no roster file needed
     assert [s.id for s in ws.store.submissions()] == report['new']
-    assert ws.sync_roster() == 6
+    assert ws.sync() == 6
     assert intake.state(ws, one.id) == ['made'] * 6
     # no cover sheets in a raw stack: each written submission says so, whatever the workspace default
     ws.set_defaults(cover_pages=1)
@@ -260,7 +260,7 @@ def test_roster_and_names(stacked):
     p = identity.people(ws)[2]
     identity.set_who(ws, 's0003', identity.label(p), author='t')
     assert ws.store.submission('s0003').name == "Casey Stubbs"
-    assert ws.sync_roster() == 6 and ws.store.submission('s0003').email == p['email']
+    assert ws.sync() == 6 and ws.store.submission('s0003').email == p['email']
     assert ws.store.submission('s0003').student == p['id']
     identity.set_who(ws, 's0004', "Someone Unlisted", author='t')
     assert ws.store.submission('s0004').name == "Someone Unlisted"
@@ -271,35 +271,21 @@ def test_roster_and_names(stacked):
     assert identity.parse_roster("First Name,Last Name\nAda,Lovelace\n")[0]['name'] == "Ada Lovelace"
 
 
-def test_handed_pdfs_are_named_by_picks_like_any_other(tmp_path, toy):
-    """A roster file beside pre-split PDFs is one more way in to the same picks."""
+def test_handed_pdfs_wait_on_names_unless_the_file_name_carries_an_id(tmp_path, toy):
     root = synth.generate(toy, tmp_path / 'ws', synth.load_cases(toy))
+    pdfs = sorted((root / 'pdfs').glob('*.pdf'))
+    pdfs[0].rename(pdfs[0].with_name('quiz-90000002.pdf'))      # the second person's ID
+    pdfs[1].rename(pdfs[1].with_name('90000001_90000003.pdf'))  # two IDs: nobody
     ws = Workspace(root, toy)
-    n = ws.sync_roster()
-    subs = ws.store.submissions()
-    view = identity.overview(ws)
-    assert n == len(subs) == len(view['rows']) and view['left'] == 0
-    one = subs[0]
-    assert one.name and identity.who(ws, one.id)['name'] == one.name
-    # a person's word stands: a changed or cleared pick is not taken from the file again
-    identity.set_who(ws, one.id, "Someone Else", author='t')
-    identity.set_who(ws, subs[1].id, "", author='t')
-    ws.sync_roster()
-    assert ws.store.submission(one.id).name == "Someone Else" and ws.store.submission(subs[1].id).name == ""
-    assert identity.overview(ws)['left'] == 1
-    ws.close()
-
-
-def test_handed_pdfs_without_a_roster_file_wait_on_names(tmp_path, toy):
-    root = synth.generate(toy, tmp_path / 'ws', synth.load_cases(toy))
-    (root / 'pdfs' / 'roster.csv').rename(root / 'roster-elsewhere.csv')
-    ws = Workspace(root, toy)
-    n = ws.sync_roster()
+    n = ws.sync()
     assert identity.overview(ws)['left'] == n and all(not s.name for s in ws.store.submissions())
-    (root / 'pdfs' / 'a.csv').write_text("Submission ID,First Name,Last Name,Email\n")
-    (root / 'pdfs' / 'b.csv').write_text("Submission ID,First Name,Last Name,Email\n")
-    with pytest.raises(RosterError):
-        ws.sync_roster()
+    identity.set_roster(ws, (root / 'roster.csv').read_text())
+    assert ws.store.submission('quiz-90000002').name == "Synthetic Student 02"
+    assert identity.overview(ws)['left'] == n - 1
+    # a person's word stands: a cleared pick is not taken from the file name again
+    identity.set_who(ws, 'quiz-90000002', "", author='t')
+    ws.sync()
+    assert ws.store.submission('quiz-90000002').name == "" and identity.overview(ws)['left'] == n
     ws.close()
 
 

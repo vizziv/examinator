@@ -264,9 +264,9 @@ def _generate(exam: Exam, root: Path, cases: list[Case]) -> Path:
     pdfs.mkdir(mode=0o700)
     renderer = Renderer(root / 'cache' / 'blanks', dpi=100)
     script = {}
-    with (pdfs / 'roster.csv').open('w', newline='') as fh:
+    with (root / 'roster.csv').open('w', newline='') as fh:
         w = csv.writer(fh)
-        w.writerow(['Submission ID', 'First Name', 'Last Name', 'Email'])
+        w.writerow(['Name', 'Student ID', 'Email'])
         for i, case in enumerate(cases, 1):
             printed = _printed_pages(exam, case, renderer)
             _draw_answers(exam, case, printed)
@@ -275,7 +275,7 @@ def _generate(exam: Exam, root: Path, cases: list[Case]) -> Path:
             scan = _scan(exam, printed)
             scan[0].save(pdfs / f'{case.name}.pdf', 'PDF', save_all=True,
                          append_images=scan[1:], resolution=100.0)
-            w.writerow([case.name, "Synthetic", f"Student {i:02d}", f"synthetic{i:02d}@example.invalid"])
+            w.writerow([f"Synthetic Student {i:02d}", f"9{i:07d}", f"synthetic{i:02d}@example.invalid"])
             script[case.name] = script_for(exam, case)
     (root / SCRIPT).write_text(json.dumps(script, indent=1))
     return root
@@ -310,7 +310,7 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
     cases = load_cases(exam) if cases is None else cases
     generate(exam, root, cases)
     ws = Workspace(root, exam)
-    ws.sync_roster()
+    ws.sync()
     runner = Runner(exam, ws, model=fake_model(root))
     problems = []
     try:

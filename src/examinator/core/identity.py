@@ -3,7 +3,7 @@ students write who they are, ranked proposals, and the person a grader picks.
 
     setting 'people'                  the roster: [{'name', 'id', 'email', 'key'}]
     artifact (sub, '', 'identity')    what the model read: {'fields': {box: text | None}, 'basis': {box: digest}}
-    artifact (sub, '', 'who')         the pick: a person's, or a name that came with the PDF: {'name', 'id', 'email', 'key'?}
+    artifact (sub, '', 'who')         the pick: a person's, or from an ID in the file name: {'name', 'id', 'email', 'key'?}
 
 The boxes are the exam's `Identity` declarations. Reading is memoised per
 submission, box and scan layout, so reading again is free. Proposals are
@@ -128,6 +128,7 @@ def parse_roster(text: str) -> list[dict]:
 def set_roster(ws, text: str) -> int:
     people = parse_roster(text)
     ws.store.set_setting('people', people)
+    by_file(ws)
     return len(people)
 
 
@@ -183,16 +184,23 @@ def set_who(ws, sid: str, text: str, *, author: str | None, expect_rev: Any = AN
     return {**body, 'rev': rev}
 
 
-def take(ws, sid: str, name: str, email: str) -> None:
-    """A name that came with the PDF (a scanning service's list of submitters)
-    becomes the pick, unless the submission has or ever had one: a person's
-    word, clearing included, stands. The roster entry with that email, if any."""
-    if ws.store.get(sid, '', WHO) is not None or ws.store.history(sid, '', WHO):
-        return
-    person = next((p for p in people(ws) if email and fold(p['email']) == fold(email)), None)
-    body = ({'name': person['name'], 'id': person['id'], 'email': person['email'], 'key': person['key']}
-            if person else {'name': name, 'id': "", 'email': email})
-    ws.store.write(sid, '', WHO, body, origin='auto', expect_rev=None)
+def by_file(ws) -> int:
+    """The programmatic way to name submissions: a PDF whose file name carries
+    exactly one roster ID, as a whole run of letters and digits ("31415926.pdf",
+    "quiz-31415926.pdf"), is picked for that person, unless the submission has
+    or ever had a pick: a person's word, clearing included, stands."""
+    ids = {fold(p['id']): p for p in people(ws) if p['id']}
+    n = 0
+    for s in ws.store.submissions() if ids else ():
+        found = {t for t in re.findall(r'[^\W_]+', fold(s.id)) if t in ids}
+        if len(found) != 1 or ws.store.get(s.id, '', WHO) is not None or ws.store.history(s.id, '', WHO):
+            continue
+        p = ids[found.pop()]
+        body = {'name': p['name'], 'id': p['id'], 'email': p['email'], 'key': p['key']}
+        ws.store.write(s.id, '', WHO, body, origin='auto', expect_rev=None)
+        ws.store.put_submissions([Submission(s.id, p['name'], p['email'], s.pdf, p['id'])])
+        n += 1
+    return n
 
 
 # --- reading the boxes ----------------------------------------------------------------
