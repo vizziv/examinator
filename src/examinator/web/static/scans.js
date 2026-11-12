@@ -62,7 +62,7 @@
     $('n-names').textContent = names && names.n ? `(${names.left ? `${names.left} unverified` : 'done'})` : '';
     const off = tabs.find(b => b.dataset.tab === 'names');
     off.classList.toggle('off', !made);
-    off.title = made ? 'who wrote each submission' : 'Names needs accepted submissions';
+    off.title = made ? 'who wrote each submission' : 'Names needs submissions';
     $('next').textContent = nextThing(open, write);
   }
   function nextThing(open, write) {

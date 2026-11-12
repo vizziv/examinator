@@ -3,7 +3,7 @@ students write who they are, ranked proposals, and the person a grader picks.
 
     setting 'people'                  the roster: [{'name', 'id', 'email', 'key'}]
     artifact (sub, '', 'identity')    what the model read: {'fields': {box: text | None}, 'basis': {box: digest}}
-    artifact (sub, '', 'who')         the pick, always a person's: {'name', 'id', 'email', 'key'?}
+    artifact (sub, '', 'who')         the pick: a person's, or a name that came with the PDF: {'name', 'id', 'email', 'key'?}
 
 The boxes are the exam's `Identity` declarations. Reading is memoised per
 submission, box and scan layout, so reading again is free. Proposals are
@@ -183,6 +183,18 @@ def set_who(ws, sid: str, text: str, *, author: str | None, expect_rev: Any = AN
     return {**body, 'rev': rev}
 
 
+def take(ws, sid: str, name: str, email: str) -> None:
+    """A name that came with the PDF (a scanning service's list of submitters)
+    becomes the pick, unless the submission has or ever had one: a person's
+    word, clearing included, stands. The roster entry with that email, if any."""
+    if ws.store.get(sid, '', WHO) is not None or ws.store.history(sid, '', WHO):
+        return
+    person = next((p for p in people(ws) if email and fold(p['email']) == fold(email)), None)
+    body = ({'name': person['name'], 'id': person['id'], 'email': person['email'], 'key': person['key']}
+            if person else {'name': name, 'id': "", 'email': email})
+    ws.store.write(sid, '', WHO, body, origin='auto', expect_rev=None)
+
+
 # --- reading the boxes ----------------------------------------------------------------
 
 IDENTITY_PROMPT = """\
@@ -245,12 +257,12 @@ def readings(fields: Sequence[Identity], body: Mapping | None) -> dict[str, str 
 
 
 def unread(ws) -> list[str]:
-    """Written submissions whose boxes still need reading: some box has no reading
+    """Submissions whose boxes still need reading: some box has no reading
     under its current declaration, or a call failed last time."""
     fields = ws.exam.identity
     reads = {a.submission: a.body for a in ws.store.all(kinds=[READ])}
-    return [s for s in sorted(ws.store.made())
-            if len(readings(fields, reads.get(s))) < len(fields) or (reads.get(s) or {}).get('failed')]
+    return [s.id for s in ws.store.submissions()
+            if len(readings(fields, reads.get(s.id))) < len(fields) or (reads.get(s.id) or {}).get('failed')]
 
 
 def by_roster(fields: Sequence[Identity], read: Mapping[str, str | None]) -> dict[str, str | None]:
@@ -457,7 +469,7 @@ def propose(read: Mapping[str, str | None], roster: Sequence[Mapping], *,
 CACHE_LIMIT = 20_000        # proposals an overview cache holds before it starts again
 
 def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None) -> dict:
-    """Every written submission (or `subs`) with what was read, the proposal and
+    """Every submission (or `subs`) with what was read, the proposal and
     the pick, most doubtful unconfirmed first, then the confirmed ones; and the
     roster entries nobody is picked for. `cache`, a dict the caller keeps,
     remembers proposals by reading revision and roster."""
@@ -468,9 +480,9 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
     cache = {} if cache is None else cache
     if len(cache) > CACHE_LIMIT:
         cache.clear()
-    made = ws.store.made()
-    ids = sorted(made) if subs is None else [s for s in subs if s in made]
-    picks = {a.submission: a for a in ws.store.all(kinds=[WHO]) if a.submission in made}
+    known = [s.id for s in ws.store.submissions()]
+    ids = known if subs is None else [s for s in subs if s in set(known)]
+    picks = {a.submission: a for a in ws.store.all(kinds=[WHO]) if a.submission in set(known)}
     reads = {a.submission: a for a in ws.store.all(kinds=[READ])}
     taken: dict[str, list[str]] = {}
     for sid, a in picks.items():

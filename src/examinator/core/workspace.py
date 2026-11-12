@@ -7,11 +7,12 @@
       cache/       rendered pages
       exports/
 
-PDFs handed in already split come with a roster: either the scanning service's
-YAML metadata (file name to a list of submitters with names and emails) or a
-CSV with `Submission ID`, `First Name`, `Last Name`, `Email`. Exactly one must
-be present then. Submissions written by intake are named on the scans page
-instead, and need no roster file.
+Every submission is named the same way: by its pick (`core.identity`), made on
+the scans page. PDFs handed in already split may come with a roster file, either
+the scanning service's YAML metadata (file name to a list of submitters with
+names and emails) or a CSV with `Submission ID`, `First Name`, `Last Name`,
+`Email`. It is one more way in: `sync_roster` turns its names into picks for
+submissions that never had one. At most one such file may be present.
 """
 from __future__ import annotations
 
@@ -36,13 +37,15 @@ def _get(d: dict, key: str) -> Any:
 
 
 def read_submitters(pdfs: Path) -> dict[str, tuple[str, str]]:
-    """Submission id -> (name, email), from the one roster file in `pdfs` (the
-    scanning service's list of who submitted which PDF)."""
+    """Submission id -> (name, email), from the roster file in `pdfs` if there is
+    one (the scanning service's list of who submitted which PDF)."""
     files = sorted(p for p in pdfs.iterdir() if p.suffix.lower() in ('.yml', '.yaml', '.csv'))
-    if len(files) != 1:
-        raise RosterError(f"expected exactly one roster file (YAML or CSV) in {pdfs}, found {len(files)}")
-    f = files[0]
+    if len(files) > 1:
+        raise RosterError(f"expected at most one roster file (YAML or CSV) in {pdfs}, found {len(files)}")
     out: dict[str, tuple[str, str]] = {}
+    if not files:
+        return out
+    f = files[0]
     if f.suffix.lower() == '.csv':
         with f.open(newline='', encoding='utf-8-sig') as fh:
             for row in csv.DictReader(fh):
@@ -77,27 +80,17 @@ class Workspace:
         self.store.close()
 
     def sync_roster(self) -> int:
-        """Record every PDF in `pdfs/` as a submission: named from the roster file,
-        or for one written by intake, from the person picked for it."""
-        from .identity import submission
-        made = self.store.made()
+        """Record every PDF in `pdfs/` as a submission, named by its pick. A name in
+        the roster file becomes the pick of a submission that never had one."""
+        from . import identity
         pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink()]
-        handed = [p for p in pdfs if p.stem not in made]
-        try:
-            roster = read_submitters(self.pdfs)
-        except RosterError:
-            if handed:
-                raise
-            roster = {}
-        subs = []
-        for pdf in pdfs:
-            if pdf.stem in made:
-                subs.append(submission(self, pdf.stem, pdf.name))
-            else:
-                name, email = roster.get(pdf.stem, ("", ""))
-                subs.append(Submission(pdf.stem, name, email, pdf.name))
-        self.store.put_submissions(subs)
-        return len(subs)
+        known = {s.id for s in self.store.submissions()}
+        self.store.put_submissions([Submission(p.stem, "", "", p.name) for p in pdfs if p.stem not in known])
+        for sid, (name, email) in read_submitters(self.pdfs).items():
+            if sid in {p.stem for p in pdfs} and (name or email):
+                identity.take(self, sid, name, email)
+        self.store.put_submissions([identity.submission(self, p.stem, p.name) for p in pdfs])
+        return len(pdfs)
 
     # --- settings: exam defaults until the workspace saves its own ---
 

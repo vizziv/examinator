@@ -548,8 +548,7 @@ submission into `pdfs/`; everything downstream is unchanged.
   list (`Busy`); a forced accept keeps the work and clears that submission's
   model memo. PDFs are written to temporary files and moved into place only
   after the store has committed, so a plan edit in between changes nothing.
-- **Who** (`core/identity.py`). A roster is optional for intake workspaces
-  (still required for PDFs handed in already split). It is stored as a
+- **Who** (`core/identity.py`). A roster is optional. It is stored as a
   setting, `[{'name', 'id', 'email', 'key'}]`, read from a CSV/TSV with a
   header or from plain lines (name and ID, comma or tab, either order; the ID
   is the part with no spaces and a digit). A preview (count, first rows,
@@ -576,8 +575,13 @@ submission into `pdfs/`; everything downstream is unchanged.
     with a reason, and gives a doubt: `agree`, `id`, `name`, `disagree`,
     `nobody`, `unread`. A person already picked elsewhere is flagged, not
     dropped. Computed on read, cached by reading revision and roster.
-  - **Picking**: only a person writes `(submission, '', 'who')`
-    (`{'name', 'id', 'email', 'key'}`, against the revision they saw). The
+  - **Picking**: every submission is named by its pick `(submission, '', 'who')`
+    (`{'name', 'id', 'email', 'key'}`), written by a person against the
+    revision they saw. One other way in: PDFs handed in already split may sit
+    beside a roster file (who submitted which PDF); `sync_roster` turns its
+    names into picks (`identity.take`, origin `'auto'`) for submissions that
+    never had one, so they show on the Names tab as verified and are changed
+    there like any other. The
     submission row carries the name, email and the student ID (`student`).
     The Names tab steps through unnamed exams, most doubtful first (V take,
     A/D other proposals, W/S back/skip, E type), and lists roster entries

@@ -82,7 +82,7 @@ class Failure(Exception):
     'arity' (wrong number of arguments), 'domain' (a math-domain error or an
     invalid probability), 'type' (an operation on the wrong kind of value),
     'unsupported' (an instructor primitive raised `Limitation` or
-    `Unsupported`: a limit of the checker, not the student's mistake), or
+    `Unsupported`: a call the primitive does not handle), or
     'other' (including any other exception from a primitive).
     """
 
@@ -114,10 +114,10 @@ class Budget(Exception):
 
 
 class Limitation(Exception):
-    """Raised by an instructor primitive: "this is not the student's fault".
-
-    For a case the primitive (or the course's checker) does not handle, such
-    as a point of an unexpected size. The interpreter turns it, or an
+    """Raised by an instructor primitive for a call it does not handle, such
+    as a point of an unexpected size. It is still a failed run: a check grades
+    it like any other `Failure` (a grader who finds the call reasonable
+    overrides the grade). The interpreter turns it, or an
     `Unsupported` raised by a primitive, into a Failure of kind 'unsupported'
     with the line and expression of the call. The sample's generator may
     raise it too (from a random primitive's call of it).
@@ -148,7 +148,7 @@ class Primitive:
 
     Errors: `fn` may raise `Failure(message, kind=...)` (the call's line and
     expression are attached), `Budget`, or `Limitation` (kind 'unsupported':
-    not the student's fault). Anything else is a Failure of kind 'other'.
+    a call `fn` does not handle). Anything else is a Failure of kind 'other'.
     """
     fn: Callable
     doc: str

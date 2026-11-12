@@ -980,7 +980,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return page('scans.html', sources=sources, counts=json.dumps(counts),
                     people=[identity.label(p) for p in identity.people(ws)],
                     expected=intake.expected_length(ws), idboxes=json.dumps(boxes), fields=exam.identity,
-                    widths=json.dumps(SHEET_WIDTHS), made=len(made),
+                    widths=json.dumps(SHEET_WIDTHS), made=len(store.submissions()),
                     handed=sum(1 for s in store.submissions() if s.id not in made))
 
     def scans_plan(request: Request) -> Response:
@@ -1075,7 +1075,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def scans_who(request, data):
         sub = store.submission(str(data.get('sub')))
-        if sub is None or sub.id not in store.made():
+        if sub is None:
             raise Bad("unknown submission")
         text = data.get('text')
         if text is not None and not isinstance(text, str):
@@ -1104,7 +1104,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         if not exam.identity:
             raise Bad("the exam declares no identity boxes")
         fresh = bool(data.get('fresh'))
-        subs = sorted(store.made()) if fresh else identity.unread(ws)
+        subs = [s.id for s in store.submissions()] if fresh else identity.unread(ws)
 
         def read(sid):
             identity.read(ws, sid, runner.model, fresh=fresh)

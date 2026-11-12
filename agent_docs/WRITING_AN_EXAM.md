@@ -368,8 +368,11 @@ not called; the error is shown to graders): decide outcomes instead of crashing.
 - Out of budget, `pseudocode.Budget` (`kind` `'steps'`, `'depth'`, `'size'`,
   `'time'` or your own): **undecided**; a grader may run it longer.
 - Could not run, `pseudocode.Unsupported` (outside the language): **undecided**;
-  a grader fixes the parse. To treat a primitive's `Limitation` (`kind ==
-  'unsupported'`) the same way, decide it yourself or pass `checks.draw(undecided=...)`.
+  a grader fixes the parse.
+
+A primitive's `Limitation` is a failed run like any other, so incorrect: the
+student called a helper in a way it does not take. A grader who finds the call
+obviously fine (a typo, an unimplemented but evident helper) overrides the grade.
 
 **Safety rules (not negotiable):**
 
@@ -400,7 +403,7 @@ Other options are `Language(collections=True, vectors=True, extra="...")`
 (lists act as points), and `dataclasses.replace(...)` to change flags; see
 `exams/exam_02/samplers.py`. Primitives use `numeric=True` for math functions,
 and `Constant(value, doc)` for named numbers. A primitive raises
-`pseudocode.Limitation` for "not the student's fault".
+`pseudocode.Limitation` for a call it does not handle (graded incorrect, like any failed run).
 
 In a check: `program = pseudocode.parse(source, LANGUAGE)` (raises `Unsupported`,
 never runs anything), then `program.is_blank('f')` (missing, or only `pass`),

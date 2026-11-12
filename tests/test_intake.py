@@ -271,10 +271,33 @@ def test_roster_and_names(stacked):
     assert identity.parse_roster("First Name,Last Name\nAda,Lovelace\n")[0]['name'] == "Ada Lovelace"
 
 
-def test_handed_pdfs_still_need_their_roster(tmp_path, toy):
+def test_handed_pdfs_are_named_by_picks_like_any_other(tmp_path, toy):
+    """A roster file beside pre-split PDFs is one more way in to the same picks."""
+    root = synth.generate(toy, tmp_path / 'ws', synth.load_cases(toy))
+    ws = Workspace(root, toy)
+    n = ws.sync_roster()
+    subs = ws.store.submissions()
+    view = identity.overview(ws)
+    assert n == len(subs) == len(view['rows']) and view['left'] == 0
+    one = subs[0]
+    assert one.name and identity.who(ws, one.id)['name'] == one.name
+    # a person's word stands: a changed or cleared pick is not taken from the file again
+    identity.set_who(ws, one.id, "Someone Else", author='t')
+    identity.set_who(ws, subs[1].id, "", author='t')
+    ws.sync_roster()
+    assert ws.store.submission(one.id).name == "Someone Else" and ws.store.submission(subs[1].id).name == ""
+    assert identity.overview(ws)['left'] == 1
+    ws.close()
+
+
+def test_handed_pdfs_without_a_roster_file_wait_on_names(tmp_path, toy):
     root = synth.generate(toy, tmp_path / 'ws', synth.load_cases(toy))
     (root / 'pdfs' / 'roster.csv').rename(root / 'roster-elsewhere.csv')
     ws = Workspace(root, toy)
+    n = ws.sync_roster()
+    assert identity.overview(ws)['left'] == n and all(not s.name for s in ws.store.submissions())
+    (root / 'pdfs' / 'a.csv').write_text("Submission ID,First Name,Last Name,Email\n")
+    (root / 'pdfs' / 'b.csv').write_text("Submission ID,First Name,Last Name,Email\n")
     with pytest.raises(RosterError):
         ws.sync_roster()
     ws.close()

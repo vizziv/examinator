@@ -11,7 +11,7 @@
 <button type="button" role="tab" data-tab="add" title="add the scanned PDFs">1 Scans <span class="n">({{ sources|length }})</span></button>
 <button type="button" role="tab" data-tab="split" title="{{ 'cut the scans into submissions' if sources else 'add scans first' }}"{% if not sources %} class="off"{% endif %}>2 Split <span class="n" id="n-split"></span></button>
 <button type="button" role="tab" data-tab="roster" title="who sits the exam">3 Roster <span class="n">({{ people|length }} people)</span></button>
-<button type="button" role="tab" data-tab="names" title="{{ 'who wrote each submission' if made else 'Names needs accepted submissions' }}"{% if not made %} class="off"{% endif %}>4 Names <span class="n" id="n-names"></span></button>
+<button type="button" role="tab" data-tab="names" title="{{ 'who wrote each submission' if made else 'Names needs submissions' }}"{% if not made %} class="off"{% endif %}>4 Names <span class="n" id="n-names"></span></button>
 <span class="dim">→</span>
 <a href="{{ root }}/runs">Runs</a>
 </nav>
