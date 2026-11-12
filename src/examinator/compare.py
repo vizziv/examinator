@@ -29,8 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from .core import variants
-from .core.context import BadOutput, Blocked, Context, Unavailable
+from .core import runner
+from .core.context import BadOutput, Blocked, Unavailable
 from .core.defs import Exam, Question
 from .core.workspace import Workspace
 from .model.client import Client, ModelError
@@ -88,29 +88,6 @@ class _Timed:
             self.calls += 1
 
 
-class _Services:
-    """Pages and crops from the workspace; the memo stays in memory."""
-
-    def __init__(self, ws: Workspace, model: _Timed):
-        self.ws, self._model, self._memo = ws, model, {}
-
-    def pages(self, submission, question):
-        pages, _ = self.ws.selected_pages(submission, question)
-        return [self.ws.page_image(submission, p) for p in pages]
-
-    def crop(self, submission, region):
-        return self.ws.crop(submission, region)
-
-    def model(self, prompt, *, images, text, expect, reasoning, tag):
-        return self._model.complete(prompt, images=images, text=text, expect=expect, reasoning=reasoning, tag=tag)
-
-    def memo(self, submission, key):
-        return self._memo.get((submission, key))
-
-    def set_memo(self, submission, key, value):
-        self._memo[(submission, key)] = value
-
-
 def regions(ws: Workspace, submission: str, q: Question) -> list[tuple[str, Any]]:
     """What an OCR model is shown, one image at a time: `(label, image)`.
     The answer boxes when the question has any, else its pages."""
@@ -122,19 +99,9 @@ def regions(ws: Workspace, submission: str, q: Question) -> list[tuple[str, Any]
 
 
 def _run_stage(ws: Workspace, q: Question, submission: str, model: _Timed) -> str:
+    """The stage as a normal run would run it, with the memo kept in memory."""
     stage = q.stage(STAGE)
-    inputs = {}
-    arts = ws.store.for_question(submission, q.id)
-    for kind in stage.inputs:
-        if kind not in arts:
-            raise Blocked(f"no {kind}")
-        inputs[kind] = arts[kind].body
-    variant = None
-    if q.variants and stage.uses_variant and 'variant' in arts:
-        variant = variants.resolved(arts['variant'].body)
-    _, note = ws.selected_pages(submission, q)
-    ctx = Context(submission=submission, question=q, stage=STAGE, variant=variant, inputs=inputs,
-                  note=note, services=_Services(ws, model))
+    ctx, _ = runner.stage_context(ws, submission, q, stage, runner.Services(ws, model, memo={}))
     out = stage.fn(ctx)
     return out if isinstance(out, str) else json.dumps(out, indent=1, ensure_ascii=False)
 

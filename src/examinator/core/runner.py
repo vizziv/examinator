@@ -50,9 +50,12 @@ class Outcome:
         return self.status == 'done'
 
 
-class _Services:
-    def __init__(self, workspace: Workspace, model: Model | None):
-        self.ws, self._model = workspace, model
+class Services:
+    """What a stage's context reaches: pages and crops from the workspace, the
+    model, and the memo: the store's, or with `memo` (a dict) one kept in memory."""
+
+    def __init__(self, workspace: Workspace, model: Model | None, memo: dict | None = None):
+        self.ws, self._model, self._memo = workspace, model, memo
 
     def pages(self, submission, question):
         pages, _ = self.ws.selected_pages(submission, question)
@@ -68,10 +71,40 @@ class _Services:
                                     reasoning=reasoning, tag=tag)
 
     def memo(self, submission, key):
+        if self._memo is not None:
+            return self._memo.get((submission, key))
         return self.ws.store.memo(submission, key)
 
     def set_memo(self, submission, key, value):
-        self.ws.store.set_memo(submission, key, value)
+        if self._memo is not None:
+            self._memo[(submission, key)] = value
+        else:
+            self.ws.store.set_memo(submission, key, value)
+
+
+def stage_context(ws: Workspace, submission: str, q: Question, stage: Stage, services: Services, *,
+                  arts: Mapping[str, Artifact] | None = None, **kw) -> tuple[Context, dict]:
+    """The context `stage` runs with for one submission, and the revisions of what
+    it reads. Raises `Blocked` when an input is missing, or carries review markers
+    and the stage does not accept them. `kw` goes to the `Context`."""
+    arts = ws.store.for_question(submission, q.id) if arts is None else arts
+    inputs, revs = {}, {}
+    for kind in stage.inputs:
+        a = arts.get(kind)
+        if a is None:
+            raise Blocked(f"no {kind}")
+        if not stage.accepts_markers and has_marker(a.body):
+            raise Blocked(f"{kind} has review markers")
+        inputs[kind], revs[kind] = a.body, a.rev
+    variant = None
+    if q.variants and stage.uses_variant:      # only a stage that declares it sees the variant
+        va = arts.get('variant')
+        variant = variants.resolved(va.body) if va else None
+        revs['variant'] = va.rev if va else None
+    _, note = ws.selected_pages(submission, q)
+    ctx = Context(submission=submission, question=q, stage=stage.name, variant=variant,
+                  inputs=inputs, note=note, services=services, **kw)
+    return ctx, revs
 
 
 class Runner:
@@ -82,7 +115,7 @@ class Runner:
         self.store = workspace.store
         self.model = model
         self.pool = pool if pool is not None else (Pool(exam.path) if exam.path else None)
-        self._services = _Services(workspace, model)
+        self._services = Services(workspace, model)
 
     def close(self) -> None:
         if self.pool is not None:
@@ -116,24 +149,12 @@ class Runner:
         target = arts.get(name)
         if target is not None and target.protected and not overwrite:
             return out('skipped', "protected")
-        inputs, revs = {}, {}
-        for kind in stage.inputs:
-            a = arts.get(kind)
-            if a is None:
-                return out('blocked', f"no {kind}")
-            if not stage.accepts_markers and has_marker(a.body):
-                return out('blocked', f"{kind} has review markers")
-            inputs[kind], revs[kind] = a.body, a.rev
-        variant = None
-        if q.variants and stage.uses_variant:      # only a stage that declares it sees the variant
-            va = arts.get('variant')
-            variant = variants.resolved(va.body) if va else None
-            revs['variant'] = va.rev if va else None
-
-        _, note = self.ws.selected_pages(submission, q)
-        ctx = Context(submission=submission, question=q, stage=name, variant=variant,
-                      inputs=inputs, params=dict(params or {}), note=note,
-                      rerun=target is not None, reasoning=reasoning, services=self._services)
+        try:
+            ctx, revs = stage_context(self.ws, submission, q, stage, self._services, arts=arts,
+                                      params=dict(params or {}), rerun=target is not None, reasoning=reasoning)
+        except Blocked as e:
+            return out('blocked', str(e))
+        variant = ctx.variant
         is_check = name == 'evidence'
         try:
             if is_check and stage.uses_variant and q.variants and variant is None:
