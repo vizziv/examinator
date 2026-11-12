@@ -257,7 +257,7 @@
       if (all && !confirm("Read again, replacing values a person set or verified?")) return null;
       return act('read', {include_protected: all, reasoning: !!$('run-reasoning')?.checked});
     }},
-    check: {run: ({el}) => act('check', {check: el.dataset.check, params: $('run-params').value})},
+    check: {run: ({el}) => act('check', {check: el.dataset.check, params: $('run-params')?.value || ''})},
     pages: {run: async () => { if (await act('pages', {pages: $('pg-list').value, note: $('pg-note').value})) location.reload(); }},
     layout: {run: async () => {
       const r = await request(`/s/${encodeURIComponent(sub)}/layout`,

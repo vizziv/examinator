@@ -294,6 +294,7 @@ a.navbtn.off { visibility: hidden; }
 .fmenu > summary { list-style: none; padding: 0 4px; border-radius: 4px; line-height: 16px; }
 .fmenu > summary::-webkit-details-marker { display: none; }
 .fmenu[open] > summary { margin: 0; background: var(--accent-soft); }
+#run .fmenu-items { right: auto; left: 0; }
 .fmenu-items { position: absolute; right: 0; top: 100%; z-index: 5; display: flex; flex-direction: column; gap: 3px; padding: 5px;
   white-space: nowrap; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: var(--shadow); }
 #question.no-scan { grid-template-columns: minmax(0, 1fr); }

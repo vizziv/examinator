@@ -150,7 +150,9 @@
 <label title="also read again what a person set or verified (kept in history)"><input type="checkbox" id="read-all"> verified too</label>{% endif %}
 {% for c in checks %}{% if c.fn %}<button type="button" data-action="check" data-check="{{ c.name }}" title="run the check now">{{ c.name if checks|length > 1 else 'check' }}</button>{% endif %}{% endfor %}
 {% if model and can_read %}<label><input type="checkbox" id="run-reasoning"> reasoning</label>{% endif %}
-<input type="text" id="run-params" placeholder="key=value" size="12" aria-label="params" spellcheck="false">
+{% if checks|selectattr('fn')|list %}<details class="fmenu"><summary title="more">⋯</summary><span class="fmenu-items">
+<label title="values for the next run of a check here, for this submission only">check with <input type="text" id="run-params" placeholder="key=value" size="14" spellcheck="false"></label>
+</span></details>{% endif %}
 <span id="reread" hidden><span class="tag unv">reading changed</span></span>
 </div>
 
