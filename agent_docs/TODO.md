@@ -22,14 +22,8 @@ field's region may be unset in code; one grade per check, any number of checks.
 - **A code-change fingerprint per check**: today a result is outdated by its
   check's definition hash or by any change to the package's code, so editing
   any file recomputes every result (in the background).
-- **Reloading the package without a restart**: state survives a restart; there
-  is no reload button.
 - After a reader's or region's change, the app says "read again" but does not
   list which submissions' values came from the old reading.
-- A keyed check over a subset of a question's fields needs a restricted key in
-  the exam (Exam 2's `restricted`); a `labels=` option may be worth it.
-- Two checks that share a comparison (answer, and answer with work) compute it
-  twice.
 - The browser was exercised on a synthetic Exam 2 workspace (verify-next,
   editing a value and the outdated check recomputing, a pseudocode page, the
   grid); never in a browser yet: the per-submission region editor, the
@@ -41,6 +35,16 @@ field's region may be unset in code; one grade per check, any number of checks.
 - **Non-rectangular regions:** click points for a polygon around the actual
   answer, so the model sees the answer and not the surrounding work. Pairs
   with the per-submission region override.
+- **No full page load between submissions:** today "next submission" loads a
+  new page (actions within a page already swap parts in place). Getting there
+  means the question page's scripts start from a function that can run again
+  on swapped-in HTML; no library needed.
+- **Runs page is for reading:** checks recompute by themselves, so its "check"
+  step is nearly redundant; dropping it leaves one check runner (automatic)
+  and one planned batch (model reads).
+- **"Work is present" field:** a field a reader fills with whether there is
+  work on the page, so a check can give credit for an answer with work. For
+  now that credit is a check with no function, decided by a person (Exam 2).
 - **Barcode / QR reader** for a printed exam version, treated as true.
 - **Search facets**, then a **student view** (plots and the final call, no
   test-battery lists). Exports by version are dropped.

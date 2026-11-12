@@ -4,13 +4,13 @@ Three independent binary choices switch groups of questions; several questions
 depend on two of them, and question 4 on all three (see `versions.py`). The
 first question, `info`, has no checks: it holds the six printed fields that tell
 the choices, and the other questions' checks read it to pick their keys.
-Questions 10 and 11 are pseudocode. Questions 7, 9 and 12 ask for work, which
-a person judges: their credit is never settled automatically for a right answer.
+Questions 10 and 11 are pseudocode. Questions 7, 9 and 12 ask for work: a check
+follows their boxed answers, and their credit is a person's decision.
 """
 from examinator import Bool, Check, Exam, Field, Region
 from examinator.std import math, readers
 
-from . import keys, lshape, normal, notes, rules, samplers, snow_cone
+from . import keys, lshape, normal, notes, samplers, snow_cone
 from .keys import number, point
 from .versions import FIELDS, band, names, printing
 
@@ -35,11 +35,6 @@ def bubbles(page, labels, tops, height, left=750, right=880):
 def per_printing(qid, key):
     """`key(name)` for each of the question's printings."""
     return {name: key(name) for name in names(qid)}
-
-
-def restricted(key, labels):
-    """A key per printing, keeping only `labels`."""
-    return {name: {label: entry for label, entry in k.items() if label in labels} for name, k in key.items()}
 
 
 def placeholders(n):
@@ -67,10 +62,9 @@ ANSWER = Bool(counts=False)        # the boxed answers alone, before the work is
 
 def worked(key, *, by, mark='check', points=Bool()):
     """The checks of a question whose credit also needs work: 'answer' follows the
-    boxed answers; `mark`, the credit, leaves a right answer to a person
-    (`rules.with_work`)."""
+    boxed answers and does not count; `mark`, the credit, is decided by a person."""
     return {'answer': Check(math.keyed(key, by=by, functions=keys.FUNCTIONS), ANSWER),
-            mark: Check(math.keyed(key, by=by, functions=keys.FUNCTIONS, grade=rules.with_work), points)}
+            mark: Check(None, points)}
 
 
 # --- questions, in printed order --------------------------------------------------
@@ -155,16 +149,21 @@ exam.question(
     checks=worked(by=printing('q7'), key={'original':  {'7.1': '3/8', '7.2': '3/4'},
                                           'alternate': {'7.1': '27/64', '7.2': '27/64'}}))
 
-# 'check' needs the first two answers; 'shiny' all four.
+# 'check' is about the first two answers; 'shiny' about all four.
 Q8 = ['8.1', '8.2', '8.3', '8.4']
-Q8_KEY = {'original':  dict(zip(Q8, map(option, [5, 4, 5, 4]))),
-          'alternate': dict(zip(Q8, map(option, [4, 5, 5, 4])))}
+
+
+def q8_key(labels):
+    return {'original':  dict(zip(labels, map(option, [5, 4, 5, 4]))),
+            'alternate': dict(zip(labels, map(option, [4, 5, 5, 4])))}
+
+
 exam.question(
     'q8', title="2 confident 2 curious", pages=[16, 17],
     fields=bubbles(16, Q8[:2], [337, 652], 120, 135, 480) + bubbles(17, Q8[2:], [132, 567], 120, 135, 480),
     read=readers.answers(notes=notes.OPTIONS),
-    checks={'check': math.keyed(restricted(Q8_KEY, Q8[:2]), by=printing('q8')),
-            'shiny': Check(math.keyed(Q8_KEY, by=printing('q8')), SHINY)})
+    checks={'check': math.keyed(q8_key(Q8[:2]), by=printing('q8')),
+            'shiny': Check(math.keyed(q8_key(Q8), by=printing('q8')), SHINY)})
 
 exam.question(
     'q9', title="Zzz score", pages=[19],

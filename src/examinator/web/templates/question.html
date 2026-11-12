@@ -23,6 +23,7 @@
 </span>
 <span class="sep"></span>
 <a class="navbtn" href="{{ root }}/scan" target="examinator-scan" data-action="scan" title="the scan in its own window">scan</a>
+<button type="button" id="scan-toggle" data-action="toggle-scan" aria-pressed="true" title="show or hide the page scan">page</button>
 <label class="dim">crop <input type="range" id="crop-size" min="160" max="1000" step="20"></label>
 <span id="busy" hidden>running…</span>
 {% endblock %}
@@ -90,19 +91,25 @@
 <div class="fields">
 {% for f in fields %}
 <div class="field{% if f.marker %} marked{% endif %}{% if not f.own %} elsewhere{% endif %}{% if f.code %} code{% endif %}" data-key="{{ f.key }}">
+<span class="fhead">
 <span class="flabel"{% if f.ask %} title="printed: {{ f.ask }}"{% endif %}>{% if f.own %}{{ f.label }}{% else %}<a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ f.qid|urlencode }}" title="{{ exam.questions[f.qid].title }}">{{ f.title }}</a>{% endif %}{% if f.printed %} <span class="ftag">printed</span>{% endif %}</span>
+<span class="fstate" data-live id="fs-{{ loop.index }}">
+{% if not f.read %}<span class="tag" title="no value yet">not read</span>
+{% elif f.marker %}<span class="tag unv" title="a review marker: correct the value">review</span>
+{% elif f.settled is none %}<span class="tag unv">unverified</span>{% endif %}
+{% for j in f.judged %}<span class="judged o-{{ j.outcome or 'none' }}" title="{% if checks|length > 1 %}{{ j.check }}: {% endif %}{{ j.outcome or 'undecided' }}{% if j.expected %} · key {{ j.expected }}{% endif %}{% if j.note %} · {{ j.note }}{% endif %}">{{ {'correct': '✓', 'incorrect': '✗', 'blank': '∅'}.get(j.outcome, '?') }}{% if j.note %} <span class="jnote">{{ j.note }}</span>{% endif %}</span>{% endfor %}
+{% if f.read and not f.marker %}<details class="fmenu"><summary tabindex="-1" title="more">⋯</summary><span class="fmenu-items">
+{% if f.settled is none %}<button type="button" data-action="verify-one" data-key="{{ f.key }}" data-rev="{{ f.rev }}">verify this value</button>
+{% else %}<span class="dim">verified{% if f.by %} · {{ f.by }}{% elif f.settled == 'reader' %} · as read{% endif %}</span>
+<button type="button" data-action="unverify" data-key="{{ f.key }}" data-rev="{{ f.rev }}">unverify</button>{% endif %}
+</span></details>{% endif %}
+</span>
+</span>
+{% if f.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}" data-region="{{ f.crop.path }}"></span>{% endif %}
 {% if f.code %}<textarea data-key="{{ f.key }}" data-rev="{{ f.rev }}" spellcheck="false" rows="{{ [[f.value.count('\n') + 2, 6]|max, 40]|min }}">
 {{ f.value }}</textarea>
 {% else %}<input type="text" data-key="{{ f.key }}" data-rev="{{ f.rev }}" value="{{ f.value }}" spellcheck="false"{% if not f.read %} placeholder="not read"{% endif %}>
 {% endif %}
-<span class="fstate" data-live id="fs-{{ loop.index }}">
-{% if not f.read %}<span class="tag" title="no value yet">not read</span>
-{% elif f.marker %}<span class="tag unv" title="a review marker: correct the value">review</span>
-{% elif f.settled is none %}<span class="tag unv">unverified</span>
-{% else %}<button type="button" class="quiet tiny" data-action="unverify" data-key="{{ f.key }}" data-rev="{{ f.rev }}" title="verified{% if f.by %} · {{ f.by }}{% elif f.settled == 'reader' %} · as read{% endif %}; unverify">✓</button>{% endif %}
-{% for j in f.judged %}<span class="judged o-{{ j.outcome or 'none' }}" title="{% if checks|length > 1 %}{{ j.check }}: {% endif %}{{ j.outcome or 'undecided' }}{% if j.expected %} · key {{ j.expected }}{% endif %}{% if j.note %} · {{ j.note }}{% endif %}">{{ {'correct': '✓', 'incorrect': '✗', 'blank': '∅'}.get(j.outcome, '?') }}{% if j.note %} <span class="jnote">{{ j.note }}</span>{% endif %}</span>{% endfor %}
-</span>
-{% if f.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}" data-region="{{ f.crop.path }}"></span>{% endif %}
 </div>
 {% endfor %}
 </div>

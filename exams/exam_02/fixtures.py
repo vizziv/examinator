@@ -134,10 +134,10 @@ def standard_normal():
 Q11_ONE_SIDED = Q11.replace('X if coin(1/2) else -X', 'X')
 Q11_BLANK = "def standard_normal():\n    pass\n"
 
-WORK = None     # a right answer that needs work: undecided until a person judges it
+# The credit of q7, q9 and q12 is a person's decision: nothing to expect of it here.
 ALL_TRUE = {**{q: True for q in ('q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q10', 'q11')},
-            'q7.answer': True, 'q7.check': WORK, 'q8.check': True, 'q8.shiny': True,
-            'q9.answer': True, 'q9.check': WORK, 'q12.answer': True, 'q12.shiny': WORK}
+            'q7.answer': True, 'q8.check': True, 'q8.shiny': True,
+            'q9.answer': True, 'q12.answer': True}
 
 
 def canonical(alt: int) -> dict:
@@ -163,8 +163,8 @@ def cases():
              {**ALL_TRUE, 'q10': None}),                        # passes with a loop: a person decides
         case('wrong', 0, {**WRONG, 'q10': Q10_HALF, 'q11': Q11_ONE_SIDED},
              {**{q: False for q in ('q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q10', 'q11')},
-              'q7.answer': False, 'q7.check': False, 'q8.check': True, 'q8.shiny': False,
-              'q9.answer': False, 'q9.check': False, 'q12.answer': False, 'q12.shiny': False}),
+              'q7.answer': False, 'q8.check': True, 'q8.shiny': False,
+              'q9.answer': False, 'q12.answer': False}),
         case('slips', 0, SLIPS, {'q1': True, 'q2': True, 'q3': True}),
         case('errors', 0, {'q10': Q10_LENGTHS}, {'q10': False}),   # points of different lengths: incorrect
         # Another printing with printing alt0's answers: the other keys apply.
@@ -173,8 +173,8 @@ def cases():
               'q7.answer': False, 'q8.check': False, 'q9.answer': False, 'q10': False, 'q12.answer': False}),
         case('empty', 5, {**{q: empty(ANSWERS[q][VERSIONS[5][q]]) for q in FIELDS}, 'q10': "", 'q11': Q11_BLANK},
              {**{q: 'blank' for q in ('q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q10', 'q11')},
-              'q7.answer': 'blank', 'q7.check': 'blank', 'q8.check': 'blank', 'q8.shiny': 'blank',
-              'q9.answer': 'blank', 'q9.check': 'blank', 'q12.answer': 'blank', 'q12.shiny': 'blank'}),
+              'q7.answer': 'blank', 'q8.check': 'blank', 'q8.shiny': 'blank',
+              'q9.answer': 'blank', 'q12.answer': 'blank'}),
         # One printed field unreadable: the questions that read that field wait for a person.
         # The others read fields that were read as expected (or none), and count.
         case('unread', 0, {**{q: ANSWERS[q][VERSIONS[0][q]] for q in FIELDS}, 'q11': Q11},

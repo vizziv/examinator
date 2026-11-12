@@ -133,6 +133,8 @@ def test_definition(exam, pkg):
     assert picking == set(v.PRINTINGS) - {'q1'} - {'q10'}
     for qid in picking:
         for c in q[qid].checks:
+            if c.fn is None:
+                continue
             assert set(c.fn.key) == set(v.names(qid)), qid
             assert c.fn.by == v.printing(qid), qid
     assert v.printing('q10') == v.bit(4) and v.printing('q4') == v.Printing('q4')
@@ -428,34 +430,24 @@ def test_question_3(exam, pkg):
 
 # --- grade rules ------------------------------------------------------------------------
 
-def test_rules(pkg):
-    rules = pkg('rules')
+def test_rules():
     c, i, b = 'correct', 'incorrect', 'blank'
     two = math.at_least(2)      # the threshold questions' rule, as this exam relies on it
     assert two(dict(a=c, b=c, c=i)) == 'correct' and two(dict(a=c, b=i, c=b)) == 'incorrect'
     assert two(dict(a=c, b=None, c=i)) is None and two(dict(a=None, b=i, c=b)) == 'incorrect'
     assert two(dict(a=b, b=b, c=b)) == 'blank'
-    got = rules.with_work(dict(a=c, b=c))
-    assert (got.value, got.reason) == (None, rules.WORK)
-    assert rules.with_work(dict(a=c, b=i)) == 'incorrect'
-    assert rules.with_work(dict(a=b, b=b)) == 'blank'
-    assert rules.with_work(dict(a=c, b=b)) == 'incorrect'
-    assert rules.with_work(dict(a=c, b=None)) is None
 
 
 def test_worked_questions(exam, pkg):
-    """q7, q9 and q12: 'answer' follows the boxes; the credit waits for a person on a right answer."""
-    f, rules = pkg('fixtures'), pkg('rules')
+    """q7, q9 and q12: 'answer' follows the boxes; the credit has no check function."""
+    f = pkg('fixtures')
     for qid, credit in (('q7', 'check'), ('q9', 'check'), ('q12', 'shiny')):
+        assert exam.questions[qid].check(credit).fn is None
         for printing, answers in f.ANSWERS[qid].items():
             assert grade(exam, qid, answers, printing, 'answer') == 'correct', (qid, printing)
-            body = outcomes(exam, qid, answers, printing, credit)[1]
-            assert (body['grade']['value'], body['grade']['reason']) == (None, rules.WORK), (qid, printing)
         wrong = f.WRONG[qid]
-        assert grade(exam, qid, wrong, 'original', 'answer') == grade(exam, qid, wrong, 'original', credit) == \
-            'incorrect'
-        empty = dict.fromkeys(wrong)
-        assert grade(exam, qid, empty, 'original', 'answer') == grade(exam, qid, empty, 'original', credit) == 'blank'
+        assert grade(exam, qid, wrong, 'original', 'answer') == 'incorrect'
+        assert grade(exam, qid, dict.fromkeys(wrong), 'original', 'answer') == 'blank'
 
 
 def test_work_is_decided_by_a_person(exam, pkg, tmp_path):
@@ -469,7 +461,7 @@ def test_work_is_decided_by_a_person(exam, pkg, tmp_path):
         read_and_verify(runner, S, ('info', 'q7'))
         answer, check = status(runner, S, 'q7', 'answer'), status(runner, S, 'q7', 'check')
         assert (answer.state, answer.value) == ('graded', True)
-        assert (check.state, check.value, check.reason, check.counts) == ('to_decide', None, "judge the work", False)
+        assert (check.state, check.value, check.counts) == ('to_decide', None, False)
         runner.decide(S, 'q7', 'check', True, author='ta')
         check = status(runner, S, 'q7', 'check')
         assert (check.state, check.value, check.counts) == ('decided', True, True)

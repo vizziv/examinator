@@ -274,13 +274,14 @@ a.navbtn.off { visibility: hidden; }
 .decide button.v-f:hover { background: var(--no-soft); border-color: var(--no-ink); }
 .decide button.v-b:hover { background: var(--blank-bg); border-color: var(--blank); }
 .decide .num { width: 6em; }
-.fields { display: grid; gap: 4px; }
-.field { display: grid; grid-template-columns: minmax(3em, max-content) minmax(8em, 22em) minmax(5em, max-content) auto; gap: 6px; align-items: center; }
-.field.code { grid-template-columns: minmax(3em, max-content) minmax(16em, 1fr) minmax(5em, max-content); align-items: start; }
-.field.code .crop { grid-column: 2 / -1; }
+/* a field: its label and state, the handwriting, and the value right under it */
+.fields { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-start; }
+.field { display: grid; grid-template-columns: minmax(9em, max-content); gap: 2px; }
+.field.code { flex: 1 1 100%; grid-template-columns: minmax(0, 1fr); }
+.fhead { display: flex; gap: 6px; align-items: center; justify-content: space-between; min-height: 18px; }
 .field textarea { width: 100%; tab-size: 4; white-space: pre; line-height: 1.45; }
 .flabel { color: var(--muted); font-family: var(--mono); font-size: 12px; }
-.field input { width: 100%; }
+.field input { width: 0; min-width: 100%; }
 .field.marked :is(input, textarea) { background: var(--unv-bg); }
 .field.dirty :is(input, textarea) { border-color: var(--warn); }
 .field.elsewhere .flabel a { color: var(--muted); }               /* read by a check, from another question */
@@ -289,7 +290,14 @@ a.navbtn.off { visibility: hidden; }
 .judged.o-correct { color: var(--ok-ink); } .judged.o-incorrect { color: var(--no-ink); }
 .judged.o-none { color: var(--ask); } .judged.o-blank { color: var(--blank); }
 .jnote { font-weight: 400; color: var(--muted); }
-button.tiny { padding: 0 4px; font-size: 11px; line-height: 16px; }
+.fmenu { position: relative; }
+.fmenu > summary { list-style: none; padding: 0 4px; border-radius: 4px; line-height: 16px; }
+.fmenu > summary::-webkit-details-marker { display: none; }
+.fmenu[open] > summary { margin: 0; background: var(--accent-soft); }
+.fmenu-items { position: absolute; right: 0; top: 100%; z-index: 5; display: flex; flex-direction: column; gap: 3px; padding: 5px;
+  white-space: nowrap; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: var(--shadow); }
+#question.no-scan { grid-template-columns: minmax(0, 1fr); }
+#question.no-scan #scan { display: none; }
 form.draft > .bar { margin-top: 5px; }
 form.draft.dirty .bar button[data-action=save] { border-color: var(--warn); color: var(--warn); }
 .notice { color: var(--bad); }
@@ -406,7 +414,7 @@ form.entry.k-region input[type=text], form.entry.k-pages input[type=text] { flex
 /* --- regions on the scan --- */
 #rg { position: sticky; top: 0; z-index: 3; background: var(--panel); padding: 3px 5px; border-bottom: 1px solid var(--line); }
 #rg .rg-n { width: 4.6em; }
-#rg-on[aria-pressed=true] { border-color: var(--accent2); color: var(--accent2-text); background: var(--accent2-soft); }
+#rg-on[aria-pressed=true], #scan-toggle[aria-pressed=true] { border-color: var(--accent2); color: var(--accent2-text); background: var(--accent2-soft); }
 #rg-save.dirty { box-shadow: 0 0 0 2px var(--warn-bg), 0 0 0 3px var(--warn); }
 #rg-msg { color: var(--muted); }
 #rg-msg.notice { color: var(--bad); }

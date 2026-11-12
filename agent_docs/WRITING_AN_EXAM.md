@@ -250,8 +250,11 @@ required=())`; or any `fn({label: outcome}) -> grade`, as the toy exam's
   `rational`; `'positive indexed'` declares `s[i]`).
 - **Functions:** `None` allows `sqrt exp log ln sin cos tan abs min max`; a list
   allows only those; `[]` none, so `a(1-b)` is a product.
-- A check that judges some of a question's fields gets a key with only those
-  (`restricted` in `exams/exam_02/exam.py`).
+- A check compares exactly the fields its key names, so a check about some of a
+  question's fields has a key with only those (question 8 in
+  `exams/exam_02/exam.py`).
+- Credit that needs a person (work on the page) is a check with no function:
+  `Check(None, Bool())`.
 
 ## 7. Pseudocode and the stochastic kit
 

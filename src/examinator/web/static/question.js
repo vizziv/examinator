@@ -197,6 +197,18 @@
     Actions.enable(document);
   }
 
+  // --- the page scan can be hidden (remembered); a field's menu closes on a click elsewhere ---
+  function showScan() {
+    const hide = !!pref('hideScan', false);
+    main.classList.toggle('no-scan', hide);
+    $('scan-toggle').setAttribute('aria-pressed', String(!hide));
+    drawCrops();
+  }
+  showScan();
+  document.addEventListener('click', e => {
+    for (const m of document.querySelectorAll('.fmenu[open]')) if (!m.contains(e.target)) m.open = false;
+  });
+
   // --- actions: buttons (data-action) and keys trigger the same ones ---
   const entryOf = ctx => ctx.target?.closest?.('form.entry');
   const link = name => document.querySelector(`a[data-action="${name}"]`);
@@ -224,7 +236,10 @@
     'grade-number': {available: () => !!targetButton('num-set', 'number'),
                      run: ({el}) => (el ? setNumber(el) : target('number').querySelector('input').focus())},
     edit: {available: hasFields, run: () => inputs()[0].focus()},
+    // Rare, so in each field's menu: verify or unverify that one value.
+    'verify-one': {run: ({el}) => act('save', {values: {}, verify: [{key: el.dataset.key, rev: revOf(el)}]})},
     unverify: {run: ({el}) => act('unverify', {key: el.dataset.key, rev: revOf(el)})},
+    'toggle-scan': {run: () => { setPref('hideScan', !pref('hideScan', false)); showScan(); }},
     discard: {run: () => {
       try { sessionStorage.removeItem(draftKey()); } catch (e) { /* private mode */ }
       snapshot();
