@@ -102,3 +102,11 @@ def test_a_key_per_variant_names_the_questions_variants():
     with pytest.raises(ValueError, match="q: the key is one per variant"):
         define(stages=stages.math(key={'x': {'1': '1'}}))      # no variants at all
     define(variants=['x', 'y'], cues=[cue()], trust=1, stages=stages.math(key={'x': {'1': '1'}, 'y': {'1': '2'}}))
+
+
+def test_a_check_writer_needs_only_the_top_level_names():
+    import examinator
+    from examinator.core.context import Unavailable
+    from examinator.core.focus import Facet
+    assert examinator.Unavailable is Unavailable and examinator.Facet is Facet
+    assert {'Blocked', 'BadOutput', 'Unavailable', 'Facet', 'Evidence'} <= set(examinator.__all__)
