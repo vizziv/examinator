@@ -122,7 +122,7 @@
     await follow(b.job, `${b.affected} outdated · rechecked`);
   });
   Actions.register('reread-cues', {run: async () => {
-    if (!confirm("Read the changed cues again with the model, for every submission whose variant is open?")) return;
+    if (!confirm("Read the changed cues again with the model, for every submission whose variant is undecided?")) return;
     $('ch-variants').hidden = true;
     const r = await request('/exam/variants', {questions: variants});
     if (!r.ok) { $('ch-fail').textContent = r.body.error || "failed"; return; }

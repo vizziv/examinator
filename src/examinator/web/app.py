@@ -953,7 +953,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                             'name': identity.who(ws, sid)['name'] if sid in made else ''})
         so = Orient.from_json(body.get('orient'))
         return {'id': src.id, 'name': src.name, 'n': n, 'rev': art.rev, 'length': body['length'],
-                'checked': bool(body.get('checked')), 'failed': body.get('failed', 0), 'o': so.code, 'orient': so.label(),
+                'checked': bool(body.get('checked')) and bool(body.get('readings')), 'failed': body.get('failed', 0), 'o': so.code, 'orient': so.label(),
                 'sheet_o': [intake.sheet_orient(body, i).code for i in range(n)],
                 'cover': cover, 'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
                 'readings': {i: (None if r is None else 'cover' if r < cover else f'p.{r - cover + 1}')
@@ -1033,7 +1033,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     def scans_propose(request, data):
         src = the_source(request)
         length = data.get('length')
-        length = None if length in (None, '') else _int(length, "pages per exam", 1, 999)
+        length = None if length in (None, '') else _int(length, "pages per submission", 1, 999)
         kw = dict(length=length, fresh=bool(data.get('fresh')), author=who(request), expect_rev=_rev(data))
         if data.get('check'):
             if not have_model():

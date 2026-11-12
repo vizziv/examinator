@@ -38,6 +38,7 @@
     for (const b of tabs) b.setAttribute('aria-selected', String(b.dataset.tab === name));
     for (const [t, id] of Object.entries(PANEL)) if ($(id)) $(id).hidden = t !== name;
     setPref('scansTab', name);
+    if (name === 'split' && plan) history.replaceState(null, '', '#src=' + plan.id);
     say('');
     main.dispatchEvent(new CustomEvent('tab', {detail: name}));
     if (name === 'roster') text.focus();
@@ -169,7 +170,7 @@
     if (!r.ok) { flash('could not load the scan'); return; }
     if (!keep || !plan || plan.id !== r.body.id) { say(''); k = r.body.cursor ?? r.body.entries.length; peek = null; }
     plan = r.body;
-    history.replaceState(null, '', '#src=' + id);
+    if (current === 'split') history.replaceState(null, '', '#src=' + id);
     render();
   }
   async function send(path, data) {
@@ -342,8 +343,14 @@
   // The name, read-only: it is given on the Names step, which the link opens on this submission.
   function nameLink(e) {
     if (!e.id || e.state === 'new') return '';
-    return make('a', {href: '#sub=' + encodeURIComponent(e.id), className: e.name ? '' : 'dim',
-                      textContent: e.name || 'no name', title: 'open on Names'});
+    const a = make('a', {href: '#sub=' + encodeURIComponent(e.id), className: e.name ? '' : 'dim',
+                         textContent: e.name || 'no name', title: 'open on Names'});
+    a.addEventListener('click', ev => {      // also when the link is the one followed last
+      ev.preventDefault();
+      history.replaceState(null, '', a.getAttribute('href'));
+      dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    return a;
   }
   function renderRows() {
     const E = plan.entries;
