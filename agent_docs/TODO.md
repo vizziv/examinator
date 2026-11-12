@@ -16,11 +16,6 @@ One list, kept current. Design background is in [`DESIGN.md`](DESIGN.md); its
   is a field, and "exam information" is a question with printed fields.
 - Names and IDs stay their own hard-coded thing.
 
-## In progress
-
-- Rewrite: variants and cues become printed fields; checks read other
-  questions' fields with recorded reads.
-
 ## Revision round, after the rewrite lands
 
 - **Reading is one phase.** A handwritten field is one read with one value to
@@ -30,7 +25,11 @@ One list, kept current. Design background is in [`DESIGN.md`](DESIGN.md); its
   page override: exam default, optionally replaced for one submission, then the
   ordinary read runs. ("Read again" is not a feature: it is the read, after
   changing where it looks.)
-- Fold the owner's comments on the rewrite's choices.
+- Open after the rewrite: one unread field in a shared information question
+  holds back every question that reads it; a manual grade is not outdated when
+  a question it would read changes; editing how a printed field is read
+  outdates nothing until the parse is run again.
+- The guide's code blocks are checked by hand, not by a test.
 
 ## Future
 
