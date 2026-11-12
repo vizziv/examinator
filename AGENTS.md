@@ -3,6 +3,7 @@
 Examinator is a Python library for building exam graders, plus the app that
 runs one. Background and design live in [`agent_docs/`](agent_docs/README.md)
 (the documents call the project "Examiner"; the name is now **Examinator**).
+Writing an exam package: [`agent_docs/WRITING_AN_EXAM.md`](agent_docs/WRITING_AN_EXAM.md).
 
 ## Student data boundary (not negotiable)
 

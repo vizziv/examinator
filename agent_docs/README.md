@@ -9,6 +9,7 @@ is everything you inherit: there is no existing code to extend.
 | [`DESIGN.md`](DESIGN.md) | The proposed architecture and API. |
 | [`LESSONS.md`](LESSONS.md) | What three earlier hand-built graders taught us. Read before designing anything. |
 | [`EXAM3.md`](EXAM3.md) | A real exam, described in full, and how it would be written in the new library. It is the acceptance target, not the template. |
+| [`WRITING_AN_EXAM.md`](WRITING_AN_EXAM.md) | How to write an exam package against the library as it is now. |
 
 ## Goal
 
