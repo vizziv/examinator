@@ -209,7 +209,7 @@ def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     intake.accept(ws, one.id)
     before = {s: (ws.pdfs / f'{s}.pdf').stat().st_mtime_ns for s in ws.store.made()}
     # grading work on the third submission (the one with the stray sheet)
-    ws.store.write('s0003', 'parity', 'parse', {'B': 'even'}, origin='manual', author='t')
+    ws.store.write('s0003', 'parity/B', 'value', {'text': 'even'}, origin='manual', author='t')
     art = intake.plan(ws, one.id)
     art = intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=art.rev, author='t')
     with pytest.raises(intake.Busy) as e:
@@ -228,13 +228,13 @@ def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
     report = intake.accept(ws, one.id, force=True)
     assert report['rewritten'] == ['s0003'] and ws.store.made()['s0003'].pages == (7, 8, 10, 11)
-    assert ws.store.get('s0003', 'parity', 'parse') is not None
+    assert ws.store.get('s0003', 'parity/B', 'value') is not None
     # joining away a submission with no work removes it
     intake.edit(ws, one.id, 'join', k=0, expect_rev=intake.plan(ws, one.id).rev, author='t')
-    ws.store.write('s0002', 'parity', 'parse', {'B': 'odd'}, origin='manual', author='t')
+    ws.store.write('s0002', 'parity/B', 'value', {'text': 'odd'}, origin='manual', author='t')
     with pytest.raises(intake.Busy):        # s0002 would go away with its work
         intake.accept(ws, one.id)
-    ws.store.delete('s0002', 'parity', 'parse')
+    ws.store.delete('s0002', 'parity/B', 'value')
     ws.store.purge_history()
     report = intake.accept(ws, one.id)
     assert report['removed'] == ['s0002'] and not (ws.pdfs / 's0002.pdf').exists()
@@ -309,11 +309,11 @@ def test_a_submission_whose_pages_are_all_dropped_is_removed(stacked):
     for sheet in range(20, 24):                             # every sheet of the last submission
         art = intake.edit(ws, one.id, 'drop', sheet=sheet, expect_rev=art.rev, author='t')
     assert art.body['entries'][-1]['id'] == 's0006' and intake.removed(ws, one.id) == ['s0006']
-    ws.store.write('s0006', 'parity', 'parse', {'B': 'odd'}, origin='manual', author='t')
+    ws.store.write('s0006', 'parity/B', 'value', {'text': 'odd'}, origin='manual', author='t')
     with pytest.raises(intake.Busy) as e:
         intake.accept(ws, one.id)
     assert e.value.submissions == ['s0006']
-    ws.store.delete('s0006', 'parity', 'parse')
+    ws.store.delete('s0006', 'parity/B', 'value')
     report = intake.accept(ws, one.id)
     assert report['removed'] == ['s0006'] and not (ws.pdfs / 's0006.pdf').exists()
     assert 's0006' not in ws.store.made() and intake.removed(ws, one.id) == []
