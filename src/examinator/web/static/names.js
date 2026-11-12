@@ -32,7 +32,10 @@
     view.byId = Object.fromEntries(view.rows.map(x => [x.sub, x]));
     // The order is fixed when first seen, so confirming does not reshuffle what is ahead.
     const known = new Set(order);
-    order = order.filter(s => view.byId[s]).concat(view.rows.map(x => x.sub).filter(s => !known.has(s)));
+    // New exams join the end: those with a proposal (V takes it) before those needing typing.
+    const fresh = view.rows.filter(x => !known.has(x.sub));
+    const typed = x => (x.candidates.length ? 0 : 1);
+    order = order.filter(s => view.byId[s]).concat(fresh.sort((a, b) => typed(a) - typed(b)).map(x => x.sub));
     if (k >= order.length || !known.size) k = nextOpen(-1);
     render();
   }
@@ -122,6 +125,7 @@
       if (c.taken) why.push(' ', tag('warn', `name twice: ${c.taken}`, 'already named for another exam'));
       if (r.candidates.length > 1) why.push(make('span', {className: 'dim', textContent: ` · ${ci % r.candidates.length + 1} of ${r.candidates.length}`}));
     }
+    if (!c && !named) why.push(make('span', {className: 'dim', textContent: 'E type a name · S skip'}));
     $('w-why').replaceChildren(...why);
     const next = view.byId[order[k + 1]];
     if (next) for (const x of next.crops) { const im = new Image(); im.src = page(next.sub, x.index); }
