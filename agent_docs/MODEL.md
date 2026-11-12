@@ -21,9 +21,12 @@ to those.
 | **Check** | A function from field values to a **result**: evidence to show, and a proposed grade for each part. It may read any field in the exam. Nothing reads a check. |
 | **Question** | A group: some fields, at most one check, the result parts and their points. The page a grader sees and a set of grid columns. |
 
-Anything in a definition may be left unset in code and set in the app (a
-region, pages, a printed field's expected readings), exam-wide or for one
-submission. A field that cannot be read yet is simply not read.
+An **override** replaces one of these values from the app without editing the
+code (a region, pages, a printed field's expected readings, an answer key),
+exam-wide or for one submission. It is stored in the workspace and wins while
+it exists; clearing it brings the code's value back. A value may also be left
+unset in code and given only as an override. A field that cannot be read yet
+is simply not read.
 
 ## Stored per submission
 
@@ -105,7 +108,7 @@ Everything the app or a batch run does is one or more of these.
 | Field value | **unverify**: back to unsettled, value kept. | person |
 | Result | **compute**: run the check on the current values. | automatic |
 | Decision | **decide**, **clear**. | person |
-| Definition | **set**, **clear** an override, exam-wide or for one submission. | person |
+| Override | **set**, **clear**, exam-wide or for one submission. | person |
 
 Changing how a field is read changes no value. The app then offers to read
 again the values no person settled.
@@ -113,6 +116,24 @@ again the values no person settled.
 Larger actions are combinations: "verify all here" verifies every unsettled
 field on the page; "save and verify" is one set; "read again" is a read of one
 question's fields; a batch run is reads, then computes.
+
+## Changing the exam while grading
+
+Stored things are keyed by name (submission and field; submission and check;
+submission, question and part), and a result records which version of the
+exam's code computed it. So the exam package can change under a workspace:
+
+| Change | What happens to stored work |
+| --- | --- |
+| A check's code or key changes | Field values and decisions untouched. That check's results are outdated and recomputed; grades that change show as changed. |
+| A question is added | Its fields are not read, its parts not run. Nothing else moves. |
+| A field is added to a question | The other fields keep their values and who settled them. The new one is not read; the check waits for it. |
+| A field or part is removed or renamed | Its stored values are ignored, not deleted (restoring the name restores them). A rename loses the work. |
+| Points change | Totals follow at once; they are derived. |
+| How a field is read changes | No value changes; the app offers to read again what no person settled. |
+
+Two things this asks of the build: a read can fill only the fields that have
+no value yet, and the app can reload the exam package without losing state.
 
 ## What the interface does with it (not part of the model)
 
