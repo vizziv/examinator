@@ -4,6 +4,8 @@ import pytest
 from examinator.core import batch
 from examinator.core.store import Conflict
 from examinator.core.workflow import NOT_WORK, part_status, question_status, total
+from examinator import Bool, Evidence, Field
+from examinator.std import stages
 from conftest import make_exam
 
 S, Q, P = 's1', 'a', 'p'      # question 'a' reads the printing, question 'p' (no grade)
@@ -96,6 +98,54 @@ def test_outdated_when_a_parse_it_read_changes(env):
     runner.recheck(S, P)                                   # rechecks the questions that read 'p'
     st = status(env)
     assert (st.state, st.value) == ('graded', False)      # the other printing's key now applies
+
+
+def trusting(env, script=None):
+    """The same workspace under the exam whose printed fields vouch for an expected reading."""
+    from conftest import SCRIPT, make_exam
+    from examinator.core.runner import Runner
+    from examinator.model.fake import FakeModel
+    exam, ws, runner = env
+    runner.close()
+    exam = make_exam(trust=True)
+    return exam, ws, Runner(exam, ws, model=FakeModel({**SCRIPT, **(script or {})}))
+
+
+def test_a_printed_reading_that_was_expected_needs_no_person(env):
+    """Row 'parse verified, evidence current': a field another question's check read
+    counts as verified when its reader vouched for the value it read."""
+    env = exam, ws, runner = trusting(env)
+    run_all(env, printing=False)
+    verify(env)
+    assert ws.store.get(S, P, 'parse').inputs['trusted'] == ['c1', 'c2']
+    assert not ws.store.get(S, P, 'parse').protected              # a later read replaces it freely
+    st = status(env)
+    assert (st.state, st.value, st.waiting_on) == ('graded', True, ())
+    # A person's edit is a person's to verify.
+    runner.save(S, P, 'parse', {'c1': 'two', 'c2': 'two'}, author='t')
+    runner.recheck(S, P)
+    assert (status(env).value, status(env).waiting_on) == (False, (P,))
+    runner.close()
+
+
+def test_an_unreadable_field_holds_back_only_the_checks_that_read_it(env):
+    env = exam, ws, runner = trusting(env, {
+        ('p', 'read'): lambda call: '{"value": "1"}' if "first cue" in call.prompt else '{"value": ""}',
+        ('c', 'parse'): '{"x": "yes"}'})
+    exam.question('c', pages=[2], result=Bool(), fields=[Field('x')],
+                  stages=[*exam.questions['b'].stages[:2],
+                          stages.check(lambda ctx: Evidence({'fields': {'x': {'outcome': 'correct' if ctx.read(P, 'c1') == 'one' else 'incorrect'}}}), isolate=False),
+                          exam.questions['b'].stages[3]])
+    run_all(env, printing=False)
+    verify(env)
+    assert ws.store.get(S, P, 'parse').inputs['trusted'] == ['c1']
+    assert (status(env).state, status(env).waiting_on) == ('unverified', (P,))     # 'a' read c2 as well
+    assert all(o.ok for o in runner.run_from(S, 'c', 'transcript'))
+    verify(env, q='c')
+    st = status(env, part='', q='c')
+    assert (st.state, st.value, st.waiting_on) == ('graded', True, ())             # 'c' read only c1
+    assert ws.store.get(S, 'c', 'evidence').inputs['labels'] == {P: ['c1']}
+    runner.close()
 
 
 def test_waits_until_a_parse_it_read_is_verified(env):

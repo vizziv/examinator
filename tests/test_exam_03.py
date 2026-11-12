@@ -460,19 +460,16 @@ def test_workflow_rules(exam, pkg, env):
         assert all(o.ok for o in runner.run_from(S, qid, exam.questions[qid].stages[0].name))
     assert ws.store.get(S, 'info', 'parse').body == versions.printed(0)['info']
 
-    # Unverified results do not count: neither the question's own parse nor the printing it read.
+    # Unverified results do not count. The printing it read was read as expected: nothing to verify there.
     st = status('q9')
     assert (st.state, st.value, st.counts, st.waiting, st.waiting_on) == (
-        'unverified', True, False, ('parse',), ('info',))
+        'unverified', True, False, ('parse',), ())
     assert status('q2', 'check').state == status('q2', 'shiny').state == 'unverified'
     assert status('q2', 'check').waiting_on == ()           # pseudocode reads no printing
     verify('q9')
     verify('q2')
-    st = status('q9')
-    assert (st.state, st.counts, st.waiting, st.waiting_on) == ('unverified', False, (), ('info',))
     assert (status('q2', 'check').state, status('q2', 'check').value, status('q2', 'shiny').value) == (
         'graded', True, True)
-    verify('info')
     assert (status('q9').state, status('q9').value, status('q9').counts) == ('graded', True, True)
 
     # Editing a verified parse outdates its grade, until the check runs again.

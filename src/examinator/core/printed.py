@@ -47,6 +47,12 @@ class Printed:
     ask: str
     reads: Mapping[str, str] = field(default_factory=dict)    # normalised reading -> value
     prompt: str = PRINTED_PROMPT
+    verify: bool = False      # a person verifies even a reading that was one of those expected
+
+    @property
+    def trusted(self) -> bool:
+        """Vouches for an unmarked value: it is one of a closed set of expected readings."""
+        return bool(self.reads) and not self.verify
 
     def validate(self, what: str) -> None:
         if not self.ask.strip():

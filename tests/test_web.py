@@ -77,9 +77,11 @@ def test_grid_lists_every_submission(site):
     r = site.get('/')
     assert r.status_code == 200
     assert 'data-id="s1"' in r.text and 'data-id="s2"' in r.text
-    for column in ('a.x', 'a.y', 'b'):
+    for column in ('p', 'a.x', 'a.y', 'b'):       # 'p' has no grade: its column says how its reading stands
         assert f'data-col="{column}"' in r.text
     assert 'href="/s/s1/a"' in r.text
+    assert 'data-q="p" data-col="p" data-s="graded"' in r.text and 'href="/s/s1/p" title="read"' in r.text
+    assert 'data-q="p" data-col="p" data-s="not_started"' in r.text       # s2: not read yet
     assert 'data-s="unverified"' in r.text and 'data-s="not_started"' in r.text
 
 

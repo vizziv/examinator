@@ -36,8 +36,11 @@ class Value:
         return (self,)
 
     def __call__(self, ctx: Context) -> str:
-        parse = ctx.input('parse') if self.question is None else ctx.read(self.question)
-        v = parse.get(self.label) if isinstance(parse, Mapping) else None
+        if self.question is None:
+            parse = ctx.input('parse')
+            v = parse.get(self.label) if isinstance(parse, Mapping) else None
+        else:
+            v = ctx.read(self.question, self.label)
         if v is None or not str(v).strip():
             raise Undecided(f"{self.name} is empty")
         if has_marker(v):

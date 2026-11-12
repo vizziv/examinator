@@ -80,7 +80,7 @@ class Pool:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
     def call(self, question: str, stage: str, payload: dict, timeout: float,
-             reads: dict | None = None) -> Any:
+             reads: dict | None = None, labels: dict | None = None) -> Any:
         """Run one stage function in a worker and return its body.
 
         `payload` holds the context fields: submission, inputs, params, note,
@@ -111,6 +111,8 @@ class Pool:
                 self._idle.append(proc)
         if reads is not None:
             reads.update(reply.get('reads') or {})
+        if labels is not None:
+            labels.update(reply.get('labels') or {})
         if 'error' in reply:
             raise StageCrash(reply['error'], reply.get('detail', ""))
         if 'undecided' in reply:
@@ -161,6 +163,7 @@ def _worker(exam_path: str) -> None:
         except Exception as e:
             reply = {'error': f"{type(e).__name__}: {e}", 'detail': traceback.format_exc()}
         reply['reads'] = ctx.reads if ctx is not None else {}
+        reply['labels'] = ctx.labels if ctx is not None else {}
         _send(out, reply)
 
 

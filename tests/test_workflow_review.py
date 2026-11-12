@@ -439,7 +439,10 @@ def test_OK_grid_agrees_with_part_status(env):
         for qid, q in exam.questions.items():
             by_q[qid] = question_status(q, ws.store.for_question(sub, qid),
                                         parses=ws.store.of_kind(sub, 'parse'), code_hash=exam.code_hash)
-            assert row.cells[qid].status == by_q[qid]
+            if q.result:
+                assert row.cells[qid].status == by_q[qid]
+            else:               # no grade: the cell says how its reading stands
+                assert row.cells[qid].status[''].state in ('graded', 'unverified', 'not_started')
             seen |= {st.state for st in by_q[qid].values()}
         assert (row.points, row.complete) == total(exam, by_q)
     assert {'manual', 'graded', 'unverified', 'outdated'} <= seen

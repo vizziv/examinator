@@ -132,6 +132,7 @@
 {% if parse.art %}
 {% if parse.art.verified %}<span class="tag">verified · {{ parse.art.verified_by }}</span>
 {% if parse.editable %}<button type="button" data-action="unverify" data-kind="parse" data-rev="{{ parse.rev }}" class="quiet">unverify</button>{% endif %}
+{% elif parse.trusted %}<span class="tag">read, not verified</span>
 {% else %}<span class="tag unv">unverified</span>{% endif %}
 {% if parse.marker %}<span class="tag unv">review marker</span>{% endif %}
 <span class="dim">{{ parse.art.author or parse.art.origin }}</span>

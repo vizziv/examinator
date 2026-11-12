@@ -254,10 +254,10 @@ def cases():
         Case('empty', **alternate,
              answers={**BLANK_CODE, 'q2': empty(ANSWERS['original']['q2']), 'q3': empty(Q3_ANSWERS)},
              expect={q: 'blank' for q in ALL}),
-        # One printed field is unreadable: the printing waits for a person, and with it every
-        # question that reads it. Question 3 reads no printing.
+        # One printed field is unreadable: the questions that read that field wait for a
+        # person. The others read fields that were read as expected, and count.
         Case('unread', printed={'info': {**printed_on(0)['info'], 'q1_parameter': None}}, blank=blank(0),
-             answers=canonical(0), expect={'q1': None, 'q2': None, 'q3': True, 'q4': None, 'q5': None, 'q6': None}),
+             answers=canonical(0), expect={'q1': None, 'q2': None, 'q3': True, 'q4': True, 'q5': True, 'q6': True}),
         # Question 6's field contradicts question 5's: both are undecided; question 4's two fields agree.
         Case('disagree', printed={'info': {**printed_on(0)['info'], 'q6_sine_frequency': '20'}},
              blank=blank(0), answers=canonical(0),

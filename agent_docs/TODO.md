@@ -25,10 +25,11 @@ One list, kept current. Design background is in [`DESIGN.md`](DESIGN.md); its
   page override: exam default, optionally replaced for one submission, then the
   ordinary read runs. ("Read again" is not a feature: it is the read, after
   changing where it looks.)
-- Open after the rewrite: one unread field in a shared information question
-  holds back every question that reads it; a manual grade is not outdated when
-  a question it would read changes; editing how a printed field is read
-  outdates nothing until the parse is run again.
+- Open after the rewrite: a manual grade is not outdated when a question it
+  would read changes; editing how a printed field is read (its region, its
+  `reads`, `verify=`) changes nothing until the parse is run again. Outdating
+  is still per parse: editing one field of a shared information question
+  outdates every check that read any of its fields (a recheck settles it).
 - The guide's code blocks are checked by hand, not by a test.
 
 ## Future

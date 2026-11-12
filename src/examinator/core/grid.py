@@ -10,12 +10,12 @@ from typing import Mapping
 
 from .defs import Exam, grade_kind
 from .store import Artifact, Store, Submission
-from .workflow import Status, parses_of, question_status, total
+from .workflow import Status, parses_of, question_status, reading_status, total
 
 
 @dataclass(frozen=True)
 class Cell:
-    status: Mapping[str, Status]      # part -> status (none for a question with no result)
+    status: Mapping[str, Status]      # part -> status; {'': how its reading stands} for a question with no result
 
 
 @dataclass(frozen=True)
@@ -48,5 +48,6 @@ def row_cells(exam: Exam, arts: Mapping[str, Mapping[str, Artifact]]) -> dict[st
     """One submission's cells from its artifacts by question (bodies needed only
     for grades; the other questions' parses are judged by revision)."""
     parses = parses_of(arts)
-    return {qid: Cell(question_status(q, arts.get(qid, {}), parses=parses, code_hash=exam.code_hash))
+    return {qid: Cell(question_status(q, arts.get(qid, {}), parses=parses, code_hash=exam.code_hash)
+                      if q.result else {'': reading_status(q, arts.get(qid, {}))})
             for qid, q in exam.questions.items()}

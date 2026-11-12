@@ -171,15 +171,24 @@ it is read into fields like anything else, and checks use it.
   crop, is edited like them, and is verified with them: one verify covers the
   whole parse. `Field.read` is a value (a reader, `reader(ctx, field) -> str`)
   so another kind of reader (a barcode) can be added without a new concept.
+- **A reader may vouch for its value** (attribute `trusted`): `Printed` does
+  when the reading was one of a closed set of expected ones, unless
+  `verify=True`. The parse records which fields were vouched for and carry no
+  marker (`inputs['trusted']`); those need no person while the parse stands as
+  read (`Artifact.trusted(labels)`). A person's edit is a person's to verify.
 - A question with only printed fields and no `result` holds the exam's printing
-  (`stages.read_fields()`): it has a parse to verify and no grade. Nothing in the
+  (`stages.read_fields()`): it has a parse and no grade, and a grid column that
+  shows how its reading stands (read, unverified, not read). Nothing in the
   library names or special-cases it.
-- **A check reads other questions' parses** with `ctx.read(question)`. There is
-  no declaration: the library **records** what a check read, the parse's
-  revision for each question (`None` if it did not exist), with the evidence's
-  recorded inputs (`inputs['reads']`). A grade is outdated when any parse it
-  read has changed, and counts only when its own parse and every parse it read
-  are verified; until then it waits, naming the question (`Status.waiting_on`).
+- **A check reads other questions' parses** with `ctx.read(question)`, or one
+  field with `ctx.read(question, label)`. There is no declaration: the library
+  **records** what a check read, the parse's revision for each question (`None`
+  if it did not exist) and which fields (`inputs['reads']`, `inputs['labels']`),
+  with the evidence. A grade is outdated when any parse it read has changed,
+  and counts only when its own parse and the fields it read elsewhere are
+  verified or trusted as read; until then it waits, naming the question
+  (`Status.waiting_on`). So one unreadable field holds back the checks that
+  read that field, not the others.
   A read of a parse that does not exist leaves the check undecided, and the
   evidence outdated once the parse appears. A check that returns before reading
   a question does not depend on it. Checks never read other checks' results.
@@ -256,9 +265,9 @@ Definitions, for one submission and question:
 | --- | --- | --- |
 | Nothing exists | Not started | No |
 | Artifacts exist, parse not verified | Proposed grade, marked unverified | No |
-| Parse verified, a parse the check read not verified (or missing) | Proposed grade, waiting on that question | No |
-| Parse verified, every parse read verified, evidence current, grade decided | The grade | Yes |
-| Parse verified, every parse read verified, evidence current, grade undecided | Needs review, with the reason | No |
+| Parse verified, a field the check read elsewhere neither verified nor trusted as read (or its parse missing) | Proposed grade, waiting on that question | No |
+| Parse verified, every field read elsewhere verified or trusted, evidence current, grade decided | The grade | Yes |
+| Parse verified, every field read elsewhere verified or trusted, evidence current, grade undecided | Needs review, with the reason | No |
 | Evidence computed from an older parse (its own or one it read) or definition | Outdated; old evidence still visible | No |
 | Manual grade, parse unchanged since | The grade, marked manual | Yes |
 | Manual grade, parse changed since | The old decision, marked outdated | No |

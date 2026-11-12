@@ -126,11 +126,11 @@ def cases():
                       'q2': Q2_ONLY_WEIBULL, 'q7': Q7_ONLY_PROCESS},
              expect={**{q: 'blank' for q in MATH},
                      'q2.check': True, 'q2.shiny': 'blank', 'q7.check': True, 'q7.shiny': 'blank'}),
-        # One printed field unreadable: the printing's parse waits for a person, and every question
-        # that reads it with it; the pseudocode questions read nothing and count.
+        # One printed field unreadable: the questions that read that field (bit 1) wait for a
+        # person. The others read fields that were read as expected, and count.
         Case('unread', printed={'info': {**printed(0)['info'], 'q5_confidence': None}}, blank=blank(0),
              answers={**{q: ANSWERS['original'][q] for q in MATH}, 'q2': Q2, 'q7': Q7},
-             expect={**{q: None for q in MATH},
+             expect={**{q: True for q in MATH}, 'q1': None, 'q5': None, 'q9': None,
                      'q2.check': True, 'q2.shiny': True, 'q7.check': True, 'q7.shiny': True}),
         # Bit 2's two fields disagree: its questions are undecided; bits 1 and 4 agree.
         Case('disagree', printed={'info': {**printed(0)['info'], 'q6_option_c': 'do'}}, blank=blank(0),

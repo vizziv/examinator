@@ -199,6 +199,13 @@ class Runner:
         inputs = {'revs': revs, 'defn': stage_hash(q, stage), 'code': self.exam.code_hash}
         if ctx.reads:
             inputs['reads'] = dict(ctx.reads)
+            inputs['labels'] = dict(ctx.labels)
+        if stage.shape == 'fields' and isinstance(body, Mapping):
+            # fields whose reader vouches for what it read: nobody need verify those
+            sure = [f.label for f in q.read_fields
+                    if getattr(f.read, 'trusted', False) and not has_marker(body.get(f.label))]
+            if sure:
+                inputs['trusted'] = sure
         guard = {**revs, **{(other, 'parse'): rev for other, rev in ctx.reads.items()}}
         try:
             self.store.write(
@@ -236,7 +243,7 @@ class Runner:
             return self.pool.call(q.id, stage.name, {
                 'submission': ctx.submission, 'inputs': ctx.inputs, 'parses': ctx.parses,
                 'params': ctx.params, 'note': ctx.note, 'overrides': self.exam.overrides},
-                self._timeout(stage), reads=ctx.reads)
+                self._timeout(stage), reads=ctx.reads, labels=ctx.labels)
         return body_of(stage.fn(ctx))
 
     def _grade(self, submission: str, q: Question, *, deliberate: bool) -> Outcome:

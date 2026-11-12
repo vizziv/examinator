@@ -29,9 +29,9 @@ def make_keyed_exam():
     exam = Exam('keyed', pages=2)
     exam.question(
         'p', pages=[1],
-        fields=[Field('c1', region=Region(1, 0, 0, 1000, 200), read=Printed("first cue", reads={'1': 'one', '2': 'two'})),
+        fields=[Field('c1', region=Region(1, 0, 0, 1000, 200), read=Printed("first cue", reads={'1': 'one', '2': 'two'}, verify=True)),
                 Field('c2', region=Region(1, 0, 200, 1000, 400),
-                      read=Printed("second cue", reads={'i': 'one', 'ii': 'two'}))],
+                      read=Printed("second cue", reads={'i': 'one', 'ii': 'two'}, verify=True))],
         stages=[stages.read_fields()])
     exam.question(
         'a', pages=[1], result={'x': Bool(), 'y': Bool(counts=False)},

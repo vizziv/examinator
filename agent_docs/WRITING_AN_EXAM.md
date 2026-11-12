@@ -114,7 +114,7 @@ exam.question('areas', title="Areas", pages=[2], result=Number(int, min=0, max=3
 | `cover_pages` | sheets the scanning service adds before page 1 (also an initial default) |
 | `crop_pad` | per-mille padding around every crop (default 12) |
 | `question(pages=)` | the printed pages holding the answer: what the model sees. A grader can change them per submission (an extra-space page, with a note that reaches the prompts) |
-| `question(result=)` | optional: a question with no result has a parse to verify and no grade (the exam's printing, which other questions read) |
+| `question(result=)` | optional: a question with no result has a parse and no grade (the exam's printing, which other questions read); its grid column shows whether it is read, or waits for a person |
 
 **Result specs.** `result=Bool()` or `Number(int | float, min=, max=)` for one
 grid column, or a dict for several parts: `{'check': Bool(), 'shiny': Bool(counts=False)}`
@@ -175,8 +175,14 @@ Field('side', region=Region(2, 0, 60, 1000, 240),
   `exam.question('info', pages=[...], fields=[...printed...], stages=[stages.read_fields()])`,
   declared first, and let the other questions' checks read it (Exams 1-3).
 - Two printed fields that should agree catch a misreading
-  (`fields.agree(...)`: disagreement is undecided). A printed field counts only
-  once a person verified its parse, so every grade that read it waits until then.
+  (`fields.agree(...)`: disagreement is undecided).
+- **Who verifies a printed field.** With `reads`, a value that was one of those
+  expected is trusted as read: nobody need verify it, and a grade that read it
+  does not wait. `Printed(..., verify=True)` makes a person verify it anyway. A
+  value with a marker, a field without `reads`, and anything a person edited
+  wait for a person, and hold back only the checks that read that field
+  (`fields.value(label, question=...)` or `ctx.read(question, label)`; a check
+  that reads the whole parse waits for all of it).
 
 Keep the facts about the printed versions (alt index → what each printed field
 reads) in `versions.py`, with an environment variable naming the blanks'
@@ -338,7 +344,7 @@ stages.check(check, timeout=60)
 | `ctx.` | |
 | --- | --- |
 | `input('parse')` | the body of an upstream artifact named in `inputs` |
-| `read('info')` | another question's parse. Recorded: the grade waits until that parse is verified and is outdated when it changes. With no parse yet it raises `Undecided`. Read only what you use: a question never read is no dependency |
+| `read('info')`, `read('info', label)` | another question's parse, or one field of it. Recorded: the grade waits until what it read is verified (or trusted as read) and is outdated when that parse changes. With no parse yet it raises `Undecided`. Read only what you use: a question never read is no dependency |
 | `params` | `{key: str}` typed by a grader for one deliberate rerun ("run with `huge_constant=10`"). The library gives it no meaning (`custom_value` in `exams/exam_03/weibullish.py`) |
 | `question`, `submission`, `note`, `rerun` | the definition, the id, the page note, and whether the artifact already existed |
 | `pages()`, `crop(region)`, `model(...)`, `remember(...)` | for model stages only. Inside an isolated check they raise `Unavailable` |

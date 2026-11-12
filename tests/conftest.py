@@ -31,14 +31,15 @@ def parse(ctx):
     return json.loads(ctx.model("parse", text=ctx.input('transcript'), expect='json'))
 
 
-def make_exam(key_salt=""):
+def make_exam(key_salt="", trust=False):
     exam = Exam('mini', pages=2)
-    exam.question(          # the printing: no grade, two printed fields that 'a' reads
+    exam.question(          # the printing: no grade, two printed fields that 'a' reads; with `trust`,
+                            # a reading that is one of those expected needs no person
         'p', pages=[1],
         fields=[Field('c1', region=Region(1, 0, 0, 1000, 200),
-                      read=Printed("first cue", reads={'1': 'one', '2': 'two'})),
+                      read=Printed("first cue", reads={'1': 'one', '2': 'two'}, verify=not trust)),
                 Field('c2', region=Region(1, 0, 200, 1000, 400),
-                      read=Printed("second cue", reads={'i': 'one', 'ii': 'two'}))],
+                      read=Printed("second cue", reads={'i': 'one', 'ii': 'two'}, verify=not trust))],
         stages=[stages.read_fields()])
     exam.question(
         'a', pages=[1], result={'x': Bool(), 'y': Bool(counts=False)},

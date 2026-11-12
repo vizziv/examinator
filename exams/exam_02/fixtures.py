@@ -175,11 +175,11 @@ def cases():
              {**{q: 'blank' for q in ('q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q10', 'q11')},
               'q7.answer': 'blank', 'q7.check': 'blank', 'q8.check': 'blank', 'q8.shiny': 'blank',
               'q9.answer': 'blank', 'q9.check': 'blank', 'q12.answer': 'blank', 'q12.shiny': 'blank'}),
-        # One printed field unreadable: the printing waits for a person, and so does every
-        # question that read it. Question 1 reads no printing; question 11 neither.
+        # One printed field unreadable: the questions that read that field wait for a person.
+        # The others read fields that were read as expected (or none), and count.
         case('unread', 0, {**{q: ANSWERS[q][VERSIONS[0][q]] for q in FIELDS}, 'q11': Q11},
-             {'q1': True, 'q11': True, 'q2': None, 'q3': None, 'q4': None, 'q5': None, 'q6': None,
-              'q7.answer': None, 'q8.check': None, 'q9.answer': None, 'q12.answer': None},
+             {'q1': True, 'q11': True, 'q2': True, 'q3': None, 'q4': None, 'q5': None, 'q6': True,
+              'q7.answer': True, 'q8.check': None, 'q9.answer': True, 'q12.answer': True},
              q5_totals=None),
         # Bit 2's two fields disagree: the questions that read bit 2 are undecided.
         case('disagree', 0, {q: ANSWERS[q][VERSIONS[0][q]] for q in FIELDS},

@@ -26,8 +26,7 @@
 <table id="grid"{% if not rows %} hidden{% endif %}>
 <thead><tr>
 <th data-sort="text">id</th><th data-sort="text">name</th>
-{% for q in questions %}
-{% for part in q.result %}<th data-sort="cell" data-col="{{ q.column(part) }}" title="{{ q.title }}">{{ q.column(part) }}</th>{% endfor %}
+{% for c in columns %}<th data-sort="cell" data-col="{{ c.name }}" title="{{ c.q.title }}">{{ c.name }}</th>
 {% endfor %}
 <th data-sort="num">total</th>
 </tr></thead>
@@ -36,7 +35,7 @@
 <tr data-id="{{ r.sub.id }}"{% if r.hidden %} hidden{% endif %}>
 <td class="id">{{ r.sub.id }}</td><td class="name"{% if r.sub.student %} title="{{ r.sub.student }}" data-student="{{ r.sub.student }}"{% endif %}>{{ r.sub.name }}</td>
 {% for c in r.cells %}
-<td class="c cell s-{{ c.state }}" data-q="{{ c.qid }}" data-col="{{ c.col }}" data-s="{{ c.state }}" data-v="{{ c.v }}"{% if c.blank %} data-b="1"{% endif %}{% if c.counts %} data-c="1"{% endif %}><a class="{{ c.cls }}" href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ labels[c.state] }}">{{ c.glyph }}</a></td>
+<td class="c cell s-{{ c.state }}" data-q="{{ c.qid }}" data-col="{{ c.col }}" data-s="{{ c.state }}" data-v="{{ c.v }}"{% if c.blank %} data-b="1"{% endif %}{% if c.counts %} data-c="1"{% endif %}><a class="{{ c.cls }}" href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ c.title }}">{{ c.glyph }}</a></td>
 {% endfor %}
 <td class="total{% if not r.complete %} open{% endif %}" data-n="{{ r.sort }}">{{ r.points }}{% if not r.complete %}<span class="dim" title="incomplete: some grades do not count yet">…</span>{% endif %}</td>
 </tr>
@@ -44,8 +43,7 @@
 </tbody>
 <tfoot><tr>
 <td colspan="2" class="dim">counted</td>
-{% for q in questions %}
-{% for part in q.result %}<td class="tally" data-col="{{ q.column(part) }}"></td>{% endfor %}
+{% for c in columns %}<td class="tally" data-col="{{ c.name }}"></td>
 {% endfor %}
 <td></td>
 </tr></tfoot>

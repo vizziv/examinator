@@ -146,20 +146,32 @@ def waiting(question: Question, arts: Mapping[str, Artifact]) -> tuple[str, ...]
     Fails closed: a result that rests on nothing a person can verify never
     counts on its own ('input'); it needs a manual decision."""
     kinds = verifiable(question)
-    out = [k for k in kinds if not ((a := arts.get(k)) is not None and a.verified)]
+    out = [k for k in kinds if not ((a := arts.get(k)) is not None
+                                    and a.trusted(question.labels if k == 'parse' and question.labels else None))]
     if not kinds:
         out.append('input')
     return tuple(out)
 
 
 def waiting_on(arts: Mapping[str, Artifact], parses: Parses | None) -> tuple[str, ...]:
-    """The other questions whose parse the evidence read and that are not verified
-    (or do not exist): an automatic grade waits for a person to verify them."""
+    """The other questions whose parse the evidence read and whose fields it read
+    are not trusted (or do not exist): an automatic grade waits for a person to
+    verify them."""
     ev = arts.get('evidence')
     if ev is None or not ev.reads:
         return ()
-    parses = parses or {}
-    return tuple(qid for qid in ev.reads if not ((p := parses.get(qid)) is not None and p.verified))
+    parses, labels = parses or {}, ev.inputs.get('labels') or {}
+    return tuple(qid for qid in ev.reads
+                 if not ((p := parses.get(qid)) is not None and p.trusted(labels.get(qid))))
+
+
+def reading_status(question: Question, arts: Mapping[str, Artifact]) -> Status:
+    """Where a question with no result stands: its parse is there and trusted
+    ('graded'), there ('unverified'), or not ('not_started')."""
+    a = arts.get('parse')
+    if a is None:
+        return Status('not_started')
+    return Status('graded' if a.trusted(question.labels or None) else 'unverified')
 
 
 def seen_revs(question: Question, arts: Mapping[str, Artifact]) -> dict[str, int | None]:

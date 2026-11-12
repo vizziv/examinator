@@ -56,16 +56,19 @@ class Context:
     # A check's view of the other questions: {question: (rev, parse body), or None if no parse yet}
     parses: Mapping[str, tuple[int, Any] | None] | None = None
     reads: dict[str, int | None] = field(default_factory=dict)   # what `read` was asked for: rev or None
+    labels: dict[str, list[str] | None] = field(default_factory=dict)   # which of its fields; None: all of it
 
     def input(self, kind: str) -> Any:
         """Body of an upstream artifact named in the stage's `inputs`."""
         return self.inputs[kind]
 
-    def read(self, question: str) -> Any:
-        """Another question's parse (`{label: value}`, or source text), for a check.
+    def read(self, question: str, label: str | None = None) -> Any:
+        """Another question's parse (`{label: value}`, or source text), for a check;
+        with `label`, one field's value (None if the parse has no such field).
 
-        The read is recorded: the grade counts only once that parse is verified,
-        and is outdated when it changes. A question with no parse yet raises
+        The read is recorded: the grade counts only once what it read is verified
+        (or was read by a reader that vouches for it: `Artifact.trusted`), and is
+        outdated when that parse changes. A question with no parse yet raises
         `Undecided` (the check is undecided, and outdated once the parse exists).
         A check that never calls this does not depend on any other question."""
         if self.parses is None:
@@ -76,9 +79,16 @@ class Context:
             raise KeyError(f"no question {question!r}")
         got = self.parses[question]
         self.reads[question] = got[0] if got is not None else None
+        seen = self.labels.setdefault(question, [])
+        if label is None:
+            self.labels[question] = None
+        elif seen is not None and label not in seen:
+            seen.append(label)
         if got is None:
             raise Undecided(f"no parse of {question} yet")
-        return got[1]
+        if label is None:
+            return got[1]
+        return got[1].get(label) if isinstance(got[1], Mapping) else None
 
     def pages(self) -> list['Image']:
         """Rendered images of the question's selected pages for this submission."""

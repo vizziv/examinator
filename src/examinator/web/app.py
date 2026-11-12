@@ -425,6 +425,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         for q in exam.questions.values():
             for part, spec in q.result.items():
                 columns.append({'q': q, 'part': part, 'name': q.column(part), 'counts': spec.counts})
+            if not q.result:        # no grade: the column shows how its reading stands
+                columns.append({'q': q, 'part': '', 'name': q.id, 'counts': False})
         sel = selection(request.query_params.get('focus'))
         table = values() if sel else {}
         rows = []
@@ -436,7 +438,13 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                     st = cell.status[part]
                     cells.append({'qid': q.id, 'col': q.column(part), 'state': st.state,
                                   'glyph': glyph(st), 'cls': value_class(st), 'v': value_key(st),
-                                  'blank': 'blank' in st.flags, 'counts': st.counts})
+                                  'blank': 'blank' in st.flags, 'counts': st.counts,
+                                  'title': STATE_LABELS[st.state]})
+                if not q.result:
+                    st = cell.status['']
+                    cells.append({'qid': q.id, 'col': q.id, 'state': st.state, 'glyph': {'graded': '–', 'unverified': '?'}.get(st.state, ''),
+                                  'cls': 'v-n', 'v': '', 'blank': False, 'counts': st.counts,
+                                  'title': {'graded': "read", 'not_started': "not read"}.get(st.state, "unverified")})
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
                          'complete': row.complete, 'sort': row.points,
                          'hidden': bool(sel) and not focus.matches(table, sel, row.submission.id)})
@@ -502,6 +510,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             if stage is None:
                 return None
             return {'kind': kind, 'art': art, 'rev': art.rev if art else '', 'editable': stage.editable,
+                    'trusted': art is not None and kind == 'parse' and art.trusted(q.labels or None),
                     'marker': art is not None and has_marker(art.body)}
 
         # fields read from the printing (or by another reader): shown with what was asked
@@ -581,7 +590,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         # what a person is asked to verify before the grades count, parse first
         waiting = [w for w in ('parse', 'transcript') if any(w in p['st'].waiting for p in parts)]
         # a question with no result: its parse is still for a person to verify
-        if not q.result and parse and parse['art'] is not None and not parse['art'].verified:
+        if not q.result and parse and parse['art'] is not None and not parse['art'].trusted(q.labels or None):
             waiting.append('parse')
         history = [{'rev': a.rev, 'at': a.updated_at[:16].replace('T', ' '), 'who': a.author or a.origin,
                     'verified': a.verified,

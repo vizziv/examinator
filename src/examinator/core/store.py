@@ -87,7 +87,7 @@ class Artifact:
     author: str | None
     updated_at: str
     rev: int
-    inputs: Mapping[str, Any]   # {'revs': {kind: rev}, 'reads': {question: parse rev}, 'defn': hash, 'code': hash}
+    inputs: Mapping[str, Any]   # {'revs': {kind: rev}, 'reads': {question: parse rev}, 'labels', 'trusted', 'defn': hash, 'code': hash}
     verified_rev: int | None
     verified_by: str | None
 
@@ -108,6 +108,15 @@ class Artifact:
     def reads(self) -> Mapping[str, int | None]:
         """Other questions' parses a check read (`Context.read`): revision, or None if absent."""
         return self.inputs.get('reads') or {}
+
+    def trusted(self, labels: Any = None) -> bool:
+        """Nobody need verify these fields of this parse (None: any of it): a
+        person verified it, or it stands as read and each field's reader vouched
+        for its value (a printed reading that was one of those expected)."""
+        if self.verified:
+            return True
+        return (labels is not None and self.origin == 'auto'
+                and set(labels) <= set(self.inputs.get('trusted') or ()))
 
 
 @dataclass(frozen=True)
