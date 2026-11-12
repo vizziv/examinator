@@ -20,10 +20,12 @@ grader picks are `core.identity`.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
 import shutil
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -183,44 +185,67 @@ def _ask(model, image: Image.Image, lm: Landmark, tag: tuple[str, str, str]) -> 
     return json_value(model.complete(prompt, images=[image], expect='json', tag=tag))
 
 
-def reader(ws, src: Source, body: Mapping, model) -> split.Reader | None:
+class LandmarkReader:
     """Reads one sheet's position from the exam's landmarks (first that answers
     wins), through the model, memoised per source, sheet, landmark, orientation
-    and scan window. None when there is no model or no landmark."""
-    exam = ws.exam
-    if model is None or not exam.landmarks:
-        return None
-    layout = Layout(0, ws.scan_window)
-    lead = cover(ws, body)
+    and scan window. A failed call is no reading and is not remembered: the
+    sheets it left unread are `failed`; `calls` counts the calls made."""
 
-    def read(i: int) -> int | None:
-        o = sheet_orient(body, i)
+    def __init__(self, ws, src: Source, body: Mapping, model):
+        self.ws, self.src, self.body, self.model = ws, src, body, model
+        self.layout = Layout(0, ws.scan_window)
+        self.lead = cover(ws, body)
+        self.calls = 0                  # model calls made (memoised answers aside)
+        self.failures = 0               # calls that failed
+        self.failed: set[int] = set()   # sheets left unread by a failed call
+
+    def __call__(self, i: int) -> int | None:
+        ws, exam = self.ws, self.ws.exam
+        o = sheet_orient(self.body, i)
         image = None
+        failed = False
         for lm in exam.landmarks:
             key = f'landmark:{lm.name}:{digest(lm)}:{list(ws.scan_window)}:{o.turn}{int(o.flip)}:{i}'
-            hit = ws.store.memo(src.id, key)
+            hit = ws.store.memo(self.src.id, key)
             if hit is None:
                 if image is None:
-                    image = page(ws, src, i, body)
+                    image = page(ws, self.src, i, self.body)
+                self.calls += 1
                 try:
-                    reading = _ask(model, layout.crop(image, lm.region, exam.crop_pad), lm,
-                                   (src.id, f'{i}@{o.turn}{int(o.flip)}', 'landmark'))
-                except Exception:       # a failed call is no reading, and is not remembered
+                    reading = _ask(self.model, self.layout.crop(image, lm.region, exam.crop_pad), lm,
+                                   (self.src.id, f'{i}@{o.turn}{int(o.flip)}', 'landmark'))
+                except Exception:
+                    self.failures += 1
+                    failed = True
                     continue
                 hit = json.dumps(reading)
-                ws.store.set_memo(src.id, key, hit)
+                ws.store.set_memo(self.src.id, key, hit)
             p = page_of(lm, json.loads(hit))
             if p is not None:
-                return lead + p - 1
+                return self.lead + p - 1
+        if failed:
+            self.failed.add(i)
         return None
-    return read
+
+    @property
+    def all_failed(self) -> bool:
+        return self.calls > 0 and self.failures == self.calls
+
+
+def reader(ws, src: Source, body: Mapping, model) -> LandmarkReader | None:
+    """The landmark reader for a source's sheets; None when there is no model or no landmark."""
+    if model is None or not ws.exam.landmarks:
+        return None
+    return LandmarkReader(ws, src, body, model)
 
 
 def propose(ws, id: str, *, model=None, length: int | None = None, fresh: bool = False,
             author: str | None = None, expect_rev: Any = ANY) -> Artifact:
     """Guess the plan again: every unconfirmed start (all of them with `fresh`),
     checked with the landmarks when there is a model. A person's confirmed
-    starts and dropped sheets stay. `length` changes the expected length."""
+    starts and dropped sheets stay. `length` changes the expected length.
+    `failed` in the plan counts the sheets a failed model call left unread;
+    a check where every call failed does not count as checked."""
     src = source(ws, id)
     cur = plan(ws, id)
     body = dict(cur.body) if cur is not None and not fresh else {}
@@ -237,7 +262,13 @@ def propose(ws, id: str, *, model=None, length: int | None = None, fresh: bool =
     if read is not None:
         body['readings'] = {}       # read again (cheap: the model's answers are memoised)
     body = split.refill(body, src.pages, read)
-    body['checked'] = read is not None
+    body.pop('failed', None)
+    if read is not None:
+        for i in read.failed:       # unread, not read as nothing
+            body['readings'].pop(str(i), None)
+        if read.failed:
+            body['failed'] = len(read.failed)
+    body['checked'] = read is not None and not read.all_failed
     return ws.store.write(id, '', PLAN, body, origin='manual' if author else 'auto', author=author,
                           expect_rev=expect_rev)
 
@@ -332,79 +363,99 @@ def state(ws, id: str) -> list[str]:
 
 
 def removed(ws, id: str) -> list[str]:
-    """Submissions written from this source that the plan no longer has."""
+    """Submissions written from this source that the plan no longer has: no
+    entry carries their id, or the entry that does has no pages left."""
     art = plan(ws, id)
-    ids = {e.get('id') for e in art.body['entries']}
+    src = source(ws, id)
+    ids = {e.get('id') for e, sheets in zip(art.body['entries'], split.pages(art.body, src.pages)) if sheets}
     return sorted(s for s, m in ws.store.made().items() if m.source == id and s not in ids)
 
 
-def _next_id(ws, taken: set[str]) -> str:
+def _next_ids(ws, taken: set[str]):
+    """Fresh submission ids, never used before, each with the counter to save after it."""
     n = int(ws.store.setting('intake_next', 1))
     while True:
         sid = f's{n:04d}'
         n += 1
         if sid not in taken and not (ws.pdfs / f'{sid}.pdf').exists():
-            ws.store.set_setting('intake_next', n)
-            return sid
+            taken.add(sid)
+            yield sid, n
 
 
 def accept(ws, id: str, *, author: str | None = None, force: bool = False,
            expect_rev: Any = ANY) -> dict:
-    """Write the plan's submissions into `pdfs/`. Unchanged ones are left alone.
-    Raises `Busy` if a submission with grading work would change or go, unless `force`."""
+    """Write the plan's submissions into `pdfs/`. Unchanged ones are left alone;
+    a submission whose entry lost all its pages is removed (the entry keeps no id).
+    Raises `Busy` if a submission with grading work would change or go, unless `force`.
+
+    The PDFs are written to temporary files first and moved into place only once
+    the store has recorded them, so a plan edit that lands in between (`Conflict`)
+    leaves `pdfs/` as it was."""
     src = source(ws, id)
     art = plan(ws, id)
     if art is None:
         raise KeyError(id)
     if expect_rev is not ANY and art.rev != expect_rev:
         raise Conflict("the plan changed")
-    body = json.loads(json.dumps(art.body))
-    n = src.pages
+    body = copy.deepcopy(art.body)
     made = ws.store.made()
     states = state(ws, id)
     gone = removed(ws, id)
     entries = body['entries']
-    sheets = _sheets_of(body, n)
-    busy = [e['id'] for e, st in zip(entries, states) if st == 'changed' and ws.store.has_work(e['id'], ignore=NO_WORK)]
+    sheets = _sheets_of(body, src.pages)
+    busy = [e['id'] for e, st, (pages, _) in zip(entries, states, sheets)
+            if st == 'changed' and pages and ws.store.has_work(e['id'], ignore=NO_WORK)]
     busy += [s for s in gone if ws.store.has_work(s, ignore=NO_WORK)]
     if busy and not force:
         raise Busy(busy)
-    taken = {s.id for s in ws.store.submissions()} | set(made)
+    fresh = _next_ids(ws, {s.id for s in ws.store.submissions()} | set(made))
+    next_n = None
     report = {'new': [], 'rewritten': [], 'removed': [], 'unchanged': 0, 'empty': 0}
     writes = []
     for e, st, (pages, orients) in zip(entries, states, sheets):
         e['confirmed'] = True       # accepted: every start is now a person's decision
         if not pages:
+            if e.get('id') in gone:
+                e['id'] = None      # its submission is removed below
             report['empty'] += 1
             continue
         if st == 'made':
             report['unchanged'] += 1
             continue
         if not e.get('id') or (e['id'] in made and made[e['id']].source != id):
-            e['id'] = _next_id(ws, taken)
-            taken.add(e['id'])
+            e['id'], next_n = next(fresh)
         writes.append((e['id'], pages, orients))
         report['new' if st == 'new' else 'rewritten'].append(e['id'])
     path = source_path(ws, src)
-    for sid, pages, orients in writes:
-        pdf_pages.write(path, [(i, Orient.from_json(o)) for i, o in zip(pages, orients)],
-                        ws.pdfs / f'{sid}.pdf')
-    now = _now()
-    with ws.store.transaction():
-        cur = ws.store.write(id, '', PLAN, body, origin=art.origin, author=art.author, expect_rev=art.rev)
+    tmps: dict[str, Path] = {}
+    try:
         for sid, pages, orients in writes:
-            ws.store.set_made(Made(sid, id, tuple(pages), {'sheets': orients}, now))
-            ws.store.put_submissions([identity.submission(ws, sid, f'{sid}.pdf')])
-            ws.store.clear_memo(sid)        # readings of the old pages
-            ws.store.delete(sid, '', identity.READ)     # and what the model read on them
-            # The written PDF starts with as many cover sheets as the plan has, whatever the workspace's default.
-            kept = ws.store.get(sid, '', 'layout')
-            ws.set_layout(sid, cover_pages=cover(ws, body), author=author,
-                          scan_window=(kept.body or {}).get('scan_window') if kept else None)
-        for sid in gone:
-            ws.store.delete_made(sid)
-            ws.store.delete_submission(sid)
-            report['removed'].append(sid)
+            tmps[sid] = ws.pdfs / f'.{sid}.{os.getpid()}.{threading.get_ident()}.part'
+            pdf_pages.write(path, [(i, Orient.from_json(o)) for i, o in zip(pages, orients)], tmps[sid])
+        now = _now()
+        with ws.store.transaction():
+            cur = ws.store.write(id, '', PLAN, body, origin=art.origin, author=art.author, expect_rev=art.rev)
+            if next_n is not None:
+                ws.store.set_setting('intake_next', next_n)
+            for sid, pages, orients in writes:
+                ws.store.set_made(Made(sid, id, tuple(pages), {'sheets': orients}, now))
+                ws.store.put_submissions([identity.submission(ws, sid, f'{sid}.pdf')])
+                ws.store.clear_memo(sid)        # readings of the old pages
+                ws.store.delete(sid, '', identity.READ)     # and what the model read on them
+                # The written PDF starts with as many cover sheets as the plan has, whatever the workspace's default.
+                kept = ws.store.get(sid, '', 'layout')
+                ws.set_layout(sid, cover_pages=cover(ws, body), author=author,
+                              scan_window=(kept.body or {}).get('scan_window') if kept else None)
+            for sid in gone:
+                ws.store.delete_made(sid)
+                ws.store.delete_submission(sid)
+                report['removed'].append(sid)
+    except BaseException:
+        for tmp in tmps.values():
+            tmp.unlink(missing_ok=True)
+        raise
+    for sid, tmp in tmps.items():
+        os.replace(tmp, ws.pdfs / f'{sid}.pdf')
     for sid in gone:
         (ws.pdfs / f'{sid}.pdf').unlink(missing_ok=True)
     report['rev'] = cur.rev

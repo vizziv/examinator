@@ -955,7 +955,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                             'name': identity.who(ws, sid)['name'] if sid in made else ''})
         so = Orient.from_json(body.get('orient'))
         return {'id': src.id, 'name': src.name, 'n': n, 'rev': art.rev, 'length': body['length'],
-                'checked': bool(body.get('checked')), 'o': code(so), 'orient': so.label(),
+                'checked': bool(body.get('checked')), 'failed': body.get('failed', 0), 'o': code(so), 'orient': so.label(),
                 'sheet_o': [code(intake.sheet_orient(body, i)) for i in range(n)],
                 'cover': cover, 'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
                 'readings': {i: (None if r is None else 'cover' if r < cover else f'p.{r - cover + 1}')

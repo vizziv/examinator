@@ -10,9 +10,10 @@ from PIL import Image, ImageDraw
 
 from examinator import Exam, Landmark, Region, load_exam, synth
 from examinator.core import identity, intake, split
+from examinator.core.store import Conflict
 from examinator.core.workspace import Workspace, RosterError
 from examinator.model.fake import FakeModel
-from examinator.pdf import render
+from examinator.pdf import pages as pdf_pages, render
 from examinator.pdf.orient import HALF, QUARTER, Orient
 from examinator.pdf.render import Renderer
 
@@ -124,7 +125,7 @@ def test_landmark_crops_come_from_the_oriented_page(tmp_path):
     assert intake.propose(ws, src.id, model=model).body['readings'] == {'0': 0}
     art = intake.plan(ws, src.id)
     art = intake.edit(ws, src.id, 'turn_source', expect_rev=art.rev, author='t')
-    art = intake.edit(ws, src.id, 'turn_source', expect_rev=art.rev, author='t')
+    intake.edit(ws, src.id, 'turn_source', expect_rev=art.rev, author='t')
     assert intake.propose(ws, src.id, model=model).body['readings'] == {'0': None}
     ws.close()
 
@@ -172,14 +173,13 @@ def test_baked_pages_are_upright_plain_scans(tmp_path):
     pdf = tmp_path / 'one.pdf'
     im.save(pdf, 'PDF', resolution=50.0)                              # 8 x 10 inch page
     src, _ = intake.add_source(ws, pdf)
-    art = intake.edit(ws, src.id, 'turn_source', expect_rev=intake.plan(ws, src.id).rev, author='t')
+    intake.edit(ws, src.id, 'turn_source', expect_rev=intake.plan(ws, src.id).rev, author='t')
     intake.accept(ws, src.id)
     out = ws.pdfs / 's0001.pdf'
     doc = pdfium.PdfDocument(str(out))
     page = doc[0]
     assert tuple(round(v) for v in page.get_size()) == (720, 576)      # width and height swapped
-    got = render.scan_image(page, 50) if render.scan_image.__code__.co_argcount > 1 else render.scan_image(page)
-    assert got is not None                                            # one full-page image: a plain scan
+    assert render.scan_image(page) is not None                        # one full-page image: a plain scan
     doc.close()
     shown = Renderer(ws.root / 'cache' / 'x', dpi=50).page(out, 0).convert('L')
     a = np.asarray(shown)
@@ -188,10 +188,24 @@ def test_baked_pages_are_upright_plain_scans(tmp_path):
     ws.close()
 
 
+def test_writing_a_pdf_that_fails_leaves_no_temporary_file(tmp_path, monkeypatch):
+    im = Image.new('RGB', (400, 500), 'white')
+    pdf = tmp_path / 'one.pdf'
+    im.save(pdf, 'PDF', resolution=50.0)
+
+    def broken(self, dest, **kw):
+        Path(dest).write_bytes(b'%PDF-partial')
+        raise OSError("disk full")
+    monkeypatch.setattr(pdfium.PdfDocument, 'save', broken)
+    with pytest.raises(OSError):
+        pdf_pages.write(pdf, [(0, QUARTER)], tmp_path / 'out.pdf')
+    assert sorted(p.name for p in tmp_path.iterdir()) == ['one.pdf']
+
+
 def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     ws, paths, model = stacked
     one, _ = intake.add_source(ws, paths[0])
-    art = intake.propose(ws, one.id, model=model)
+    intake.propose(ws, one.id, model=model)
     intake.accept(ws, one.id)
     before = {s: (ws.pdfs / f'{s}.pdf').stat().st_mtime_ns for s in ws.store.made()}
     # grading work on the third submission (the one with the stray sheet)
@@ -204,19 +218,19 @@ def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     assert (ws.pdfs / 's0003.pdf').stat().st_mtime_ns == before['s0003']
     # orientation change of a submission without work: rewritten; nothing else touched
     art = intake.edit(ws, one.id, 'restore', sheet=9, expect_rev=art.rev, author='t')
-    art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')
+    intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')
     assert intake.state(ws, one.id) == ['made', 'made', 'made', 'made', 'changed', 'made']
     report = intake.accept(ws, one.id)
     assert report['rewritten'] == ['s0005'] and report['unchanged'] == 5
     after = {s: (ws.pdfs / f'{s}.pdf').stat().st_mtime_ns for s in ws.store.made()}
     assert [s for s in after if after[s] != before[s]] == ['s0005']
     # forced: the change goes through and the work stays where it was
-    art = intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
+    intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
     report = intake.accept(ws, one.id, force=True)
     assert report['rewritten'] == ['s0003'] and ws.store.made()['s0003'].pages == (7, 8, 10, 11)
     assert ws.store.get('s0003', 'parity', 'parse') is not None
     # joining away a submission with no work removes it
-    art = intake.edit(ws, one.id, 'join', k=0, expect_rev=intake.plan(ws, one.id).rev, author='t')
+    intake.edit(ws, one.id, 'join', k=0, expect_rev=intake.plan(ws, one.id).rev, author='t')
     ws.store.write('s0002', 'parity', 'parse', {'B': 'odd'}, origin='manual', author='t')
     with pytest.raises(intake.Busy):        # s0002 would go away with its work
         intake.accept(ws, one.id)
@@ -231,7 +245,7 @@ def test_ids_are_never_reused(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    art = intake.edit(ws, one.id, 'cut', sheet=2, expect_rev=intake.plan(ws, one.id).rev, author='t')
+    intake.edit(ws, one.id, 'cut', sheet=2, expect_rev=intake.plan(ws, one.id).rev, author='t')
     report = intake.accept(ws, one.id)
     assert report['new'] == ['s0007'] and report['rewritten'] == ['s0001']
 
@@ -264,3 +278,56 @@ def test_handed_pdfs_still_need_their_roster(tmp_path, toy):
     with pytest.raises(RosterError):
         ws.sync_roster()
     ws.close()
+
+
+# --- failures and races ---
+
+def test_failed_landmark_calls_are_counted_not_read_as_nothing(stacked):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    art = intake.propose(ws, one.id, model=FakeModel(lambda call: None))     # every call fails
+    assert art.body['failed'] > 0 and not art.body['checked']
+    assert art.body['readings'] == {}                       # failed sheets are unread, not read as None
+    assert split.doubts(art.body, one.pages) == [[]] * 6
+    assert intake.propose(ws, one.id).body.get('failed') is None
+
+
+def test_a_submission_whose_pages_are_all_dropped_is_removed(stacked):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    intake.accept(ws, one.id)
+    art = intake.plan(ws, one.id)
+    for sheet in range(20, 24):                             # every sheet of the last submission
+        art = intake.edit(ws, one.id, 'drop', sheet=sheet, expect_rev=art.rev, author='t')
+    assert art.body['entries'][-1]['id'] == 's0006' and intake.removed(ws, one.id) == ['s0006']
+    ws.store.write('s0006', 'parity', 'parse', {'B': 'odd'}, origin='manual', author='t')
+    with pytest.raises(intake.Busy) as e:
+        intake.accept(ws, one.id)
+    assert e.value.submissions == ['s0006']
+    ws.store.delete('s0006', 'parity', 'parse')
+    report = intake.accept(ws, one.id)
+    assert report['removed'] == ['s0006'] and not (ws.pdfs / 's0006.pdf').exists()
+    assert 's0006' not in ws.store.made() and intake.removed(ws, one.id) == []
+    assert intake.plan(ws, one.id).body['entries'][-1]['id'] is None
+    assert intake.state(ws, one.id)[:5] == ['made'] * 5
+
+
+def test_a_plan_edit_during_accept_leaves_pdfs_alone(stacked, monkeypatch):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    intake.accept(ws, one.id)
+    before = {p.name: p.read_bytes() for p in ws.pdfs.glob('*.pdf')}
+    art = intake.edit(ws, one.id, 'turn', k=1, expect_rev=intake.plan(ws, one.id).rev, author='t')
+    intake.edit(ws, one.id, 'cut', sheet=2, expect_rev=art.rev, author='t')    # a new submission too
+    counter = ws.store.setting('intake_next')
+    real = intake.pdf_pages.write
+
+    def write_then_edit(*a):
+        real(*a)
+        intake.edit(ws, one.id, 'flip', k=0, expect_rev=intake.plan(ws, one.id).rev, author='u')
+    monkeypatch.setattr(intake.pdf_pages, 'write', write_then_edit)
+    with pytest.raises(Conflict):
+        intake.accept(ws, one.id)
+    assert {p.name: p.read_bytes() for p in ws.pdfs.glob('*.pdf')} == before
+    assert not [p for p in ws.pdfs.iterdir() if p.suffix == '.part']
+    assert ws.store.setting('intake_next') == counter
