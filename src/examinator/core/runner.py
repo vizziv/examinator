@@ -2,9 +2,13 @@
 
 `Runner.run_stage` runs one stage for one submission and question: it reads
 the upstream artifacts, computes outside any transaction, then publishes only
-if everything it read is still current. A stage that fails leaves the previous
-artifact intact. A check that times out, crashes or lacks a resolved variant
-is stored as undecided evidence: never "incorrect".
+if everything it read is still current, other questions' parses included. A
+stage that fails leaves the previous artifact intact. A check that times out,
+crashes or cannot decide (`Undecided`, another question's parse not there
+yet) is stored as undecided evidence: never "incorrect".
+
+A parse stage of fields returns what the student wrote; the runner adds every
+field that has a reader (`Field.read`, a printed field), in label order.
 
 The grade stage is pure and fast; it runs in-process right after every check
 and writes one row per result part, leaving manual decisions alone unless the
@@ -12,17 +16,16 @@ run was deliberate.
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
-from . import variants
 from .context import BadOutput, Blocked, Context, Unavailable
 from .defs import Exam, Grade, Question, Stage, grade_kind, has_marker, stage_hash
-from .evidence import body_of, undecided
+from .evidence import Undecided, body_of, undecided
 from .isolate import Pool, PoolClosed, StageTimeout
 from .store import ANY, Artifact, Conflict
-from .workflow import (_derived, evidence_current, grade_current, recheck_wanted, seen_revs,
-                       variant_current)
+from .workflow import _derived, evidence_current, grade_current, recheck_wanted, seen_revs
 from .workspace import Workspace
 
 DEFAULT_TIMEOUT = 60.0
@@ -56,6 +59,11 @@ class Services:
 
     def __init__(self, workspace: Workspace, model: Model | None, memo: dict | None = None):
         self.ws, self._model, self._memo = workspace, model, memo
+
+    def parses(self, submission, exam):
+        """What a check sees of the other questions: `Context.parses`."""
+        have = self.ws.store.of_kind(submission, 'parse')
+        return {qid: ((a.rev, a.body) if (a := have.get(qid)) is not None else None) for qid in exam.questions}
 
     def pages(self, submission, question):
         pages, _ = self.ws.selected_pages(submission, question)
@@ -96,15 +104,19 @@ def stage_context(ws: Workspace, submission: str, q: Question, stage: Stage, ser
         if not stage.accepts_markers and has_marker(a.body):
             raise Blocked(f"{kind} has review markers")
         inputs[kind], revs[kind] = a.body, a.rev
-    variant = None
-    if q.variants and stage.uses_variant:      # only a stage that declares it sees the variant
-        va = arts.get('variant')
-        variant = variants.resolved(va.body) if va else None
-        revs['variant'] = va.rev if va else None
     _, note = ws.selected_pages(submission, q)
-    ctx = Context(submission=submission, question=q, stage=stage.name, variant=variant,
+    ctx = Context(submission=submission, question=q, stage=stage.name,
                   inputs=inputs, note=note, services=services, **kw)
     return ctx, revs
+
+
+def read_fields(ctx: Context, body: Any) -> dict:
+    """A parse of fields as stored: what the stage returned for the fields the
+    student writes, and every field with a reader read now, in label order."""
+    body = body if isinstance(body, Mapping) else {}
+    rctx = dataclasses.replace(ctx, stage='read')     # its model calls are tagged 'read'
+    got = {f.label: f.read(rctx, f) for f in ctx.question.read_fields}
+    return {label: got[label] if label in got else body.get(label) for label in ctx.question.labels}
 
 
 class Runner:
@@ -149,20 +161,23 @@ class Runner:
         target = arts.get(name)
         if target is not None and target.protected and not overwrite:
             return out('skipped', "protected")
-        try:
-            ctx, revs = stage_context(self.ws, submission, q, stage, self._services, arts=arts,
-                                      params=dict(params or {}), rerun=target is not None, reasoning=reasoning)
-        except Blocked as e:
-            return out('blocked', str(e))
-        variant = ctx.variant
         is_check = name == 'evidence'
         try:
-            if is_check and stage.uses_variant and q.variants and variant is None:
-                body = undecided("variant undecided")
-            else:
-                body = self._execute(q, stage, ctx)
+            ctx, revs = stage_context(self.ws, submission, q, stage, self._services, arts=arts,
+                                      params=dict(params or {}), rerun=target is not None, reasoning=reasoning,
+                                      parses=self._services.parses(submission, self.exam) if is_check else None)
+        except Blocked as e:
+            return out('blocked', str(e))
+        try:
+            body = self._execute(q, stage, ctx)
+            if stage.shape == 'fields' and q.read_fields:
+                body = read_fields(ctx, body)
             if is_check and not (isinstance(body, Mapping) and isinstance(body.get('data'), Mapping)):
                 body = undecided("the check returned no evidence")
+        except Undecided as e:
+            if not is_check:
+                return out('failed', "undecided")
+            body = undecided(str(e))
         except Blocked as e:
             return out('blocked', str(e))
         except PoolClosed:
@@ -181,11 +196,14 @@ class Runner:
             body = undecided("the check failed to run", [
                 {'type': 'details', 'summary': "Error", 'audience': 'grader',
                  'blocks': [{'type': 'code', 'text': detail}]}])
+        inputs = {'revs': revs, 'defn': stage_hash(q, stage), 'code': self.exam.code_hash}
+        if ctx.reads:
+            inputs['reads'] = dict(ctx.reads)
+        guard = {**revs, **{(other, 'parse'): rev for other, rev in ctx.reads.items()}}
         try:
             self.store.write(
-                submission, qid, name, body, origin='auto',
-                inputs={'revs': revs, 'defn': stage_hash(q, stage), 'code': self.exam.code_hash},
-                expect_rev=target.rev if target else None, guard=revs, unless_protected=not overwrite)
+                submission, qid, name, body, origin='auto', inputs=inputs,
+                expect_rev=target.rev if target else None, guard=guard, unless_protected=not overwrite)
         except Conflict as e:
             return out('discarded', str(e))
         if is_check and q.stage('grade') is not None:
@@ -216,9 +234,9 @@ class Runner:
     def _execute(self, q: Question, stage: Stage, ctx: Context) -> Any:
         if stage.isolate and self.pool is not None:
             return self.pool.call(q.id, stage.name, {
-                'submission': ctx.submission, 'variant': ctx.variant, 'inputs': ctx.inputs,
+                'submission': ctx.submission, 'inputs': ctx.inputs, 'parses': ctx.parses,
                 'params': ctx.params, 'note': ctx.note, 'overrides': self.exam.overrides},
-                self._timeout(stage))
+                self._timeout(stage), reads=ctx.reads)
         return body_of(stage.fn(ctx))
 
     def _grade(self, submission: str, q: Question, *, deliberate: bool) -> Outcome:
@@ -260,32 +278,34 @@ class Runner:
         return out('done')
 
     def recheck(self, submission: str, qid: str) -> Outcome | None:
-        """Automatic recheck after a parse or variant changes or is verified.
+        """Automatic recheck after a parse changes or is verified: this question's,
+        then that of every question whose check read this question's parse.
 
-        Brings the variant in line with changed cue definitions (from the stored
-        readings that still apply; no model), reruns derived stages and the check if the evidence
-        is not current, and otherwise repairs automatic grades that fell behind.
-        Never replaces a manual grade or anything protected."""
+        Reruns derived stages and the check if the evidence is not current, and
+        otherwise repairs automatic grades that fell behind. Never replaces a
+        manual grade or anything protected. Returns this question's outcome."""
+        out = self._recheck(submission, qid)
+        for other in self.readers(submission, qid):
+            self._recheck(submission, other)
+        return out
+
+    def readers(self, submission: str, qid: str) -> list[str]:
+        """The questions whose stored check read `qid`'s parse, for one submission."""
+        return [other for other, ev in self.store.of_kind(submission, 'evidence').items()
+                if qid in ev.reads and other in self.exam.questions]
+
+    def _recheck(self, submission: str, qid: str) -> Outcome | None:
         q = self.exam.questions[qid]
         if q.stage('evidence') is None:
             return None
         arts = self.store.for_question(submission, qid)
-        va = arts.get('variant')
-        if va is not None and not variant_current(q, arts) and not va.protected:
-            readings = variants.stored_readings(q, va.body)
-            try:
-                self.store.write(submission, qid, 'variant', variants.narrow(q, readings), origin='auto',
-                                 inputs={'revs': {}, 'defn': stage_hash(q, q.stage('variant'))},
-                                 expect_rev=va.rev, unless_protected=True)
-            except Conflict:
-                pass
-            arts = self.store.for_question(submission, qid)
         if not recheck_wanted(q, arts):
             return None
-        if evidence_current(q, arts):
+        parses = self.store.of_kind(submission, 'parse')
+        if evidence_current(q, arts, parses):
             if q.stage('grade') is not None and any(
                     (g := arts.get(grade_kind(p))) is None
-                    or (g.origin != 'manual' and not grade_current(q, p, arts)) for p in q.result):
+                    or (g.origin != 'manual' and not grade_current(q, p, arts, parses)) for p in q.result):
                 return self._grade(submission, q, deliberate=False)
             return None
         out = None
@@ -319,7 +339,7 @@ class Runner:
         """A grader's edit of an editable artifact. Editing clears verification
         unless `verify` approves the new content in the same step."""
         stage = self.exam.questions[qid].stage(kind)
-        if stage is None or not stage.editable or kind == 'variant':
+        if stage is None or not stage.editable:
             raise ValueError(f"{kind} is not editable")
         if verify and has_marker(body):
             raise ValueError("resolve review markers before verifying")
@@ -331,8 +351,6 @@ class Runner:
         cur = self.store.get(submission, qid, kind)
         if verified and cur is not None and has_marker(cur.body):
             raise ValueError("resolve review markers before verifying")
-        if verified and kind == 'variant' and not variants.resolved(cur.body if cur else None):
-            raise ValueError("choose a variant first")
         return self.store.verify(submission, qid, kind, expect_rev=expect_rev, author=author,
                                  verified=verified)
 
@@ -364,36 +382,3 @@ class Runner:
         self.store.delete(submission, qid, grade_kind(part), expect_rev=expect_rev)
         if q.stage('grade') is not None:
             self._grade(submission, q, deliberate=False)
-
-    def choose_variant(self, submission: str, qid: str, variant: str | None, *, author: str | None,
-                       expect_rev: Any = ANY) -> Artifact | None:
-        """A manual variant choice, authoritative until removed (`variant=None`
-        returns to what the recorded cue readings say)."""
-        q = self.exam.questions[qid]
-        cur = self.store.get(submission, qid, 'variant')
-        if variant is None:
-            if cur is None:
-                return None
-            readings = variants.stored_readings(q, cur.body)
-            return self.store.write(submission, qid, 'variant', variants.narrow(q, readings),
-                                    origin='auto', inputs=self._variant_inputs(q), expect_rev=expect_rev)
-        return self.store.write(submission, qid, 'variant',
-                                variants.choose(q, cur.body if cur else None, variant),
-                                origin='manual', author=author, inputs=self._variant_inputs(q),
-                                expect_rev=expect_rev)
-
-    def _variant_inputs(self, q: Question) -> dict:
-        return {'revs': {}, 'defn': stage_hash(q, q.stage('variant'))}
-
-    def correct_cue(self, submission: str, qid: str, cue: str, reading: str | None, *,
-                    author: str | None, expect_rev: Any = ANY) -> Artifact:
-        """A grader corrects one cue's reading; candidates are narrowed again."""
-        q = self.exam.questions[qid]
-        if cue not in [c.name for c in q.cues]:
-            raise ValueError(f"unknown cue {cue!r}")
-        cur = self.store.get(submission, qid, 'variant')
-        readings = variants.stored_readings(q, cur.body if cur else None)
-        readings[cue] = reading
-        return self.store.write(submission, qid, 'variant', variants.narrow(q, readings),
-                                origin='manual', author=author, inputs=self._variant_inputs(q),
-                                expect_rev=expect_rev)

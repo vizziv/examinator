@@ -166,16 +166,11 @@
     await settle(r.body);
     return true;
   }
-  // Verify whatever waits for a person, parse first, then the variant. False when something
-  // could not be verified (a failed save, an undecided variant), so V stays on this submission.
+  // Verify whatever waits for a person here: the parse. False when it could not be
+  // verified (a failed save, a review marker), so V stays on this submission.
   async function verifyWaiting() {
     const waiting = JSON.parse($('parts').dataset.waiting || '[]'), ed = parseEd();
-    if (editable(ed) && (dirty(ed) || waiting.includes('parse')) && !await save(ed, true)) return false;
-    if (waiting.includes('variant')) {
-      if (!document.querySelector('[data-action="variant-verify"]')) { flash("variant undecided: choose one"); return false; }
-      if (!await act('verify', {kind: 'variant', rev: variantRev()})) return false;
-    }
-    return true;
+    return !(editable(ed) && (dirty(ed) || waiting.includes('parse')) && !await save(ed, true));
   }
 
   const parseEd = () => $('ed-parse');
@@ -189,7 +184,6 @@
     }
     return act('decide', {part: box.dataset.part, rev: revOf(box), seen, ...extra});
   };
-  const variantRev = () => revOf($('variant'));
   // Z / X / C / G grade the first undecided part (or the only part): its buttons carry those
   // actions, so they show the keys; the other parts' buttons keep the plain ones.
   const GRADES = {'v-t': 'grade-right', 'v-f': 'grade-wrong', 'v-b': 'grade-blank', 'num-set': 'grade-number'};
@@ -252,16 +246,6 @@
     undecide: {run: ({el}) => {
       const box = el.closest('.decide');
       return act('undecide', {part: box.dataset.part, rev: revOf(box)});
-    }},
-    'variant-choose': {run: () => {
-      const v = $('variant-pick').value;
-      return v ? act('variant', {variant: v, rev: variantRev()}) : $('variant-pick').focus();
-    }},
-    'variant-clear': {run: () => act('variant', {variant: null, rev: variantRev()})},
-    'variant-verify': {run: () => act('verify', {kind: 'variant', rev: variantRev()})},
-    cue: {run: ({el}) => {
-      const input = el.closest('.cue').querySelector('input');
-      return act('cue', {cue: input.dataset.cue, reading: input.value, rev: variantRev()});
     }},
     run: {available: ({el}) => !el || !el.dataset.off, run: ({el}) => ((el.dataset.confirm && !confirm(`Replace ${el.dataset.confirm}?`)) ? null
       : act('run', {stage: el.dataset.stage, onward: !!el.dataset.onward,

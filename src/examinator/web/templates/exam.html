@@ -5,13 +5,13 @@
 {% block head %}<script src="{{ root }}/static/entries.js" defer></script>{% endblock %}
 {% block body %}
 <main class="narrow" id="exam-data">
-<p class="help">Changes here apply to <b>all submissions</b>. Saving a key, prompt or cue outdates the grades
+<p class="help">Changes here apply to <b>all submissions</b>. Saving a key or prompt outdates the grades
 that used it and rechecks them in the background; manual grades are kept and marked outdated.
+A printed field's region, question or readings apply when its parse is run again.
 Regions are easiest to adjust on a question page (scan, “regions”).</p>
 
 <div id="changes" class="panel" hidden>
 <span id="ch-text"></span> <progress id="ch-bar" hidden></progress>
-<span id="ch-variants" hidden>· cue changed: <button type="button" data-action="reread-cues" class="primary">reread cues</button></span>
 <span id="ch-fail" class="notice"></span>
 </div>
 

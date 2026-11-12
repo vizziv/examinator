@@ -1,11 +1,12 @@
 """Exam 3: nine questions on 22 printed pages, in eight printed versions.
 
 Three independent binary choices each switch a group of questions between an
-`original` and an `alternate` printing; every question in a group reads the
-same two printed cues, which must agree.
+`original` and an `alternate` printing. The first question, `info`, has no
+grade: it holds the printed fields that tell the printing, two per choice. The
+questions of a group read that choice's two fields, which must agree.
 """
-from examinator import Bool, Cue, Exam, Field, Region
-from examinator.std import math, stages
+from examinator import Bool, Exam, Field, Printed, Region
+from examinator.std import fields, math, stages
 
 from . import huge_constants, language, notes, point_process, rectangles, weibullish
 
@@ -22,10 +23,6 @@ def boxes(page, labels, tops, left, right, height):
 
 def band(page, top, bottom):
     return Region(page, 0, top, 1000, bottom)
-
-
-def variants(*cues):
-    return dict(variants=['original', 'alternate'], cues=list(cues))
 
 
 def numbered(n, *accepted):
@@ -54,33 +51,45 @@ def marks(**parts):
 TWO_MARKS = {'check': Bool(), 'shiny': Bool(counts=False)}
 
 
-# --- cues: two printed clues per group of questions -----------------------
+# --- the printing: two printed fields per choice, in a question of their own -----
 
-BIT1 = variants(
-    Cue('q5_confidence', region=band(10, 208, 474),
-        ask="the overall confidence percent printed in question 5's task sentence, as a number without the % sign",
-        reads={'95': 'original', '90': 'alternate'}),
-    Cue('q9_observations', region=band(18, 318, 649),
-        ask="the three observed numbers printed in question 9, in order, as a JSON list",
-        reads={'[14, 12, 15]': 'original', '[14, 11, 15]': 'alternate'}))
+def printed(label, region, ask, original, alternate):
+    reads = {**{text: 'original' for text in original}, **{text: 'alternate' for text in alternate}}
+    return Field(label, region=region, read=Printed(ask, reads=reads))
+
+
 # On the alternate printing explanations C and D swap, so both sentences are on the page:
-# the cue asks for one literally printed word of the item labelled C, and its band stops
-# above the answer boxes (which also print "C" and "D").
-BIT2 = variants(
-    Cue('q6_option_c', region=band(13, 40, 275),
-        ask="the single word printed immediately after 'They' in the list item labelled 'C.' "
-            "(the item labelled C only, not item D)",
-        reads={'use': 'original', 'do': 'alternate'}),
-    Cue('q3_first_height', region=band(7, 70, 170),
-        ask="the single italic word printed immediately before the word 'height' in the sentence labelled 3.1",
-        reads={'base': 'original', 'spike': 'alternate'}))
-BIT4 = variants(
-    Cue('q8_first_n', region=band(17, 0, 273),
-        ask="the value labelled n in the expression labelled 8.1",
-        reads={'3': 'original', '4': 'alternate'}),
-    Cue('q4_negative_branch', region=band(8, 0, 487),
-        ask="question 4's density expression for -1 <= r < 0, in plain ASCII",
-        reads={'r+1': 'original', '1+r': 'original', '-r': 'alternate'}))
+# `q6_option_c` asks for one literally printed word of the item labelled C, and its band
+# stops above the answer boxes (which also print "C" and "D").
+exam.question(
+    'info', title="Printing", pages=[7, 8, 10, 13, 17, 18],
+    fields=[printed('q5_confidence', band(10, 208, 474),
+                    "the overall confidence percent printed in question 5's task sentence, "
+                    "as a number without the % sign", ['95'], ['90']),
+            printed('q9_observations', band(18, 318, 649),
+                    "the three observed numbers printed in question 9, in order, as a JSON list",
+                    ['[14, 12, 15]'], ['[14, 11, 15]']),
+            printed('q6_option_c', band(13, 40, 275),
+                    "the single word printed immediately after 'They' in the list item labelled 'C.' "
+                    "(the item labelled C only, not item D)", ['use'], ['do']),
+            printed('q3_first_height', band(7, 70, 170),
+                    "the single italic word printed immediately before the word 'height' in the "
+                    "sentence labelled 3.1", ['base'], ['spike']),
+            printed('q8_first_n', band(17, 0, 273),
+                    "the value labelled n in the expression labelled 8.1", ['3'], ['4']),
+            printed('q4_negative_branch', band(8, 0, 487),
+                    "question 4's density expression for -1 <= r < 0, in plain ASCII", ['r+1', '1+r'], ['-r'])],
+    stages=[stages.read_fields()])
+
+
+def bit(*labels):
+    """One choice: its printed fields, which must agree."""
+    return fields.agree(*(fields.value(label, question='info') for label in labels))
+
+
+BIT1 = bit('q5_confidence', 'q9_observations')
+BIT2 = bit('q6_option_c', 'q3_first_height')
+BIT4 = bit('q8_first_n', 'q4_negative_branch')
 
 
 # --- questions, in printed order ---------------------------------------------
@@ -95,9 +104,9 @@ def right_right(p, q):
 
 
 exam.question(
-    'q1', title="Right right", pages=[3], result=Bool(), **BIT1,
+    'q1', title="Right right", pages=[3], result=Bool(),
     fields=boxes(3, ['1.1', '1.2', '1.3', '1.4'], [96, 207, 318, 430], 500, 885, 100),
-    stages=stages.math(symbols=rectangles.SYMBOLS, functions=rectangles.FUNCTIONS, notes=notes.RECTANGLE,
+    stages=stages.math(by=BIT1, symbols=rectangles.SYMBOLS, functions=rectangles.FUNCTIONS, notes=notes.RECTANGLE,
                        key={'original': right_right('a', 'b'), 'alternate': right_right('b', 'a')}))
 
 exam.question(
@@ -110,32 +119,32 @@ exam.question(
 
 Q3 = ['3.1', '3.2', '3.3', '3.4']
 exam.question(
-    'q3', title="A tale of two heights", pages=[7], result=Bool(), **BIT2,
+    'q3', title="A tale of two heights", pages=[7], result=Bool(),
     fields=boxes(7, Q3, [98, 308, 518, 728], 650, 900, 110),
-    stages=stages.math(key={'original':  dict(zip(Q3, map(option, [2, 2, 2, 1]))),
+    stages=stages.math(by=BIT2, key={'original':  dict(zip(Q3, map(option, [2, 2, 2, 1]))),
                             'alternate': dict(zip(Q3, map(option, [2, 3, 2, 2])))}))
 
 Q4 = [f'4.{part}.{bound}' for part in (1, 2) for bound in 'abcd']
 exam.question(
-    'q4', title="Sawtooth GPS", pages=[9], result=Bool(), **BIT4,
+    'q4', title="Sawtooth GPS", pages=[9], result=Bool(),
     fields=boxes(9, Q4, [99, 199, 298, 397, 519, 618, 718, 817], 500, 885, 92),
-    stages=stages.math(key={
+    stages=stages.math(by=BIT4, key={
         'original':  dict(zip(Q4, ['-1', '-1/2', '0', '1/2', '-1', '-1/4', '0', '3/4'])),
         'alternate': dict(zip(Q4, ['-1/2', '0', '1/2', '1', '-3/4', '0', '1/4', '1']))}))
 
 exam.question(
     'q5', title="Mmm, measuring multiple means", pages=[11],
-    result=Bool(), **BIT1,
+    result=Bool(),
     fields=boxes(11, ['5'], [98], 710, 900, 150),
-    stages=stages.math(key={'original':  {'5': numbered(4, '30')},
+    stages=stages.math(by=BIT1, key={'original':  {'5': numbered(4, '30')},
                             'alternate': {'5': numbered(3, '15')}}))
 
 Q6 = ['6.1', '6.2', '6.3', '6.4']
 exam.question(
     'q6', title="Poisson un, poisson deux, poisson rouge, poisson bleu",
-    pages=[13], result=Bool(), **BIT2,
+    pages=[13], result=Bool(),
     fields=boxes(13, Q6, [295, 456, 617, 777], 710, 900, 110),
-    stages=stages.math(key={'original':  dict(zip(Q6, map(letter, 'CDAB'))),
+    stages=stages.math(by=BIT2, key={'original':  dict(zip(Q6, map(letter, 'CDAB'))),
                             'alternate': dict(zip(Q6, map(letter, 'DCAB')))}))
 
 exam.question(
@@ -146,13 +155,13 @@ exam.question(
                              grade_rule=marks(check='7.1', shiny='7.2'), timeout=40))
 
 exam.question(
-    'q8', title="Triangular likelihood", pages=[17], result=Bool(), **BIT4,
+    'q8', title="Triangular likelihood", pages=[17], result=Bool(),
     fields=boxes(17, ['8.1', '8.2'], [98, 518], 500, 885, 110),
-    stages=stages.math(key={'original':  {'8.1': '6/25**3', '8.2': '0'},
+    stages=stages.math(by=BIT4, key={'original':  {'8.1': '6/25**3', '8.2': '0'},
                             'alternate': {'8.1': '0', '8.2': '6/25**3'}}))
 
 exam.question(
-    'q9', title="Capital L likelihood", pages=[19], result=Bool(), **BIT1,
+    'q9', title="Capital L likelihood", pages=[19], result=Bool(),
     fields=boxes(19, ['9.a', '9.b'], [96, 207], 500, 885, 100),
-    stages=stages.math(key={'original':  {'9.a': '12', '9.b': '16'},
+    stages=stages.math(by=BIT1, key={'original':  {'9.a': '12', '9.b': '16'},
                             'alternate': {'9.a': '11', '9.b': '19'}}))

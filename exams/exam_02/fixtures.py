@@ -3,7 +3,7 @@ none is student work. With `EXAM2_BLANKS` set, each case is drawn on the
 matching blank PDF; without it, on placeholder pages."""
 from examinator.synth import Case
 
-from .versions import VERSIONS, blank, readings
+from .versions import INFO, VERSIONS, blank, readings
 
 P8 = [f'??_{i}' for i in range(1, 9)]
 P6 = P8[:6]
@@ -17,7 +17,7 @@ FIELDS = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8', 'q9', 'q12']       # q
 
 NONE_ABOVE, AT_MOST_2 = 'None of the above', "It's ≤ 2δ"
 
-# Canonical answers per question and variant, stated independently of the keys in exam.py.
+# Canonical answers per question and printing, stated independently of the keys in exam.py.
 ANSWERS = {
     'q1': dict.fromkeys(['right', 'left', 'right+1', 'left+1'],
                         dict(zip(Q1, ['1/4', '1/2', '4', '[1/4, 1/3]', 'None']))),
@@ -151,8 +151,9 @@ def empty(answers: dict) -> dict:
 
 
 def case(name, alt, answers, expect, **changed):
-    return Case(name, variants=VERSIONS[alt], blank=blank(alt), answers=answers, expect=expect,
-                readings={**readings(alt), **changed})
+    """A case on printing `alt`; `changed` overrides what printed fields read (None: unreadable)."""
+    return Case(name, printed={INFO: {**readings(alt), **changed}}, blank=blank(alt), answers=answers,
+                expect=expect)
 
 
 def cases():
@@ -174,11 +175,16 @@ def cases():
              {**{q: 'blank' for q in ('q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q10', 'q11')},
               'q7.answer': 'blank', 'q7.check': 'blank', 'q8.check': 'blank', 'q8.shiny': 'blank',
               'q9.answer': 'blank', 'q9.check': 'blank', 'q12.answer': 'blank', 'q12.shiny': 'blank'}),
-        # Bit 1: one cue unreadable. Bit 2: its two cues disagree. Bit 4: both agree.
-        # Question 1's key does not depend on its printing, so it still counts.
-        case('cues', 0, {q: ANSWERS[q][VERSIONS[0][q]] for q in FIELDS},
-             {'q1': True, 'q2': True, 'q3': None, 'q4': None, 'q5': None, 'q6': None,
-              'q7.answer': True, 'q8.check': None, 'q9.answer': None, 'q12.answer': True},
-             q5_totals=None, q9_variance='9'),
+        # One printed field unreadable: the printing waits for a person, and so does every
+        # question that read it. Question 1 reads no printing; question 11 neither.
+        case('unread', 0, {**{q: ANSWERS[q][VERSIONS[0][q]] for q in FIELDS}, 'q11': Q11},
+             {'q1': True, 'q11': True, 'q2': None, 'q3': None, 'q4': None, 'q5': None, 'q6': None,
+              'q7.answer': None, 'q8.check': None, 'q9.answer': None, 'q12.answer': None},
+             q5_totals=None),
+        # Bit 2's two fields disagree: the questions that read bit 2 are undecided.
+        case('disagree', 0, {q: ANSWERS[q][VERSIONS[0][q]] for q in FIELDS},
+             {'q1': True, 'q2': True, 'q3': True, 'q4': None, 'q5': True, 'q6': None,
+              'q7.answer': True, 'q8.check': True, 'q9.answer': None, 'q12.answer': True},
+             q9_variance='9'),
     ]
     return out

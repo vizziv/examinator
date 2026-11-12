@@ -10,6 +10,7 @@ from examinator_kits.stochastic import checks
 from examinator_kits.stochastic import fit as sampling
 
 from .language import POINTS, SEED, Draws, draw, settle_direct
+from .versions import PRINTING
 
 LABEL = '5'
 ENTRIES = {'original': 'unit_cone', 'alternate': 'twonit_cone'}
@@ -32,9 +33,9 @@ def uniform01(u):
     return np.clip(u, 0.0, 1.0)
 
 
-def check_program(program: pseudocode.Program, variant: str) -> checks.Part:
+def check_program(program: pseudocode.Program, printing: str) -> checks.Part:
     part = checks.Part(LABEL)
-    entry, h = ENTRIES[variant], HEIGHTS[variant]
+    entry, h = ENTRIES[printing], HEIGHTS[printing]
     if program.is_blank(entry):
         other = next((e for e in ENTRIES.values() if e != entry and not program.is_blank(e)), None)
         return part.settle(None, f"defines {other}, not {entry}: check the printing") if other else part.settle('blank')
@@ -62,4 +63,5 @@ def check_program(program: pseudocode.Program, variant: str) -> checks.Part:
 
 
 def check(ctx):
-    return checks.check_source(ctx.input('parse'), POINTS, LABEL, lambda program: check_program(program, ctx.variant))
+    printing = PRINTING['q5'](ctx)
+    return checks.check_source(ctx.input('parse'), POINTS, LABEL, lambda program: check_program(program, printing))

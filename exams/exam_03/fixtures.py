@@ -3,7 +3,7 @@ none is student work. With `EXAM3_BLANKS` set, each case is drawn on the
 matching blank PDF; without it, on placeholder pages."""
 from examinator.synth import Case
 
-from .versions import VERSIONS, blank
+from .versions import VERSIONS, blank, printed
 
 Q3 = ['3.1', '3.2', '3.3', '3.4']
 Q4 = [f'4.{part}.{bound}' for part in (1, 2) for bound in 'abcd']
@@ -109,27 +109,32 @@ def empty(answers: dict) -> dict:
 
 
 def cases():
-    out = [Case(f'alt{alt}', variants=VERSIONS[alt], blank=blank(alt), answers=canonical(alt), expect=ALL_TRUE)
+    out = [Case(f'alt{alt}', printed=printed(alt), blank=blank(alt), answers=canonical(alt), expect=ALL_TRUE)
            for alt in VERSIONS]
     out += [
-        Case('forms', variants=VERSIONS[0], blank=blank(0),
+        Case('forms', printed=printed(0), blank=blank(0),
              answers={**OTHER_FORMS, 'q2': Q2_LITERAL, 'q7': Q7}, expect=ALL_TRUE),
-        Case('one-wrong', variants=VERSIONS[0], blank=blank(0),
+        Case('one-wrong', printed=printed(0), blank=blank(0),
              answers={**ONE_WRONG, 'q2': Q2_WRONG_WEIBULL, 'q7': Q7_OFF_BY_ONE},
              expect={**{q: False for q in MATH},
                      'q2.check': False, 'q2.shiny': True, 'q7.check': True, 'q7.shiny': False}),
         # The alternate printing with the original printing's answers: the alternate key applies.
-        Case('crossed', variants=VERSIONS[7], blank=blank(7),
+        Case('crossed', printed=printed(7), blank=blank(7),
              answers={q: ANSWERS['original'][q] for q in MATH}, expect={q: False for q in MATH}),
-        Case('empty', variants=VERSIONS[5], blank=blank(5),
+        Case('empty', printed=printed(5), blank=blank(5),
              answers={**{q: empty(ANSWERS['original'][q]) for q in MATH},
                       'q2': Q2_ONLY_WEIBULL, 'q7': Q7_ONLY_PROCESS},
              expect={**{q: 'blank' for q in MATH},
                      'q2.check': True, 'q2.shiny': 'blank', 'q7.check': True, 'q7.shiny': 'blank'}),
-        # Bit 1: one cue unreadable. Bit 2: the two cues disagree. Bit 4: both agree.
-        Case('cues', variants=VERSIONS[0], blank=blank(0),
-             readings={'q5_confidence': None, 'q6_option_c': 'do'},
+        # One printed field unreadable: the printing's parse waits for a person, and every question
+        # that reads it with it; the pseudocode questions read nothing and count.
+        Case('unread', printed={'info': {**printed(0)['info'], 'q5_confidence': None}}, blank=blank(0),
+             answers={**{q: ANSWERS['original'][q] for q in MATH}, 'q2': Q2, 'q7': Q7},
+             expect={**{q: None for q in MATH},
+                     'q2.check': True, 'q2.shiny': True, 'q7.check': True, 'q7.shiny': True}),
+        # Bit 2's two fields disagree: its questions are undecided; bits 1 and 4 agree.
+        Case('disagree', printed={'info': {**printed(0)['info'], 'q6_option_c': 'do'}}, blank=blank(0),
              answers={q: ANSWERS['original'][q] for q in MATH},
-             expect={'q1': None, 'q5': None, 'q9': None, 'q3': None, 'q6': None, 'q4': True, 'q8': True}),
+             expect={'q1': True, 'q5': True, 'q9': True, 'q3': None, 'q6': None, 'q4': True, 'q8': True}),
     ]
     return out

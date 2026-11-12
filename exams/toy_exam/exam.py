@@ -1,7 +1,8 @@
 """A deliberately small exam, unlike any real one: it exists to show that the
-library is generic. One question scored as a number in a range with three
-variants, and one boolean question with no variants."""
-from examinator import Bool, Cue, Exam, Field, Grade, Identity, Landmark, Number, Region
+library is generic. One question scored as a number in a range, printed in
+three versions: a printed field in the question says which, and picks the key.
+One boolean question printed the same for everyone."""
+from examinator import Bool, Exam, Field, Grade, Identity, Landmark, Number, Printed, Region
 from examinator.std import math, stages
 
 exam = Exam('toy', title="Toy exam", pages=4,
@@ -30,15 +31,14 @@ def count_correct(evidence):
 AREAS = ['A.1', 'A.2', 'A.3']
 exam.question(
     'areas', title="Areas", pages=[2], result=Number(int, min=0, max=3),
-    variants=['red', 'green', 'blue'],
-    cues=[Cue('areas_side', region=Region(2, 0, 60, 1000, 240),
-              ask="the printed side length of the square, as a number",
-              reads={'2': 'red', '3': 'green', '5': 'blue'})],
-    fields=[Field(label, region=Region(2, 400, top, 900, top + 120))
-            for label, top in zip(AREAS, [300, 480, 660])],
+    fields=[Field('side', region=Region(2, 0, 60, 1000, 240),     # printed, not written: the version
+                  read=Printed("the printed side length of the square, as a number",
+                               reads={'2': 'red', '3': 'green', '5': 'blue'}))]
+           + [Field(label, region=Region(2, 400, top, 900, top + 120))
+              for label, top in zip(AREAS, [300, 480, 660])],
     stages=[stages.transcribe(),
             stages.parse_math(symbols=['x']),
-            stages.check_math(symbols={'x': 'positive'}, key={
+            stages.check_math(symbols={'x': 'positive'}, by='side', key={
                 'red':   dict(zip(AREAS, ['4', '4*x', '2*x**2'])),
                 'green': dict(zip(AREAS, ['9', '6*x', '3*x**2'])),
                 'blue':  dict(zip(AREAS, ['25', '10*x', '5*x**2']))}),

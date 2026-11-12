@@ -15,6 +15,7 @@ from examinator_kits.stochastic import checks
 from examinator_kits.stochastic import fit as sampling
 
 from . import samplers
+from .versions import printing
 
 LABEL = 'snow_cone'
 N = 4000
@@ -86,4 +87,5 @@ def judge(program, region: Region) -> checks.Part:
 
 
 def check(ctx):
-    return samplers.check(ctx.input('parse'), LABEL, lambda program: judge(program, REGIONS[ctx.variant]))
+    region = REGIONS[printing('q10')(ctx)]        # reads the printing; undecided until it agrees
+    return samplers.check(ctx.input('parse'), LABEL, lambda program: judge(program, region))

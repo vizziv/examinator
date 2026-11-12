@@ -84,11 +84,10 @@
   document.addEventListener('submit', e => { if (e.target.matches('form.entry')) e.preventDefault(); });
   addEventListener('beforeunload', e => { if (document.querySelector('form.entry.dirty')) e.preventDefault(); });
 
-  // --- the exam page: progress of the recheck, rereading cues, copying the change list ---
+  // --- the exam page: progress of the recheck, copying the change list ---
   const panel = document.getElementById('changes');
   if (!panel) return;
   const $ = id => document.getElementById(id);
-  let variants = [];
 
   async function follow(job, what) {
     const bar = $('ch-bar');
@@ -114,20 +113,11 @@
     const b = e.detail;
     panel.hidden = false;
     $('ch-fail').textContent = '';
-    variants = b.variants || [];
-    $('ch-variants').hidden = !variants.length;
     for (const s of b.skipped || []) $('ch-fail').textContent += `not applied: ${s.path} (${s.reason}) `;
     if (!b.job) { $('ch-text').textContent = "no grades affected"; return; }
     $('ch-text').textContent = `${b.affected} answers outdated (${b.questions.join(', ')}); rechecking`;
     await follow(b.job, `${b.affected} outdated · rechecked`);
   });
-  Actions.register('reread-cues', {run: async () => {
-    if (!confirm("Read the changed cues again with the model, for every submission whose variant is undecided?")) return;
-    $('ch-variants').hidden = true;
-    const r = await request('/exam/variants', {questions: variants});
-    if (!r.ok) { $('ch-fail').textContent = r.body.error || "failed"; return; }
-    await follow(r.body.job, `cues reread`);
-  }});
   Actions.register('copy-lines', {available: () => !!$('lines'), run: async () => {
     try { await navigator.clipboard.writeText($('lines').textContent); flash("copied", 'ok'); }
     catch (err) { getSelection().selectAllChildren($('lines')); }

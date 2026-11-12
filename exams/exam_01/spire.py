@@ -17,6 +17,7 @@ from examinator_kits.stochastic import checks
 from examinator_kits.stochastic import fit as sampling
 
 from .language import COLLECTIONS, draw
+from .versions import PRINTING
 
 LABEL = '6'
 ENTRY = 'spire'
@@ -91,5 +92,5 @@ def check_program(program: pseudocode.Program, density: Density) -> checks.Part:
 
 
 def check(ctx):
-    density = DENSITIES[ctx.variant]
+    density = DENSITIES[PRINTING['q6'](ctx)]
     return checks.check_source(ctx.input('parse'), COLLECTIONS, LABEL, lambda program: check_program(program, density))

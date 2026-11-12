@@ -12,6 +12,7 @@ from examinator_kits.stochastic import checks
 from examinator_kits.stochastic import fit as sampling
 
 from .language import POINTS, SEED, Draws, draw, settle_direct
+from .versions import PRINTING
 
 LABEL = '4'
 ENTRY = 'ice_cream'
@@ -112,5 +113,5 @@ def check_program(program: pseudocode.Program, region: Region) -> checks.Part:
 
 
 def check(ctx):
-    region = REGIONS[ctx.variant]
+    region = REGIONS[PRINTING['q4'](ctx)]
     return checks.check_source(ctx.input('parse'), POINTS, LABEL, lambda program: check_program(program, region))

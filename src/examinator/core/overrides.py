@@ -3,9 +3,8 @@
 An override replaces one plain-data value of a question, addressed by a path:
 
     <question>/pages                          printed pages holding the answer
-    <question>/require | verify_variant       variant agreement; whether a person verifies it
     <question>/fields/<label>/region
-    <question>/cues/<name>/region | ask | reads
+    <question>/fields/<label>/read/ask | reads    a printed field: what the model is asked; readings to values
     <question>/stages/<name>/<field>[/<key>...]   a stage's configuration: a field of
                                               its function's dataclass, then mapping keys
 
@@ -13,9 +12,9 @@ Segments are separated by '/'; inside a segment '%' is written '%25' and '/'
 is written '%2F'. Labels with dots ('4.1.a') need no escaping.
 
 What can be edited is what is plain data: text, numbers, booleans, a `Region`,
-page lists, a cue's `reads` map, and key entries that are text or a choice
-(an object with an `accepted` tuple of texts). Functions are never editable,
-and neither are names used as addresses, variants, result specs or stage
+page lists, a printed field's `reads` map, and key entries that are text or a
+choice (an object with an `accepted` tuple of texts). Functions are never
+editable, and neither are names used as addresses, result specs or stage
 wiring. A stage-configuration field can opt out with
 `dataclasses.field(metadata={'override': False})`.
 
@@ -32,7 +31,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .defs import Cue, Exam, Field, Question, Region, Stage, stage_hash
+from .defs import Exam, Field, Question, Region, Stage, stage_hash
+from .printed import Printed
 from .store import ANY, Store
 
 KINDS = ('region', 'text', 'int', 'number', 'bool', 'pages', 'map', 'choice')
@@ -142,16 +142,11 @@ def _leaves(q: Question) -> dict[tuple[str, ...], tuple[str, bool]]:
     """Every editable value of a question: {segments after the id: (kind, nullable)}."""
     out: dict[tuple[str, ...], tuple[str, bool]] = {
         ('pages',): ('pages', False)}
-    if q.variants:
-        out[('require',)] = ('int', True)
-        out[('verify_variant',)] = ('bool', False)
     for f in q.fields:
-        out[('fields', f.label, 'region')] = ('region', True)
-    for c in q.cues:
-        if c.fn is None:
-            out.update({('cues', c.name, 'region'): ('region', False),
-                        ('cues', c.name, 'ask'): ('text', False),
-                        ('cues', c.name, 'reads'): ('map', False)})
+        out[('fields', f.label, 'region')] = ('region', f.read is None)    # a reader needs its region
+        if isinstance(f.read, Printed):
+            out.update({('fields', f.label, 'read', 'ask'): ('text', False),
+                        ('fields', f.label, 'read', 'reads'): ('map', False)})
     for s in q.stages:
         if dataclasses.is_dataclass(s.fn) and not isinstance(s.fn, type):
             for segs, kind, nullable in _config_leaves(s.fn):
@@ -167,7 +162,7 @@ def _child(node: Any, seg: str):
     if isinstance(node, Stage):
         child, rebuild = _child(node.fn, seg)
         return child, lambda v: dataclasses.replace(node, fn=rebuild(v))
-    if isinstance(node, tuple) and all(isinstance(x, (Field, Cue, Stage)) for x in node):
+    if isinstance(node, tuple) and all(isinstance(x, (Field, Stage)) for x in node):
         for i, x in enumerate(node):
             if (x.label if isinstance(x, Field) else x.name) == seg:
                 return x, lambda v, i=i: node[:i] + (v,) + node[i + 1:]
@@ -254,8 +249,6 @@ def _check(exam: Exam, q: Question, segs: tuple[str, ...], kind: str, nullable: 
     if kind == 'int':
         if not _int(value):
             raise ValueError("expected an integer")
-        if segs == ('require',) and value < 0:
-            raise ValueError("expected a count of cues")
         return value
     if kind == 'number':
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -272,10 +265,7 @@ def _check(exam: Exam, q: Question, segs: tuple[str, ...], kind: str, nullable: 
     if kind == 'map':
         if not (isinstance(value, Mapping) and all(isinstance(k, str) and k.strip() and isinstance(v, str)
                                                    for k, v in value.items())):
-            raise ValueError("expected a map of readings to variants")
-        unknown = sorted({*value.values()} - {*q.variants})
-        if unknown:
-            raise ValueError(f"unknown variant {unknown[0]!r}")
+            raise ValueError("expected a map of readings to values")
         return dict(value)
     if kind == 'choice':
         if not (isinstance(value, (list, tuple)) and value

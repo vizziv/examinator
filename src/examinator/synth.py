@@ -7,7 +7,12 @@ row, and scripted model replies, so the whole pipeline runs offline.
 
 `selftest` runs every case end to end with the scripted model, verifies each
 parse as a grader would, and compares the grades with `Case.expect`. It doubles
-as a test of every question and variant of the exam.
+as a test of every question and printing of the exam.
+
+Which printing a case is, is a fact about the case: `Case.printed` says what is
+printed in each printed field (`core.printed.Printed`), so the placeholder pages
+show it and the scripted model reads it; `Case.blank` names the blank PDF of
+that printing to draw on.
 
 Nothing here touches real student data: every byte is derived from the exam
 definition, instructor-provided blank PDFs and the cases.
@@ -23,7 +28,9 @@ from typing import Any, Mapping
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .core.defs import Exam, Region
+from .core.defs import Exam, Field, Region
+from .core.printed import Printed
+from .core.reading import normalize
 from .core.runner import Runner
 from .core.workflow import question_status
 from .core.workspace import Workspace
@@ -36,11 +43,13 @@ SCRIPT = 'fake_model.json'
 @dataclass
 class Case:
     name: str                                                    # the submission id
-    answers: Mapping[str, Any] = field(default_factory=dict)     # question -> parse body
-    variants: Mapping[str, str] = field(default_factory=dict)    # question -> printed variant
-    expect: Mapping[str, Any] = field(default_factory=dict)      # grid column -> value, 'blank', or None (undecided)
-    blank: str | Path | None = None                              # blank exam PDF to draw on
-    readings: Mapping[str, str | None] = field(default_factory=dict)   # cue name -> scripted reading override
+    answers: Mapping[str, Any] = field(default_factory=dict)     # question -> parse body (written fields)
+    # question -> {printed field label: what is printed there (a reading, or the value it reads to);
+    # None: the model cannot read it}
+    printed: Mapping[str, Mapping[str, str | None]] = field(default_factory=dict)
+    # grid column -> value, 'blank', or None (must not count: undecided, or waiting for a person)
+    expect: Mapping[str, Any] = field(default_factory=dict)
+    blank: str | Path | None = None                              # blank exam PDF of this printing, to draw on
 
 
 def load_cases(exam: Exam) -> list[Case]:
@@ -56,7 +65,6 @@ class BadCase(ValueError):
 def check_cases(exam: Exam, cases: list[Case]) -> None:
     """`BadCase` naming the case and the key for any case that does not fit the exam."""
     columns = [q.column(p) for q in exam.questions.values() for p in q.result]
-    cue_names = {c.name for q in exam.questions.values() for c in q.cues if c.fn is None}
     names = [c.name for c in cases]
     for case in cases:
         def bad(what):
@@ -72,25 +80,24 @@ def check_cases(exam: Exam, cases: list[Case]) -> None:
             if isinstance(body, Mapping):
                 if shape not in (None, 'fields'):
                     raise bad(f"answers[{qid!r}]: this question's parse is source text, not {{label: text}}")
-                unknown = [k for k in body if k not in q.labels]
+                unknown = [k for k in body if k not in q.written]
                 if unknown:
-                    raise bad(f"answers[{qid!r}]: no field {unknown[0]!r} (fields: {list(q.labels)})")
+                    raise bad(f"answers[{qid!r}]: no written field {unknown[0]!r} (fields: {list(q.written)})")
             elif body is not None and not isinstance(body, str):
                 raise bad(f"answers[{qid!r}]: expected {{label: text or None}}, source text, or None")
             elif shape == 'fields':
-                raise bad(f"answers[{qid!r}]: expected {{label: text or None}} for the fields {list(q.labels)}")
-        for qid, variant in case.variants.items():
+                raise bad(f"answers[{qid!r}]: expected {{label: text or None}} for the fields {list(q.written)}")
+        for qid, values in case.printed.items():
             q = exam.questions.get(qid)
             if q is None:
-                raise bad(f"variants: no question {qid!r}")
-            if variant not in q.variants:
-                raise bad(f"variants[{qid!r}]: {variant!r} is not one of {list(q.variants)}")
+                raise bad(f"printed: no question {qid!r}")
+            printed = [f.label for f in q.read_fields if isinstance(f.read, Printed)]
+            for label in values:
+                if label not in printed:
+                    raise bad(f"printed[{qid!r}]: no printed field {label!r} (printed fields: {printed})")
         for col in case.expect:
             if col not in columns:
                 raise bad(f"expect: no grid column {col!r} (columns: {columns})")
-        for name in case.readings:
-            if name not in cue_names:
-                raise bad(f"readings: no cue {name!r} read by the model (cues: {sorted(cue_names)})")
 
 
 def _new_root(root: Path) -> None:
@@ -136,9 +143,14 @@ def _text(answer: Any) -> str:
     return "" if answer is None else str(answer)
 
 
-def cue_reading(cue, variant: str | None) -> str | None:
-    """A reading that points at `variant`: the first matching key of the cue's map."""
-    return next((k for k, v in cue.reads.items() if v == variant), None)
+def printed_reading(f: Field, given: str | None) -> str | None:
+    """What the model reads in a printed field, from what a case says is printed:
+    a reading of the field's `reads` as it is, a value as the first reading that
+    maps to it, anything else as it is (a reading the field does not expect)."""
+    reads = f.read.reads
+    if given is None or any(normalize(k) == normalize(given) for k in reads):
+        return given
+    return next((k for k, v in reads.items() if v == given), given)
 
 
 def _printed_pages(exam: Exam, case: Case, renderer: Renderer) -> list[Image.Image]:
@@ -152,13 +164,13 @@ def _printed_pages(exam: Exam, case: Case, renderer: Renderer) -> list[Image.Ima
             d = ImageDraw.Draw(im)
             d.text((40, 30), f"{exam.title}  (synthetic)  page {p}", fill='black', font=_font(18))
             for q in exam.questions.values():
-                for cue in q.cues:
-                    if cue.region is not None and cue.region.page == p:
-                        l, t, _, _ = _box(cue.region)
-                        shown = case.readings.get(cue.name) or cue_reading(cue, case.variants.get(q.id)) or ""
+                for f in q.read_fields:
+                    if isinstance(f.read, Printed) and f.region.page == p:
+                        l, t, _, _ = _box(f.region)
+                        shown = printed_reading(f, case.printed.get(q.id, {}).get(f.label)) or ""
                         d.text((l + 40, t + 30), f"{q.title}: {shown}", fill='black', font=_font(16))
                 for f in q.fields:
-                    if f.region is not None and f.region.page == p:
+                    if f.region is not None and f.region.page == p and f.read is None:
                         l, t, r, b = _box(f.region)
                         d.rectangle((l, t, r, b), outline='black')
                         d.text((max(l - 60, 5), t + 5), f.label, fill='black', font=_font(16))
@@ -195,7 +207,7 @@ def _draw_identity(exam: Exam, pages: list[Image.Image], person: Mapping[str, st
 def _draw_answers(exam: Exam, case: Case, pages: list[Image.Image]) -> None:
     for qid, body in case.answers.items():
         q = exam.questions[qid]
-        regions = [f for f in q.fields if f.region is not None]
+        regions = [f for f in q.fields if f.region is not None and f.read is None]
         if isinstance(body, Mapping):
             for f in regions:
                 l, t, _, _ = _box(f.region)
@@ -226,25 +238,22 @@ def _scan(exam: Exam, printed: list[Image.Image]) -> list[Image.Image]:
 
 def script_for(exam: Exam, case: Case) -> dict[str, Any]:
     """Scripted model replies for one case: `'question|stage' -> text`, and for
-    the variant stage a map from each cue's question text to its JSON reply."""
+    reading printed fields (`'question|read'`) a map from each field's `ask` to
+    its JSON reply. A printed field the case does not mention has no reply."""
     script: dict[str, Any] = {}
     for qid, q in exam.questions.items():
-        if q.cues:
-            replies = {}
-            for cue in q.cues:
-                if cue.fn is not None:
-                    continue
-                reading = (case.readings[cue.name] if cue.name in case.readings
-                           else cue_reading(cue, case.variants.get(qid)))
-                replies[cue.ask] = json.dumps({'quote': "synthetic", 'value': reading})
-            script[f'{qid}|variant'] = replies
+        given = case.printed.get(qid, {})
+        replies = {f.read.ask: json.dumps({'quote': "synthetic", 'value': printed_reading(f, given[f.label])})
+                   for f in q.read_fields if isinstance(f.read, Printed) and f.label in given}
+        if replies:
+            script[f'{qid}|read'] = replies
         if qid not in case.answers:
             continue
         body = case.answers[qid]
         if isinstance(body, Mapping):
             script[f'{qid}|transcript'] = "\n".join(
-                f"{label}: {'BLANK' if body.get(label) is None else body[label]}" for label in q.labels)
-            script[f'{qid}|parse'] = json.dumps({'answers': {label: body.get(label) for label in q.labels}})
+                f"{label}: {'BLANK' if body.get(label) is None else body[label]}" for label in q.written)
+            script[f'{qid}|parse'] = json.dumps({'answers': {label: body.get(label) for label in q.written}})
         else:
             script[f'{qid}|transcript'] = script[f'{qid}|parse'] = _text(body)
     return script
@@ -297,7 +306,7 @@ def fake_model(root: str | Path):
     def reply(call):
         submission, question, stage = call.tag
         entry = script.get(submission, {}).get(f'{question}|{stage}')
-        if isinstance(entry, dict):     # the variant stage: one reply per cue question
+        if isinstance(entry, dict):     # printed fields: one reply per field's question
             return next((v for ask, v in entry.items() if ask in call.prompt), None)
         return entry
 
@@ -315,28 +324,34 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
     problems = []
     try:
         for case in cases:
+            # As a batch run does: every question's parse first, then the checks, so
+            # a check that reads another question's parse finds it.
             for qid, q in exam.questions.items():
-                if not q.stages:        # decided by hand only: nothing to run
-                    continue
-                runner.run_from(case.name, qid, q.stages[0].name)
-                arts = ws.store.for_question(case.name, qid)
-                for kind in ('variant', 'parse'):
-                    a = arts.get(kind)
-                    if a is not None and not a.verified:
-                        try:
-                            runner.verify(case.name, qid, kind, author='selftest', expect_rev=a.rev)
-                        except ValueError:
-                            pass        # unresolved variant or review marker: left for "a person"
-                runner.recheck(case.name, qid)
-                status = question_status(q, ws.store.for_question(case.name, qid))
+                for s in q.stages:
+                    if s.name in ('evidence', 'grade') or not runner.run_stage(case.name, qid, s.name).ok:
+                        break
+            for qid, q in exam.questions.items():
+                a = ws.store.get(case.name, qid, 'parse')
+                if a is not None and not a.verified:
+                    try:
+                        runner.verify(case.name, qid, 'parse', author='selftest', expect_rev=a.rev)
+                    except ValueError:
+                        pass            # a review marker: left for "a person"
+            for qid, q in exam.questions.items():
+                if q.stage('evidence') is not None:
+                    runner.recheck(case.name, qid)
+            parses = ws.store.of_kind(case.name, 'parse')
+            for qid, q in exam.questions.items():
+                status = question_status(q, ws.store.for_question(case.name, qid), parses=parses)
                 for part, st in status.items():
                     col = q.column(part)
                     if col not in case.expect:
                         continue
                     want = case.expect[col]
                     got = 'blank' if 'blank' in st.flags else st.value
-                    counts_ok = st.counts if want is not None else not st.counts
-                    if got != want or not counts_ok:
+                    # None: it must not count (undecided, or a proposal still waiting for a person)
+                    ok = not st.counts if want is None else (got == want and st.counts)
+                    if not ok:
                         problems.append(f"{case.name} {col}: expected {want!r}, got {got!r} "
                                         f"({st.state}{': ' + st.reason if st.reason else ''})")
     finally:
