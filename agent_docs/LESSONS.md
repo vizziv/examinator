@@ -90,8 +90,8 @@ background for judgment, not a specification.
   conflicted with text readings on half the versions. Reading printed text in a
   defined region was reliable.
 - **A single reading per version bit.** Replaced by requiring two independent
-  printed sources that agree. With covert per-question variants there may be
-  only one distinguishing feature, so plan for review of single-cue readings.
+  printed sources that agree. With covert per-question printings there may be
+  only one distinguishing feature, so plan for a person to verify single readings.
 - **Picking the best-scoring version** when evidence conflicted. Replaced by
   "unresolved, ask a person".
 - **A special fast path** for one common shape of rejection-sampling loop.
@@ -127,8 +127,8 @@ because nothing made them reusable.
 - **Grouping by normalized answer** on the grid, and searching the comments in
   parsed code across all students.
 - **A synthetic-workspace generator** built from blank exams and the answer
-  keys. It doubles as a self-test of every question and variant.
-- **Exports grouped by question variant** for a downstream grading service:
+  keys. It doubles as a self-test of every question and printing.
+- **Exports grouped by question and printing** for a downstream grading service:
   per-student page stubs, a combined batch, a blank template and a manifest.
 
 ## Operational details worth keeping

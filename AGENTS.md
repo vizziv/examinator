@@ -29,11 +29,12 @@ text. Answer keys never appear in any prompt.
 ```text
 src/examinator/
   core/     definitions, store, workflow rules, runner, batch, workspace;
+            printed (fields read from the printing) and reading (one region, by the model);
             split (pure boundary logic) and intake (sources, plans, accepting into pdfs/);
             identity (roster, reading name/ID boxes, pure proposals, the pick)
   pdf/      page rendering, scan layout, orientation, writing submission PDFs
   model/    loopback model client, scripted fake model
-  std/      standard library: stages, prompts, math, pseudocode, blocks
+  std/      standard library: stages, prompts, fields, math, pseudocode, blocks
   web/      server and browser interface
   synth.py  synthetic-workspace generator
 src/examinator_kits/

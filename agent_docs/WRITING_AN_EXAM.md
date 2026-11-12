@@ -11,10 +11,10 @@ parses, feedback, model logs or caches, or a real workspace (`pdfs/`,
 
 ## 1. Where a thing belongs
 
-- **The app** (graders, manually): a misread answer, a variant, a grade, a region
-  nudged on the scan, a key edited live.
-- **The exam package** (you): pages, questions, regions, cues, keys, prompt
-  notes, custom checks and grade rules, a course's pseudocode builtins.
+- **The app** (graders, manually): a misread answer or printed field, a grade, a
+  region nudged on the scan, a key edited live.
+- **The exam package** (you): pages, questions, regions, printed fields, keys,
+  prompt notes, custom checks and grade rules, a course's pseudocode builtins.
 - **The library** (`src/examinator`; rarely, generically): mechanism only. If
   several exams need something, prefer a small hook over an option named after a course.
 
@@ -64,35 +64,36 @@ directory name (the toy exam's is `'toy'`).
 | `Case` field | Meaning |
 | --- | --- |
 | `name` | the submission id |
-| `answers` | `{question: parse body}`: `{label: text or None}` for math, a source string for pseudocode. `None` means blank |
-| `variants` | `{question: variant}` that this fake submission was printed with |
-| `readings` | `{cue name: reading or None}` to override what the scripted model reads (e.g. `None`: unreadable) |
-| `expect` | `{grid column: value}`. The column is `'q'` for a single result and `'q.part'` for a part. A value, `'blank'`, or `None` (undecided, so the grade must not count) |
-| `blank` | optional path of a blank PDF to draw on; otherwise placeholder pages are drawn |
+| `answers` | `{question: parse body}`: `{label: text or None}` for the fields the student writes, a source string for pseudocode. `None` means blank |
+| `printed` | `{question: {printed field label: what is printed}}`: which printing this fake submission has. A reading of the field's `reads`, or the value it reads to; `None`: the model cannot read it. The placeholder pages show it and the scripted model reads it |
+| `expect` | `{grid column: value}`. The column is `'q'` for a single result and `'q.part'` for a part. A value, `'blank'`, or `None` (the grade must not count: undecided, or still waiting for a person) |
+| `blank` | optional path of the blank PDF of this printing to draw on; otherwise placeholder pages are drawn |
 
 The self-test draws each case, scripts the model to reply with exactly your
-answers, runs every stage, verifies each variant and parse as a grader would,
-and compares the grid. A parse with a `[REVIEW: ...]` marker cannot be verified,
-so every part of that question expects `None`. Cover each variant, a wrong
-answer, a blank answer and an unread cue (`exams/toy_exam/fixtures.py`).
-`synth` and `selftest` check the cases first: an unknown question, field,
-variant, grid column or cue is one line naming the case and the key. A question
+answers and printed fields, runs every question's parse, verifies each parse as
+a grader would, runs the checks, and compares the grid. A parse with a
+`[REVIEW: ...]` marker cannot be verified, so every part of that question
+expects `None`, and so does every question whose check read it. Cover each
+printing, a wrong answer, a blank answer and an unread printed field
+(`exams/toy_exam/fixtures.py`). `synth` and `selftest` check the cases first:
+an unknown question, field, printed field or grid column is one line naming the
+case and the key. A question
 a case leaves out of `answers` has no scripted reply: `run --fake` lists its
 model stages as `failed no scripted response`, and the self-test ignores them.
 
 **Imports** (everything an exam package needs):
 
 ```python
-from examinator import Exam, Field, Region, Cue, Landmark, Identity, Bool, Number, Grade, Evidence, EvidenceView, Facet
-from examinator import Blocked, Unavailable, BadOutput     # what a stage may raise or meet
+from examinator import Exam, Field, Printed, Region, Landmark, Identity, Bool, Number, Grade, Evidence, EvidenceView, Facet
+from examinator import Blocked, Unavailable, BadOutput, Undecided    # what a stage may raise or meet
 from examinator.synth import Case
-from examinator.std import stages, math, pseudocode        # stages.math (a bundle) is not the module math
-#   stages: math, pseudocode (bundles); transcribe, parse_math, parse_pseudocode, check_math, check, grade
+from examinator.std import stages, math, pseudocode, fields  # stages.math (a bundle) is not the module math
+#   stages: math, pseudocode (bundles); transcribe, parse_math, parse_pseudocode, read_fields, check_math, check, grade
 #   math: Choice, Approx, all_correct, parse_expr, Unsupported
 #   pseudocode: BASE, WITH_COLLECTIONS, Language, Primitive, Constant, parse, Unsupported, Failure, Budget, Limitation
+#   fields: value, agree (a field's value in a check; fields that must agree)
 from examinator.std.blocks import Plot, Series, Table, Note, Code, Details, Raw
 from examinator_kits.stochastic import primitives, fit, checks     # samplers (optional)
-from examinator.core.variants import vote                          # inside a computed cue
 ```
 
 ## 3. Declaring the exam
@@ -103,7 +104,7 @@ from examinator.core.variants import vote                          # inside a co
 exam = Exam('toy', title="Toy exam", pages=4, scan_window=[50, 40, 950, 900], cover_pages=1,
             landmarks=[...], identity=[...])
 exam.question('areas', title="Areas", pages=[2], result=Number(int, min=0, max=3),
-              variants=[...], cues=[...], fields=[...], stages=[...])
+              fields=[...], stages=[...])
 ```
 
 | Argument | Meaning |
@@ -113,6 +114,7 @@ exam.question('areas', title="Areas", pages=[2], result=Number(int, min=0, max=3
 | `cover_pages` | sheets the scanning service adds before page 1 (also an initial default) |
 | `crop_pad` | per-mille padding around every crop (default 12) |
 | `question(pages=)` | the printed pages holding the answer: what the model sees. A grader can change them per submission (an extra-space page, with a note that reaches the prompts) |
+| `question(result=)` | optional: a question with no result has a parse to verify and no grade (the exam's printing, which other questions read) |
 
 **Result specs.** `result=Bool()` or `Number(int | float, min=, max=)` for one
 grid column, or a dict for several parts: `{'check': Bool(), 'shiny': Bool(counts=False)}`
@@ -124,8 +126,8 @@ the total. Keep parts few: two outputs are usually two questions.
 `Field(label, region=Region(page, left, top, right, bottom))` in **printed-page**
 coordinates: per-mille of the printed page, origin top left, pages from 1. The
 library maps regions onto each scan (scan window, cover pages) and pads them by
-`crop_pad`. They feed the crops beside the grader's input, the cue crops sent to
-the model, and `transcribe(crops=True)`. A field's page should be in the
+`crop_pad`. They feed the crops beside the grader's input, the printed-field
+crops sent to the model, and `transcribe(crops=True)`. A field's page should be in the
 question's `pages`; labels are the printed labels (the prompts use them).
 `Exam.question` raises `ValueError`, naming the question, for a region off the
 page (page outside `1..pages`, not `0 <= left < right <= 1000`, not
@@ -141,51 +143,50 @@ as `tests/test_exam_01.py` does. In the app, **regions** on a question page
 drags rectangles on a scan; the **Exam data** page lists the changes as Python
 lines to copy into the package.
 
-### Variants and cues
+### Printings: printed fields
 
-A question with several printings lists `variants` and the `cues` that tell
-them apart. Variants are usually covert: a cue reads **printed** text that
-differs between printings.
+When an exam is printed in several versions, which one a submission has is read
+from the printing itself, into **printed fields**: ordinary fields whose value
+the model reads from the **printed** text in their region.
 
 ```python
-cues=[Cue('areas_side', region=Region(2, 0, 60, 1000, 240),
-          ask="the printed side length of the square, as a number",
-          reads={'2': 'red', '3': 'green', '5': 'blue'})]
+Field('side', region=Region(2, 0, 60, 1000, 240),
+      read=Printed("the printed side length of the square, as a number",
+                   reads={'2': 'red', '3': 'green', '5': 'blue'}))
 ```
 
 - `ask` finishes the sentence "Report: ..." in a fixed prompt about printed
-  text. The `reads` keys are listed to the model as expected values. They
-  identify a printing, so they are not keys.
+  text. The `reads` keys are listed to the model as expected values, and the
+  model is told to answer `[REVIEW: what is printed]` when it sees none of them.
+  They are printed text, never keys.
 - Readings are normalised before lookup (case, spaces, one layer of brackets or
-  quotes, a trailing `.` or `%`). Give several readings for one variant when
+  quotes, a trailing `.` or `%`). Give several readings for one value when
   models write it differently (`{'r+1': 'original', '1+r': 'original', '-r': 'alternate'}`).
-- Every cue that reads removes the variants it does not match. The variant
-  resolves when one remains and at least `require` cues agree (default: all of
-  them). Nothing is guessed: an undecided variant goes to a person, and a check that
-  `uses_variant` stays undecided until then.
-- A resolved variant counts without a person looking, so the cues are yours to
-  make reliable: one cue is one piece of information, and two (often one from a
-  neighbouring question's pages, as in Exams 1 and 3) catch a misreading by
-  disagreeing. `verify_variant=True` has a person verify every variant of the
-  question instead.
-- Checked at definition: a map cue reading to a name that is not a variant, a
-  variant with fewer cues able to select it than `require` (default: all cues),
-  and `require` above the number of cues. A map cue reading only to other names
-  (`'original'`/`'alternate'`) is allowed beside a computed cue that combines it.
-- A cue used by several questions (same name) is read once per submission.
-- `Cue(name, fn=callable)` computes a variant (or `None`) from `ctx` when a map
-  cannot, e.g. by combining other cues' votes with
-  `examinator.core.variants.vote(ctx, cue)` (`Combine` and `printing()` in
-  `exams/exam_02/versions.py`).
+  Without `reads`, the value is the reading itself.
+- A reading that is absent, or not one of `reads`, becomes a value with a review
+  marker. Nothing is guessed: the parse waits for a person.
+- The value sits in the question's parse beside the student's fields, with its
+  crop on the question page, and is edited and verified with them. Exclude
+  printed fields from `answers` in fixtures; give them in `printed`.
+- **Two shapes.** A question that needs its own printing holds the printed field
+  itself (the toy exam's `side`), in a parse of fields. When printings switch
+  groups of questions, or a question's parse is source code, put the printed
+  fields in one question of their own with no result,
+  `exam.question('info', pages=[...], fields=[...printed...], stages=[stages.read_fields()])`,
+  declared first, and let the other questions' checks read it (Exams 1-3).
+- Two printed fields that should agree catch a misreading
+  (`fields.agree(...)`: disagreement is undecided). A printed field counts only
+  once a person verified its parse, so every grade that read it waits until then.
 
-Keep the table of printed versions (alt index → question → variant) in
-`versions.py`, with an environment variable naming the blanks' directory, so
-tests can compare cues with the blanks' text and skip without them.
+Keep the facts about the printed versions (alt index → what each printed field
+reads) in `versions.py`, with an environment variable naming the blanks'
+directory, so fixtures draw each case on its blank and tests can compare the
+printed fields with the blanks' text and skip without them.
 
 ### Landmarks and identity boxes (intake)
 
 Needed only when scans arrive as stacks of many students. Both are declared on
-the `Exam`, like a cue (a region and a question for the model):
+the `Exam`, like a printed field (a region and a question for the model):
 
 ```python
 landmarks=[Landmark('title', region=Region(1, 300, 90, 700, 150),
@@ -209,27 +210,26 @@ the stage's name:
 
 | Stage (factory) | Reads | Writes | Notes |
 | --- | --- | --- | --- |
-| `variant` (added automatically when `variants` is set) | the cue crops | `{'cues', 'candidates', 'agree', 'resolved', ...}` | model; editable |
 | `stages.transcribe(prompt=, notes=, crops=False)` | the page images | `str` | model; editable |
-| `stages.parse_math(symbols=, functions=, notes=)` | `transcript` | `{label: str or None}` | model; editable; this is what graders verify |
+| `stages.parse_math(symbols=, functions=, notes=)` | `transcript` | `{label: str or None}`, printed fields included | model; editable; this is what graders verify |
 | `stages.parse_pseudocode(entries, language=, notes=, then=)` | `transcript` | source `str` | model; editable; `then(source)` rewrites deterministically |
-| `stages.check_math(key, symbols=, functions=, timeout=)` | `parse` | evidence | local and isolated |
-| `stages.check(fn, inputs=('parse',), uses_variant=, timeout=, isolate=True)` | `inputs` | evidence | your check |
+| `stages.read_fields()` | the printed-field crops | `{label: str}` | model; editable; a parse of printed fields only |
+| `stages.check_math(key, by=, symbols=, functions=, timeout=)` | `parse` | evidence | local and isolated |
+| `stages.check(fn, inputs=('parse',), timeout=, isolate=True)` | `inputs`, and parses it reads | evidence | your check |
 | `stages.grade(rule)` | `evidence` | one grade per result part | pure and in-process |
 
 Bundles return such lists:
 
 ```python
-stages.math(key, symbols=, functions=, notes=, grade_rule=math.all_correct, timeout=)
+stages.math(key, by=, symbols=, functions=, notes=, grade_rule=math.all_correct, timeout=)
 #   == [transcribe(notes), parse_math(...), check_math(...), grade(grade_rule)]
-stages.pseudocode(entries, check_fn, language=, notes=, then=, grade_rule=, timeout=, uses_variant=)
+stages.pseudocode(entries, check_fn, language=, notes=, then=, grade_rule=, timeout=)
 #   == [transcribe(TRANSCRIBE_PSEUDOCODE), parse_pseudocode(...), check(check_fn), grade(grade_rule)]
 ```
 
 `entries` is the list of function names the student must write (`['tri']`; the
 parse prompt asks for them). `grade_rule=` is required there: your check
-decides what the evidence means. Never list `variant`: it is added in front
-whenever `variants` is set.
+decides what the evidence means.
 
 Assemble the list yourself when a bundle does not fit (`sampler()` and question 3
 in `exams/exam_01/exam.py`). `stages=[]` makes a question graded manually only.
@@ -239,9 +239,8 @@ What the `Stage` flags mean in practice:
 - `editable`: graders may edit it; editing clears verification, and saving or
   verifying a parse reruns the check. `uses_model`: blocked without a model.
 - `isolate`, `timeout`: a worker process with a wall-clock limit (default 60 s).
-- `uses_variant`: the stage gets `ctx.variant`, is undecided while it is
-  unresolved and outdated when it changes. `check_math` sets it for a per-variant
-  key (`stages.per_variant(key)`); a custom check must ask for it.
+- `shape='fields'`: the parse is `{label: value}`; the runner adds the
+  question's printed fields to what the stage returns.
 - `accepts_markers`: stages refuse inputs carrying `[REVIEW: ...]` unless set;
   `check_math` sets it and leaves the marked field undecided. **A marker in one
   field still holds back every part of the question**: the parse cannot be
@@ -282,9 +281,15 @@ stages.math(symbols={'t': 'positive'}, key={
     'b': {'1': '3*t', '2': math.Approx(0.05, rel=0.02), ('3', '4'): roots}})
 ```
 
-- **Per-variant keys:** if every value of `key` is a dict, the key is chosen
-  by variant. Its variant names must be exactly the question's `variants`
-  (a `ValueError` at definition otherwise).
+- **Keys that differ by printing:** with `by=`, every value of `key` is a key,
+  and `by` picks one by a field's value: a label of the question's own field
+  (`by='side'`), another question's field (`fields.value('q5_conf', question='info')`),
+  fields that must agree (`fields.agree(...)`), or any `fn(ctx) -> value` that
+  raises `Undecided` when it cannot tell (`Printing` in `exams/exam_02/versions.py`
+  combines several bits). Names are compared normalised. When the fields `by`
+  names have `reads`, the key's names must be exactly their values, and a field
+  of another question must be declared before (a `ValueError` at definition
+  otherwise). A value with no key is undecided.
 - **Symbols:** `symbols=['x']`, or a dict of assumptions
   (`{'x': 'positive'}`, also `negative`, `nonnegative`, `nonpositive`, `nonzero`,
   `real`, `integer`, `rational`). `'positive indexed'` declares `s[i]`, where
@@ -327,13 +332,13 @@ judges from the work (`with_work`). Keep rules pure and fast.
 
 ```python
 def check(ctx) -> Evidence: ...
-stages.check(check, uses_variant=True, timeout=60)
+stages.check(check, timeout=60)
 ```
 
 | `ctx.` | |
 | --- | --- |
 | `input('parse')` | the body of an upstream artifact named in `inputs` |
-| `variant` | the resolved variant (only with `uses_variant=True`) |
+| `read('info')` | another question's parse. Recorded: the grade waits until that parse is verified and is outdated when it changes. With no parse yet it raises `Undecided`. Read only what you use: a question never read is no dependency |
 | `params` | `{key: str}` typed by a grader for one deliberate rerun ("run with `huge_constant=10`"). The library gives it no meaning (`custom_value` in `exams/exam_03/weibullish.py`) |
 | `question`, `submission`, `note`, `rerun` | the definition, the id, the page note, and whether the artifact already existed |
 | `pages()`, `crop(region)`, `model(...)`, `remember(...)` | for model stages only. Inside an isolated check they raise `Unavailable` |
@@ -354,8 +359,10 @@ own grade rule reads it. Blocks come from `examinator.std.blocks`:
 Every block takes `audience='grader'` (hidden from the future student view): use it for keys and sources.
 
 What to raise: `Blocked("no parse")` when the stage cannot run yet (nothing is
-written); `BadOutput` from a model stage whose reply has the wrong structure
-(the message never quotes the reply). **Anything else a check raises, a timeout,
+written); `Undecided("a few words")` from a check that cannot decide anything
+(every part undecided, with that reason; `fields.value` and `fields.agree` raise
+it); `BadOutput` from a model stage whose reply has the wrong structure (the
+message never quotes the reply). **Anything else a check raises, a timeout,
 or a `data` that is not a dict makes every part undecided** (the grade rule is
 not called; the error is shown to graders): decide outcomes instead of crashing.
 
@@ -509,20 +516,20 @@ number, `blank`), or `-` when there is none or it is undecided (the app shows
 `?`). A cell that does not count yet carries its state; the total adds what
 counts, with `+?` while something does not:
 
-- `unverified`: a grade is proposed, but a person has not verified the parse
-  (or the variant, with `verify_variant=True`). **Normal after `run`**;
-  only the self-test and graders verify.
+- `unverified`: a grade is proposed, but a person has not verified the parse,
+  or a parse of another question the check read (the app says "waits on").
+  **Normal after `run`**; only the self-test and graders verify.
 - `not_started`: nothing written (after `run --fake`: no scripted answer).
   `in_progress`: no grade yet, because a stage failed or was blocked.
 - `needs_review`: verified, but undecided (the reason is in the app), or graded manually.
-- `outdated`: computed from an older parse, variant or definition; run again.
+- `outdated`: computed from an older parse (its own or one it read) or definition; run again.
 - `manual`, `manual_outdated`: a grader decided (and the parse changed since).
 
 **`run` re-runs the selected stages every time, by design** (the model is
 asked again, each check reruns, and every new result is a new revision; old
 ones go to history). Use `--missing-only` to fill gaps only, and `--dry-run`
-to see the plan. What a person wrote or verified (an edited or verified parse
-or variant, a manual grade) is skipped as `skip_protected` unless you pass
+to see the plan. What a person wrote or verified (an edited or verified parse,
+a manual grade) is skipped as `skip_protected` unless you pass
 `--include-protected`; a check downstream of a verified parse still reruns.
 
 **Synthetic stacks.** `synth --stacks DIR` writes `DIR/incoming/stack-1.pdf`
@@ -547,9 +554,9 @@ only, writing to a new directory outside the repository.
 
 **Done when:**
 
-- [ ] `selftest` prints `ok`, with cases for every variant, a wrong answer, a blank answer and an unread cue
-- [ ] every region lands on its box or printed cue on every blank (crops checked by eye or by the ink test)
-- [ ] the cues' readings, checked against each blank's text, give the right variant for every printed version
+- [ ] `selftest` prints `ok`, with cases for every printing, a wrong answer, a blank answer and an unread printed field
+- [ ] every region lands on its box or printed text on every blank (crops checked by eye or by the ink test)
+- [ ] the printed fields' readings, checked against each blank's text, give the right key for every printed version
 - [ ] the no-key-in-prompt test passes
 - [ ] every custom key entry and grade rule has a unit test, including its undecided case
 - [ ] the library is unchanged, or changed only generically, with `uv run pytest` passing
@@ -564,17 +571,18 @@ only, writing to a new directory outside the repository.
   scan and not pixels (out of range is refused; plausible but wrong is not).
   A field on a page outside `pages` is never sent to the model. Boxes closer
   than `crop_pad` show their neighbours.
-- **A cue that cannot tell variants apart:** the same text on every printing,
-  or a band that also covers answer boxes with the same letters (comment above
-  `BIT2` in `exams/exam_03/exam.py`).
-- **A custom check without `uses_variant=True`** (it sees `ctx.variant is None`
-  and is not outdated when the variant changes).
+- **A printed field that cannot tell printings apart:** the same text on every
+  printing, or a band that also covers answer boxes with the same letters
+  (comment above `q6_option_c` in `exams/exam_03/exam.py`).
+- **Reading the printing from a custom check's own parse of source code:** a
+  pseudocode parse has no fields; put printed fields in a question of their own
+  and `ctx.read` it.
 - **Crashing instead of deciding.** A check that raises is undecided, so a
   failing student program shows `?`: catch `Failure` and return `'incorrect'`.
   Conversely, notation the parser rejects or an inconclusive comparison is
   `None`, never `'incorrect'`.
 - **A review marker in a fixture** holds back every part of its question.
-- **Callables where data would do.** Text keys, `Choice` entries, cue `reads`,
+- **Callables where data would do.** Text keys, `Choice` entries, a printed field's `reads`,
   regions and notes can be edited live in the app; a key inside a function cannot.
 - **Fixtures derived from the keys**, so a wrong key passes its own self-test.
   Write answers out independently, in other notations too (`OTHER_FORMS` in
