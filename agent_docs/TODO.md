@@ -130,25 +130,16 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
 
 ## Future
 
-- **Simple exams made in the app** (the owner's direction, 2026-11-13; not
-  designed in detail, nothing built). No self-editing Python: a package is
-  one way to produce a definition and the only home of custom checks; the
-  workspace holds edits as data; the app can render changes as Python, one
-  way. Three steps, smallest first:
-  1. *Versions as a list on the exam and a level at which any value can be
-     set* (alongside all / one scan / one submission). A makeup exam printed
-     after grading starts is a new version with its own keys and, if needed,
-     regions. Would replace answer keys that differ by a printed value. Open:
-     where a submission's version comes from (read once per copy, typed, or
-     from its scan). To be written up as a short design for the owner first.
-  2. *Structure editable in the app* (add a question, a field, pick a check
-     kind): the definition becomes something the workspace owns. Hard part:
-     reconciling with a package whose code changes afterwards.
-  3. *An exam with no package*: upload a blank PDF, draw the questions, set
-     the keys.
-  If a field's set of possible values comes back, it is a plain list on the
-  field (no translation, no per-question override), driving a dropdown when
-  typing, the wording the model sees, and which keys are expected.
+- **Decided against, 2026-11-13 (the owner raised both and walked them
+  back):** building an exam's structure in the app, and versions as a concept
+  of their own. Structure lives in the Python package: the expected way to get
+  one is to hand an agent the exam PDFs and have it write the package with
+  this library, so large structural edits in the app are unlikely. A version
+  is just a field; an answer key that differs by version is a key that
+  differs by that field's value. The app edits values only (regions, the
+  print area, a reader's or check's own configuration), each valid on its
+  own. If a field's set of possible values ever comes back, it is a plain
+  list on the field (no translation, no per-question override).
 
 - **Non-rectangular regions:** click points for a polygon around the actual
   answer, so the model sees the answer and not the surrounding work. Pairs
