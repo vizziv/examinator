@@ -3,6 +3,36 @@
 One list, kept current. Design background is in [`DESIGN.md`](DESIGN.md); its
 §15 says what the core must already provide for later layers.
 
+## Where things stand (2026-11-13)
+
+For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
+
+- **Built and settled with the owner:** the field model (values, results,
+  decisions, the status table); one store of scoped overrides; identification
+  as a built-in group of ordinary fields plus a pick (`Exam(identity=...)`);
+  `Ask`, the one region reader; fields with a `default` in place of check
+  parameters; image blocks (the kit draws with matplotlib; no custom plot
+  format, no raw HTML); the Read page in one step; Split as one ordered list
+  of sheets with marks (start, extra, dropped, turn, missing).
+- **Principles the owner confirmed:** few primitives that compose, and a new
+  need should be met by an existing primitive first; history is for what a
+  person edits (values, decisions, overrides), never for computed results;
+  changing how a field is read changes no value, and verified values are never
+  re-read unasked; being already matched must not raise a name match's
+  confidence; rare actions live in menus; the past exams are test cases, not
+  behaviour to preserve; the CLI is development tooling, not a user interface.
+- **Verified how:** every change passed the fast suite and the four exams'
+  self-tests against the instructor blanks, and was exercised in a browser on
+  synthetic workspaces by the subagent that made it. No change has been run
+  against a live model. Subagent work was committed after tests and spot
+  checks, not a line-by-line read; the last independent review was on
+  2026-11-12, before the override store, identity, image-block and Split
+  rework landed. A second review of those is due.
+- **Next, in the owner's rough order:** a second design and code review; a
+  first live-model run on synthetic handwriting (also tunes name matching);
+  a filter overlay on the question page; no full page load between
+  submissions; search facets; then a student view.
+
 ## The model (built 2026-11-12)
 
 [`MODEL.md`](MODEL.md): fields, readers, checks, questions; values, results,
@@ -18,8 +48,8 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
 
 ## Open after the rewrite
 
-- **Which grades changed** after a check's code or key changed: old results
-  are in history; nothing lists them yet.
+- **Which grades changed** after a check's code or key changed: results keep
+  no history, so this would compare old and new at recompute time. Not built.
 - **Per-field handwriting reads** (one crop, one value) as an alternative to
   the question's joint read: the reader protocol allows it; nothing compares
   the two (a live-model question).
