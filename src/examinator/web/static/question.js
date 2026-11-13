@@ -8,27 +8,33 @@
   const busy = $('busy');
   const revOf = el => (el.dataset.rev === '' ? null : Number(el.dataset.rev));
 
+  // What the server drew of each live part, so a refresh redraws only what changed.
+  const served = new Map([...document.querySelectorAll('[data-live]')].map(el => [el.id, el.outerHTML]));
+
   // --- next / previous submission, following the grid's order (the filter, search and sort) ---
-  try { sessionStorage.setItem('gridAt', JSON.stringify({sub, q})); } catch (e) { /* private mode */ }  // the grid's cursor
+  // The order is read when the page is shown: the grid may have changed it since it was drawn.
   const ids = JSON.parse(main.dataset.ids);
-  let order = session('order', null);
-  if (!Array.isArray(order)) order = ids;
-  const at = order.indexOf(sub);
-  $('pos').textContent = `${at < 0 ? '–' : at + 1}/${order.length}`;
-  function go(step) {
-    let next = order[at + step];
+  let order = ids, at = ids.indexOf(sub);
+  whenShown(() => {
+    try { sessionStorage.setItem('gridAt', JSON.stringify({sub, q})); } catch (e) { /* private mode */ }  // the grid's cursor
+    order = session('order', null);
+    if (!Array.isArray(order)) order = ids;
+    at = order.indexOf(sub);
+    $('pos').textContent = `${at < 0 ? '–' : at + 1}/${order.length}`;
+  });
+  function step(by) {     // the page `by` submissions on in the order, or undefined
+    let next = order[at + by];
     if (at < 0) {         // not in the order: the nearest one in it, by submission id
       const rank = new Map(ids.map((s, i) => [s, i])), me = rank.get(sub);
-      const side = order.filter(s => (step > 0 ? rank.get(s) > me : rank.get(s) < me))
+      const side = order.filter(s => (by > 0 ? rank.get(s) > me : rank.get(s) < me))
         .sort((a, b) => rank.get(a) - rank.get(b));
-      next = step > 0 ? side[0] : side[side.length - 1];
+      next = by > 0 ? side[0] : side[side.length - 1];
     }
-    if (next !== undefined) location.href = `${ROOT}/s/${encodeURIComponent(next)}/${encodeURIComponent(q)}`;
+    return next === undefined ? undefined : `${ROOT}/s/${encodeURIComponent(next)}/${encodeURIComponent(q)}`;
   }
-  function canGo(step) {
-    if (at >= 0) return order[at + step] !== undefined;
-    const rank = new Map(ids.map((s, i) => [s, i])), me = rank.get(sub);
-    return order.some(s => (step > 0 ? rank.get(s) > me : rank.get(s) < me));
+  const canGo = by => step(by) !== undefined;
+  function go(by) {
+    if (canGo(by)) location.href = step(by);
   }
 
   // --- the filter: does this submission still match it (asked only while one is set) ---
@@ -72,7 +78,12 @@
     }
     touched();
   }
-  adopt();
+  snapshot();
+  // Shown later than drawn (prerendered ahead, or back from the back/forward cache): the
+  // draft, then what changed meanwhile, so what is drawn is what a press sends against.
+  const early = document.prerendering;
+  whenShown(() => { adopt(); if (early) refresh(); });
+  addEventListener('pageshow', e => { if (e.persisted) refresh(); });
   document.addEventListener('input', e => { if (e.target.closest?.('#ed-fields')) touched(); });
   addEventListener('beforeunload', e => { if (dirty()) e.preventDefault(); });
 
@@ -86,7 +97,8 @@
     } catch (e) { return; }
     for (const fresh of doc.querySelectorAll('[data-live]')) {
       const old = $(fresh.id);
-      if (!old) continue;
+      if (!old || served.get(fresh.id) === fresh.outerHTML) continue;
+      served.set(fresh.id, fresh.outerHTML);
       const node = document.importNode(fresh, true);
       if (old.tagName === 'DETAILS') node.open = old.open;
       old.replaceWith(node);
@@ -144,8 +156,9 @@
   // Save the values changed here (a person who sets a value verifies it); with `all`,
   // verify this question's other values too (`list`: 'waitingOther' for those read from
   // other questions). The answer, or null when something could not be saved or verified (a
-  // conflict, a review marker), so V stays on this submission.
-  function save(all, list = 'waiting') {
+  // conflict, a review marker), so V stays on this submission. `leaving`: the page is left
+  // on the answer, so what the save started is not waited for (it runs on the server).
+  function save(all, list = 'waiting', leaving = false) {
     flash('');
     const values = {}, edited = changed();
     for (const el of edited) values[el.dataset.key] = {text: el.value, rev: revOf(el)};
@@ -164,7 +177,7 @@
         }
         touched();
         form().querySelector('.notice').hidden = true;
-        await settle(b);
+        if (!leaving) await settle(b);
       }});
   }
   const waiting = () => JSON.parse($('parts').dataset.waiting || '[]').length > 0 || dirty();
@@ -218,6 +231,12 @@
   function toFirst() {            // until the grader scrolls it themselves
     const first = scan.querySelector('.sheet.on');
     if (first && !moved) scan.scrollTop = first.offsetTop - ($('rg')?.offsetHeight || 0);
+    // The pages in view load now, not lazily: a page rendered ahead loads nothing lazily until shown.
+    const view = scan.getBoundingClientRect();
+    for (const img of scan.querySelectorAll('img.scan[loading=lazy]')) {
+      const r = img.getBoundingClientRect();
+      if (r.bottom > view.top && r.top < view.bottom) img.loading = 'eager';
+    }
   }
   for (const name of ['wheel', 'pointerdown', 'keydown']) scan.addEventListener(name, () => { moved = true; }, {passive: true});
   addEventListener('load', toFirst);
@@ -267,7 +286,7 @@
              run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx)) : save(true))},
     // V: verify everything here, then the next submission in the filter (as on Scans and Names: "yes, next").
     'verify-next': {available: () => canGo(1) || waiting(),
-                    run: () => save(true).then(b => { if (b && canGo(1)) go(1); })},
+                    run: () => { const on = canGo(1); return save(true, 'waiting', on).then(b => { if (b && on) go(1); }); }},
     'grade-right': {available: () => !!targetButton('v-t'), run: ({el}) => decide(el || targetButton('v-t'), {value: true})},
     'grade-wrong': {available: () => !!targetButton('v-f'), run: ({el}) => decide(el || targetButton('v-f'), {value: false})},
     'grade-blank': {available: () => !!targetButton('v-b'), run: ({el}) => decide(el || targetButton('v-b'), {blank: true})},
@@ -313,6 +332,9 @@
     }},
   };
   for (const [name, spec] of Object.entries(actions)) Actions.register(name, spec);
+  // After the first frame (shown, not drawn ahead), the likeliest first: the browser renders them in turn.
+  whenShown(() => requestAnimationFrame(() => setTimeout(() =>
+    ahead([step(1), link('next-question')?.href, step(-1), link('prev-question')?.href]))));
   function setNumber(el) {
     const input = el.closest('.decide').querySelector('input');
     if (input.value.trim() === '') return input.focus();

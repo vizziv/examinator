@@ -450,6 +450,18 @@ a time in place) send every change the same way:
   auto-repeat never triggers an action, a held Enter or Space never clicks a
   button or takes a picker's choice again, and the second click of a double
   click never reaches a button, an action or a list choice.
+- **Moving is a page load, rendered ahead.** The pages a key reaches (on a
+  question page: next and previous submission in the grid's order, next and
+  previous question; on the grid: the cursor's cell, and a hovered one) are
+  listed for the browser to prerender (`ahead()` in `common.js`, speculation
+  rules; the CSP admits `'inline-speculation-rules'`, JSON, and still no inline
+  code). Where the browser does not prerender, the move is an ordinary load.
+  A prerendered page runs before it is shown and may never be: every GET
+  changes nothing (a test), what a page writes to state shared with other pages
+  waits for `whenShown()`, and a page shown later than drawn (prerendered, or
+  restored from the back/forward cache) redraws from the server at once, as
+  after any change. HTML is `no-store`, so Back without that cache loads what is
+  there now.
 
 Screens for the first version:
 

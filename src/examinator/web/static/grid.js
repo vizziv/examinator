@@ -138,6 +138,7 @@
   function place(td) {
     cur?.classList.remove('cur');
     cur = td || null;
+    ahead([cur?.querySelector('a')?.href], '#grid td.c a');       // the cell Enter opens, and one hovered
     if (!cur) return;
     cur.classList.add('cur');
     cur.scrollIntoView({block: 'nearest', inline: 'nearest'});
@@ -156,10 +157,8 @@
   Actions.register('cell-down', step(1, 0));
   Actions.register('cell-open', {available: () => !!cur && !cur.closest('tr').hidden, run: () => cur.querySelector('a').click()});
   const came = session('gridAt', null);
-  if (came) {
-    const row = [...body.rows].find(r => r.dataset.id === came.sub);
-    place(row && [...row.querySelectorAll('td.c')].find(td => td.dataset.q === came.q));
-  }
+  const cameRow = came && [...body.rows].find(r => r.dataset.id === came.sub);
+  place(cameRow && [...cameRow.querySelectorAll('td.c')].find(td => td.dataset.q === came.q));
 
   // The legend closes on a click elsewhere.
   const legend = document.querySelector('details.legend');
