@@ -48,6 +48,13 @@ def answers_from_json(text: str, labels: Sequence[str]) -> dict[str, str]:
     return out
 
 
+def _prompts(reader: Any, what: str) -> None:
+    """A reader with no prompt reads nothing: refused where the definition is validated."""
+    for name in ('prompt', 'parse_prompt'):
+        if not getattr(reader, name).strip():
+            raise ValueError(f"{what}: `{name}` is empty")
+
+
 @dataclass(frozen=True)
 class Answers:
     """Short answers: transcribe the question's pages (or each field's crop),
@@ -58,6 +65,9 @@ class Answers:
     functions: tuple[str, ...] | None = None
     notes: str = ""
     crops: bool = False     # send each field's crop instead of whole pages
+
+    def validate(self, what: str) -> None:
+        _prompts(self, what)
 
     @property
     def needs_region(self) -> bool:
@@ -101,6 +111,10 @@ class Code:
     notes: str = ""
     then: Callable[[str], str] | None = None    # deterministic rewrite of the parsed source
     multiline = True                     # its fields' values span lines
+
+
+    def validate(self, what: str) -> None:
+        _prompts(self, what)
 
     def wanted(self, label: str) -> tuple[str, ...]:
         if isinstance(self.entries, Mapping):

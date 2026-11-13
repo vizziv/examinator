@@ -18,7 +18,7 @@ from examinator.core.defs import ASKS, IDENTITY
 from examinator.core.runner import Runner
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
-from examinator.std import fields, math
+from examinator.std import fields, math, readers
 
 from conftest import SCRIPT, Parse, workspace
 from test_web import Site
@@ -183,3 +183,14 @@ def test_cli_run_refuses_the_identity_group(tmp_path, capsys):
     root = synth.generate(load_exam(TOY), tmp_path / 'ws', synth.load_cases(load_exam(TOY)))
     assert cli.main(['run', str(TOY), '-w', str(root), '--fake', '-q', IDENTITY]) == 2
     assert f"no question {IDENTITY}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('reader', [
+    lambda: Ask("the side", prompt="  "),
+    lambda: readers.answers(prompt=""),
+    lambda: readers.answers(parse_prompt=" "),
+    lambda: readers.code(['f'], prompt=""),
+])
+def test_a_reader_with_an_empty_prompt_is_refused(reader):
+    with pytest.raises(ValueError, match="empty"):
+        reader().validate("q")
