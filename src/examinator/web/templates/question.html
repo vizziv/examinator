@@ -56,8 +56,8 @@
  data-cover="{{ layout.cover_pages }}" data-pad="{{ exam.crop_pad }}" data-first="{{ first_page }}" data-pages="{{ exam.pages }}">
 {% if regions or count %}
 <div id="rg" class="bar">
-<button type="button" id="rg-on" data-action="regions" aria-pressed="false" title="edit the field regions on the scan">regions</button>
 <button type="button" id="pa-on" data-action="print-area" aria-pressed="false" title="edit the print area: where the printed page sits on the scanned sheet">print area</button>
+<button type="button" id="rg-on" data-action="regions" aria-pressed="false" title="edit the field regions on the scan">regions</button>
 <span id="rg-panel" class="bar" hidden>
 <select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.printed %} (printed){% endif %}</option>{% endfor %}</select>
 <span class="rg-group">
@@ -66,8 +66,8 @@
 <label class="nl" title="top"><i>t</i><input type="number" class="rg-n" min="0" max="1000" aria-label="top"></label>
 <label class="nl" title="right"><i>r</i><input type="number" class="rg-n" min="0" max="1000" aria-label="right"></label>
 <label class="nl" title="bottom"><i>b</i><input type="number" class="rg-n" min="0" max="1000" aria-label="bottom"></label>
-<label class="nl" title="width: right − left (moves the right edge)"><i>w</i><input type="number" id="rg-w" min="5" max="1000" aria-label="width"></label>
-<label class="nl" title="height: bottom − top (moves the bottom edge)"><i>h</i><input type="number" id="rg-h" min="5" max="1000" aria-label="height"></label>
+<label class="nl" title="width (right − left)"><i>w</i><input type="number" id="rg-w" min="5" max="1000" aria-label="width"></label>
+<label class="nl" title="height (bottom − top)"><i>h</i><input type="number" id="rg-h" min="5" max="1000" aria-label="height"></label>
 </span>
 <span id="rg-region-btns" class="rg-group">
 <button type="button" id="rg-save" data-action="region-save-own" class="primary" title="this submission's own region">save for this submission</button>
