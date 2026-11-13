@@ -203,7 +203,7 @@ def test_naming_and_a_forced_accept(site):
     plan = client.get(f'/scans/{src}/plan').json()
     plan = post(client, token, f'/scans/{src}/edit', {'op': 'drop', 'sheet': 6, 'rev': plan['rev']}).json()['plan']
     plan = post(client, token, f'/scans/{src}/edit', {'op': 'drop', 'sheet': 17, 'rev': plan['rev']}).json()['plan']
-    busy = [{'id': 's0002', 'change': 'rewrite', 'said': ['grading']}, {'id': 's0005', 'change': 'rewrite', 'said': ['pick']}]
+    busy = [{'id': 's0002', 'change': 'rewrite', 'said': ['values']}, {'id': 's0005', 'change': 'rewrite', 'said': ['name']}]
     assert plan['busy'] == busy
     r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
     assert r.status_code == 409 and r.json()['current']['busy'] == busy

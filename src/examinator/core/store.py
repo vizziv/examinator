@@ -82,7 +82,6 @@ create table if not exists memo (
 COLUMNS = 'submission, name, kind, body, origin, author, updated_at, rev'
 OVERRIDE = 'scope, path, value, author, updated_at, rev'
 MADE = 'submission, source, pages, orient, made_at, file'
-WORK = ('value', 'result', 'decision')      # kinds that are grading work (intake will not rewrite over them)
 
 
 class Conflict(Exception):
@@ -414,15 +413,6 @@ class Store:
             self._db.execute("delete from row where submission=? and kind='result'", (id,))
             self._db.execute('delete from image where submission=?', (id,))
             self._changed()
-
-    def has_work(self, submission: str, *, besides: str = '') -> bool:
-        """Whether a submission has grading work: a value, a result or a decision
-        (with `besides`, one whose name does not start with it)."""
-        with self._lock:
-            return self._db.execute(
-                f"select 1 from row where submission=? and kind in ({','.join('?' * len(WORK))}) "
-                "and (?='' or substr(name, 1, ?)!=?) limit 1",
-                (submission, *WORK, besides, len(besides), besides)).fetchone() is not None
 
     @contextmanager
     def transaction(self):

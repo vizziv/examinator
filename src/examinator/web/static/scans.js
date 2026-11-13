@@ -269,9 +269,9 @@
       say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`, 'bad');      // failed, or lost
     }, true)});
   // Accept, having said what it would disturb: written submissions it rewrites or removes that
-  // something was said or done about. The person agrees to exactly those (`allow`).
-  const SAID = {pick: 'named', grading: 'graded', boxes: 'own boxes'};
-  const AFTER = {rewrite: 'Rewritten: the name, decisions and values a person verified stay; readings and own boxes go.',
+  // a person said something about. The person agrees to exactly those (`allow`).
+  const SAID = {values: 'verified values', decisions: 'decisions', name: 'a name', regions: 'own regions'};
+  const AFTER = {rewrite: 'Rewritten: the name, decisions and verified values stay; what was read and own regions go.',
                  remove: 'Removed: the submission and all of it go.'};
   register('split-accept', {run: () => {
     const flagged = plan.entries.filter(e => e.doubts.length).length;

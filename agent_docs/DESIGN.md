@@ -760,11 +760,12 @@ gives a submission's file, written or handed in).
     so a rewritten submission's pages are new URLs. Accepts run one at a time
     (the server's lock).
   - *Accept speaks for a person*, recorded as the plan's author. A written
-    submission it would rewrite or remove that something was said or done
-    about (its pick, grading work: a value, result or decision outside the
-    identity group, boxes of its own: overrides at its scope) is named first
-    (`intake.disturbed`, on the page; `Busy`, 409) and touched only when the
-    person agrees to that id (`allow`). The confirm says what follows.
+    submission it would rewrite or remove that a person said something about
+    (values a person typed or verified, decisions, the name, its own regions
+    or print area) is named first (`intake.disturbed`, on the page; `Busy`,
+    409) and touched only when the person agrees to that id (`allow`). The
+    confirm says what follows. One with only model readings and results is
+    rewritten without asking: they are read and computed again.
   - *A rewritten submission has new pages* (`intake.repaged`): what was read
     from the old ones goes (every value no person verified),
     and so does where things are on them (its own regions and print area,

@@ -63,7 +63,6 @@ def test_rows_all_and_dropping_large_parts(store):
     assert [r.body for r in small] == [{'grade': {'value': True}}]
     assert {r.submission for r in store.all(kinds=['value'])} == {'s', 't'}
     assert [r.submission for r in store.all(submission='t')] == ['t']
-    assert store.has_work('s') and not store.has_work('u')
 
 
 def test_concurrent_edits_one_wins(store):
