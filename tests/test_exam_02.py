@@ -42,9 +42,8 @@ def pkg(exam):
 
 
 def info(alt):
-    """The `info` values of printing `alt`: each printed field's value."""
-    v = importlib.import_module(f'{EXAM.name}.versions')
-    return {f.label: v.STATES[bool(alt & b)] for b, pair in v.FIELDS.items() for f in pair}
+    """The `info` values of printing `alt`: what each printed field reads."""
+    return importlib.import_module(f'{EXAM.name}.versions').readings(alt)
 
 
 def values(exam, qid, answers, printing=None, body=None):
@@ -234,11 +233,11 @@ def test_two_bits_combine_into_a_printing(exam, pkg, tmp_path):
             {f'info/{f.label}' for b in (1, 4) for f in v.FIELDS[b]}      # bits 1 and 4, not bit 2
         assert (status(runner, 'agree', 'q5').state, status(runner, 'agree', 'q5').value) == ('graded', True)
 
-        assert printed('split') == {**info(5), 'q7_quantile': 'original'}
+        assert printed('split') == {**info(5), 'q7_quantile': 'median'}
         st = status(runner, 'split', 'q5')
         assert (st.state, st.value, st.counts) == ('to_decide', None, False) and 'disagree' in st.reason
         rev = runner.values('split')['info/q7_quantile'].rev
-        runner.set('split', 'info', 'q7_quantile', 'alternate', author='ta', expect_rev=rev)
+        runner.set('split', 'info', 'q7_quantile', 'upper quartile', author='ta', expect_rev=rev)
         assert status(runner, 'split', 'q5').state == 'outdated'
         runner.refresh('split')
         assert (status(runner, 'split', 'q5').state, status(runner, 'split', 'q5').value) == ('graded', True)

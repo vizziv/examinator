@@ -20,8 +20,9 @@ VERSIONS = {alt: {q: 'alternate' if alt & bit else 'original' for q, bit in BITS
 
 
 def printed(alt: int) -> dict:
-    """What `info`'s printed fields read to on one version: `Case.printed`."""
-    return {'info': {label: 'alternate' if alt & bit else 'original'
+    """What `info`'s printed fields read on one version: `Case.printed`."""
+    from .exam import TEXTS
+    return {'info': {label: next(t for t, p in TEXTS[label].items() if p == ('alternate' if alt & bit else 'original'))
                      for bit, labels in FIELDS.items() for label in labels}}
 
 

@@ -31,9 +31,13 @@ def band(page, top, bottom):
     return Region(page, 0, top, 1000, bottom)
 
 
+# printed field -> {a text it may show: the printing it shows it on}, the first text per printing as printed
+TEXTS: dict[str, dict[str, str]] = {}
+
+
 def printed(label, region, ask, original, alternate):
-    reads = {text: state for state, texts in ((ORIGINAL, original), (ALTERNATE, alternate)) for text in texts}
-    return Field(label, region=region, read=Printed(ask, reads=reads))
+    TEXTS[label] = {text: state for state, texts in ((ORIGINAL, original), (ALTERNATE, alternate)) for text in texts}
+    return Field(label, region=region, read=Printed(ask))
 
 
 # bit -> its two printed fields (in the `info` question)
@@ -61,7 +65,7 @@ FIELDS = {
 
 def bit(n):
     """One bit's state, 'original' or 'alternate': its two fields, which must agree."""
-    return fields.agree(*(fields.value(f.label, question=INFO) for f in FIELDS[n]))
+    return fields.agree(*(fields.table(fields.value(f.label, question=INFO), TEXTS[f.label]) for f in FIELDS[n]))
 
 
 def _l_piece(mirrored, shifted):
@@ -110,8 +114,7 @@ class Printing:
 
 
 def printing(qid):
-    """What picks a question's key: one bit directly (so its readings are checked
-    against the key at definition), or the bits combined."""
+    """What picks a question's key: one bit directly, or the bits combined."""
     bits, name = PRINTINGS[qid]
     return bit(bits[0]) if name is None else Printing(qid)
 
@@ -130,7 +133,7 @@ def readings(alt: int) -> dict:
     out = {}
     for b, on in bits_of(alt).items():
         for f in FIELDS[b]:
-            out[f.label] = next(text for text, state in f.read.reads.items() if state == STATES[on])
+            out[f.label] = next(text for text, state in TEXTS[f.label].items() if state == STATES[on])
     return out
 
 

@@ -19,8 +19,13 @@ def band(page, top, bottom):
     return Region(page, 0, top, 1000, bottom)
 
 
+# printed field -> {its text on a printing: that printing}
+TEXTS: dict[str, dict[str, str]] = {}
+
+
 def printed(label, region, ask, original, alternate):
-    return Field(label, region=region, read=Printed(ask, reads={original: 'original', alternate: 'alternate'}))
+    TEXTS[label] = {original: 'original', alternate: 'alternate'}
+    return Field(label, region=region, read=Printed(ask))
 
 
 FIELDS = [
@@ -40,7 +45,7 @@ FIELDS = [
 
 
 def _agree(*labels):
-    return fields.agree(*(fields.value(label, question=INFO) for label in labels))
+    return fields.agree(*(fields.table(fields.value(label, question=INFO), TEXTS[label]) for label in labels))
 
 
 # question -> its printing, 'original' or 'alternate': two printed fields that must agree
@@ -59,8 +64,9 @@ VERSIONS = {alt: {q: 'alternate' if alt else 'original' for q in VARIED} for alt
 
 
 def printed_on(alt: int) -> dict:
-    """What `info`'s printed fields read to on one printing: `Case.printed`."""
-    return {INFO: {f.label: 'alternate' if alt else 'original' for f in FIELDS}}
+    """What `info`'s printed fields read on one printing: `Case.printed`."""
+    want = 'alternate' if alt else 'original'
+    return {INFO: {f.label: next(t for t, p in TEXTS[f.label].items() if p == want) for f in FIELDS}}
 
 
 FILES = {0: 'exam_01.pdf', 1: 'exam_01_alt1.pdf'}

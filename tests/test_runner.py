@@ -43,9 +43,48 @@ def test_read_writes_values_unverified_unless_the_reader_vouches(env, tmp_path):
     ws2 = workspace(tmp_path / 't', trusted)
     r2 = Runner(ws2, model=FakeModel(dict(SCRIPT)))
     read_all(r2, 's1')
-    assert value(ws2, 's1', 'p/c1').verified == 'reader'           # one of a closed set: vouched for
+    assert value(ws2, 's1', 'p/c1').verified == 'reader'           # printed, no marker: vouched for
     r2.close()
     ws2.close()
+
+
+def test_a_printed_reading_is_vouched_for_unless_flagged_and_handwriting_never():
+    from examinator import Ask
+    f = Field('c', Region(1, 0, 0, 10, 10))
+    printed = Printed("the printed number")
+    assert printed.vouches(f, "30") and printed.value(" 30 ") == "30"
+    assert not printed.vouches(f, printed.value(None))                  # not read: a marker
+    assert not printed.vouches(f, "[REVIEW: smudged] 3?") and not printed.vouches(f, "")
+    assert not Printed("the printed number", verify=True).vouches(f, "30")
+    assert not Ask("the student's name").vouches(f, "Ann")             # handwriting: a person verifies
+
+
+def test_a_value_with_no_key_is_undecided_and_says_which(tmp_path):
+    """A by-value key has no declared set of values: one with no key is caught when it is
+    read, as an undecided grade naming the field and the value."""
+    from examinator.std import math
+    exam = Exam('k', pages=1)
+    exam.question('q', pages=[1], fields=[Field('n', Region(1, 0, 0, 500, 100), read=Printed("n, as a number")),
+                                          Field('x')], read=Parse(),
+                  check=Check(math.keyed({'10': {'x': '1'}, '20': {'x': '2'}}, by='n'), isolate=False))
+    ws = workspace(tmp_path, exam, subs=('s1',))
+    runner = Runner(ws, model=FakeModel({('q', 'read:n'): '{"value": "30"}', ('q', 'parse'): '{"x": "1"}'}))
+    try:
+        assert all(o.ok for o in runner.read('s1', 'q'))
+        assert value(ws, 's1', 'q/n').verified == 'reader'
+        runner.refresh('s1', questions=['q'])
+        st = state(runner, 's1', 'q', 'check')
+        assert st.value is None and st.reason == "no key for n = 30"
+        runner.set('s1', 'q', 'n', '10', author='ta')
+        runner.refresh('s1')
+        assert state(runner, 's1', 'q', 'check').value is True
+        # what to expect is the ask's to say; an edited ask is what the next read asks
+        overrides.set(ws, 'q/fields/n/read/ask', "n, as a number: 10 or 20", author='ta')
+        runner.read('s1', 'q', labels=['n'], include_protected=True)
+        assert "Report: n, as a number: 10 or 20." in runner.model.calls[-1].prompt
+    finally:
+        runner.close()
+        ws.close()
 
 
 def test_reading_again_the_same_text_changes_nothing(env):
@@ -82,9 +121,9 @@ def test_a_read_can_fill_only_the_fields_with_no_value(env):
 
 def test_a_field_without_a_region_is_not_read_until_it_has_one(tmp_path):
     exam = Exam('r', pages=1)
-    exam.question('info', pages=[1], fields=[Field('c', read=Printed("the cue", reads={'1': 'one'}))])
+    exam.question('info', pages=[1], fields=[Field('c', read=Printed("the cue"))])
     ws = workspace(tmp_path, exam, subs=('s1',))
-    runner = Runner(ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
+    runner = Runner(ws, model=FakeModel({('info', 'read:c'): '{"value": "one"}'}))
     outs = runner.read('s1', 'info')
     assert [(o.status, o.detail) for o in outs] == [('blocked', "no region: c")] and value(ws, 's1', 'info/c') is None
     overrides.set(ws, 'info/fields/c/region', [1, 0, 0, 500, 100], scope='submission:s1',
@@ -99,7 +138,7 @@ def test_a_read_asks_the_model_every_time_and_keeps_only_the_value(env):
     person's request) asks the model again, for the same crop or another; reading
     only what is missing (resuming a read) asks nothing of what has a value."""
     exam, ws, _ = env
-    replies = {'read:c1': '{"value": "1"}', 'read:c2': '{"value": "i"}'}
+    replies = {'read:c1': '{"value": "one"}', 'read:c2': '{"value": "one"}'}
     runner = Runner(ws, model=FakeModel(lambda call: replies[call.tag[2]]))
 
     def calls():
@@ -107,7 +146,7 @@ def test_a_read_asks_the_model_every_time_and_keeps_only_the_value(env):
     assert all(o.ok for o in runner.read('s1', 'p'))
     assert calls() == 2 and value(ws, 's1', 'p/c1').text == 'one'
     assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 4        # the same crops: asked again
-    replies.update({'read:c1': '{"value": "2"}', 'read:c2': '{"value": "ii"}'})
+    replies.update({'read:c1': '{"value": "two"}', 'read:c2': '{"value": "two"}'})
     assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 6
     assert value(ws, 's1', 'p/c1').text == 'two'
     assert runner.read('s1', 'p', missing_only=True) == [] and calls() == 6
@@ -295,13 +334,13 @@ def test_a_cancelled_batch_stops_queued_reads(tmp_path):
     from examinator.core import batch
     exam = Exam('r', pages=1)
     exam.question('info', pages=[1], fields=[Field('c', Region(1, 0, 0, 500, 100),
-                                                    read=Printed("the cue", reads={'1': 'one'}))])
+                                                    read=Printed("the cue"))])
     ws = workspace(tmp_path, exam, subs=('s1', 's2', 's3'))
     holder = {}
 
     def reply(call):
         holder['run'].cancel()                      # stop pressed during the first read
-        return '{"value": "1"}'
+        return '{"value": "one"}'
     runner = Runner(ws, model=FakeModel(reply))
     plan = batch.plan(ws, batch.Selection(('s1', 's2', 's3'), ('info',)), model_available=True)
     run = holder['run'] = batch.BatchRun(runner, plan, parallel=1)
@@ -315,9 +354,9 @@ def test_a_cancelled_batch_stops_queued_reads(tmp_path):
 def test_a_batch_reads_what_it_plans_and_never_what_a_person_set_meanwhile(tmp_path):
     from examinator.core import batch
     exam = Exam('r', pages=1)
-    exam.question('info', pages=[1], fields=[Field('c', read=Printed("the cue", reads={'1': 'one'}))])
+    exam.question('info', pages=[1], fields=[Field('c', read=Printed("the cue"))])
     ws = workspace(tmp_path, exam, subs=('s1', 's2'))
-    runner = Runner(ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
+    runner = Runner(ws, model=FakeModel({('info', 'read:c'): '{"value": "one"}'}))
     sel = batch.Selection(('s1', 's2'), ('info',))
     plan = lambda: batch.plan(ws, sel, model_available=True)
     assert [(i.question, i.action) for i in plan().items] == [('info', 'blocked')] * 2
@@ -372,7 +411,7 @@ def test_a_whole_page_reader_needs_every_page_of_its_question(tmp_path):
     from examinator.core.runner import to_read
     exam = Exam('two', pages=2)
     exam.question('w', pages=[1, 2], fields=[Field('x', Region(1, 0, 0, 500, 100)), Field('y')], read=Parse())
-    cue = Printed("cue", reads={'1': 'one'})
+    cue = Printed("cue")
     exam.question('r', pages=[1, 2], fields=[Field('c', Region(1, 0, 0, 500, 100), read=cue),
                                             Field('d', Region(2, 0, 0, 500, 100), read=cue), Field('e', read=cue)])
     ws = workspace(tmp_path, exam, subs=('s1',))

@@ -48,7 +48,7 @@ class Case:
     # question -> {label: text or None (blank)} for the fields its reader reads; or, for a
     # question with one such field (pseudocode, say), the text itself
     answers: Mapping[str, Any] = field(default_factory=dict)
-    # question -> {printed field label: what is printed there (a reading, or the value it reads to);
+    # question -> {printed field label: what is printed there, as the model reads it;
     # None: the model cannot read it}
     printed: Mapping[str, Mapping[str, str | None]] = field(default_factory=dict)
     # grid column -> value, 'blank', or None (must not count: undecided, or waiting for a person)
@@ -167,7 +167,7 @@ def _printed_pages(exam: Exam, case: Case, renderer: Renderer) -> list[Image.Ima
                         continue
                     if isinstance(f.read, Printed):
                         l, t, _, _ = _box(f.region)
-                        shown = f.read.reading(case.printed.get(q.id, {}).get(f.label)) or ""
+                        shown = case.printed.get(q.id, {}).get(f.label) or ""
                         d.text((l + 40, t + 30), f"{q.title}: {shown}", fill='black', font=_font(16))
                     elif f.read is None:
                         l, t, r, b = _box(f.region)

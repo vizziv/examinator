@@ -37,8 +37,9 @@ def pkg(exam):
 
 
 def info(exam, printing):
-    """The `info` values of a submission whose every choice is `printing`."""
-    return {f.label: printing for f in exam.questions['info'].fields}
+    """The `info` values of a submission whose every choice is `printing`: what its printed fields read."""
+    versions = importlib.import_module(f'{EXAM.name}.versions')
+    return versions.printed(0 if printing == 'original' else 7)['info']
 
 
 def values(exam, qid, answers, printing=None, body=None):
@@ -99,7 +100,7 @@ def test_definition(exam, pkg):
     assert info.checks == () and info.read is None and all(isinstance(f.read, Printed) for f in info.fields)
     assert {label for labels in pkg('versions').FIELDS.values() for label in labels} == {f.label for f in info.fields}
     for f in info.fields:
-        assert set(f.read.reads.values()) == {'original', 'alternate'}, f.label
+        assert set(pkg('exam').TEXTS[f.label].values()) == {'original', 'alternate'}, f.label
     # Questions 2 and 7: one code field per function, one reader for both, one check per field.
     for qid, functions in (('q2', ('weibull', 'weibullish')), ('q7', ('poisson_process', 'poisson_dist'))):
         q = exam.questions[qid]
@@ -150,7 +151,7 @@ def test_versions_match_the_printed_blanks(exam, pkg):
                 found = re.search(pattern, text, re.S)
                 assert found, (alt, f.label)
                 want = 'original' if found[1] == original else 'alternate'
-                assert versions.printed(alt)['info'][f.label] == want, (alt, f.label)
+                assert pkg('exam').TEXTS[f.label][versions.printed(alt)['info'][f.label]] == want, (alt, f.label)
                 w, h = page.get_size()
                 r = f.region
                 inside = page.get_textpage().get_text_bounded(
@@ -174,7 +175,7 @@ def test_the_printing_read_from_info_selects_the_key(exam, pkg):
         labels = [v.label for v in exam.questions[qid].check('check').fn.by.refs()]
         _, got = outcomes(exam, qid, answers['original'][qid])
         assert got['grade']['value'] is None and f"info {labels[0]} not read" in got['grade']['reason']
-        _, got = outcomes(exam, qid, answers['original'][qid], body={**info(exam, 'original'), labels[0]: 'alternate'})
+        _, got = outcomes(exam, qid, answers['original'][qid], body={**info(exam, 'original'), labels[0]: info(exam, 'alternate')[labels[0]]})
         assert got['grade']['value'] is None and "disagree" in got['grade']['reason']
         assert {k for k in got['reads'] if k.startswith('info/')} == {f'info/{label}' for label in labels}, qid
 
@@ -542,7 +543,7 @@ def test_workflow_rules(exam, pkg, env):
     put('q9', f.ANSWERS['alternate']['q9'])
     runner.refresh(S)
     assert (st('q9').state, st('q9').value) == ('graded', False)
-    put('info', {label: 'alternate' for label in versions.FIELDS[1]})
+    put('info', {label: info(exam, 'alternate')[label] for label in versions.FIELDS[1]})
     assert st('q9').state == 'outdated' and st('q2', 'check').state == 'graded'
     runner.refresh(S)
     assert (st('q9').state, st('q9').value) == ('graded', True)
@@ -588,12 +589,12 @@ def test_disagreeing_printed_fields_are_undecided_until_a_grader_corrects_info(e
             verify(runner, S, qid)
         runner.refresh(S, questions=['q5'])
         got = text_of(runner, S, 'info')
-        assert (got['q5_confidence'], got['q9_observations']) == ('original', 'alternate')
+        assert (got['q5_confidence'], got['q9_observations']) == ('95', '[14, 11, 15]')
         st = status(runner, S, 'q5')
         assert (st.state, st.value, st.counts) == ('to_decide', None, False)
         assert 'disagree' in st.grade.reason
         rev = runner.values(S)['info/q9_observations'].rev
-        runner.set(S, 'info', 'q9_observations', 'original', author='ta', expect_rev=rev)
+        runner.set(S, 'info', 'q9_observations', '[14, 12, 15]', author='ta', expect_rev=rev)
         assert status(runner, S, 'q5').state == 'outdated'
         runner.refresh(S)
         st = status(runner, S, 'q5')

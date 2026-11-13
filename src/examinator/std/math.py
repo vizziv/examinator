@@ -595,12 +595,13 @@ def at_least(k: int, required: Sequence[str] = ()) -> Callable[[Mapping], str | 
 
 # --- the keyed check -------------------------------------------------------------
 
-def pick(keys: Mapping[str, Any], value: str) -> tuple[str, Any]:
-    """The key for a field's value (names compared normalised), or `Undecided`."""
+def pick(keys: Mapping[str, Any], value: str, what: str | None = None) -> tuple[str, Any]:
+    """The key for a value (names compared normalised), or `Undecided` naming what
+    picked it (`what`: a field) and the value."""
     for name, k in keys.items():
         if normalize(name) == normalize(value):
             return name, k
-    raise Undecided(f"no key for {value!r}"[:120])
+    raise Undecided((f"no key for {what} = {value}" if what else f"no key for {value!r}")[:120])
 
 
 def keyed_by_value(key: Mapping[Any, Any]) -> bool:
@@ -618,8 +619,8 @@ class Keyed:
     grade: Callable[[Mapping], Any] = all_correct
 
     def validate(self, question, exam) -> None:
-        """A key per value comes with `by`, its labels are the question's fields,
-        and its names are the values the printed fields `by` names can take."""
+        """A key per value comes with `by` (whose fields exist), and its labels are
+        the question's fields. A value with no key is undecided when it is read."""
         from . import fields as fields_
         per_value = keyed_by_value(self.key)
         if per_value != (self.by is not None):
@@ -639,20 +640,12 @@ class Keyed:
                 elif isinstance(entry, Choice) and not (entry.accepted and all(
                         isinstance(a, str) and a.strip() for a in entry.accepted)):
                     raise ValueError(f"{question.id}: the key for {labels} is a choice of one or more texts")
-        if self.by is None:
-            return
-        can = fields_.possible(exam, question, self.by, question.id)
-        if can is None:
-            return
-        names = {normalize(str(n)) for n in self.key}
-        missing, extra = sorted(can - names), sorted(names - can)
-        if missing or extra:
-            raise ValueError(f"{question.id}: the key is one per value of {getattr(self.by, 'name', 'by')}, but "
-                             + "; ".join(([f"{missing} have no key"] if missing else [])
-                                         + ([f"{extra} are not values it reads to"] if extra else [])))
+        if self.by is not None:
+            fields_.check_refs(exam, question, self.by, question.id)
 
     def __call__(self, ctx) -> Result:
-        name, key = pick(self.key, self.by(ctx)) if self.by is not None else (None, self.key)
+        name, key = pick(self.key, self.by(ctx), getattr(self.by, 'name', None)) if self.by is not None \
+            else (None, self.key)
         answers, problems = {}, {}
         for label in labels_of(key):
             try:
@@ -702,8 +695,8 @@ def keyed(key: Mapping[Any, Any], *, by: Any = None, symbols: Mapping[str, str] 
     over those fields' answers (`check_group`). With `by`, `key` is one key per
     value of a field, and `by` picks it: a label of the question's own field, a
     `fields.value(label, question=...)` of another question's,
-    `fields.agree(...)`, or any `fn(ctx) -> value` (raise `Undecided` when it
-    cannot tell). `symbols` maps names to assumptions (`{'a': 'positive'}`), or
+    `fields.agree(...)`, `fields.table(...)`, or any `fn(ctx) -> value` (raise
+    `Undecided` when it cannot tell); a value with no key is undecided. `symbols` maps names to assumptions (`{'a': 'positive'}`), or
     lists names; `functions=[]` means no function calls, so juxtaposition is
     multiplication. A field that is not read, or carries a review marker, is
     undecided, and so is a grade it could tip.
