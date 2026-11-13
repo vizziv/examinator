@@ -89,9 +89,24 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
   only ~16% faster. Says nothing about real handwriting: synthetic answers
   are a font. Not run live: Exams 1 and 2, the browser under a slow model,
   name-matching doubts, a second model for comparison.
-- **Next, in the owner's rough order:** the same live run on a second local
-  model for speed and accuracy; a filter overlay on the question page; search
-  facets; then a student view.
+- **Model (decided 2026-11-14):** gemma 26b (`google/gemma-4-26b-a4b-qat`,
+  the CLI default) for everything. Compared on identical synthetic
+  workspaces of the toy exam and Exams 1-3, gemma 12b was about 2.5 times
+  slower per call (58 s against 23 s per Exam 3 submission) and no more
+  accurate except on a few printed values; it makes up answers on blank pages
+  (34 fields) and misreads digits. The owner will not try a smaller model.
+  About 1 h (Exam 3) to 1.5 h (Exam 2) to read 150 students on 26b, plus
+  about 35 min of page readings at intake for a 22-page exam.
+- **Accepted as they are (the owner, 2026-11-14):** reading pseudocode is
+  unreliable with any model and no effort goes into making the code reader
+  more reliable; a person corrects what it gets wrong. Known and left: it
+  drops a function the model keys with parentheses, and treats a bare `pass`
+  as unstated. A reader is not expected to notice an upside-down page:
+  nothing is read from a scan before a person accepts its split, except the
+  page readings Split uses, and turning is done there. Not built: detecting
+  orientation; synthetic multiple choice as filled bubbles.
+- **Next, in the owner's rough order:** a filter overlay on the question page;
+  search facets; then a student view.
 - **For the owner:** Exam 3's package labels question 1's fields 1.1-1.4
   while the page prints the course's placeholder notation; the reader copes
   by matching boxes in order. `fields.table` (std) maps each printed text to a
