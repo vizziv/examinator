@@ -54,7 +54,6 @@ class Value:
     by: str | None = None             # the person who verified it
     author: str | None = None         # who wrote this text (a person), None if a reader
     updated_at: str = ''
-    source: str | None = None         # what a reader read it from (`runner.sources`); None if a person typed it
 
     @property
     def is_verified(self) -> bool:
@@ -68,16 +67,10 @@ class Value:
     def of(row: Row) -> 'Value':
         b = row.body or {}
         return Value(str(b.get('text') or ''), row.rev, b.get('verified'), b.get('by'),
-                     row.author if row.origin == 'manual' else None, row.updated_at, b.get('from'))
+                     row.author if row.origin == 'manual' else None, row.updated_at)
 
     def body(self) -> dict:
-        out = {'text': self.text, 'verified': self.verified, 'by': self.by}
-        return out if self.source is None else {**out, 'from': self.source}
-
-    def stale(self, source: str | None) -> bool:
-        """Read from something other than `source` (what the reader would read now), and
-        nobody verified it: it needs reading again. A value a person typed or verified never is."""
-        return self.verified != 'person' and self.source is not None and self.source != source
+        return {'text': self.text, 'verified': self.verified, 'by': self.by}
 
 
 @dataclass(frozen=True)

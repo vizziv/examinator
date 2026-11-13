@@ -174,7 +174,6 @@
 {% if can_read %}<button type="button" data-action="read"{% if off %} disabled title="no model"{% else %} title="read this question's values again (not those a person verified)"{% endif %}>read</button>
 <label title="also read again what a person set or verified (kept in history)"><input type="checkbox" id="read-all"> verified too</label>{% endif %}
 {% for c in checks %}{% if c.fn %}<button type="button" data-action="check" data-check="{{ c.name }}" title="run the check again (checks recompute by themselves after a change; this is for one that timed out, say)">{{ c.name if checks|length > 1 else 'check' }}</button>{% endif %}{% endfor %}
-<span id="reread" hidden><span class="tag unv">reading changed</span></span>
 </div>
 
 <details id="pages" class="panel">

@@ -111,7 +111,8 @@ each submission becomes its own PDF when you accept the split.
 <div id="names" hidden>
 <section id="w-bar" class="panel bar">
 <h2>Names</h2> <span id="w-sum"></span>
-<button type="button" data-action="names-read" title="{{ 'read the name and ID boxes with the model (only those not read yet, or moved)' if model else 'no model' }}"{% if not fields %} hidden{% endif %}>read names</button>
+<span id="w-read"{% if not fields %} hidden{% endif %}><button type="button" data-action="names-read" title="{{ 'read the name and ID boxes not read yet, with the model' if model else 'no model' }}">read names</button>
+<label title="also read again what no person verified (after moving a box, say)"><input type="checkbox" id="w-again"> again</label></span>
 <span id="w-noboxes" class="dim"{% if fields %} hidden{% endif %}>no name or ID boxes</span>
 <button type="button" id="w-boxes-on" data-action="names-boxes" aria-pressed="false" title="draw the name and ID boxes, for every submission">boxes</button>
 <span class="grow"></span>

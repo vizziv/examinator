@@ -24,7 +24,7 @@
   // How sure a proposal is: both agree is information, one of the two waits on a person, the rest are problems.
   const DOUBT = {agree: '', id: 'unv', email: 'unv', name: 'unv', disagree: 'bad', tie: 'bad', nobody: 'bad',
     unreadable: 'bad', empty: 'bad', unread: ''};
-  const verified = r => !!r.who && !r.who.recheck;
+  const verified = r => !!r.who;
 
   // --- the roster, searched in the browser: sent once with the page ---
   const fold = t => (t || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/['’`]/g, '');
@@ -117,7 +117,7 @@
   S.register('names-back', {available: () => k > 0, run: () => go(k - 1)});
   S.register('names-type', {available: () => !!row(), run: () => { pick.focus(); pick.select(); }});
   S.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, long: true, run: async () => {
-    const r = await request('/scans/names/read', {});
+    const r = await request('/scans/names/read', {again: $('w-again').checked});
     if (!r.ok) { flash(r.body.error || 'failed'); return; }
     $('msg').hidden = !r.body.n;
     $('msg').textContent = r.body.n ? `reading ${r.body.n}…` : '';
@@ -317,7 +317,7 @@
     await load(false, true);
     const shadowed = list.length && !list[0].scope && view.columns.some(c => view.byId[sub].own[c.name] && drafts[c.name]
       && !Rects.same(drafts[c.name], view.byId[sub].own[c.name].value));
-    say(`${what}${shadowed ? ' · this submission keeps its own' : ''}${list.length && main.dataset.model ? ' · read names to use them' : ''}`);
+    say(`${what}${shadowed ? ' · this submission keeps its own' : ''}`);
   }
   S.register('names-box-save-own', {available: () => bx.edit && changes('own').length > 0,
     run: () => saveBoxes(changes('own'), `saved · ${WHERE.own}`)});
@@ -366,9 +366,9 @@
     await load();
   }
   function valueBox(r, name) {
-    const v = r.values[name], stale = r.stale.includes(name);
+    const v = r.values[name];
     const input = make('input', {type: 'text', className: 'mono', value: v ? v.text : '', spellcheck: false,
-      placeholder: stale && main.dataset.model ? 'not read yet' : '', title: 'Enter: save (verified by you)'});
+      placeholder: !v && main.dataset.model ? 'not read yet' : '', title: 'Enter: save (verified by you)'});
     input.setAttribute('aria-label', name);
     input.addEventListener('keydown', e => {
       if (e.key !== 'Enter' || e.isComposing) return;
@@ -382,7 +382,6 @@
       ok.addEventListener('click', () => S.enqueue(() => saveValue(r, name, {verify: [{key: `@identity/${name}`, rev: v.rev}]})));
       out.push(' ', tag('unv', 'unverified'), ok);
     }
-    if (stale && v && v.verified !== 'person') out.push(' ', tag('', 'read again'));
     return out;
   }
 
@@ -399,8 +398,7 @@
     return el;
   }
   // With no boxes nothing is read: unverified is all there is to say.
-  const doubtTag = r => (r.who && r.who.recheck ? tag('unv', 'pages changed', 'named before its pages changed: confirm again')
-    : r.who ? tag('', 'verified') : !r.crops.length ? tag('unv', 'unverified') : tag(DOUBT[r.doubt], view.doubts[r.doubt]));
+  const doubtTag = r => (r.who ? tag('', 'verified') : !r.crops.length ? tag('unv', 'unverified') : tag(DOUBT[r.doubt], view.doubts[r.doubt]));
   const whoTags = r => (!r.who ? [] : [r.who.twice ? tag('bad', 'name twice') : '',
     !r.who.person && view.roster ? tag('', 'not on the roster') : '']);
 
@@ -464,19 +462,19 @@
 
   function render() {
     const left = view.left, n = view.rows.length, fields = view.boxed;
-    const counts = {}, stale = view.rows.filter(r => r.stale.length).length;
+    const counts = {}, unread = view.rows.filter(r => r.unread.length).length;
     for (const r of view.rows) if (!verified(r)) counts[r.doubt] = (counts[r.doubt] || 0) + 1;
     $('w-sum').replaceChildren(!n ? tag('', 'no submissions yet') : left ? tag('unv', `${left} unverified`) : tag('', `all ${n} verified`),
       ...['disagree', 'tie', 'nobody', 'unreadable', 'empty'].filter(d => counts[d]).map(d => tag(DOUBT[d], `${counts[d]} ${view.doubts[d]}`)),
-      stale ? tag('', `${stale} to read`) : '');
+      unread ? tag('', `${unread} to read`) : '');
     $('w-roster').textContent = view.roster ? `roster: ${view.roster}` : 'no roster yet';
-    main.querySelector('[data-action="names-read"]').hidden = !fields;
+    $('w-read').hidden = !fields;
     $('w-noboxes').hidden = !!fields;
     $('w-step').hidden = $('w-all').hidden = !n;
     renderBoxes();
     renderStep();
     renderRows();
-    main.dispatchEvent(new CustomEvent('names', {detail: {n, left, unread: stale, proposal: !!cand(), fields}}));
+    main.dispatchEvent(new CustomEvent('names', {detail: {n, left, unread, proposal: !!cand(), fields}}));
     Actions.hints();
     Actions.enable(main);
   }

@@ -220,7 +220,7 @@ def test_names_read_confirm_cycle_skip(site):
     view = client.get('/scans/names').json()
     assert view['left'] == 6 and {r['doubt'] for r in view['rows']} == {'unread'}
     assert [c['name'] for c in view['rows'][0]['crops']] == ['name', 'id']
-    assert all(r['stale'] == ['name', 'id'] for r in view['rows'])
+    assert all(r['unread'] == ['name', 'id'] for r in view['rows'])
     # reading: a background job with the (scripted) model, refused without the token
     assert client.post('/scans/names/read', json={}).status_code == 403
     r = post(client, token, '/scans/names/read', {})
@@ -331,27 +331,27 @@ def test_drawing_the_name_boxes_for_every_submission(site):
     wait(client, post(client, token, '/scans/names/read', {}).json()['job'])
     assert identity.unread(ws) == []
     before = {r['sub']: r['crops'] for r in view['rows']}
-    # move the name box, for every submission; values read under the old box are read again
+    # move the name box, for every submission: no value changes; reading again is asked for
     path = '@identity/fields/name/region'
     assert client.post('/exam/set', json={'path': path, 'value': [1, 100, 190, 820, 290], 'rev': None}).status_code == 403
     r = post(client, token, '/exam/set', {'path': path, 'value': [1, 100, 190, 820, 290], 'rev': None})
-    assert r.status_code == 200 and r.json()['overridden'] and r.json()['reread'] == ['@identity/name']
+    assert r.status_code == 200 and r.json()['overridden'] and 'reread' not in r.json()
     rev = r.json()['rev']
     assert post(client, token, '/exam/set', {'path': path, 'value': [1, 100, 190, 820, 300], 'rev': None}).status_code == 409
     view = client.get('/scans/names').json()
     assert {c['name']: c['rev'] for c in view['columns']}['name'] == rev
     assert all(r['crops'][0]['box'] != before[r['sub']][0]['box'] for r in view['rows'])
     assert all(r['crops'][1]['box'] == before[r['sub']][1]['box'] for r in view['rows'])
-    assert sorted(identity.unread(ws)) == sorted(before)                 # read again ...
-    r = post(client, token, '/scans/names/read', {})
-    assert r.json()['n'] == 6 and wait(client, r.json()['job'])['state'] == 'done'   # ... with the new box
-    # one submission's own box: its crop alone moves, and it alone is read again
+    assert identity.unread(ws) == [] and post(client, token, '/scans/names/read', {}).json()['n'] == 0
+    r = post(client, token, '/scans/names/read', {'again': True})
+    assert r.json()['n'] == 6 and wait(client, r.json()['job'])['state'] == 'done'   # with the new box
+    # one submission's own box: its crop alone moves
     own = {'path': path, 'value': [1, 100, 120, 800, 200], 'rev': None, 'scope': 'submission:s0003'}
     assert post(client, token, '/exam/set', own).status_code == 200
     rows = {r['sub']: r for r in client.get('/scans/names').json()['rows']}
     assert rows['s0003']['own']['name']['value'] == [1, 100, 120, 800, 200] and rows['s0002']['own'] == {}
     assert rows['s0003']['crops'][0]['box'] != rows['s0002']['crops'][0]['box']
-    assert identity.unread(ws) == ['s0003']
+    assert identity.unread(ws) == []
     # on the Exam data page, with the package's value, as a line for the package, and the submission's own
     page = client.get('/exam').text
     assert 'data-path="@identity/fields/name/region"' in page and "@identity/fields/name/region: Region(1, " in page

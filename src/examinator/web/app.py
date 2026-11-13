@@ -826,8 +826,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def _changed(path: str, scope: str, change: overrides.Change, data: dict) -> dict:
         """After an edit: recompute in the background what it outdated, the
-        requesting page's submission first; say which fields to offer to read again,
-        and what is now in force at that scope (and, for the page's submission, at each)."""
+        requesting page's submission first; say what is now in force at that scope (and, for the page's submission, at each)."""
         o = store.overrides(scope).get(path)
         subs = [s.id for s in store.submissions()]
         first = data.get('sub')
@@ -841,10 +840,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         except ValueError:
             kind = ''
         value = ws.layers(**({} if level == EXAM else {level: id_})).value(path) if kind else None
-        out ={'rev': o.rev if o else None, 'value': value, 'text': show_value(kind, value),
+        out = {'rev': o.rev if o else None, 'value': value, 'text': show_value(kind, value),
                'overridden': o is not None, 'checks': [f'{q}.{c}' for q, c in change.checks],
                'affected': len(change.checks) * len(subs), 'job': job,
-               'reread': [f'{q}/{label}' for q, label in change.fields],
                'skipped': [{'path': s.path, 'reason': s.reason} for s in change.skipped]}
         if first in subs and kind in ('region', 'print_area'):     # where the page's crops now are
             out['levels'] = levels(ws.layers(first), path, overrides.entry(exam, path).base, store.overrides())
@@ -1096,9 +1094,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise Bad("model unavailable")
         if not identity.boxed(ws):
             raise Bad("no name or ID boxes: draw them first")
-        fresh = bool(data.get('fresh'))
-        subs = [s.id for s in store.submissions()] if fresh else identity.unread(ws)
-        return {'job': jobs.start_each([(s,) for s in subs], lambda sid: identity.read(runner, sid, fresh=fresh)),
+        again = bool(data.get('again'))       # also read again what no person verified
+        subs = [s.id for s in store.submissions()] if again else identity.unread(ws)
+        return {'job': jobs.start_each([(s,) for s in subs], lambda sid: identity.read(runner, sid, again=again)),
                 'n': len(subs)}
 
     def sheet_image(request: Request) -> Response:

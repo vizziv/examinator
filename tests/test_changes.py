@@ -161,13 +161,13 @@ def test_how_a_field_is_read_changes_and_no_value_changes(tmp_path):
     ws, runner = graded(tmp_path, build())
     before = snapshot(ws, 's1')
     change = overrides.set(ws, 'q/fields/a/region', [1, 0, 0, 500, 100], author='ta')
-    assert change.fields == (('q', 'a'),) and change.checks == ()
+    assert change.checks == ()
     # the same below the exam: one submission's region, pages, print area
     own = overrides.scope(overrides.SUBMISSION, 's1')
     for path, value in (('q/fields/b/region', [1, 0, 100, 500, 200]), ('q/pages', [1]),
                         ('@print_area', [10, 10, 990, 990])):
         change = overrides.set(ws, path, value, scope=own, author='ta')
-        assert change.checks == () and change.fields
+        assert change.checks == ()
     assert snapshot(ws, 's1') == before
     assert [st(runner, 's1', 'q', 'check').state, st(runner, 's2', 'q', 'check').state] == ['graded', 'decided']
     # a field removed from the package: its own region is ignored, not deleted; restoring the name restores it

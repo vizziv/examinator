@@ -254,7 +254,7 @@
     let r = await send('accept', {});
     if (r && r.status === 409 && r.body.current && r.body.current.busy) {
       const busy = r.body.current.busy, many = busy.length > 1;
-      if (!confirm(`${busy.join(', ')} already ${many ? 'have' : 'has'} grading work, and the split changes or removes ${many ? 'them' : 'it'}. Rewrite anyway? The work stays but may no longer match the pages.`)) return;
+      if (!confirm(`${busy.join(', ')} already ${many ? 'have' : 'has'} grading work, and the split changes or removes ${many ? 'them' : 'it'}. Rewrite anyway? What people typed, verified or decided stays; unverified readings are dropped.`)) return;
       r = await send('accept', {force: true});
     }
     if (r && r.ok) {

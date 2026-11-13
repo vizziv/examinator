@@ -422,7 +422,7 @@ def test_a_region_for_this_submission_only(site):
     r = site.post('/exam/set', {'path': path, 'value': [1, 0, 0, 500, 100], 'rev': None, 'scope': OWN, 'sub': 's1'})
     lv = r.json()['levels']
     assert r.status_code == 200 and lv['own'] == lv['value'] == [1, 0, 0, 500, 100] and lv['own_rev'] == r.json()['rev']
-    assert r.json()['reread'] == ['p/c1'] and r.json()['job'] is None
+    assert 'reread' not in r.json() and r.json()['job'] is None
     assert site.value('s1', 'p/c1').text == 'one'                 # no value changes
     assert site.ws.region('s2', site.exam.questions['p'], 'c1') == site.exam.questions['p'].fields[0].region
     html = site.get('/s/s1/p').text
@@ -485,6 +485,7 @@ def test_batch_plan_run_status(site):
     assert site.state('s2', 'b').state == 'unverified'
     again = site.post('/read/plan', {'missing_only': True}).json()
     assert again['counts']['read'] == 0 and again['counts']['skip_present'] > 0
+    assert site.post('/read/plan', {}).json()['counts']['read'] == 6       # explicitly again: what nobody verified
     for bad in ({'questions': []}, {'submissions': ['ghost']}, {'questions': ['ghost']}):
         assert site.post('/read/plan', bad).status_code == 400
         assert site.post('/read/start', bad).status_code == 400
@@ -706,7 +707,7 @@ def test_set_and_clear_round_trip(site):
     path = 'p/fields/c1/read/ask'
     r = site.post('/exam/set', {'path': path, 'value': "the first cue, printed", 'rev': None})
     assert r.status_code == 200, r.text
-    assert r.json()['reread'] == ['p/c1'] and r.json()['job'] is None        # offered: read again
+    assert r.json()['job'] is None and r.json()['checks'] == []
     rev = r.json()['rev']
     assert site.exam.questions['p'].fields[0].read.ask == "the first cue, printed"
     page = site.get('/exam').text
@@ -734,7 +735,7 @@ def test_region_override_moves_the_crop_and_changes_no_value(ksite):
     before = crop_box(ksite.get('/s/s1/a').text, path)
     assert before
     r = ksite.post('/exam/set', {'path': path, 'value': [1, 100, 300, 600, 450], 'rev': None, 'sub': 's1'})
-    assert r.status_code == 200 and r.json()['job'] is None and r.json()['reread'] == ['a/x']
+    assert r.status_code == 200 and r.json()['job'] is None
     after = crop_box(ksite.get('/s/s1/a').text, path)
     assert after != before
     assert ksite.state('s1', 'a', 'x').state == 'graded'

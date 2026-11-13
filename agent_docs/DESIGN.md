@@ -374,7 +374,7 @@ the PDF's identity, the page and the resolution.
   from the cache.
 - A field's region may be replaced for one submission, as the page selection
   can. Changing where a field is read (region, print area, pages)
-  changes no value: the app offers to read again.
+  changes no value; reading again is a person's explicit choice.
 - The same regions serve three purposes: crops shown beside the grader's input,
   crops sent to the model for printed fields, and (optionally) cropped reading
   (`readers.answers(crops=True)`). Whole pages is the proven default.
@@ -622,8 +622,10 @@ submission into `pdfs/`; everything downstream is unchanged.
   any more is removed. A submission that would change or disappear while it has
   grading work (a value, a result or a decision; identity fields' values are
   not grading work) is refused with the
-  list (`Busy`); a forced accept keeps the work and clears that submission's
-  model memo. Order: PDFs are written to temporary files; one commit checks
+  list (`Busy`); a forced accept keeps what people typed, verified or decided. Every rewritten submission
+  loses its model memo and the values a reader wrote that no person typed or
+  verified (`intake.forget_reads`): those fields are not read again until asked.
+  Order: PDFs are written to temporary files; one commit checks
   the plan is unchanged and notes the ids about to be placed (setting
   `intake_pending`) with the id counter; files move into place; one commit
   records the plan, `made` and the submissions; removed files are deleted; the
@@ -643,11 +645,8 @@ submission into `pdfs/`; everything downstream is unchanged.
      column (of a reading, a file name or a pick) supports some roster people;
      a match needs them to single out one person. Ties and conflicts between
      columns are doubts shown to a person, never resolved silently.
-  3. *A value a reader wrote records what it was read from*
-     (`runner.sources`: the reader's memo key, the region, the print area,
-     the scanned sheet and its turn). It needs reading again when that differs
-     from what it would read now (`Value.stale`); a value a person typed or
-     verified never does.
+  3. *Moving a box changes no value.* Reading again is asked for ("read
+     names", with "again" for values no person verified).
 
   A roster is optional. It is stored as a
   setting, `[{'name', 'id', 'email', 'key'}]`, read from a CSV/TSV with a
@@ -676,10 +675,11 @@ submission into `pdfs/`; everything downstream is unchanged.
     submission" or "save for all", "drop own", "revert all", as on the
     question page.
   - **Reading**: `identity.read(runner, sub)` is `Runner.read` of the group's
-    placed fields (`intake --names`, the Scans page's background job).
-    `identity.unread` lists submissions with a placed field with no value or
-    a stale one (rule 3): a moved box, or a sheet changed by intake, is read
-    again; meanwhile a stale value is no evidence. "Are there boxes" is one
+    placed fields with no value (`again`: also those no person verified;
+    `intake --names`, the Scans page's background job). `identity.unread`
+    lists submissions with a placed field with no value. The model memo is
+    keyed by the region and print area, so reading a moved box asks the
+    model again. "Are there boxes" is one
     predicate, `identity.boxed` (any submission's, its own included). No
     roster text ever reaches a prompt. Each value shows under its crop on
     the Names tab, where it can be corrected (Enter) or verified (✓), through
@@ -702,13 +702,12 @@ submission into `pdfs/`; everything downstream is unchanged.
     confident misreading must not cascade into a second wrong match). Computed
     on read, cached by value revisions and roster.
   - **Picking**: every submission is named by its pick `(submission, '', 'who')`:
-    the person (`{'name', 'id', 'email'}`) and the sheets its boxes were on
-    (`'from'`), written by a person against the revision they saw. Who a
+    the person (`{'name', 'id', 'email'}`), written by a person against the
+    revision they saw. Who a
     pick is on the current roster (and so "taken", "twice", "not on the
     roster") is derived by unique exact evidence (`Matcher.find`: ID and
     email where both have them, else the whole name), so a replaced roster
-    relinks every pick. A rewritten submission keeps its pick; if the sheet
-    under its boxes changed, the pick is to confirm again ("pages changed").
+    relinks every pick. A rewritten submission keeps its pick.
     One programmatic way in, for PDFs handed in already
     split: a file name carrying exactly one roster ID, that one person has, as a whole run of
     letters and digits (`identity.by_file`, on `sync` and when the roster is

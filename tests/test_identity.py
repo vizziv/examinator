@@ -241,41 +241,48 @@ def test_identity_fields_are_ordinary_values(written):
     got = runner.values('s0001')
     assert got['@identity/name'].verified is None                    # nobody stands behind it yet
     calls = len(model.calls)
-    identity.read(runner, 's0001')
-    assert len(model.calls) == calls and runner.values('s0001') == got     # remembered: free, unchanged
+    assert identity.read(runner, 's0001') == []                             # nothing left to read
     assert all(c.prompt.count("Read the HANDWRITTEN") == 1 and c.tag[1] == IDENTITY for c in model.calls[-2:])
     assert "Avery" not in " ".join(c.prompt for c in model.calls)            # no roster in any prompt
-    identity.read(runner, 's0001', fresh=True)
-    assert len(model.calls) == calls + 2 and runner.values('s0001') == got  # asked again, same answer
+    identity.read(runner, 's0001', again=True)
+    assert len(model.calls) == calls and runner.values('s0001') == got      # remembered: free, unchanged
     assert ws.store.get('s0001', '', identity.WHO) is None                  # reading never picks
     # set, verify, history, and a read never replaces what a person set
     v = runner.set('s0001', IDENTITY, 'name', "Avery  Testwell", author='t')
     assert v.verified == 'person' and ws.store.history('s0001', '@identity/name', 'value')
     runner.verify('s0001', IDENTITY, 'id', author='t', expect_rev=got['@identity/id'].rev)
-    identity.read(runner, 's0001', fresh=True)
+    identity.read(runner, 's0001', again=True)
     assert texts(ws, 's0001')['name'] == "Avery  Testwell" and runner.values('s0001')['@identity/id'].verified == 'person'
     assert identity.overview(ws, ['s0001'])['rows'][0]['read'] == {'name': "Avery  Testwell", 'id': "90412873"}
 
 
-def test_a_region_for_one_submission_moves_its_crop_and_reads_again(written):
+def test_moving_a_box_changes_no_value_and_reading_again_is_asked(written):
+    """The standing rule: changing how a field is read changes no value. Reading
+    again is explicit (`again`), and the memo is keyed by the region, so a moved box
+    asks the model again while an unmoved one is free."""
     ws, runner, model = written
     for sid in ('s0001', 's0002'):
         identity.read(runner, sid)
-    assert 's0001' not in identity.unread(ws)
+    before = {sid: runner.values(sid) for sid in ('s0001', 's0002')}
     g = ws.exam.identity
     path, scope = '@identity/fields/name/region', overrides.scope(overrides.SUBMISSION, 's0001')
-    change = overrides.set(ws, path, [1, 100, 120, 800, 200], scope=scope, author='t')
-    assert change.fields == (('@identity', 'name'),)
+    overrides.set(ws, path, [1, 100, 120, 800, 200], scope=scope, author='t')
     assert ws.region('s0001', g, 'name').top == 120 and ws.region('s0002', g, 'name') == g.field('name').region
-    assert identity.unread(ws)[:1] == ['s0001'] and 's0002' not in identity.unread(ws)
-    assert identity.overview(ws, ['s0001'])['rows'][0]['stale'] == ['name']
+    assert {sid: runner.values(sid) for sid in before} == before                  # no value changed
+    row = identity.overview(ws, ['s0001'])['rows'][0]
+    assert 's0001' not in identity.unread(ws) and row['unread'] == [] and row['read']['name'] == "Avery Testwell"
     calls = len(model.calls)
-    identity.read(runner, 's0001')
-    assert len(model.calls) == calls + 1 and 's0001' not in identity.unread(ws)     # only the moved one
-    # every submission's region moved: all read again, but what a person verified
+    assert identity.read(runner, 's0001') == [] and len(model.calls) == calls     # only missing values are read
+    identity.read(runner, 's0001', again=True)
+    assert len(model.calls) == calls + 1        # the moved box asks again; the ID box is remembered
+    # every submission's box moved: reading again replaces what no person verified, only
     runner.verify('s0002', IDENTITY, 'name', author='t', expect_rev=runner.values('s0002')['@identity/name'].rev)
     overrides.set(ws, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='t')
-    assert identity.overview(ws, ['s0002'])['rows'][0]['stale'] == ['id']
+    assert runner.values('s0002') == {**before['s0002'], '@identity/name': runner.values('s0002')['@identity/name']}
+    calls = len(model.calls)
+    identity.read(runner, 's0002', again=True)
+    assert len(model.calls) == calls + 1 and [c.tag[2] for c in model.calls[-1:]] == ['read:id']
+    assert runner.values('s0002')['@identity/name'].verified == 'person'
 
 
 def test_the_group_is_kept_apart_from_grading(written):
@@ -393,48 +400,19 @@ def test_a_new_roster_relinks_the_picks(written):
     assert {r['sub']: r for r in identity.overview(ws)['rows']}['s0003']['who']['person'] == old[2]['name']
 
 
-def source_of(ws, sid, col):
-    return identity.at(ws, sid).sources[col]
-
-
 def test_empty_is_not_unreadable(written):
     ws, runner, model = written
     for col in ('name', 'id'):
-        runner._put_read('s0001', IDENTITY, col, "", False, source_of(ws, 's0001', col), False)
+        runner._put_read('s0001', IDENTITY, col, "", False, False)
     assert identity.overview(ws, ['s0001'])['rows'][0]['doubt'] == 'empty'
-    runner._put_read('s0001', IDENTITY, 'name', "[REVIEW: not read]", False, source_of(ws, 's0001', 'name'), False)
+    runner._put_read('s0001', IDENTITY, 'name', "[REVIEW: not read]", False, False)
     assert identity.overview(ws, ['s0001'])['rows'][0]['doubt'] == 'unreadable'
 
 
-def test_a_value_records_what_it_was_read_from(written):
-    """Region A, then the submission's own B (read), then A again: the value is B's
-    reading, so it is stale under A, shown as such and no evidence, until read again."""
-    ws, runner, model = written
-    path, scope = '@identity/fields/name/region', overrides.scope(overrides.SUBMISSION, 's0001')
-    identity.read(runner, 's0001')
-    a = runner.values('s0001')['@identity/name']
-    assert a.source == source_of(ws, 's0001', 'name') and 's0001' not in identity.unread(ws)
-    overrides.set(ws, path, [1, 100, 400, 800, 480], scope=scope, author='t')
-    assert 's0001' in identity.unread(ws)
-    identity.read(runner, 's0001')
-    b = runner.values('s0001')['@identity/name']
-    assert b.source != a.source and 's0001' not in identity.unread(ws)
-    overrides.clear(ws, path, scope=scope, expect_rev=ws.store.overrides(scope)[path].rev)
-    row = identity.overview(ws, ['s0001'])['rows'][0]
-    assert row['stale'] == ['name'] and 's0001' in identity.unread(ws)
-    assert 'name' not in row['read'] and row['doubt'] == 'id'                # B's reading is no evidence under A
-    identity.read(runner, 's0001')
-    assert runner.values('s0001')['@identity/name'].source == a.source and 's0001' not in identity.unread(ws)
-    # a value a person verified or typed is never stale
-    overrides.set(ws, path, [1, 100, 400, 800, 480], scope=scope, author='t')
-    runner.verify('s0001', IDENTITY, 'name', author='t', expect_rev=runner.values('s0001')['@identity/name'].rev)
-    runner.set('s0001', IDENTITY, 'id', "90412873", author='t')
-    assert 's0001' not in identity.unread(ws)
-
-
-def test_rewriting_a_submission_keeps_what_still_holds(written):
-    """A rewritten submission keeps its values and its pick; a value read from a sheet it no
-    longer has is stale, and its pick is to confirm again."""
+def test_rewriting_a_submission_drops_its_unverified_readings(written):
+    """Split's Accept rewrites a submission from other sheets: what a reader wrote and no
+    person typed or verified is dropped (identity and grading fields alike: not read), and
+    the memo with it; values a person typed or verified, and the pick, stay."""
     ws, runner, model = written
     identity.read(runner, 's0001')
     runner.set('s0001', IDENTITY, 'id', "90412873", author='t')
@@ -443,18 +421,26 @@ def test_rewriting_a_submission_keeps_what_still_holds(written):
     intake.edit(ws, one, 'drop', sheet=3, expect_rev=intake.plan(ws, one).rev, author='t')
     assert intake.accept(ws, one)['rewritten'] == ['s0001']               # names are not grading work
     row = identity.overview(ws, ['s0001'])['rows'][0]
-    assert texts(ws, 's0001') == {'name': "Avery Testwell", 'id': "90412873"}
-    assert row['stale'] == [] and not row['who']['recheck'] and ws.store.submission('s0001').name == "Avery Testwell"
-    # the sheet with the name box turned: the reading is stale, the pick to confirm again
+    assert texts(ws, 's0001') == {'id': "90412873"} and row['unread'] == ['name']
+    assert row['who']['name'] == "Avery Testwell" and ws.store.submission('s0001').name == "Avery Testwell"
+    assert 's0001' in identity.unread(ws)
+    calls = len(model.calls)
+    identity.read(runner, 's0001')
+    assert len(model.calls) == calls + 1 and texts(ws, 's0001')['name'] == "Avery Testwell"   # memo dropped too
+    # grading values: only a forced Accept rewrites a submission with grading work; the same rule
+    runner._put_read('s0001', 'areas', 'A.1', "4", False, False)                 # read, unverified
+    runner._put_read('s0001', 'areas', 'side', "red", True, False)              # read, vouched by the reader
+    runner._put_read('s0001', 'areas', 'A.2', "4*x", False, False)
+    runner.verify('s0001', 'areas', 'A.2', author='t', expect_rev=runner.values('s0001')['areas/A.2'].rev)
+    runner.set('s0001', 'parity', 'B', "even", author='t')                       # typed
+    runner.verify('s0001', IDENTITY, 'name', author='t', expect_rev=runner.values('s0001')['@identity/name'].rev)
     intake.edit(ws, one, 'turn_page', sheet=0, expect_rev=intake.plan(ws, one).rev, author='t')
-    intake.accept(ws, one)
-    view = identity.overview(ws)
-    row = {r['sub']: r for r in view['rows']}['s0001']
-    assert row['stale'] == ['name'] and row['who']['recheck'] and row['who']['name'] == "Avery Testwell"
-    assert view['left'] == 10
-    rev = ws.store.get('s0001', '', identity.WHO).rev
-    identity.pick(ws, 's0001', identity.people(ws)[0], author='t', expect_rev=rev)          # confirmed again
-    assert not {r['sub']: r for r in identity.overview(ws)['rows']}['s0001']['who']['recheck']
+    with pytest.raises(intake.Busy):
+        intake.accept(ws, one)
+    assert intake.accept(ws, one, force=True)['rewritten'] == ['s0001']
+    got = {k: v.text for k, v in runner.values('s0001').items()}
+    assert got == {'areas/A.2': "4*x", 'parity/B': "even", '@identity/id': "90412873", '@identity/name': "Avery Testwell"}
+    assert identity.who(ws, 's0001')['name'] == "Avery Testwell"
 
 
 def test_a_failed_call_is_no_reading_and_not_remembered(tmp_path):

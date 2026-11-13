@@ -41,8 +41,7 @@ configuration field can opt out with `dataclasses.field(metadata={'override': Fa
 `Exam.base` keeps the roots as built; `apply` makes the live ones the base plus
 the exam's overrides, replacing frozen objects along each path, never mutating
 them. Because a check's hash describes the live check, an edited key outdates
-exactly the checks that used it. Changing how a field is read changes no value;
-`Change.fields` lists the fields to offer to read again.
+exactly the checks that used it. Changing how a field is read changes no value.
 """
 from __future__ import annotations
 
@@ -52,7 +51,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
-from .defs import PRINT_AREA, Check, Exam, Field, Region, digest
+from .defs import PRINT_AREA, Check, Exam, Field, Region
 from .store import ANY
 
 if TYPE_CHECKING:
@@ -465,10 +464,8 @@ class Layers:
 @dataclass(frozen=True)
 class Change:
     """What one edit did: the checks whose definition changed (their results are
-    now outdated and are recomputed), the fields whose reading changed (to offer
-    to read again), and stored overrides that could not be applied."""
+    now outdated and are recomputed), and stored overrides that could not be applied."""
     checks: tuple[tuple[str, str], ...]
-    fields: tuple[tuple[str, str], ...] = ()
     skipped: tuple[Skipped, ...] = ()
 
     @property
@@ -476,31 +473,16 @@ class Change:
         return tuple(dict.fromkeys(q for q, _ in self.checks))
 
 
-def _hashes(exam: Exam) -> tuple[dict, dict]:
-    checks = {(qid, c.name): exam.check_hash(q, c) for qid, q in exam.questions.items() for c in q.checks}
-    layout = list(exam.print_area)
-    fields = {(qid, f.label): digest({'region': f.region, 'read': q.reader_of(f.label), 'pages': q.pages,
-                                      'layout': layout})
-              for qid, q in exam.questions.items() for f in q.fields}
-    return checks, fields
+def _hashes(exam: Exam) -> dict:
+    return {(qid, c.name): exam.check_hash(q, c) for qid, q in exam.questions.items() for c in q.checks}
 
 
 def _changed(ws: 'Workspace', path: str, scope: str) -> Change:
-    exam = ws.exam
-    if scope == '':
-        (c0, f0), skipped = _hashes(exam), ws.refresh()
-        c1, f1 = _hashes(exam)
-        return Change(tuple(k for k in c1 if c1[k] != c0.get(k)), tuple(k for k in f1 if f1[k] != f0.get(k)),
-                      tuple(skipped))
-    # below the exam: only how fields are read, for some submissions (no check reads these values)
-    segs = split(path)
-    q = exam.questions.get(segs[0])
-    if q is not None:
-        labels = [segs[2]] if len(segs) > 2 and segs[1] == 'fields' else q.labels
-        return Change((), tuple((q.id, label) for label in labels))
-    if segs[0] == PRINT_AREA:       # every crop
-        return Change((), tuple((qid, f.label) for qid, q in exam.questions.items() for f in q.fields))
-    return Change(())
+    if scope != '':         # below the exam: only how fields are read, for some submissions
+        return Change(())
+    c0, skipped = _hashes(ws.exam), ws.refresh()
+    c1 = _hashes(ws.exam)
+    return Change(tuple(k for k in c1 if c1[k] != c0.get(k)), tuple(skipped))
 
 
 def set(ws: 'Workspace', path: str, value: Any, *, scope: str = '', author: str | None,
