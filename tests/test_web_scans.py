@@ -128,8 +128,8 @@ def test_missing_pages_and_extra_sheets_downstream(site):
     assert '<span class="pno">missing</span>' in html and 'data-region="parity/fields/B/region"' not in html
     assert '<span class="pno">extra 1</span>' in client.get(f'/s/{stray}/parity').text
     # a field on the missing page is not read: blocked, like one with no region
-    groups = post(client, token, '/runs/plan', {'submissions': [short, stray], 'questions': ['parity']}).json()['groups']
-    assert {(g['action'], g['reason']) for g in groups} == {('blocked', "page missing"), ('run', "1 field")}
+    groups = post(client, token, '/read/plan', {'submissions': [short, stray], 'questions': ['parity']}).json()['groups']
+    assert {(g['action'], g['reason']) for g in groups} == {('blocked', "page missing"), ('read', "1 field")}
     runner = Runner(ws.exam, ws, model=synth.fake_model(ws.root))
     try:
         assert [(o.status, o.detail) for o in runner.read(short, 'parity')] == [('blocked', "page missing: B")]
@@ -319,14 +319,14 @@ def test_identity_values_set_and_verified_like_any_field(site):
     wait(client, post(client, token, '/scans/names/read', {}).json()['job'])
     row = {r['sub']: r for r in client.get('/scans/names').json()['rows']}['s0002']
     v = row['values']['id']
-    assert v['text'] == "91786250" and v['settled'] is None
+    assert v['text'] == "91786250" and v['verified'] is None
     r = post(client, token, '/s/s0002/@identity/save', {'values': {'@identity/id': {'text': "91736250", 'rev': v['rev']}}})
     assert r.status_code == 200
     row = {r['sub']: r for r in client.get('/scans/names').json()['rows']}['s0002']
-    assert row['values']['id']['settled'] == 'person' and row['candidates'][0]['why'] == "ID exact, name exact"
+    assert row['values']['id']['verified'] == 'person' and row['candidates'][0]['why'] == "ID exact, name exact"
     n = row['values']['name']
     assert post(client, token, '/s/s0002/@identity/save', {'verify': [{'key': '@identity/name', 'rev': n['rev']}]}).status_code == 200
-    assert {r['sub']: r for r in client.get('/scans/names').json()['rows']}['s0002']['values']['name']['settled'] == 'person'
+    assert {r['sub']: r for r in client.get('/scans/names').json()['rows']}['s0002']['values']['name']['verified'] == 'person'
 
 
 def test_the_group_is_not_graded_in_the_app(site):
@@ -336,9 +336,9 @@ def test_the_group_is_not_graded_in_the_app(site):
     wait(client, post(client, token, '/scans/names/read', {}).json()['job'])
     grid = client.get('/').text
     assert '@identity' not in grid
-    assert '@identity' not in client.get('/runs').text
+    assert '@identity' not in client.get('/read').text
     assert all(q['id'] != '@identity' for q in client.get('/focus/values').json()['questions'])
-    assert post(client, token, '/runs/plan', {'questions': ['@identity']}).status_code == 400
+    assert post(client, token, '/read/plan', {'questions': ['@identity']}).status_code == 400
     first = next(iter(ws.exam.grading))
     assert 'data-action="prev-question"' not in client.get(f'/s/s0001/{first}').text
 

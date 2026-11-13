@@ -21,7 +21,7 @@ EXAM = ROOT / 'exams' / 'exam_02'
 BLANKS = os.environ.get('EXAM2_BLANKS')
 needs_blanks = pytest.mark.skipif(not BLANKS, reason="EXAM2_BLANKS is not set")
 S = 'synthetic'
-FRONT, EXTRA = (1,), (26, 27, 28)       # the cover page and the extra-space pages
+FRONT, EXTRA = (1,), (26, 27, 28)       # the front page and the extra-space pages
 
 
 def extent(qid):
@@ -85,7 +85,7 @@ def status(runner, sub, qid, check='check'):
 
 
 def read_and_verify(runner, sub, questions):
-    """Read the questions' fields, settle every value as a grader would, and run their checks."""
+    """Read the questions' fields, verify every value as a grader would, and run their checks."""
     for qid in questions:
         assert all(o.ok for o in runner.read(sub, qid))
     for k, v in runner.values(sub).items():

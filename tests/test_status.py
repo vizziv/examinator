@@ -8,9 +8,9 @@ CHECK = Check(lambda ctx: None)
 DEFN, CODE = 'd1', 'c1'
 
 
-def values(**settled):
-    """'q/<name>' values at revision 1; True: settled by a person, 'reader', False: unsettled."""
-    return {f'q/{k}': Value("1", 1, {True: 'person', 'reader': 'reader', False: None}[s]) for k, s in settled.items()}
+def values(**verified):
+    """'q/<name>' values at revision 1; True: verified by a person, 'reader', False: unverified."""
+    return {f'q/{k}': Value("1", 1, {True: 'person', 'reader': 'reader', False: None}[s]) for k, s in verified.items()}
 
 
 def stored(value=True, reads=None, defn=DEFN, code=CODE, flags=()):
@@ -30,7 +30,7 @@ def test_decided_when_its_fields_are_unchanged():
     assert (s.state, s.value, s.author, s.counts) == ('decided', False, 'ta', True)
 
 
-def test_decided_counts_even_on_unsettled_or_marked_fields():
+def test_decided_counts_even_on_unverified_or_marked_fields():
     vals = {'q/a': Value("[REVIEW: 1 or 7]", 1)}
     assert st(vals=vals, decision=Decision(Grade(True), {'q/a': 1}, 'ta', 11)).counts
 
@@ -51,7 +51,7 @@ def test_to_decide_without_a_check_function():
     assert (s.state, s.counts) == ('to_decide', False)
 
 
-def test_to_decide_when_current_settled_and_undecided():
+def test_to_decide_when_current_verified_and_undecided():
     s = st(result=stored(None))
     assert (s.state, s.value, s.reason, s.counts) == ('to_decide', None, "cannot decide", False)
 
@@ -81,7 +81,7 @@ def test_outdated_when_the_check_or_the_code_changed():
     assert st(result=stored(True, code='c0')).state == 'outdated'
 
 
-def test_unverified_when_a_field_it_read_is_not_settled():
+def test_unverified_when_a_field_it_read_is_not_verified():
     s = st(vals=values(a=False), result=stored(True))
     assert (s.state, s.value, s.waiting, s.counts) == ('unverified', True, ('q/a',), False)
 
@@ -100,21 +100,21 @@ def test_graded():
     assert (s.state, s.value, s.counts) == ('graded', True, True)
 
 
-def test_settled_by_the_reader_is_settled():
+def test_verified_by_the_reader_is_verified():
     assert st(vals=values(a='reader'), result=stored(True)).state == 'graded'
 
 
-def test_a_field_read_at_its_default_is_settled_while_it_has_no_value():
+def test_a_field_read_at_its_default_is_verified_while_it_has_no_value():
     at_default = stored(True, reads={'q/a': 1, 'q/k': DEFAULT})
     assert st(result=at_default).state == 'graded'
-    # a value set since (by a person, or one nobody settled) outdates it; dropped again, it is current
+    # a value set since (by a person, or one nobody verified) outdates it; dropped again, it is current
     assert st(vals={**values(a=True), 'q/k': Value("20", 4, 'person')}, result=at_default).state == 'outdated'
     assert st(vals={**values(a=True), 'q/k': Value("20", 4)}, result=at_default).state == 'outdated'
     assert st(vals=values(a=True), result=at_default).state == 'graded'
 
 
 def test_only_the_fields_read_matter():
-    vals = {**values(a=True), 'q/b': Value("x", 2), 'r/c': Value("y", 3)}       # unsettled, but not read
+    vals = {**values(a=True), 'q/b': Value("x", 2), 'r/c': Value("y", 3)}       # unverified, but not read
     assert st(vals=vals, result=stored(False)).state == 'graded'
 
 

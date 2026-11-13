@@ -8,7 +8,7 @@
     GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
     GET  /image/{sub}/{q}/{check}/{path}?v=   one evidence image (path '2' or '1-0-3')
     GET  /jobs/{id}                 background job state
-    GET  /runs                      batch reads;  POST /runs/plan|start|stop,  GET /runs/status
+    GET  /read                      batch reads;  POST /read/plan|start|stop,  GET /read/status
     GET  /settings                  this browser's keys and appearance
     GET  /exam                      exam data (overrides);  POST /exam/set|clear, at a scope:
                                     every submission, one scan's, one submission's
@@ -542,18 +542,18 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'key': k, 'qid': qid, 'label': label, 'own': qid == q.id,
                 'title': label if qid == q.id else f"{qid} {label}",
                 'value': v.text if v else '', 'rev': v.rev if v else '', 'read': v is not None,
-                'settled': v.settled if v else None, 'by': v.by if v else None,
+                'verified': v.verified if v else None, 'by': v.by if v else None,
                 'marker': bool(v and v.marker),
-                'code': other.multiline(label),
+                'multiline': other.multiline(label),
                 'printed': isinstance(reader, Printed), 'ask': getattr(reader, 'ask', ''),
                 'typed': reader is None, 'default': f.default,
                 'crop': crop(region, overrides.join(qid, 'fields', label, 'region')),
                 'judged': judged.get(label, []) if qid == q.id else []})
         for n, f in enumerate(fields):
             f['n'] = n
-        unsettled = [f for f in fields if f['read'] and f['settled'] is None and not f['marker']]
-        waiting = [f['key'] for f in unsettled if f['own']]           # what Verify here settles
-        waiting_other = [f['key'] for f in unsettled if not f['own']]
+        unverified = [f for f in fields if f['read'] and f['verified'] is None and not f['marker']]
+        waiting = [f['key'] for f in unverified if f['own']]           # what Verify here verifies
+        waiting_other = [f['key'] for f in unverified if not f['own']]
 
         history = []
         for f in fields:
@@ -561,7 +561,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 b = h.body or {}
                 history.append({'field': f['title'], 'key': f['key'], 'rev': h.rev,
                                 'at': h.updated_at[:16].replace('T', ' '), 'who': h.author or "read",
-                                'settled': b.get('settled'), 'text': str(b.get('text', ''))[:300]})
+                                'verified': b.get('verified'), 'text': str(b.get('text', ''))[:300]})
         history.sort(key=lambda h: h['at'], reverse=True)
 
         qids = list(exam.grading)
@@ -603,7 +603,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return qid, label
 
     def save(request, data):
-        """Set the values a person changed (each settled by them), then verify
+        """Set the values a person changed (each verified by them), then verify
         the ones listed: 'save', 'save and verify', 'verify all here'."""
         sub, q = target(request)
         changed, verify = data.get('values') or {}, data.get('verify') or []
@@ -621,7 +621,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             k = item.get('key') if isinstance(item, dict) else None
             qid, label = field_of(data, k)
             if k in revs:
-                continue            # set just now: settled by this person
+                continue            # set just now: verified by this person
             runner.verify(sub.id, qid, label, author=author, expect_rev=_rev(item))
         return {'revs': revs, 'job': refresh(sub.id, q.id) if revs else None}
 
@@ -660,7 +660,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         runner.clear(sub.id, q.id, check_of(q, data).name, expect_rev=_rev(data))
 
     def read(request, data):
-        """Read this question's fields again (not what a person settled, unless asked)."""
+        """Read this question's fields again (not what a person verified, unless asked)."""
         sub, q = target(request)
         if not have_model():
             raise Bad("model unavailable")
@@ -751,11 +751,11 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise HTTPException(404)
         return JSONResponse(info)
 
-    def runs_page(request: Request) -> Response:
-        return page('runs.html', questions=list(exam.grading.values()),
+    def read_page(request: Request) -> Response:
+        return page('read.html', questions=list(exam.grading.values()),
                     total=len(store.submissions()))
 
-    def run_plan(data: dict) -> batch.Plan:
+    def batch_plan(data: dict) -> batch.Plan:
         """What the selection in a request would read now."""
         known = [s.id for s in store.submissions()]
         subs = data.get('submissions')
@@ -768,8 +768,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                               include_protected=bool(data.get('include_protected')))
         return batch.plan(exam, store, sel, model_available=have_model(), regions=ws.fields, missing=ws.missing)
 
-    def runs_plan(request, data):
-        plan = run_plan(data)
+    def read_plan(request, data):
+        plan = batch_plan(data)
         groups: dict[tuple, list[str]] = {}
         for item in plan.items:
             groups.setdefault((item.action, item.question, item.reason), []).append(item.submission)
@@ -779,23 +779,23 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                             'submissions': ids[:200]}
                            for (a, qn, r), ids in sorted(groups.items(), key=lambda kv: (rank[kv[0][0]], kv[0][1:]))]}
 
-    def runs_start(request, data):
+    def read_start(request, data):
         """Read what the selection would read now (planned here, at the start)."""
         with lock:
             current: Batch | None = request.app.state.batch
             if current is not None and current.active:
-                raise Conflict("a run is already in progress")
-            plan = run_plan(data)
+                raise Conflict("a read is already in progress")
+            plan = batch_plan(data)
             run = batch.BatchRun(runner, plan, parallel=_int(data.get('parallel', 2), "parallel", 1, 16))
             request.app.state.batch = Batch(run)
             request.app.state.batch.start()
-        return {'total': plan.count('run')}
+        return {'total': plan.count('read')}
 
-    def runs_status(request: Request) -> Response:
+    def read_status(request: Request) -> Response:
         current: Batch | None = request.app.state.batch
         return JSONResponse(current.info() if current else {'state': 'idle'})
 
-    def runs_stop(request, data):
+    def read_stop(request, data):
         current: Batch | None = request.app.state.batch
         if current is not None:
             current.run.cancel()
@@ -1171,11 +1171,11 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         Route('/page/{sub}/{index:int}.jpg', page_image),
         Route('/image/{sub}/{q}/{check}/{path}', evidence_image),
         Route('/jobs/{id}', job),
-        Route('/runs', runs_page),
-        post('/runs/plan', runs_plan),
-        post('/runs/start', runs_start),
-        post('/runs/stop', runs_stop),
-        Route('/runs/status', runs_status),
+        Route('/read', read_page),
+        post('/read/plan', read_plan),
+        post('/read/start', read_start),
+        post('/read/stop', read_stop),
+        Route('/read/status', read_status),
         Route('/settings', settings_page),
         Route('/exam', exam_page),
         post('/exam/set', exam_set),

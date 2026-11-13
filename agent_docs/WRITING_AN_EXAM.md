@@ -182,7 +182,7 @@ submission, or one). A field without a reader is read by
 `Ask(<what to ask about that column>)`. `Ask(ask, reads=..., verify=...)`
 asks the model one thing about a field's region, by default about
 handwriting; `Printed` is the same about printed text; any reader works (one
-that vouches for its value settles it). These fields are never graded; a
+that vouches for its value verifies it). These fields are never graded; a
 person picks who the submission is from proposals on the Names tab. See
 `exams/toy_exam/exam.py`.
 
@@ -248,7 +248,7 @@ def check(ctx):
   time limit (default 60 s). `Bool(counts=False)` keeps a grade out of the
   total. `Check(None)` is decided by a person only.
 - A setting a grader may change is a field with a default: `Field('huge_constant', default='10')`
-  reads as `'10'`, settled, until a grader types another value (`exams/exam_03`, question 2).
+  reads as `'10'`, verified, until a grader types another value (`exams/exam_03`, question 2).
 - A question with two grades has two checks. Each reads what it needs
   (Exam 2's `answer` and `check` for "answer + work", Exam 3's two-function
   questions); nothing reads a check.

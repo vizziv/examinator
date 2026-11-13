@@ -5,8 +5,8 @@ or more of these.
     result        compute (automatic: `refresh` recomputes what is outdated)
     decision      decide, clear (a person)
 
-A read writes only values no person settled (unless told to), and a read that
-yields the same text changes nothing: same revision, still settled. A compute
+A read writes only values no person verified (unless told to), and a read that
+yields the same text changes nothing: same revision, still verified. A compute
 runs outside any transaction and is published only if every field it read is
 still at the revision it read. A check that times out, crashes or cannot decide
 is stored as an undecided result: never "incorrect". Writes by people carry
@@ -151,7 +151,7 @@ class Runner:
     def read(self, submission: str, qid: str, *, missing_only: bool = False, include_protected: bool = False, fresh: bool = False,
              labels: Sequence[str] | None = None) -> list[Outcome]:
         """Read a question's fields (or those of `labels`) and write what was read.
-        Values a person settled are skipped unless `include_protected`; with
+        Values a person verified are skipped unless `include_protected`; with
         `missing_only`, only fields with no value are read. One outcome per reader run."""
         q = self.exam.questions[qid]
         resolved = replace(q, fields=self.ws.fields(submission, q))
@@ -170,7 +170,7 @@ class Runner:
                     continue
                 if missing_only and v is not None:
                     continue
-                if v is not None and v.settled == 'person' and not include_protected:
+                if v is not None and v.verified == 'person' and not include_protected:
                     continue
                 targets.append(f)
             if not targets:
@@ -210,17 +210,17 @@ class Runner:
         k = key(qid, label)
         row = self.store.get(submission, k, 'value')
         cur = Value.of(row) if row is not None else None
-        if cur is not None and cur.settled == 'person' and not include_protected:
+        if cur is not None and cur.verified == 'person' and not include_protected:
             return True
-        settled = 'reader' if vouched and not has_marker(text) else None
+        verified = 'reader' if vouched and not has_marker(text) else None
         try:
             if cur is not None and cur.text == text:       # the same value: nothing moves
-                if cur.settled == 'person' or cur.settled == settled:
+                if cur.verified == 'person' or cur.verified == verified:
                     return True
-                self.store.write(submission, k, 'value', replace(cur, settled=settled, by=None).body(),
+                self.store.write(submission, k, 'value', replace(cur, verified=verified, by=None).body(),
                                  origin='auto', expect_rev=cur.rev, keep_rev=True)
             else:
-                self.store.write(submission, k, 'value', Value(text, 0, settled).body(), origin='auto',
+                self.store.write(submission, k, 'value', Value(text, 0, verified).body(), origin='auto',
                                  expect_rev=cur.rev if cur else None)
         except Conflict:
             return False
@@ -302,17 +302,17 @@ class Runner:
 
     def set(self, submission: str, qid: str, label: str, text: str, *, author: str | None,
             expect_rev: Any = ANY) -> Value:
-        """A person's value. It is settled by them, unless it carries a review marker."""
+        """A person's value. It is verified by them, unless it carries a review marker."""
         k = self._field(qid, label)
         if not isinstance(text, str):
             raise ValueError("a value is text")
         if not self.exam.questions[qid].multiline(label):
             text = one_line(text)
-        settled = None if has_marker(text) else 'person'
+        verified = None if has_marker(text) else 'person'
         row = self.store.get(submission, k, 'value')
         cur = Value.of(row) if row is not None else None
         keep = cur is not None and cur.text == text
-        new = Value(text, 0, settled, author if settled else None)
+        new = Value(text, 0, verified, author if verified else None)
         return Value.of(self.store.write(submission, k, 'value', new.body(), origin='manual', author=author,
                                          expect_rev=expect_rev, keep_rev=keep))
 
@@ -325,7 +325,7 @@ class Runner:
 
     def verify(self, submission: str, qid: str, label: str, *, author: str | None, expect_rev: int,
                verified: bool = True) -> Value:
-        """Settle the value as it stands (or, `verified=False`, unsettle it). Same revision."""
+        """Verify the value as it stands (or, `verified=False`, unverify it). Same revision."""
         k = self._field(qid, label)
         row = self.store.get(submission, k, 'value')
         if row is None or row.rev != expect_rev:
@@ -333,7 +333,7 @@ class Runner:
         cur = Value.of(row)
         if verified and cur.marker:
             raise ValueError("resolve review markers before verifying")
-        new = replace(cur, settled='person' if verified else None, by=author if verified else None)
+        new = replace(cur, verified='person' if verified else None, by=author if verified else None)
         return Value.of(self.store.write(submission, k, 'value', new.body(), origin=row.origin, author=row.author,
                                          expect_rev=expect_rev, keep_rev=True))
 

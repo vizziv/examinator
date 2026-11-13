@@ -24,15 +24,15 @@
   const ready = () => { start.disabled = running || !toRead; };
 
   // What the current options would read: asked again shortly after every change.
-  const NAMES = {run: "will read", skip_protected: "skipped, protected", skip_present: "skipped, present", blocked: "blocked"};
+  const NAMES = {read: "will read", skip_protected: "skipped, protected", skip_present: "skipped, present", blocked: "blocked"};
   async function plan() {
     const mine = planning = {};
-    const r = await request('/runs/plan', selection());
+    const r = await request('/read/plan', selection());
     if (mine !== planning) return;          // a newer change asked again
     const counts = document.getElementById('counts'), table = document.getElementById('groups');
     counts.replaceChildren();
     table.replaceChildren();
-    toRead = r.ok ? r.body.counts.run : 0;
+    toRead = r.ok ? r.body.counts.read : 0;
     ready();
     if (!r.ok) { counts.textContent = r.body.error || "failed"; return; }
     for (const [action, n] of Object.entries(r.body.counts)) {
@@ -53,17 +53,17 @@
     later();
   }});
 
-  Actions.register('run-start', {available: () => !start.disabled, run: async () => {
+  Actions.register('read-start', {available: () => !start.disabled, run: async () => {
     msg.textContent = '';
     if (flag('include_protected') && !confirm("Read again, replacing values a person set or verified?")) return;
-    const r = await request('/runs/start', {...selection(), parallel: Number(form.parallel.value)});
+    const r = await request('/read/start', {...selection(), parallel: Number(form.parallel.value)});
     if (!r.ok) { msg.textContent = r.body.error || "failed"; return; }
     poll();
   }});
-  Actions.register('run-stop', {available: () => !stop.disabled, run: () => request('/runs/stop', {})});
+  Actions.register('read-stop', {available: () => !stop.disabled, run: () => request('/read/stop', {})});
 
   async function poll() {
-    const r = await request('/runs/status');
+    const r = await request('/read/status');
     const s = r.body;
     if (!r.ok || s.state === 'idle') return;
     document.getElementById('progress').hidden = false;

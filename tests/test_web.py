@@ -123,7 +123,7 @@ def test_question_page_before_and_after_reading(site):
     assert 'title="printed: first cue"' in printing and 'data-region="p/fields/c1/region"' in printing
     assert 'no grade' in printing and 'data-action="decide"' not in printing
     assert site.get('/s/s1/b').status_code == 200
-    for path in ('/runs', '/settings'):
+    for path in ('/read', '/settings'):
         assert site.get(path).status_code == 200
 
 
@@ -145,7 +145,7 @@ def test_security_headers(site):
 
 
 def test_theme_and_actions_are_static_and_controls_declare_actions(site):
-    for path in ('/', '/s/s1/a', '/filter', '/runs', '/exam', '/settings'):
+    for path in ('/', '/s/s1/a', '/filter', '/read', '/exam', '/settings'):
         html = site.get(path).text
         assert html.index('/static/theme.js"></script>') < html.index('/static/app.css')
         assert '/static/actions.js' in html
@@ -175,7 +175,7 @@ def test_post_needs_token(site):
     assert site.client.post('/s/s1/a/save', json=body).status_code == 403
     assert site.client.post('/s/s1/a/save', json=body, headers={'X-Token': 'wrong'}).status_code == 403
     assert site.client.post('/exam/set', json={'path': '@print_area', 'value': [1, 1, 999, 999], 'rev': None}).status_code == 403
-    assert site.client.post('/runs/stop').status_code == 403
+    assert site.client.post('/read/stop').status_code == 403
     assert site.value('s1', 'a/x').text == '1'
     # the token header, then JSON only: no forms, no token in the body
     seen = site.seen('s1', 'b')
@@ -185,7 +185,7 @@ def test_post_needs_token(site):
     r = site.client.post('/s/s1/b/decide', content=b'{"check": ', headers={'X-Token': site.token,
                                                                           'Content-Type': 'application/json'})
     assert r.status_code == 400
-    assert site.post('/runs/stop', [1]).status_code == 400                 # not an object
+    assert site.post('/read/stop', [1]).status_code == 400                 # not an object
     big = {'values': {}, 'pad': 'x' * (2 << 20)}
     assert site.post('/s/s1/a/save', big).status_code == 413
     # a body is not even read without the token
@@ -196,8 +196,8 @@ def test_bad_host_and_origin(site):
     assert site.get('/', headers={'Host': 'evil.example'}).status_code == 400
     assert site.get('/', headers={'Host': '127.0.0.1.evil.example:8580'}).status_code == 400
     assert site.get('/', headers={'Host': 'localhost:8580'}).status_code == 200
-    assert site.post('/runs/stop', headers={'Origin': 'http://evil.example'}).status_code == 403
-    assert site.post('/runs/stop', headers={'Origin': BASE}).status_code == 200
+    assert site.post('/read/stop', headers={'Origin': 'http://evil.example'}).status_code == 403
+    assert site.post('/read/stop', headers={'Origin': BASE}).status_code == 200
 
 
 def test_public_url_host_and_author(env):
@@ -260,23 +260,23 @@ def test_save_and_verify_all_here_recomputes_and_grades(site):
                                    'verify': waiting})
     assert r.status_code == 200
     assert site.wait(r.json()['job'])['state'] == 'done'
-    assert site.value('s1', 'a/x').settled == 'person' and site.value('s1', 'a/x').by == 'tester'
-    assert site.value('s1', 'a/y').settled == 'person'
+    assert site.value('s1', 'a/x').verified == 'person' and site.value('s1', 'a/x').by == 'tester'
+    assert site.value('s1', 'a/y').verified == 'person'
     assert (site.state('s1', 'a', 'x').state, site.state('s1', 'a', 'x').value) == ('graded', False)
     assert (site.state('s1', 'a', 'y').state, site.state('s1', 'a', 'y').value) == ('graded', True)
-    assert '<span class="tag unv">unverified</span>' not in site.get('/s/s1/a').text      # no badge once settled
+    assert '<span class="tag unv">unverified</span>' not in site.get('/s/s1/a').text      # no badge once verified
 
 
 def test_verify_unverify_and_markers(site):
     site.run_all()
     rev = site.rev('s1', 'a/x')
-    assert site.post('/s/s1/a/unverify', {'key': 'a/x', 'rev': rev}).status_code == 200      # already unsettled
+    assert site.post('/s/s1/a/unverify', {'key': 'a/x', 'rev': rev}).status_code == 200      # already unverified
     assert site.post('/s/s1/a/save', {'verify': [{'key': 'a/x', 'rev': rev}]}).status_code == 200
-    assert site.value('s1', 'a/x').settled == 'person' and site.rev('s1', 'a/x') == rev     # same revision
+    assert site.value('s1', 'a/x').verified == 'person' and site.rev('s1', 'a/x') == rev     # same revision
     assert site.post('/s/s1/a/unverify', {'key': 'a/x', 'rev': rev}).status_code == 200
-    assert site.value('s1', 'a/x').settled is None
+    assert site.value('s1', 'a/x').verified is None
     r = site.post('/s/s1/a/save', {'values': {'a/x': {'text': '1 [REVIEW: or 7]', 'rev': rev}}})
-    assert r.status_code == 200 and site.value('s1', 'a/x').settled is None     # a marker is never settled
+    assert r.status_code == 200 and site.value('s1', 'a/x').verified is None     # a marker is never verified
     r = site.post('/s/s1/a/save', {'verify': [{'key': 'a/x', 'rev': site.rev('s1', 'a/x')}]})
     assert r.status_code == 400 and 'review' in r.json()['error']
     assert 'tag unv" title="a review marker' in site.get('/s/s1/a').text
@@ -290,7 +290,7 @@ def test_history_and_restore(site):
     assert m
     r = site.post('/s/s1/a/restore', {'key': 'a/x', 'rev': int(m.group(1)), 'expect': site.rev('s1', 'a/x')})
     assert r.status_code == 200 and site.value('s1', 'a/x').text == '1'
-    assert site.value('s1', 'a/x').settled == 'person'
+    assert site.value('s1', 'a/x').verified == 'person'
 
 
 def test_decide_and_clear(site):
@@ -449,11 +449,11 @@ def test_a_region_conflict_says_what_is_saved_so_saving_again_overwrites(site):
     assert set_([1, 0, 0, 700, 100], None).status_code == 200
 
 
-# --- runs ---
+# --- read ---
 
 def wait_batch(site):
     for _ in range(600):
-        info = site.get('/runs/status').json()
+        info = site.get('/read/status').json()
         if info['state'] not in ('running',):
             return info
         time.sleep(0.02)
@@ -461,36 +461,36 @@ def wait_batch(site):
 
 
 def test_batch_plan_run_status(site):
-    assert site.get('/runs/status').json() == {'state': 'idle'}
-    r = site.post('/runs/plan', {})
+    assert site.get('/read/status').json() == {'state': 'idle'}
+    r = site.post('/read/plan', {})
     assert r.status_code == 200
     plan = r.json()
-    assert plan['counts']['run'] == 6 and plan['counts']['blocked'] == 0      # 3 reads, twice
-    r = site.post('/runs/start', {'parallel': 2})
+    assert plan['counts']['read'] == 6 and plan['counts']['blocked'] == 0      # 3 reads, twice
+    r = site.post('/read/start', {'parallel': 2})
     assert r.status_code == 200 and r.json()['total'] == 6
     info = wait_batch(site)
     # every read, then one refresh per submission: the checks ran without being asked for
     assert info['state'] == 'done' and info['done'] == info['total'] == 8 and info['failures'] == []
     assert site.state('s2', 'b').state == 'unverified'
-    again = site.post('/runs/plan', {'missing_only': True}).json()
-    assert again['counts']['run'] == 0 and again['counts']['skip_present'] > 0
+    again = site.post('/read/plan', {'missing_only': True}).json()
+    assert again['counts']['read'] == 0 and again['counts']['skip_present'] > 0
     for bad in ({'questions': []}, {'submissions': ['ghost']}, {'questions': ['ghost']}):
-        assert site.post('/runs/plan', bad).status_code == 400
-        assert site.post('/runs/start', bad).status_code == 400
-    one = site.post('/runs/plan', {'submissions': ['s2'], 'questions': ['b']}).json()
-    assert one['counts']['run'] == 1 and one['groups'][0]['submissions'] == ['s2']
-    assert site.post('/runs/stop').status_code == 200
+        assert site.post('/read/plan', bad).status_code == 400
+        assert site.post('/read/start', bad).status_code == 400
+    one = site.post('/read/plan', {'submissions': ['s2'], 'questions': ['b']}).json()
+    assert one['counts']['read'] == 1 and one['groups'][0]['submissions'] == ['s2']
+    assert site.post('/read/stop').status_code == 200
 
 
 def test_a_batch_never_replaces_what_a_person_set_unless_told(site):
     site.run_all()
     site.runner.set('s1', 'a', 'x', "9", author='ta')
-    plan = site.post('/runs/plan', {'submissions': ['s1'], 'questions': ['a']}).json()
-    assert plan['counts']['run'] == 1                     # y is not settled: it is read
-    site.post('/runs/start', {'submissions': ['s1'], 'questions': ['a']})
+    plan = site.post('/read/plan', {'submissions': ['s1'], 'questions': ['a']}).json()
+    assert plan['counts']['read'] == 1                     # y is not verified: it is read
+    site.post('/read/start', {'submissions': ['s1'], 'questions': ['a']})
     wait_batch(site)
     assert site.value('s1', 'a/x').text == '9'
-    site.post('/runs/start', {'submissions': ['s1'], 'questions': ['a'], 'include_protected': True})
+    site.post('/read/start', {'submissions': ['s1'], 'questions': ['a'], 'include_protected': True})
     wait_batch(site)
     assert site.value('s1', 'a/x').text == '1'
 

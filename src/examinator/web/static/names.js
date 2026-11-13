@@ -366,7 +366,7 @@
   function valueBox(r, name) {
     const v = r.values[name], stale = r.stale.includes(name);
     const input = make('input', {type: 'text', className: 'mono', value: v ? v.text : '', spellcheck: false,
-      placeholder: stale && main.dataset.model ? 'not read yet' : '', title: 'Enter: save (settled by you)'});
+      placeholder: stale && main.dataset.model ? 'not read yet' : '', title: 'Enter: save (verified by you)'});
     input.setAttribute('aria-label', name);
     input.addEventListener('keydown', e => {
       if (e.key !== 'Enter' || e.isComposing) return;
@@ -375,12 +375,12 @@
       S.enqueue(() => saveValue(r, name, {values: {[`@identity/${name}`]: {text: input.value, rev: v ? v.rev : null}}}));
     });
     const out = [make('span', {className: 'dim', textContent: name + ' '}), input];
-    if (v && !v.settled && !v.marker) {
+    if (v && !v.verified && !v.marker) {
       const ok = make('button', {type: 'button', className: 'quiet', textContent: '✓', title: 'verify this value'});
       ok.addEventListener('click', () => S.enqueue(() => saveValue(r, name, {verify: [{key: `@identity/${name}`, rev: v.rev}]})));
       out.push(' ', tag('unv', 'unverified'), ok);
     }
-    if (stale && v && v.settled !== 'person') out.push(' ', tag('', 'read again'));
+    if (stale && v && v.verified !== 'person') out.push(' ', tag('', 'read again'));
     return out;
   }
 

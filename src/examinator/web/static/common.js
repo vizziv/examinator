@@ -108,7 +108,7 @@ function drawCrop(crop) {
   if (!width) {
     width = (r - l) * 1000 * cropScale();
     const room = crop.closest('.fields');
-    if (room) width = Math.min(width, Math.max(160, (room.clientWidth - 4) * (crop.closest('.field.code') ? 0.5 : 1)));
+    if (room) width = Math.min(width, Math.max(160, (room.clientWidth - 4) * (crop.closest('.field.multiline') ? 0.5 : 1)));
   }
   const k = width / ((r - l) * img.naturalWidth);
   img.style.width = img.naturalWidth * k + 'px';

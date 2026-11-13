@@ -16,7 +16,7 @@
 <button type="button" role="tab" data-tab="roster" title="who sits the exam">3 Roster <span class="n">({{ people|length }} people)</span></button>
 <button type="button" role="tab" data-tab="names" title="{{ 'who wrote each submission' if made else 'Names needs submissions' }}"{% if not made %} class="off"{% endif %}>4 Names <span class="n" id="n-names"></span></button>
 <span class="dim">→</span>
-<a href="{{ root }}/runs">Read</a>
+<a href="{{ root }}/read">Read</a>
 </nav>
 <p id="next" class="dim"></p>
 <p id="msg" role="status" hidden></p>
@@ -121,7 +121,7 @@ each submission becomes its own PDF when you accept the split.
 
 <section id="w-step" class="panel">
 <div class="bar"><b id="w-sub"></b> <span id="w-tags"></span><span class="grow"></span><span id="w-pos" class="dim"></span></div>
-<div id="w-done" hidden><p>Every submission is verified. <a href="{{ root }}/runs">next: Read</a></p></div>
+<div id="w-done" hidden><p>Every submission is verified. <a href="{{ root }}/read">next: Read</a></p></div>
 <div id="w-main">
 <div id="w-look">
 <div id="w-crops"></div>

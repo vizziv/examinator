@@ -22,7 +22,7 @@
 {% block body %}
 <div id="grid-wrap">
 {% if not rows %}<p class="help">No submissions yet → <a href="{{ root }}/scans">Scans</a></p>
-{% elif not started %}<p class="help">Nothing read yet → <a href="{{ root }}/runs">Read</a></p>{% endif %}
+{% elif not started %}<p class="help">Nothing read yet → <a href="{{ root }}/read">Read</a></p>{% endif %}
 <table id="grid"{% if not rows %} hidden{% endif %}>
 <thead><tr>
 <th data-sort="text">id</th><th data-sort="text">name</th>

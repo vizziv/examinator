@@ -225,13 +225,13 @@ def values(ws, sid: str | None = None) -> dict[str, dict[str, Value]]:
 
 def stale(ws, sid: str, got: Mapping[str, Value]) -> list[str]:
     """The identity fields of one submission to read: in use, and with no value, or
-    with a value no person settled that was read under another region, reader or
+    with a value no person verified that was read under another region, reader or
     scan layout (a reader that remembers its readings says which: `Ask.memo_key`)."""
     layout = None
     out = []
     for f in placed(ws, sid):
         v = got.get(f.label)
-        if v is not None and v.settled == 'person':
+        if v is not None and v.verified == 'person':
             continue
         memo_key = getattr(f.read, 'memo_key', None)
         if v is not None and callable(memo_key):
@@ -252,7 +252,7 @@ def unread(ws) -> list[str]:
 
 def read(runner, sid: str, *, fresh: bool = False) -> list:
     """Read one submission's identity fields that are in use: `Runner.read` of the
-    group, so what a person settled stays. `fresh` asks the model again."""
+    group, so what a person verified stays. `fresh` asks the model again."""
     labels = [f.label for f in placed(runner.ws, sid)]
     return runner.read(sid, IDENTITY, labels=labels, fresh=fresh) if labels else []
 
@@ -261,7 +261,7 @@ def forget(ws, sid: str) -> None:
     """Drop what a reader read in a submission's identity fields (its pages changed);
     what a person set stays."""
     for col, v in values(ws, sid).get(sid, {}).items():
-        if v.settled != 'person':
+        if v.verified != 'person':
             ws.store.delete(sid, key(IDENTITY, col), 'value')
 
 
@@ -511,7 +511,7 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
         body = pick.body if pick is not None and isinstance(pick.body, dict) else None
         twice = bool(body and body.get('key') and len(taken.get(body['key'], ())) > 1)
         rows.append({'sub': sid, 'read': read, 'stale': stale(ws, sid, got),
-                     'values': {c: {'text': v.text, 'rev': v.rev, 'settled': v.settled, 'marker': v.marker}
+                     'values': {c: {'text': v.text, 'rev': v.rev, 'verified': v.verified, 'marker': v.marker}
                                 for c, v in got.items()},
                      'doubt': prop['doubt'], 'candidates': cands,
                      'who': ({'name': body.get('name', ""), 'id': body.get('id', ""), 'key': body.get('key'),

@@ -29,16 +29,16 @@ def read_all(runner, sub):
 
 # --- read ---
 
-def test_read_writes_values_unsettled_unless_the_reader_vouches(env, tmp_path):
+def test_read_writes_values_unverified_unless_the_reader_vouches(env, tmp_path):
     exam, ws, runner = env
     read_all(runner, 's1')
-    assert value(ws, 's1', 'a/x').text == '1' and not value(ws, 's1', 'a/x').is_settled
-    assert value(ws, 's1', 'p/c1').text == 'one' and value(ws, 's1', 'p/c1').settled is None   # verify=True
+    assert value(ws, 's1', 'a/x').text == '1' and not value(ws, 's1', 'a/x').is_verified
+    assert value(ws, 's1', 'p/c1').text == 'one' and value(ws, 's1', 'p/c1').verified is None   # verify=True
     trusted = make_exam(trust=True)
     ws2 = workspace(tmp_path / 't', trusted)
     r2 = Runner(trusted, ws2, model=FakeModel(dict(SCRIPT)))
     read_all(r2, 's1')
-    assert value(ws2, 's1', 'p/c1').settled == 'reader'           # one of a closed set: vouched for
+    assert value(ws2, 's1', 'p/c1').verified == 'reader'           # one of a closed set: vouched for
     r2.close()
     ws2.close()
 
@@ -51,17 +51,17 @@ def test_reading_again_the_same_text_changes_nothing(env):
     version = ws.store.version()
     assert all(o.ok for o in runner.read('s1', 'a', include_protected=True))
     after = value(ws, 's1', 'a/x')
-    assert (after.rev, after.settled) == (before.rev, 'person') and ws.store.version() == version
+    assert (after.rev, after.verified) == (before.rev, 'person') and ws.store.version() == version
 
 
-def test_a_read_never_replaces_what_a_person_settled_unless_told(env):
+def test_a_read_never_replaces_what_a_person_verified_unless_told(env):
     exam, ws, runner = env
     read_all(runner, 's1')
     runner.set('s1', 'a', 'x', "7", author='ta')
     runner.read('s1', 'a')
     assert value(ws, 's1', 'a/x').text == '7'
     runner.read('s1', 'a', include_protected=True)
-    assert value(ws, 's1', 'a/x').text == '1' and value(ws, 's1', 'a/x').settled is None
+    assert value(ws, 's1', 'a/x').text == '1' and value(ws, 's1', 'a/x').verified is None
     assert [h.body['text'] for h in ws.store.history('s1', 'a/x', 'value')][:1] == ['7']      # kept in history
 
 
@@ -126,12 +126,12 @@ def test_no_model_blocks_reads(env):
 
 # --- set, verify, unverify ---
 
-def test_a_person_who_sets_a_value_settles_it_unless_it_carries_a_marker(env):
+def test_a_person_who_sets_a_value_verifies_it_unless_it_carries_a_marker(env):
     exam, ws, runner = env
     v = runner.set('s1', 'a', 'x', "1", author='ta')
-    assert (v.settled, v.by, v.author) == ('person', 'ta', 'ta')
+    assert (v.verified, v.by, v.author) == ('person', 'ta', 'ta')
     v = runner.set('s1', 'a', 'x', "1 [REVIEW: or 7]", author='ta', expect_rev=v.rev)
-    assert v.settled is None
+    assert v.verified is None
     with pytest.raises(ValueError, match="review markers"):
         runner.verify('s1', 'a', 'x', author='ta', expect_rev=v.rev)
     with pytest.raises(Conflict):
@@ -141,7 +141,7 @@ def test_a_person_who_sets_a_value_settles_it_unless_it_carries_a_marker(env):
 def test_blank_is_a_value_and_differs_from_not_read(env):
     exam, ws, runner = env
     v = runner.set('s1', 'a', 'x', "", author='ta')
-    assert v.text == '' and v.is_settled and value(ws, 's1', 'a/y') is None
+    assert v.text == '' and v.is_verified and value(ws, 's1', 'a/y') is None
 
 
 def test_a_value_is_one_line_unless_its_field_is_multiline(env):
@@ -160,9 +160,9 @@ def test_verify_and_unverify_keep_the_revision(env):
     read_all(runner, 's1')
     v = value(ws, 's1', 'a/x')
     w = runner.verify('s1', 'a', 'x', author='ta', expect_rev=v.rev)
-    assert (w.rev, w.settled, w.by) == (v.rev, 'person', 'ta')
+    assert (w.rev, w.verified, w.by) == (v.rev, 'person', 'ta')
     u = runner.verify('s1', 'a', 'x', author='ta', expect_rev=v.rev, verified=False)
-    assert (u.rev, u.settled, u.text) == (v.rev, None, '1')
+    assert (u.rev, u.verified, u.text) == (v.rev, None, '1')
     assert len(ws.store.history('s1', 'a/x', 'value')) == 2         # both are history
 
 
@@ -171,7 +171,7 @@ def test_setting_the_same_text_is_a_verify(env):
     read_all(runner, 's1')
     v = value(ws, 's1', 'a/x')
     w = runner.set('s1', 'a', 'x', "1", author='ta', expect_rev=v.rev)
-    assert (w.rev, w.settled) == (v.rev, 'person')
+    assert (w.rev, w.verified) == (v.rev, 'person')
 
 
 # --- compute ---
@@ -321,7 +321,7 @@ def test_a_batch_reads_what_it_plans_and_never_what_a_person_set_meanwhile(tmp_p
     assert [(i.question, i.action) for i in plan().items] == [('info', 'blocked')] * 2
     overrides.set(exam, ws.store, 'info/fields/c/region', [1, 0, 0, 500, 100], author='ta')   # no value changed
     planned = plan()
-    assert planned.count('run') == 2
+    assert planned.count('read') == 2
     runner.set('s2', 'info', 'c', "two", author='ta')            # after the plan, before the run
     assert all(o.ok for o in batch.BatchRun(runner, planned).run())
     assert value(ws, 's1', 'info/c').text == 'one' and value(ws, 's2', 'info/c').text == 'two'

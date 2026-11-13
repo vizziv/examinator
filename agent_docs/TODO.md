@@ -72,7 +72,7 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
 
 ## Known gaps
 
-- Filter page shows raw state names (`needs_review`).
+- Filter page shows raw state names (`to_decide`).
 - A narrow (~900 px) question page can scroll sideways with a wide crop.
 - Never exercised in a browser: uploading scans, a roster from a file,
   Accept's confirmation dialog, the Names tab for PDFs handed in already split.

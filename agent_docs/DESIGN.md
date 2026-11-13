@@ -23,7 +23,7 @@ the status of a grade) is [`MODEL.md`](MODEL.md). This document is the rest.
 | Result | A check's stored output: the proposal, evidence, what it read. |
 | Decision | A person's grade for a check. |
 | Evidence | Per-field judgements (beside the field) and display blocks (below). |
-| Verified | A person stands behind a value (in the model: settled). |
+| Verified | Someone stands behind a value: a person, or the reader that vouched for it. |
 
 ## 2. Shape
 
@@ -113,13 +113,13 @@ question's field, `ctx.read(label, question=...)` another's; each read is
 recorded with the field's revision. A field not read, or with a review marker,
 raises `Undecided`. A setting a grader may change (a constant the check uses)
 is a field with a default (`Field(label, default='10')`): it reads as the
-default, settled, until a person sets a value, and a change recomputes the
+default, verified, until a person sets a value, and a change recomputes the
 check like any other (MODEL.md). Checks run in
 a warm worker process with a wall-clock limit (default 60 s; a worker's
 start-up is not counted).
 
 A model output may contain `[REVIEW: reason]` wherever it is unsure. Such a
-value is never settled, so every grade that read it waits for a person.
+value is never verified, so every grade that read it waits for a person.
 
 ## 5. Printings: printed fields, and checks that read other questions
 
@@ -137,13 +137,13 @@ read into fields like anything else, and checks use it.
   not one of `reads`, becomes a value with a review marker. Never guess.
 - **A reader may vouch for its value**: `Printed` does when the reading was one
   of a closed set of expected ones, unless `verify=True`. Such a value is
-  settled by the reader; reading again replaces it, never a value a person
-  settled.
+  verified by the reader; reading again replaces it, never a value a person
+  verified.
 - A question with only printed fields and no checks holds the exam's printing.
   Its grid column shows how its fields stand (not read, unverified, verified).
 - **A check reads other questions' fields** with `ctx.read(label,
   question=...)`. Nothing is declared: the library **records** what it read.
-  A grade counts only once every field it read is settled; one unreadable
+  A grade counts only once every field it read is verified; one unreadable
   field holds back only the checks that read it.
 - Keys that differ by printing are chosen by a field's value:
   `math.keyed(key={value: {...}}, by=...)`, where `by` is a label of the
@@ -190,14 +190,14 @@ functions over stored rows, in `core/status.py`, with one test per row
 (`tests/test_changes.py`). Further rules:
 
 - Verification approves a value; it does not change who wrote it, nor the
-  value's revision. A person who sets a value settles it.
+  value's revision. A person who sets a value verifies it.
 - A decision is authoritative even if a field it was made on carries a review
   marker, and may be made when the check never ran.
 - A check that read no field never counts by itself.
 - Supporting work on the page is never read or checked. Graders judge it.
 - Status always comes from these rules, never from evidence contents.
 
-**Protection.** A value a person settled is never replaced by a read unless
+**Protection.** A value a person verified is never replaced by a read unless
 asked (`include_protected`); the replaced value goes to history. Nothing
 automatic touches a decision.
 
@@ -234,7 +234,7 @@ create table memo (submission, key, value);                      -- model readin
 In code and prose a row is written as the store's methods take it,
 `(submission, name, kind)`: `(sub, 'a/x', 'value')`, `(source id, '', 'split')`.
 
-Bodies: a value `{'text', 'settled': None | 'reader' | 'person', 'by'}`; a
+Bodies: a value `{'text', 'verified': None | 'reader' | 'person', 'by'}`; a
 result `{'grade', 'fields', 'blocks', 'reads': {'question/label': rev | None},
 'defn', 'code'}` (a field read at its default: revision `DEFAULT`, 0); a decision `{'grade', 'seen': {'question/label':
 rev | None}}`.
@@ -242,7 +242,7 @@ rev | None}}`.
 - Every read on the normal path is a keyed lookup. The grid and the filter
   page load every row in one query, leaving result blocks out.
 - A revision changes only when content changes (`keep_rev` for a value
-  settled or unsettled). Writing the body a row already has is a no-op.
+  verified or unverified). Writing the body a row already has is a no-op.
 - All writes by people carry the revision they saw; a mismatch is rejected and
   the browser keeps its draft. A decision carries the revisions of the fields
   it was made on.
@@ -257,16 +257,16 @@ the PDF's identity, the page and the resolution.
 ## 9. Running work
 
 - **From a question page:** read (the question's fields; not what a person
-  settled unless asked), run a check again (one that timed out, say).
+  verified unless asked), run a check again (one that timed out, say).
 - **Batch:** reading only, for a selection of submissions and questions. The
   Read page shows live, as the options change, what will be read, what is
   skipped as protected or present, and what is blocked (no model, no region);
   one button reads it, planned again at the start. A read never replaces what
-  a person settled unless asked, and a read that finds a value changed
+  a person verified unless asked, and a read that finds a value changed
   meanwhile is discarded. Checks have no batch: they recompute by themselves,
   and the batch refreshes each submission once its reads finish.
 - **Missing only** reads only fields with no value, runs only checks that are
-  not current. **Include protected** reads again what a person settled.
+  not current. **Include protected** reads again what a person verified.
 - **Cancellation** stops queued work and lets running tasks finish.
 - A timeout or crash yields an undecided result, never "incorrect".
 - A read that fails leaves the previous values intact.
@@ -372,7 +372,7 @@ normalization. Those are exam code.
   toolchain (**Decided** preference). The grid is rendered once and filtered and
   sorted in the browser; requests are for state changes.
 - The app owns the frame: grid, navigation, scan and crop views, fields,
-  edit/verify/decide controls, runs, settings. Exams own only evidence blocks.
+  edit/verify/decide controls, batch reads, settings. Exams own only evidence blocks.
 
 Screens for the first version:
 
@@ -413,7 +413,7 @@ One word per idea, everywhere a person can see it (labels, titles, messages,
 docs). Internal names (`needs_review`, `core/focus.py`) may differ.
 
 - **submission**: one student's paper. Never "exam" for that; the exam is the exam itself.
-- **verify**: a person stands behind a value; before, **unverified**; after, **verified** (the model says settled; the screen never does).
+- **verify**: a person stands behind a value; before, **unverified**; after, **verified**.
 - **decided**: a grade a person gave (never "by hand", "manual"); one plain look everywhere ("decided · who"). **to decide**: a person must give the grade.
 - **undecided**: no grade yet, the glyph `?` (never "not determined", "needs review", "unresolved", "open").
 - **filter**: the narrowed set of submissions (never "focus", "like this").
@@ -454,7 +454,7 @@ Do not build these in M1–M3. Do not block them either.
 | Live editing of exam data (keys, regions, prompt notes) | **Built** (`core/overrides.py`, the Exam page and the question page's editors). Plain data addressed by path, stored in the `override` table with history; an edit outdates exactly the checks whose definition it changes, which are recomputed. |
 | Live-editable logic (small rules) | Grade rules are functions of outcomes. A restricted interpreter (the pseudocode interpreter with a rules profile, or an embedded hermetic language) could supply such a function from stored text. |
 | Filter and search facets (group by normalized answer; search comments in code) | **Built** (`core/focus.py`). A facet is a small function of one submission's view (values, statuses), computed on read in one query and cached by the store's version. |
-| Listing which grades changed after a check changed | Not built. Old results stay in history, so the app can compare. |
+| Listing which grades changed after a check changed | Not built. Results keep no history; it would compare old and new results at recompute time (MODEL.md). |
 | Static student view | A second renderer over stored rows; which blocks it shows is its own decision (no mark on blocks yet). |
 | Several exams in one process | No module-level state; exam packages loaded under distinct names. |
 | "Review me later" flag (a TA marks an answer for the professor to look over) | Not built. The glyph `!` is reserved for it in the grid and on the question page; `?` means only "a person must decide". The flag would be a small manual row per submission and question, with author and an optional note, and a built-in facet so the filter page can gather flagged answers. It must not affect whether a grade counts. |
@@ -550,8 +550,8 @@ submission into `pdfs/`; everything downstream is unchanged.
     without a reader of its own is read by `Ask(defs.ASKS[column])`, about
     the handwriting. The group is a question in `exam.questions` with
     `apart=True`; `exam.grading` (the grid, totals, filter facets, the Read
-    page, batch runs, prev/next question) leaves it out. Everything else is
-    a field's: values with revisions, history and `settled`; `Runner.read`,
+    page, batch reads, prev/next question) leaves it out. Everything else is
+    a field's: values with revisions, history and `verified`; `Runner.read`,
     `set`, `verify`; re-read protection; regions at exam and submission scope
     (`@identity/fields/<column>/region`, the Exam data page); the memo;
     scripted fake-model replies.
@@ -563,7 +563,7 @@ submission into `pdfs/`; everything downstream is unchanged.
   - **Reading**: `identity.read(runner, sub)` is `Runner.read` of the group's
     placed fields (`intake --names`, the Scans page's background job).
     `identity.unread` lists submissions with a placed field with no value, or
-    a value no person settled whose reading is not remembered under the
+    a value no person verified whose reading is not remembered under the
     field's current region and layout (`Ask.memo_key`): a moved box is read
     again. Accepting a rewritten submission drops its memo and what a reader
     read in its identity fields, not what a person set, nor its pick. No

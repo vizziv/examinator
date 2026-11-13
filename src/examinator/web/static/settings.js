@@ -30,9 +30,9 @@
       vivid.style.background = `linear-gradient(to right, ${stops(8).map(f => Theme.color(L.light, f * Theme.MAX_C, h)).join(', ')})`;
       for (const [b, qh] of quicks) b.style.background = Theme.color(L.light, c, qh);
       for (const theme of ['light', 'dark']) {
-        const chip = box.querySelector('.pk-' + theme);
-        chip.style.color = Theme.color(text[theme], c, h);
-        chip.firstElementChild.style.background = Theme.color(L[theme], c, h);
+        const swatch = box.querySelector('.pk-' + theme);
+        swatch.style.color = Theme.color(text[theme], c, h);
+        swatch.firstElementChild.style.background = Theme.color(L[theme], c, h);
       }
     }
     function changed() {

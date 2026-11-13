@@ -205,7 +205,7 @@ def test_identity_fields_are_ordinary_values(written):
     assert [o.status for o in identity.read(runner, 's0001')] == ['done', 'done']     # email: no region, not read
     assert texts(ws, 's0001') == {'name': "Avery Testwell", 'id': "90412873"}
     got = runner.values('s0001')
-    assert got['@identity/name'].settled is None                    # nobody stands behind it yet
+    assert got['@identity/name'].verified is None                    # nobody stands behind it yet
     calls = len(model.calls)
     identity.read(runner, 's0001')
     assert len(model.calls) == calls and runner.values('s0001') == got     # remembered: free, unchanged
@@ -216,10 +216,10 @@ def test_identity_fields_are_ordinary_values(written):
     assert ws.store.get('s0001', '', identity.WHO) is None                  # reading never picks
     # set, verify, history, and a read never replaces what a person set
     v = runner.set('s0001', IDENTITY, 'name', "Avery  Testwell", author='t')
-    assert v.settled == 'person' and ws.store.history('s0001', '@identity/name', 'value')
+    assert v.verified == 'person' and ws.store.history('s0001', '@identity/name', 'value')
     runner.verify('s0001', IDENTITY, 'id', author='t', expect_rev=got['@identity/id'].rev)
     identity.read(runner, 's0001', fresh=True)
-    assert texts(ws, 's0001')['name'] == "Avery  Testwell" and runner.values('s0001')['@identity/id'].settled == 'person'
+    assert texts(ws, 's0001')['name'] == "Avery  Testwell" and runner.values('s0001')['@identity/id'].verified == 'person'
     assert identity.overview(ws, ['s0001'])['rows'][0]['read'] == {'name': "Avery  Testwell", 'id': "90412873"}
 
 
@@ -238,7 +238,7 @@ def test_a_region_for_one_submission_moves_its_crop_and_reads_again(written):
     calls = len(model.calls)
     identity.read(runner, 's0001')
     assert len(model.calls) == calls + 1 and 's0001' not in identity.unread(ws)     # only the moved one
-    # every submission's region moved: all read again, but what a person settled
+    # every submission's region moved: all read again, but what a person verified
     runner.verify('s0002', IDENTITY, 'name', author='t', expect_rev=runner.values('s0002')['@identity/name'].rev)
     overrides.set(ws.exam, ws.store, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='t')
     assert identity.overview(ws, ['s0002'])['rows'][0]['stale'] == ['id']

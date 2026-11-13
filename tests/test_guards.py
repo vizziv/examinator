@@ -31,6 +31,17 @@ def test_nothing_mentions_cover_pages():
     assert not hits, "\n".join(hits)
 
 
+def test_no_dead_names():
+    """Names an earlier rename or removal retired (`verified`, the Read page at /read, `multiline`)."""
+    pattern = re.compile(r"\bis_settled\b|\bSETTLERS\b|\.settled\b|'settled'|scan_window|/runs\b|needs_review|"
+                         r"\.field\.code\b|\bf\.code\b")
+    files = [f for f in (*(ROOT / 'src').rglob('*'), *(ROOT / 'exams').rglob('*.py'))
+             if f.suffix in ('.py', '.html', '.js', '.css')]
+    hits = [f"{f.relative_to(ROOT)}:{n}: {line.strip()}" for f in files
+            for n, line in enumerate(f.read_text().splitlines(), 1) if pattern.search(line)]
+    assert not hits, "\n".join(hits)
+
+
 def test_library_never_imports_an_exam():
     for f in (ROOT / 'src' / 'examinator').rglob('*.py'):
         assert 'toy_exam' not in f.read_text() and 'exam_03' not in f.read_text(), f

@@ -109,7 +109,7 @@ def test_request_shape(serve):
     server = serve(reply("fine"))
     image = Image.new('RGB', (8, 6), 'white')
     out = make(server, max_tokens=77).complete("Do the task.", images=[image], text="some data",
-                                               tag=('s', 'q', 'stage'))
+                                               tag=('s', 'q', 'step'))
     assert out == "fine"
     (method, path, body), = server.requests
     assert (method, path) == ('POST', '/v1/chat/completions')
@@ -296,12 +296,12 @@ def test_fake_key_precedence():
     fake = FakeModel({
         ('s1', 'q1', 'parse'): "most specific",
         ('q1', 'parse'): "by question",
-        'parse': "by stage",
+        'parse': "by step",
         'echo': lambda call: f"{call.tag[0]}:{call.text}",
     })
     assert fake.complete("p", tag=('s1', 'q1', 'parse')) == "most specific"
     assert fake.complete("p", tag=('s2', 'q1', 'parse')) == "by question"
-    assert fake.complete("p", tag=('s1', 'q2', 'parse')) == "by stage"
+    assert fake.complete("p", tag=('s1', 'q2', 'parse')) == "by step"
     assert fake.complete("p", text="t", tag=('s9', 'q1', 'echo')) == "s9:t"
 
 

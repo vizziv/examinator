@@ -7,7 +7,7 @@ the end.
 ## In one paragraph
 
 Paper is read into **fields**. **Checks** compute results from field values.
-People **settle** field values and, where a check cannot decide, make
+People **verify** field values and, where a check cannot decide, make
 **decisions**. A **question** only groups fields and a check for the page, the
 grid and the totals; it has no state. All state is on fields, results and
 decisions, and every action in the app is a combination of a few small changes
@@ -53,32 +53,31 @@ printed word; possibly with a `[REVIEW: ...]` marker).
 | State | Meaning |
 | --- | --- |
 | **not read** | No value yet. |
-| **unsettled** | Has a value nobody stands behind. Shown with the "unverified" badge. |
-| **settled** | Someone stands behind the value: a person, or the reader that vouched for it. No badge. |
+| **unverified** | Has a value nobody stands behind. Shown with the "unverified" badge. |
+| **verified** | Someone stands behind the value: a person, or the reader that vouched for it. No badge. |
 
-One attribute, `settled by`: nobody, the reader, or a named person. That is the
-whole state. (In the code and on screen these are 'not_read', 'unverified' and
-'verified': `status.FIELD_STATES`, and the `settled` attribute of a `Value`.)
+One attribute, `verified by`: nobody, the reader, or a named person. That is the
+whole state (`status.FIELD_STATES`; the `verified` attribute of a `Value`).
 Choices made here:
 
 - **"Typed by a person" and "read, then verified by a person" are the same
-  state.** A person who sets a value settles it. Who wrote a value is history,
+  state.** A person who sets a value verifies it. Who wrote a value is history,
   not state.
-- **Settled by a reader and settled by a person are the same to a check.** They
-  differ in one thing only: reading again replaces a value the reader settled,
-  never one a person settled.
-- **A value with a review marker cannot be settled.** A marker is not a state.
+- **Verified by a reader and verified by a person are the same to a check.** They
+  differ in one thing only: reading again replaces a value the reader verified,
+  never one a person verified.
+- **A value with a review marker cannot be verified.** A marker is not a state.
 - **Blank is a value** (empty text, read as such). It differs from not read.
 - **Reading again and getting the same value changes nothing**: same revision,
-  still settled, nothing downstream moves.
+  still verified, nothing downstream moves.
 - **No transcript.** Whatever a reader does on the way to the value is not
   stored.
-- **A default is a value nobody need settle.** A field may have a default
+- **A default is a value nobody need verify.** A field may have a default
   (`Field(label, default='10')`): a setting a person may type, read by no
   reader but its own. While it has no stored value, a check reading it gets
   the default, recorded at revision `DEFAULT` (0; stored revisions start at
   1). That read is current while the field still has no stored value, and
-  counts as settled. Setting a value outdates the result like any change;
+  counts as verified. Setting a value outdates the result like any change;
   clearing the value (back to the default) outdates it again.
 
 ### 2. Result
@@ -120,35 +119,35 @@ In order; the first that applies:
 | --- | --- | --- |
 | **decided** | A decision exists and its fields are unchanged. | Yes |
 | **decided, outdated** | A decision exists, a field changed since. | No |
-| **to decide** | No check; or the result is current, its fields settled, and the proposal is undecided. | No |
+| **to decide** | No check; or the result is current, its fields verified, and the proposal is undecided. | No |
 | **not run** | No result. | No |
 | **outdated** | The result is outdated. | No |
-| **unverified** | The result is current and some field it read is not settled (a field read at its default is settled). The proposal is shown. | No |
-| **graded** | The result is current, every field it read is settled, the proposal is a grade. | Yes |
+| **unverified** | The result is current and some field it read is not verified (a field read at its default is verified). The proposal is shown. | No |
+| **graded** | The result is current, every field it read is verified, the proposal is a grade. | Yes |
 
 A check that read no field at all never counts by itself ("to decide").
 
 ## The small changes
 
-Everything the app or a batch run does is one or more of these.
+Everything the app or a batch read does is one or more of these.
 
 | On | Change | By |
 | --- | --- | --- |
-| Field value | **read**: a reader sets the value; settled by the reader if it vouches, else unsettled. Skips values a person settled. | run |
-| Field value | **set**: a new value, settled by that person. | person |
-| Field value | **verify**: settle the value as it stands. | person |
-| Field value | **unverify**: back to unsettled, value kept. | person |
+| Field value | **read**: a reader sets the value; verified by the reader if it vouches, else unverified. Skips values a person verified. | run |
+| Field value | **set**: a new value, verified by that person. | person |
+| Field value | **verify**: the value as it stands, now verified by that person. | person |
+| Field value | **unverify**: back to unverified, value kept. | person |
 | Field value | **unset**: a field with a default back to it (its value dropped). | person |
 | Result | **compute**: run the check on the current values. | automatic |
 | Decision | **decide**, **clear**. | person |
 | Override | **set**, **clear**, at a scope. | person |
 
 Changing how a field is read changes no value. The app then offers to read
-again the values no person settled.
+again the values no person verified.
 
-Larger actions are combinations: "verify all here" verifies every unsettled
+Larger actions are combinations: "verify all here" verifies every unverified
 field on the page; "save and verify" is one set; "read again" is a read of one
-question's fields; a batch run is reads, then computes.
+question's fields; a batch read is reads, then computes.
 
 ## Changing the exam while grading
 
@@ -159,10 +158,10 @@ exam's code computed it. So the exam package can change under a workspace:
 | --- | --- |
 | A check's code or key changes | Field values and decisions untouched. That check's results are outdated and recomputed. Results keep no history (they are recomputable); listing which grades changed would be done by comparing at recompute time (not built). |
 | A question or check is added | Its fields are not read, its checks not run. Nothing else moves. |
-| A field is added to a question | The other fields keep their values and who settled them. The new one is not read. A check is affected only once it reads the new field: then it is recomputed and waits for it. |
+| A field is added to a question | The other fields keep their values and who verified them. The new one is not read. A check is affected only once it reads the new field: then it is recomputed and waits for it. |
 | A field or check is removed or renamed | Its stored values are ignored, not deleted (restoring the name restores them). A rename loses the work. |
 | Points change | Totals follow at once; they are derived. |
-| How a field is read changes | No value changes; the app offers to read again what no person settled. |
+| How a field is read changes | No value changes; the app offers to read again what no person verified. |
 
 Two things this asks of the build: a read can fill only the fields that have
 no value yet, and the app can reload the exam package without losing state.
@@ -170,8 +169,8 @@ no value yet, and the app can reload the exam package without losing state.
 ## What the interface does with it (not part of the model)
 
 - A question's page shows its own fields and the fields its check read from
-  elsewhere, so "verify all here" settles everything the grade rests on.
-- A field shows a badge only when unsettled.
+  elsewhere, so "verify all here" verifies everything the grade rests on.
+- A field shows a badge only when unverified.
 - The grid shows one cell per check, by the table above.
 
 ## What goes away
@@ -184,7 +183,7 @@ no value yet, and the app can reload the exam package without losing state.
 - Identification is a built-in group of ordinary fields plus a pick. The
   group (`defs.IDENTITY`, '@identity') has one field per roster column (name,
   ID, email; those the exam maps placed, the others drawn in the app): values,
-  settling, reads, regions at every scope, all as for any field. It is kept
+  verifying, reads, regions at every scope, all as for any field. It is kept
   apart from grading (`Question.apart`: no grid column, total, facet or batch
   read; read on the Names step). Who wrote a submission is then one stored
   pick per submission, a person's choice among proposals computed purely from
@@ -216,10 +215,10 @@ no value yet, and the app can reload the exam package without losing state.
 
 Choices made while building it:
 
-- A value's revision changes only with its text; settling or unsettling keeps
+- A value's revision changes only with its text; verifying or unverifying keeps
   it (and goes to history). So verifying never outdates a result or a decision.
-- "A person settled it" protects a value from reads; a value a person set and
-  then unverified is unsettled, so a read may replace it.
+- "A person verified it" protects a value from reads; a value a person set and
+  then unverified is unverified again, so a read may replace it.
 - A result is current while its check's definition hash (`Exam.check_hash`:
   the check function and its configuration, keys included) and the exam
   package's code hash are unchanged and every field it read is at the revision

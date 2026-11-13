@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
-{% set nav = 'runs' %}
+{% set nav = 'read' %}
 {% block title %}Read · {{ exam.title }}{% endblock %}
-{% block head %}<script src="{{ root }}/static/runs.js" defer></script>{% endblock %}
+{% block head %}<script src="{{ root }}/static/read.js" defer></script>{% endblock %}
 {% block body %}
-<main class="narrow" id="runs">
+<main class="narrow" id="read">
 <h1>Read</h1>
 <p class="help">Reads fields with the model{% if not model %} (unavailable){% endif %}. Checks need no run: they recompute by themselves, and again after these reads.</p>
 <form id="sel" autocomplete="off">
@@ -26,13 +26,13 @@ Without it, those are skipped. Decisions are never touched.</p>
 <p id="counts" aria-live="polite"></p>
 <details id="plan" class="panel"><summary>by question</summary><table class="ev" id="groups"></table></details>
 <div class="bar">
-<button type="button" id="start" data-action="run-start" class="primary" disabled>read</button>
-<button type="button" id="stop" data-action="run-stop" class="danger" disabled>stop</button>
+<button type="button" id="start" data-action="read-start" class="primary" disabled>read</button>
+<button type="button" id="stop" data-action="read-stop" class="danger" disabled>stop</button>
 <span id="msg" role="status"></span>
 </div>
 </form>
 <section id="progress" class="panel" hidden>
-<h2>Run</h2>
+<h2>Reading</h2>
 <progress id="bar" value="0" max="1"></progress> <span id="prog"></span>
 <table class="ev" id="failures"></table>
 </section>

@@ -231,9 +231,9 @@ def test_store_version_follows_every_change(tmp_path):
         seen.append(store.version())
         assert seen[-1] != seen[-2]
 
-    a = store.write('s1', 'q/x', 'value', {'text': '1', 'settled': None}, origin='auto')
+    a = store.write('s1', 'q/x', 'value', {'text': '1', 'verified': None}, origin='auto')
     changed()
-    store.write('s1', 'q/x', 'value', {'text': '1', 'settled': 'person'}, origin='auto', keep_rev=True,
+    store.write('s1', 'q/x', 'value', {'text': '1', 'verified': 'person'}, origin='auto', keep_rev=True,
                 expect_rev=a.rev)
     changed()
     store.delete('s1', 'q/x', 'value')

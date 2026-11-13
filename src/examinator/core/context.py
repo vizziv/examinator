@@ -5,7 +5,7 @@ A check is `fn(ctx: CheckContext) -> Result`. It reads field values with
 question='info')` (another question's). Every read is recorded with the
 field's revision (`DEFAULT` for a field read at its default), so the result is
 outdated when a field it read changes, and its grade counts only once every
-field it read is settled.
+field it read is verified.
 
 A reader is called with a `ReadContext`: the pages and crops of one
 submission, and the loopback model. Inside an isolated check there are no

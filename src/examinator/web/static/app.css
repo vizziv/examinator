@@ -286,9 +286,9 @@ a.navbtn.off { visibility: hidden; }
 .fields { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-start; }
 .field { display: grid; grid-template-columns: minmax(9em, max-content); gap: 2px; }
 /* a multi-line value sits beside its handwriting, to compare line by line */
-.field.code { flex: 1 1 100%; grid-template-columns: max-content minmax(16em, 1fr); gap: 2px 8px; align-items: start; }
-.field.code .fhead { grid-column: 1 / -1; }
-.field.code:not(:has(.crop)) { grid-template-columns: minmax(0, 1fr); }
+.field.multiline { flex: 1 1 100%; grid-template-columns: max-content minmax(16em, 1fr); gap: 2px 8px; align-items: start; }
+.field.multiline .fhead { grid-column: 1 / -1; }
+.field.multiline:not(:has(.crop)) { grid-template-columns: minmax(0, 1fr); }
 details.others { margin-top: 6px; }
 details.others > .fields { margin-top: 4px; }
 .fhead { display: flex; gap: 6px; align-items: center; justify-content: space-between; min-height: 18px; }
@@ -336,7 +336,7 @@ pre.code { margin: 3px 0; padding: 4px 6px; background: var(--panel-2); border: 
 pre.code .ln::before { content: attr(data-n); display: inline-block; width: 2.5em; margin-right: 8px; text-align: right; color: var(--muted); }
 pre.code .ln.hl { background: var(--hl); }
 
-/* --- narrow pages: runs, settings, filter, exam data --- */
+/* --- narrow pages: read, settings, filter, exam data --- */
 main.narrow { max-width: var(--page-max); margin: 0 auto; padding: 10px var(--gutter) 24px; }
 main.narrow > * + * { margin-top: var(--panel-gap); }
 fieldset { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; margin: 0 0 var(--panel-gap); padding: 4px 10px 8px;

@@ -3,15 +3,15 @@
 Three kinds of stored thing, each a store row with a revision that changes
 only when its content changes:
 
-- a **field value** (`Value`): text, and who settled it: nobody, the reader
-  that vouched for it, or a person. Its states: not read (no row), unsettled,
-  settled. A value with a review marker is never settled.
+- a **field value** (`Value`): text, and who verified it: nobody, the reader
+  that vouched for it, or a person. Its states: not read (no row), unverified,
+  verified. A value with a review marker is never verified.
 - a **result** (`Stored`): a check's proposed grade, its evidence, which
   fields it read at which revisions, and which definition computed it. It is
   current while every field it read is at that revision and the definition
   is unchanged; otherwise outdated (and recomputed automatically). A field
   read at its default is recorded at `defs.DEFAULT`: that read is current
-  while the field has no stored value, and settled.
+  while the field has no stored value, and verified.
 - a **decision** (`Decision`): a person's grade for a check, recorded against
   the revisions of the fields on the page; outdated once one of them changes.
 
@@ -22,11 +22,12 @@ The grade of a check (`status`), the first that applies:
 | 'decided'          | a decision exists and its fields are unchanged              | yes    |
 | 'decided_outdated' | a decision exists, a field changed since                    | no     |
 | 'to_decide'        | no check function; or the result is current, the fields it  | no     |
-|                    | read are settled, and it proposes no grade (or read nothing)|        |
+|                    | read are verified, and it proposes no grade (or read        |        |
+|                    | nothing)                                                    |        |
 | 'not_run'          | no result                                                   | no     |
 | 'outdated'         | the result is outdated                                      | no     |
-| 'unverified'       | current, and some field it read is not settled              | no     |
-| 'graded'           | current, every field it read settled, a grade proposed      | yes    |
+| 'unverified'       | current, and some field it read is not verified             | no     |
+| 'graded'           | current, every field it read verified, a grade proposed     | yes    |
 
 Pure functions over stored rows; nothing here is derived from evidence.
 """
@@ -40,7 +41,7 @@ from .store import Row
 
 STATES = ('decided', 'decided_outdated', 'to_decide', 'not_run', 'outdated', 'unverified', 'graded')
 COUNTING = ('decided', 'graded')
-SETTLERS = ('reader', 'person')
+VERIFIERS = ('reader', 'person')
 FIELD_STATES = ('not_read', 'unverified', 'verified')     # a question with no checks: its fields
 
 
@@ -49,14 +50,14 @@ class Value:
     """One field's stored value."""
     text: str
     rev: int
-    settled: str | None = None        # None, 'reader' or 'person'
-    by: str | None = None             # the person who settled it
+    verified: str | None = None       # None, 'reader' or 'person'
+    by: str | None = None             # the person who verified it
     author: str | None = None         # who wrote this text (a person), None if a reader
     updated_at: str = ''
 
     @property
-    def is_settled(self) -> bool:
-        return self.settled in SETTLERS
+    def is_verified(self) -> bool:
+        return self.verified in VERIFIERS
 
     @property
     def marker(self) -> bool:
@@ -65,11 +66,11 @@ class Value:
     @staticmethod
     def of(row: Row) -> 'Value':
         b = row.body or {}
-        return Value(str(b.get('text') or ''), row.rev, b.get('settled'), b.get('by'),
+        return Value(str(b.get('text') or ''), row.rev, b.get('verified'), b.get('by'),
                      row.author if row.origin == 'manual' else None, row.updated_at)
 
     def body(self) -> dict:
-        return {'text': self.text, 'settled': self.settled, 'by': self.by}
+        return {'text': self.text, 'verified': self.verified, 'by': self.by}
 
 
 @dataclass(frozen=True)
@@ -111,7 +112,7 @@ class Status:
     state: str
     grade: Grade = Grade()                # shown: the decision's, or the proposal (possibly old)
     author: str | None = None             # who decided
-    waiting: tuple[str, ...] = ()         # 'unverified': the fields read that are not settled
+    waiting: tuple[str, ...] = ()         # 'unverified': the fields read that are not verified
 
     @property
     def counts(self) -> bool:
@@ -162,7 +163,7 @@ def status(check: Check, values: Values, stored: Stored | None, decision: Decisi
     if not current(stored, values, defn=defn, code=code):
         return Status('outdated', stored.grade)
     waiting = tuple(k for k, rev in stored.reads.items()
-                    if rev != DEFAULT and not ((v := values.get(k)) is not None and v.is_settled))
+                    if rev != DEFAULT and not ((v := values.get(k)) is not None and v.is_verified))
     if waiting:
         return Status('unverified', stored.grade, waiting=waiting)
     if not stored.reads:
@@ -175,10 +176,10 @@ def status(check: Check, values: Values, stored: Stored | None, decision: Decisi
 
 def fields_state(question: Question, values: Values) -> str:
     """How a question's fields stand, for a question with no checks: 'not_read'
-    (some field has no value), 'unverified' (some value is not settled) or 'verified'.
-    A field at its default is settled."""
+    (some field has no value), 'unverified' (some value is not verified) or 'verified'.
+    A field at its default is verified."""
     got = [values.get(key(question.id, f.label)) for f in question.fields if f.default is None]
-    if any(v is not None and not v.is_settled for v in got):
+    if any(v is not None and not v.is_verified for v in got):
         return 'unverified'
     if any(v is None for v in got):
         return 'not_read'
@@ -187,7 +188,7 @@ def fields_state(question: Question, values: Values) -> str:
 
 def total(exam: Exam, statuses: Mapping[tuple[str, str], Status]) -> tuple[float, bool]:
     """Points that count so far for one submission (statuses by (question, check)),
-    and whether every counting grade is settled."""
+    and whether every counting grade is verified."""
     points, complete = 0.0, True
     for qid, q in exam.questions.items():
         for c in q.checks:

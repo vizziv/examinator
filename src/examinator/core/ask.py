@@ -16,7 +16,7 @@ with a review marker when it sees none of them. A reading that is absent
 waits for a person; an empty reading without `reads` is a blank value.
 
 An `Ask` **vouches** for a value that was one of a closed set of expected
-readings (`reads` given, `verify` not set): such a value is settled by the
+readings (`reads` given, `verify` not set): such a value is verified by the
 reader, and nobody need verify it. A field with no region is not read. Each
 reading is remembered per submission under `memo_key` (the region, the
 question and the scan layout), so reading again is free unless asked `fresh`.

@@ -23,7 +23,7 @@ from .runner import Outcome, Runner
 from .status import Sheet
 from .store import Store
 
-ACTIONS = ('run', 'skip_protected', 'skip_present', 'blocked')
+ACTIONS = ('read', 'skip_protected', 'skip_present', 'blocked')
 
 
 @dataclass(frozen=True)
@@ -73,12 +73,12 @@ def plan(exam: Exam, store: Store, selection: Selection, *, model_available: boo
                 vals = [sheet.values.get(key(qid, f.label)) for f in readable]
                 todo = [f for f, v in zip(readable, vals)
                         if not (selection.missing_only and v is not None)
-                        and not (v is not None and v.settled == 'person' and not selection.include_protected)]
+                        and not (v is not None and v.verified == 'person' and not selection.include_protected)]
                 off = [f for f in todo if f.region is not None and f.region.page in gone]
                 placed = [f for f in todo if f not in off and (
                     f.region is not None or not getattr(q.reader_of(f.label), 'needs_region', False))]
                 if not todo:
-                    protected = any(v is not None and v.settled == 'person' for v in vals)
+                    protected = any(v is not None and v.verified == 'person' for v in vals)
                     add('skip_protected' if protected and not selection.missing_only else 'skip_present')
                 elif not placed:
                     add('blocked', "page missing" if off else "no region")
@@ -86,7 +86,7 @@ def plan(exam: Exam, store: Store, selection: Selection, *, model_available: boo
                                                  for f in placed):
                     add('blocked', "model unavailable")
                 else:
-                    add('run', f"{len(placed)} field{'s' if len(placed) != 1 else ''}")
+                    add('read', f"{len(placed)} field{'s' if len(placed) != 1 else ''}")
     return Plan(selection, tuple(items))
 
 
@@ -102,7 +102,7 @@ class BatchRun:
     current: str = ''                # in progress: 'reading', then 'recomputing'
 
     def __post_init__(self):
-        self.total = self.plan.count('run') + len(self.plan.selection.submissions)
+        self.total = self.plan.count('read') + len(self.plan.selection.submissions)
         self._cancel = threading.Event()
         self._lock = threading.Lock()
 
@@ -126,7 +126,7 @@ class BatchRun:
             return None if self._cancel.is_set() else self.runner.refresh(sub, questions=sel.questions)
 
         with ThreadPoolExecutor(max_workers=max(1, self.parallel)) as pool:
-            for step, fn, todo in (('reading', read, [i for i in self.plan.items if i.action == 'run']),
+            for step, fn, todo in (('reading', read, [i for i in self.plan.items if i.action == 'read']),
                                    ('recomputing', refresh, list(sel.submissions))):
                 self.current = step
                 for outs in pool.map(fn, todo):

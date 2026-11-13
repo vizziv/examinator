@@ -106,14 +106,14 @@ def test_a_field_added_to_a_question(tmp_path):
     before = snapshot(ws, 's1')
     ws, runner = reopen(ws, runner, build(labels=('a', 'b', 'c'), extra_check='ac'))
     values = runner.values('s1')
-    assert values['q/a'].is_settled and values['q/b'].is_settled and 'q/c' not in values   # not read
+    assert values['q/a'].is_verified and values['q/b'].is_verified and 'q/c' not in values   # not read
     assert st(runner, 's1', 'q', 'check').state == 'graded'               # does not read it: unaffected
     assert snapshot(ws, 's1') == before
     runner.refresh('s1', questions=['q'])                                 # the new check reads it
     s = st(runner, 's1', 'q', 'both')
     assert (s.state, s.value) == ('unverified', None) and "c not read" in s.reason
     runner.read('s1', 'q', missing_only=True)                             # fills only the new field
-    assert runner.values('s1')['q/a'].rev == values['q/a'].rev and runner.values('s1')['q/a'].is_settled
+    assert runner.values('s1')['q/a'].rev == values['q/a'].rev and runner.values('s1')['q/a'].is_verified
     assert st(runner, 's1', 'q', 'both').state == 'outdated'
     runner.refresh('s1')
     assert st(runner, 's1', 'q', 'both').state == 'unverified'            # waits for the new value

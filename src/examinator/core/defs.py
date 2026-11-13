@@ -76,7 +76,7 @@ class Field:
     unless the field is `multiline` (None, the default: as its reader says,
     which is one line for all but code). `default` (text) makes the field a
     setting a person may type: no reader but its own reads it, and while it
-    has no stored value its value is the default, settled (`DEFAULT`).
+    has no stored value its value is the default, verified (`DEFAULT`).
     """
     label: str
     region: Region | None = None
@@ -86,7 +86,7 @@ class Field:
 
 
 # The revision a check records for a field it read at its default (stored revisions start at 1):
-# current while the field has no stored value, and settled.
+# current while the field has no stored value, and verified.
 DEFAULT = 0
 
 

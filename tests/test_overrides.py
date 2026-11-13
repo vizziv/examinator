@@ -273,7 +273,7 @@ def test_changing_how_a_printed_field_is_read_changes_no_value_until_it_is_read_
     runner.read('s1', 'p')                    # a person verified them: skipped
     assert runner.values('s1') == before
     runner.read('s1', 'p', include_protected=True, fresh=True)
-    assert runner.values('s1')['p/c1'].text == 'two' and runner.values('s1')['p/c1'].settled == 'reader'
+    assert runner.values('s1')['p/c1'].text == 'two' and runner.values('s1')['p/c1'].verified == 'reader'
     assert status(runner, 's1', 'a', 'x')[0] == 'outdated'
     runner.refresh('s1')
     assert status(runner, 's1', 'a', 'x') == ('graded', False)            # the other printing's key

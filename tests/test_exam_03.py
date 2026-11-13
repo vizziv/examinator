@@ -79,10 +79,10 @@ def text_of(runner, sub, qid):
 
 
 def verify(runner, sub, qid, labels=None):
-    """Settle a question's values (or some of them) as a grader would."""
+    """Verify a question's values (or some of them) as a grader would."""
     for k, v in runner.values(sub).items():
         q, label = k.split('/', 1)
-        if q == qid and (labels is None or label in labels) and not v.is_settled:
+        if q == qid and (labels is None or label in labels) and not v.is_verified:
             runner.verify(sub, q, label, author='ta', expect_rev=v.rev)
 
 
@@ -504,7 +504,7 @@ def test_workflow_rules(exam, pkg, env):
         return status(runner, S, qid, check)
 
     def put(qid, answers):
-        """A grader types a question's values (which settles them)."""
+        """A grader types a question's values (which verifies them)."""
         for label, text in answers.items():
             runner.set(S, qid, label, text, author='ta', expect_rev=runner.values(S)[f'{qid}/{label}'].rev)
 
@@ -515,7 +515,7 @@ def test_workflow_rules(exam, pkg, env):
     assert text_of(runner, S, 'q2') == f.Q2
 
     # Unverified results do not count. The printing was read as expected: nothing to verify there.
-    assert all(runner.values(S)[f'info/{label}'].settled == 'reader' for label in versions.printed(0)['info'])
+    assert all(runner.values(S)[f'info/{label}'].verified == 'reader' for label in versions.printed(0)['info'])
     s9 = st('q9')
     assert (s9.state, s9.value, s9.counts, set(s9.waiting)) == ('unverified', True, False, {'q9/9.a', 'q9/9.b'})
     assert st('q2', 'check').state == st('q2', 'shiny').state == 'unverified'
@@ -547,7 +547,7 @@ def test_workflow_rules(exam, pkg, env):
     runner.refresh(S)
     assert (st('q9').state, st('q9').value) == ('graded', True)
 
-    # The constant at its default is settled; a grader's value outdates the result, and
+    # The constant at its default is verified; a grader's value outdates the result, and
     # dropping it goes back to the default.
     assert st('q2', 'shiny').state == 'graded' and 'q2/huge_constant' not in runner.values(S)
     runner.set(S, 'q2', 'huge_constant', '20', author='ta')

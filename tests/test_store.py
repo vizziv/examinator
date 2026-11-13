@@ -21,11 +21,11 @@ def test_revs_increase_and_never_repeat(store):
 
 
 def test_keep_rev_for_a_change_that_is_not_content(store):
-    a = store.write('s', 'q/x', 'value', {'text': '1', 'settled': None}, origin='auto')
-    b = store.write('s', 'q/x', 'value', {'text': '1', 'settled': 'person'}, origin='auto', expect_rev=a.rev,
+    a = store.write('s', 'q/x', 'value', {'text': '1', 'verified': None}, origin='auto')
+    b = store.write('s', 'q/x', 'value', {'text': '1', 'verified': 'person'}, origin='auto', expect_rev=a.rev,
                     keep_rev=True)
-    assert b.rev == a.rev and b.body['settled'] == 'person'
-    assert [h.body['settled'] for h in store.history('s', 'q/x', 'value')] == [None]
+    assert b.rev == a.rev and b.body['verified'] == 'person'
+    assert [h.body['verified'] for h in store.history('s', 'q/x', 'value')] == [None]
 
 
 def test_the_same_body_again_is_a_no_op(store):
