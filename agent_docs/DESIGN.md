@@ -43,7 +43,8 @@ my_exam/                  an exam package (lives wherever the user keeps exams)
 
 workspace/                one exam's data (never in a repository)
   sources/  scanned stacks as added (intake)
-  pdfs/  ID.pdf per submission
+  made/  each submission's PDF as intake wrote it (named by the store)
+  pdfs/  ID.pdf per submission handed in already split
   exam.sqlite
   cache/  exports/
 ```
@@ -583,7 +584,8 @@ Do not build these in M1–M3. Do not block them either.
 ## 16. Intake: scans in, submissions out
 
 Examinator takes stacks of scans (many students per PDF) and writes one PDF per
-submission into `pdfs/`; everything downstream is unchanged.
+submission into `made/`; everything downstream is unchanged (`Workspace.pdf_path`
+gives a submission's file, written or handed in).
 
 - **Sources.** Each scanned PDF is kept unchanged as `sources/ID.pdf`, ID the
   start of its SHA-256 (so adding it twice is noticed); a `source` table lists
@@ -600,6 +602,7 @@ submission into `pdfs/`; everything downstream is unchanged.
   | --- | --- |
   | `start` | it begins a submission |
   | `said` | a person said whether it starts one and whether it is dropped |
+  | `verified` | on a first sheet: a person verified that submission (it is its sheets) |
   | `dropped` | in no submission (blank, stray, a leading junk sheet) |
   | `extra` | kept with its submission, not a printed page (False: a person said not) |
   | `missing` | how many printed pages not scanned come before it (0: a person said none) |
@@ -613,18 +616,33 @@ submission into `pdfs/`; everything downstream is unchanged.
      one; so there is no empty submission, and the server tells the page each
      sheet's submission and printed page (`owner`, `slot`) rather than the page
      working it out.
-  2. **A mark is a guess or a person's statement.** Each person's edit sets
-     `said` on the sheets whose start or dropped mark it speaks about (V: the
-     first page; A/D, cut, join: the sheets it moves or joins; drop, put back;
-     Shift+A/D across a boundary); Accept sets it on every sheet. A guess
-     (the first, "guess again", reading pages, and the re-guess that ends every
-     edit, from stored readings) clears the start and dropped marks of the
-     sheets nobody spoke for and guesses them again; it never changes a `said`
-     sheet. So a join is not split again, a put-back sheet is not dropped
-     again, and after Accept nothing moves unless a person moves it. A
-     submission is *verified* when its first sheet is `said`. A turn changes
-     only turns (readings stay as last read until pages are read again).
-  3. **What was written is `made`, and only `made`.** Which run is which
+  2. **A mark is a guess or a person's statement.** A guess (the first,
+     "guess again", reading pages, and the re-guess that ends every edit, from
+     stored readings) clears the start and dropped marks of the sheets nobody
+     spoke for and guesses them again; it never changes a `said` sheet. Each
+     person's edit says exactly what the person did, on the sheets it names:
+     A/D, the boundary is at the sheet it moves to and not at the one it leaves;
+     cut, a start; join, no start inside; drop, put back; Shift+A/D across a
+     boundary, the sheet and the one it passes are where they now are. Accept
+     says everything (and verifies every submission). A turn changes only turns
+     (readings stay as last read until pages are read again).
+  3. **A verified submission is its sheets.** V says the whole submission: its
+     first sheet starts one, none of its other sheets does (its dropped ones
+     dropped), and the next kept sheet starts one; its first sheet gets
+     `verified`. Every edit keeps each verified submission whole, so no guess
+     moves it, and verifying what the guess already says changes nothing. The
+     mark moves with its submission when a person moves its first sheet (A/D,
+     Shift+A/D, dropping it), and goes when that sheet stops starting one; a
+     boundary a person moves is theirs but verifies no neighbour. "Unverified"
+     in the step view and V's "next" mean nobody verified it.
+  4. **Guessing works in stretches**, each from the first kept sheet or a start
+     a person said up to the next one; a stretch's starts are what `propose`
+     finds from its beginning (`until` its end: each start is found from the one
+     before, so where a stretch ends never changes what is found before it). So
+     a correction re-guesses the sheets after it nobody spoke for, up to the
+     next start a person said, and never past a verified submission; what is
+     left over there is a short submission, flagged.
+  5. **What was written is `made`, and only `made`.** Which run is which
      written submission is derived (`split.link`, used by `intake.outline` for
      the page, its counts and Accept alike): a written submission and a run
      that share a sheet are ranked by where the first shared sheet comes in
@@ -632,7 +650,8 @@ submission into `pdfs/`; everything downstream is unchanged.
      first, each at most once. A run linked to none is new; a written
      submission linked to none is to be removed. So undoing past an Accept
      keeps every id, and a join's removed id never comes back.
-  4. **The store says written only about files in place** (see Accepting).
+  6. **A written file is never changed; the store names the file** (see
+     Accepting).
 - **A submission maps the exam's printed pages to sheets** (`split.lay_out`):
   its sheets in list order, less extra ones, with the missing pages, are
   printed pages 1, 2, .... Sheets beyond the exam's pages are extra
@@ -674,8 +693,9 @@ submission into `pdfs/`; everything downstream is unchanged.
   into the neighbouring submission instead, and a submission it leaves with no
   sheet is gone. The overview labels each sheet with its printed page ("p3",
   "extra") and shows "missing p3" placeholders. Guesses after a person's start
-  are recomputed from it (every N kept sheets, adjusted by stored readings). A
-  length mismatch after verifying is a flag, not a block.
+  are recomputed from it (every N kept sheets, adjusted by stored readings), up
+  to the next start a person said. A length mismatch after verifying is a flag,
+  not a block.
 - **Orientation**: quarter turns clockwise, 0-3 (`pdf/orient.py`: `turn`
   transposes exactly), a sheet's own `turn` and nothing else. Every press is a
   quarter turn clockwise more (four return to the start): R the sheet shown;
@@ -691,23 +711,33 @@ submission into `pdfs/`; everything downstream is unchanged.
   path. A submission's PDF is its printed pages in order, a blank placeholder
   ("missing page" in small grey letters) where one is missing, then its extra
   sheets (`split.written`). A `made` table records each submission's source
-  sheets in that order (None for a placeholder) and each page's turn
-  (`Made.orient`). Ids are opaque (`s0001`), allocated once, never reused.
-  Accepting makes every sheet a person's. A written submission no run is
-  any more is removed. A submission that would change or disappear while it has
-  grading work (a value, a result or a decision; identity fields' values are
-  not grading work) is refused with the
-  list (`Busy`); a forced accept keeps what people typed, verified or decided. Every rewritten submission
-  loses its model memo and the values a reader wrote that no person typed or
-  verified (`intake.forget_reads`): those fields are not read again until asked.
-  Order: PDFs are written to temporary files; one commit checks
-  the plan is unchanged and notes the ids about to be placed (setting
-  `intake_pending`) with the id counter; files move into place; one commit
-  records the plan, `made` and the submissions; removed files are deleted; the
-  note is cleared. A crash anywhere is repaired by the next Accept: a noted
-  file with no `made` row is deleted (and `Workspace.sync` never takes it for
-  a submission), a noted or missing file counts as not written, and stray
-  temporary files are swept.
+  sheets in that order (None for a placeholder), each page's turn
+  (`Made.orient`) and its file (`Made.file`). Ids are opaque (`s0001`),
+  allocated once, never reused.
+  - *A written file is never changed.* Each PDF is written (through one
+    temporary file and a rename) under a fresh name, `made/s0001-TOKEN.pdf`;
+    one commit records the plan, `made` and the submissions, checking the plan
+    is the one accepted. A file in `made/` that no `made` row names is garbage,
+    swept at the start and end of every Accept. So a failure or a crash at any
+    point leaves the store and every file it names agreeing, and an edit
+    landing mid-Accept makes it refuse (409) with nothing changed. `pdfs/`
+    holds only PDFs handed in already split, which `Workspace.sync` adopts;
+    nothing Accept writes is ever there. Page URLs carry the file's render key,
+    so a rewritten submission's pages are new URLs. Accepts run one at a time
+    (the server's lock).
+  - *Accept speaks for a person*, recorded as the plan's author. A written
+    submission it would rewrite or remove that something was said or done
+    about (its pick, grading work: a value, result or decision outside the
+    identity group, boxes of its own: overrides at its scope) is named first
+    (`intake.disturbed`, on the page; `Busy`, 409) and touched only when the
+    person agrees to that id (`allow`). The confirm says what follows.
+  - *A rewritten submission has new pages* (`intake.repaged`): what was read
+    from the old ones goes (the model memo, every value no person verified),
+    and so does where things are on them (its own regions and print area,
+    drawn on the old pages; a region on a sheet it no longer has would not
+    even validate); what a person said about the student stays (values a person
+    verified, decisions, the pick). A removed submission is gone with its
+    boxes; its id is never reused.
 - **Who** (`core/identity.py`). Three rules hold throughout:
   1. *A naming is a change like any other* (§13, Changes): `{sub, rev, key |
      text | restore}` (take a proposal, pick from the list, type a name, unname,
