@@ -21,17 +21,36 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
   re-read unasked; being already matched must not raise a name match's
   confidence; rare actions live in menus; the past exams are test cases, not
   behaviour to preserve; the CLI is development tooling, not a user interface.
+- **Principles added by the second review (2026-11-13), each built as a
+  design change rather than a patch per bug:**
+  - *Split:* the plan is only the pile, sorted; what was written is `made`,
+    and which run is which written submission is derived (`split.link`). A
+    mark is a guess or a person's, and guessing touches only guesses; Accept
+    makes every sheet a person's. A submission is its kept sheets. The store
+    says "written" only about files in place.
+  - *Naming:* an action is a statement about what was on screen, bound at the
+    keypress with the revision seen. Automatic matching acts only on unique
+    evidence; ties and conflicts are doubts. A value a reader wrote records
+    what it was read from, and is stale when that differs from now.
+  - *Definitions:* an override is valid exactly when the definition with it
+    applied is valid (`Exam.validate`, one validation). An open workspace
+    always has its overrides. The identity group is reachable only through
+    the Names step.
+  - *Evidence:* a result has one stored shape, enforced where a check's
+    return is settled; images are stored by digest outside the result row. A
+    read needs its pages (`runner.unreadable`). A kit figure is a pure
+    function of its arguments, drawn only when shown.
 - **Verified how:** every change passed the fast suite and the four exams'
   self-tests against the instructor blanks, and was exercised in a browser on
-  synthetic workspaces by the subagent that made it. No change has been run
-  against a live model. Subagent work was committed after tests and spot
-  checks, not a line-by-line read; the last independent review was on
-  2026-11-12, before the override store, identity, image-block and Split
-  rework landed. A second review of those is due.
-- **Next, in the owner's rough order:** a second design and code review; a
-  first live-model run on synthetic handwriting (also tunes name matching);
-  a filter overlay on the question page; no full page load between
-  submissions; search facets; then a student view.
+  synthetic workspaces by the subagent that made it. The four redesigns above
+  were built in parallel and merged; the whole suite and the self-tests pass
+  on the merge. No change has been run against a live model. Subagent work is
+  committed after tests and spot checks, not a line-by-line read, and the
+  redesigns themselves have not been independently reviewed.
+- **Next, in the owner's rough order:** a first live-model run on synthetic
+  handwriting (also tunes name matching); a filter overlay on the question
+  page; no full page load between submissions; search facets; then a student
+  view.
 
 ## The model (built 2026-11-12)
 
@@ -67,12 +86,15 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
   extra on a question page (synthetic Exam 3 stacks). Never in a browser yet: the restore button, the
   Exam data page's "read again" message, Stop on a run slow enough to stop.
 
-- **Split marks, what is left:** a sheet moves one place per press (no drag
-  to a far place in the pile); a guess that drops stray sheets before the
-  first submission is not told apart from a person's drop, so guessing again
-  keeps it; proposed marks cover a submission one sheet short or long only, from page
-  readings; a placeholder page is shown on the question page as is (its crop
-  is withheld, nothing is read from it).
+- **Split marks, what is left:** no drag to a far place in the pile (a sheet
+  moves one place per press, stepping over dropped sheets); proposed marks
+  cover a submission one sheet short or long only, from page readings; a
+  placeholder page is shown on the question page as is.
+- **Left from the second review:** ordinary fields record what they were read
+  from, but the question page and the batch plan do not yet use
+  `Value.stale` to say "read again"; overrides apply in path order, so one
+  that is valid only together with a later one is skipped; images are
+  deduplicated within a result, not across results.
 
 ## Future
 
