@@ -73,10 +73,9 @@ Choices made here:
   still verified, nothing downstream moves.
 - **No transcript.** Whatever a reader does on the way to the value is not
   stored.
-- **A read value records what it was read from** (`runner.sources`: the
-  reader, region, print area, scanned sheet). It is **stale** when that
-  differs from what the reader would read now and nobody verified it; a
-  person's value never is. "Read again" is that difference, nothing else.
+- **Changing how a field is read changes no value.** A value does not record
+  what it was read from; reading again is a person's choice (a question's
+  "read", the Read page, "read names").
 - **A default is a value nobody need verify.** A field may have a default
   (`Field(label, default='10')`): a setting a person may type, read by no
   reader but its own. While it has no stored value, a check reading it gets
@@ -147,8 +146,8 @@ Everything the app or a batch read does is one or more of these.
 | Decision | **decide**, **clear**. | person |
 | Override | **set**, **clear**, at a scope. | person |
 
-Changing how a field is read changes no value. The app then offers to read
-again the values no person verified.
+Changing how a field is read changes no value. Reading again is asked for
+explicitly; it replaces only values no person verified.
 
 Larger actions are combinations: "verify all here" verifies every unverified
 field on the page; "save and verify" is one set; "read again" is a read of one
@@ -166,7 +165,8 @@ exam's code computed it. So the exam package can change under a workspace:
 | A field is added to a question | The other fields keep their values and who verified them. The new one is not read. A check is affected only once it reads the new field: then it is recomputed and waits for it. |
 | A field or check is removed or renamed | Its stored values are ignored, not deleted (restoring the name restores them). A rename loses the work. |
 | Points change | Totals follow at once; they are derived. |
-| How a field is read changes | No value changes; the app offers to read again what no person verified. |
+| How a field is read changes | No value changes. Reading again, when a person asks, replaces what no person verified. |
+| A submission's pages are rewritten (Split's Accept) | Values a reader wrote that no person typed or verified are dropped (not read); the rest stays. |
 
 Two things this asks of the build: a read can fill only the fields that have
 no value yet, and the app can reload the exam package without losing state.

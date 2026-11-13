@@ -218,7 +218,8 @@ details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var
 #grid th[data-dir=desc]::after { content: ' ▼'; font-size: 9px; color: var(--link); }
 #grid td { padding: 0; border-bottom: 1px solid var(--line); height: 21px; line-height: 20px; white-space: nowrap;
   vertical-align: baseline; font-variant-numeric: tabular-nums; }   /* one text baseline per row */
-#grid td.id, #grid td.name, #grid td.total, #grid td.id { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+#grid td.id, #grid td.name, #grid td.total { padding: 0 7px; }
+#grid td.id { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 /* id and name stay in view when the grid scrolls sideways (grid.js sets --name-left) */
 #grid td.id, #grid td.name, #grid th:nth-child(-n+2) { position: sticky; left: 0; z-index: 1; background-color: var(--panel); }
 #grid td.name, #grid th:nth-child(2) { left: var(--name-left, 0); box-shadow: inset -1px 0 0 var(--line); }

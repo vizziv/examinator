@@ -175,7 +175,7 @@ def test_identity_field_changes_described_as_python(tmp_path):
     try:
         overrides.set(ws, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='ta')
         change = overrides.set(ws, '@identity/fields/email/region', [1, 10, 10, 300, 60], author='ta')
-        assert change.checks == () and change.fields == (('@identity', 'email'),)     # offered to read again
+        assert change.checks == ()
         lines = describe_changes(exam, ws.store)
         assert any(x.startswith('@identity/fields/id/region: Region(') and '-> Region(1, 100, 330, 600, 420)' in x
                    for x in lines)
@@ -213,9 +213,9 @@ def test_set_and_describe_changes(env):
     with pytest.raises(ValueError):
         overrides.set(ws, 'a/fields/x/region', [1, 9, 9, 1, 1], author='ta')
     change = overrides.set(ws, 'a/fields/x/region', [1, 400, 310, 900, 430], author='ta')
-    assert change.checks == () and change.fields == (('a', 'x'),)     # how it is read, not what checks see
+    assert change.checks == ()     # how it is read, not what checks see
     change = overrides.set(ws, 'p/fields/c1/read/reads', {'1': 'one'}, author='ta')
-    assert change.checks == () and change.fields == (('p', 'c1'),)
+    assert change.checks == ()
     lines = describe_changes(exam, ws.store)
     assert lines[0].startswith('a/fields/x/region: None -> Region(1, 400, 310, 900, 430)  (ta, ')
     fresh = make_exam()                 # a fresh session sees the same exam: opening the workspace applies it
@@ -436,11 +436,11 @@ def test_changes_below_the_exam_outdate_no_check(scoped):
     before = {qc: exam.check_hash(exam.questions[qc[0]], exam.questions[qc[0]].check(qc[1])) for qc in
               [(qid, c.name) for qid, q in exam.grading.items() for c in q.checks]}
     change = overrides.set(ws, 'a/fields/x/region', [1, 0, 0, 5, 5], scope=S1, author='ta')
-    assert change.checks == () and change.fields == (('a', 'x'),)
+    assert change.checks == ()
     change = overrides.set(ws, '@print_area', [5, 5, 995, 995], scope=SRC, author='ta')
-    assert change.checks == () and ('a', 'x') in change.fields and ('p', 'c1') in change.fields
+    assert change.checks == ()
     change = overrides.set(ws, '@print_area', [9, 9, 991, 991], author='ta')     # every crop moves
-    assert change.checks == () and ('a', 'x') in change.fields
+    assert change.checks == ()
     assert {qc: exam.check_hash(exam.questions[qc[0]], exam.questions[qc[0]].check(qc[1])) for qc in before} == before
 
 

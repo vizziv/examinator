@@ -5,7 +5,7 @@
 // 'print': the print area, edited with the same controls (no page), saved for this
 // submission, for every submission from the same scan file, or for all.
 // Both are exam data at a scope (/exam/set, /exam/clear with `scope`).
-// Neither changes a value: read again. What is edited is drawn orange; the other, primary, for context.
+// Neither changes a value. What is edited is drawn orange; the other, primary, for context.
 // The rectangles, their coordinates and controls are rects.js's; the region boxes follow the
 // print area's draft.
 (() => {
@@ -147,11 +147,11 @@
       const moved = !same(before, r.value), shadowed = !clear && !same(r.value, saved);  // a narrower scope still wins here
       if (moved || !dirty(r)) r.draft = r.value && [...r.value];
       say((clear ? (level === 'own' ? "own region dropped" : "reverted · all submissions") : `saved · ${WHERE[level]}`)
-          + (shadowed ? " · this submission keeps its own" : moved ? " · read again to use it" : ''));
+          + (shadowed ? " · this submission keeps its own" : ''));
       inputs();
       draw();
       recrop(b.boxes || {});
-      document.dispatchEvent(new CustomEvent('entry-saved', {detail: {...b, reread: moved ? [r.label] : []}}));
+      document.dispatchEvent(new CustomEvent('entry-saved', {detail: b}));
     });
   }
 
@@ -161,17 +161,16 @@
     if (clear && !confirm({own: "Drop this submission's own print area?",
                            scan: "Drop this scan's print area, for every submission from it?",
                            all: "Back to the package's print area, for all submissions?"}[level])) return;
-    const before = pa.value, saved = pa.draft;
+    const saved = pa.draft;
     return saveAt(pa, level, clear, b => {
       pa.draft = [...pa.value];
       recrop(b.boxes || {});
-      const moved = !same(before, pa.value), shadowed = !clear && !same(pa.value, saved);
+      const shadowed = !clear && !same(pa.value, saved);
       say(`print area ${clear ? 'dropped' : 'saved'} · ${WHERE[level]}`
-          + (shadowed ? ` · this submission keeps ${pa.own != null ? 'its own' : "its scan's"}` : '')
-          + (moved ? " · read again to use it" : ''));
+          + (shadowed ? ` · this submission keeps ${pa.own != null ? 'its own' : "its scan's"}` : ''));
       inputs();
       draw();
-      if (moved) document.dispatchEvent(new CustomEvent('entry-saved', {detail: {reread: ['print area']}}));
+      document.dispatchEvent(new CustomEvent('entry-saved', {detail: b}));
     });
   }
 

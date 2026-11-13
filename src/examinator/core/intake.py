@@ -21,9 +21,10 @@ with a blank placeholder where a page is missing (None in `Made.pages`), then
 its extra sheets in order (`split.lay_out`), written upright. A submission
 that would change or disappear while it has grading work (identity fields are
 not grading work) is not touched unless the caller insists (`force`): `Busy`
-names them. A rewritten submission's remembered readings are dropped; a value a
-reader read from a sheet it no longer has is stale (it records what it was read
-from: `runner.sources`).
+names them. A rewritten submission's pages are new: what was remembered from
+the old ones goes, and so does every value a reader wrote that no person typed
+or verified (identity fields and grading alike): those fields are not read.
+What a person typed or verified, and the pick, stay.
 
 The store says "written" only about files in place: files are moved into
 `pdfs/` before the store records them, and the ids being placed are noted
@@ -401,6 +402,15 @@ def disturbed(ws, rows, gone) -> list[str]:
     return [r['id'] for r in rows if r['state'] == 'changed' and work(r['id'])] + [s for s in gone if work(s)]
 
 
+def forget_reads(ws, sid: str) -> None:
+    """A submission's pages changed: drop what was read from the old ones (the memo,
+    and values a reader wrote that no person typed or verified)."""
+    ws.store.clear_memo(sid)
+    for r in ws.store.all(kinds=['value'], submission=sid):
+        if r.origin != 'manual' and (r.body or {}).get('verified') != 'person':
+            ws.store.delete(sid, r.name, 'value')
+
+
 def accept(ws, id: str, *, force: bool = False, expect_rev: Any = ANY) -> dict:
     """Accept the plan: every sheet becomes a person's (`split.accepted`), and its
     submissions are written into `pdfs/`. Unchanged ones are left alone; a
@@ -466,7 +476,7 @@ def accept(ws, id: str, *, force: bool = False, expect_rev: Any = ANY) -> dict:
             sid = r['id']
             ws.store.set_made(Made(sid, id, tuple(r['pages']), tuple(r['orient']), now))
             ws.store.put_submissions([identity.submission(ws, sid, f'{sid}.pdf')])
-            ws.store.clear_memo(sid)        # readings of the old pages
+            forget_reads(ws, sid)
         for sid in gone:
             ws.store.delete_made(sid)
             ws.store.delete_submission(sid)

@@ -332,7 +332,6 @@
   // --- an exam-data edit (key panel, regions): this submission is recomputed first ---
   document.addEventListener('entry-saved', async e => {
     const b = e.detail;
-    if (b.reread && b.reread.length) $('reread').hidden = false;      // how a field is read changed: offer to read
     await refresh();
     if (!b.job) return;
     busy.hidden = false;

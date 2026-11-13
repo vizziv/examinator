@@ -28,10 +28,17 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
     mark is a guess or a person's, and guessing touches only guesses; Accept
     makes every sheet a person's. A submission is its kept sheets. The store
     says "written" only about files in place.
-  - *Naming:* an action is a statement about what was on screen, bound at the
-    keypress with the revision seen. Automatic matching acts only on unique
-    evidence; ties and conflicts are doubts. A value a reader wrote records
-    what it was read from, and is stale when that differs from now.
+  - *The interface:* every change names the revision the page drew, on
+    every route (a test built from the route table); `Changes.send` is the
+    only way a page sends one, finished at the press; changes to one subject
+    go in press order; one press acts once.
+  - *Naming:* automatic matching acts only on unique evidence; ties and
+    conflicts are doubts. A pick records the person; its link to the roster is
+    derived.
+  - *Reading:* changing how a field is read changes no value, and nothing
+    tracks "read again". A person types the value or reads again explicitly
+    ("again" on Names, the Read page). A rewritten submission's unverified
+    readings are dropped.
   - *Definitions:* an override is valid exactly when the definition with it
     applied is valid (`Exam.validate`, one validation). An open workspace
     always has its overrides. The identity group is reachable only through
@@ -90,11 +97,21 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
   moves one place per press, stepping over dropped sheets); proposed marks
   cover a submission one sheet short or long only, from page readings; a
   placeholder page is shown on the question page as is.
-- **Left from the second review:** ordinary fields record what they were read
-  from, but the question page and the batch plan do not yet use
-  `Value.stale` to say "read again"; overrides apply in path order, so one
+- **Left from the second review:** overrides apply in path order, so one
   that is valid only together with a later one is skipped; images are
-  deduplicated within a result, not across results.
+  deduplicated within a result, not across results; a region can be saved for
+  a submission or for all, not for one source scan (only the print area can);
+  moving a sheet across a Split boundary and back leaves the next submission
+  marked verified ("a person placed this boundary" and "a person reviewed this
+  submission" are one flag: the owner's call).
+- **Names, one page per submission** (an experiment, started and stopped
+  2026-11-13, uncommitted in a worktree): would make Names like the question
+  page and remove the reload of every submission after each pick
+  (`/scans/names` at scale). Only worth it if as fast and much simpler.
+- **Cosmetic, open:** the filter summary wraps the grid header at 1400 px;
+  the Filter page shows raw state names; Names shows the raw
+  "[REVIEW: not read]" marker in the value box; the Read page says "N will
+  read" but counts to N plus one refresh per submission.
 
 ## Future
 

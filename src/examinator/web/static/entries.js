@@ -61,8 +61,7 @@
       const el = form.querySelector('.ev');
       if (form.dataset.kind === 'bool') el.checked = !!b.value; else el.value = b.text;
     }
-    say(form, (clear ? "reverted" : "saved") + (b.job ? ` · ${b.checks.join(', ')} outdated` : '')
-                  + ((b.reread || []).length ? " · read again to use it" : ''));
+    say(form, (clear ? "reverted" : "saved") + (b.job ? ` · ${b.checks.join(', ')} outdated` : ''));
     document.dispatchEvent(new CustomEvent('entry-saved', {detail: b}));
   }
 
@@ -114,10 +113,8 @@
     panel.hidden = false;
     $('ch-fail').textContent = '';
     for (const s of b.skipped || []) $('ch-fail').textContent += `not applied: ${s.path} (${s.reason}) `;
-    const n = (b.reread || []).length;
-    const reread = !n ? '' : ` · how ${n > 6 ? `${n} fields are` : b.reread.join(', ') + ' is'} read changed: read again on the question pages`;
-    if (!b.job) { $('ch-text').textContent = "no grades affected" + reread; return; }
-    $('ch-text').textContent = `${b.checks.join(', ')} outdated; recomputing` + reread;
+    if (!b.job) { $('ch-text').textContent = "no grades affected"; return; }
+    $('ch-text').textContent = `${b.checks.join(', ')} outdated; recomputing`;
     await follow(b.job, `${b.checks.join(', ')} recomputed`);
   });
   // A scan's or a submission's own value: back to what applies to the others.

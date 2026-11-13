@@ -165,11 +165,18 @@
   }
 
   // --- loading and editing the plan (the server says whose each page is and what it counts as) ---
-  async function load(id, keep) {
+  // The cursor: after a person's own edit it stays where they are working; after any other
+  // redraw from the server's plan (load, undo, guess again, read pages, a 409) it is the plan's (`adopt`).
+  function adopt(p) {
+    if (!plan || plan.id !== p.id) say('');
+    plan = p;
+    k = p.cursor ?? p.entries.length;
+    peek = null;
+  }
+  async function load(id) {
     const r = await request(`/scans/${encodeURIComponent(id)}/plan`);
     if (!r.ok) { flash('could not load the scan'); return; }
-    if (!keep || !plan || plan.id !== r.body.id) { say(''); k = r.body.cursor ?? r.body.entries.length; peek = null; }
-    plan = r.body;
+    adopt(r.body);
     if (current === 'split') history.replaceState(null, '', '#src=' + id);
     render();
   }
@@ -179,7 +186,7 @@
     const id = plan.id, mine = b => b && b.id === id && plan.id === id;
     return Changes.send(`plan:${id}`, `/scans/${encodeURIComponent(id)}/${path}`, {rev: plan.rev, ...data}, {
       long,
-      redraw: cur => { if (mine(cur)) { plan = cur; render(); } },
+      redraw: cur => { if (mine(cur)) { adopt(cur); render(); } },
       done: async b => {
         if (mine(b.plan)) { plan = b.plan; render(); }
         if (then) await then(b);
@@ -233,16 +240,13 @@
   register('split-shift-earlier', shift(-1));
   register('split-shift-later', shift(1));
   // Turning, a quarter turn clockwise more for each page: the page shown, its submission's, or (a button only) the scan's.
+  const whole = b => { adopt(b.plan); render(); };     // the answer replaces the plan as a whole, not an edit of the person's
   const turned = () => say(LANDMARKS && MODEL ? 'turned: read pages again' : 'turned');
   register('split-turn-page', {available: () => !done(), run: () => edit('turn_page', {sheet: focus()}, turned)});
   register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: () => edit('turn', {k}, turned)});
   register('split-turn-source', {run: () => edit('turn_source', {}, turned)});
-  register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {})});
-  register('split-guess', {run: () => send('propose', {length: $('s-length').value}, () => {
-    k = plan.cursor ?? plan.entries.length;
-    peek = null;
-    render();
-  })});
+  register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {}, whole)});
+  register('split-guess', {run: () => send('propose', {length: $('s-length').value}, whole)});
   register('split-read', {available: () => MODEL && LANDMARKS, run: () => {
     say('reading pages…');
     return send('propose', {check: true, length: $('s-length').value}, async b => {
@@ -257,7 +261,7 @@
     const unverified = plan.entries.filter(open).length;
     if ((flagged || unverified) && !confirm(`${flagged} flagged, ${unverified} unverified. Write the submissions anyway?`)) return;
     const busy = plan.busy, many = busy.length > 1;
-    if (busy.length && !confirm(`${busy.join(', ')} already ${many ? 'have' : 'has'} grading work, and the split changes or removes ${many ? 'them' : 'it'}. Rewrite anyway? The work stays but may no longer match the pages.`)) return;
+    if (busy.length && !confirm(`${busy.join(', ')} already ${many ? 'have' : 'has'} grading work, and the split changes or removes ${many ? 'them' : 'it'}. Rewrite anyway? What people typed, verified or decided stays; unverified readings are dropped.`)) return;
     return send('accept', {force: busy.length > 0}, b => {
       const x = b.report;
       made += x.new.length - x.removed.length;

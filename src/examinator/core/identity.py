@@ -3,15 +3,14 @@ proposals, and the person a grader picks.
 
     setting 'people'                  the roster: [{'name', 'id', 'email', 'key'}]
     row (sub, '@identity/<column>', 'value')   an identity field's value, like any field's
-    row (sub, '', 'who')              the pick: the person picked, {'name', 'id', 'email', 'from'}
+    row (sub, '', 'who')              the pick: the person picked, {'name', 'id', 'email'}
 
 Where students write who they are is the exam's built-in group of identity
 fields (`defs.IDENTITY`): one ordinary field per roster column, with a region
 set in the package or drawn in the app (for every submission or for one), read
 by its reader (`Ask` about the handwriting, by default) with `Runner.read`, and
-set or verified like any field. A value a reader wrote records what it was
-read from; one read from something else than its field would read now is
-stale: read again, and no evidence meanwhile.
+set or verified like any field. Moving a box changes no value: reading again
+is a person's choice (`read`, `again`).
 
 Matching acts only on unique evidence. Each identifying column (of a reading,
 or of a pick) yields the roster people it supports; a match needs them to
@@ -34,7 +33,6 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from .defs import IDENTITY, Field, Question, digest, split_key
-from .runner import sheet, sources
 from .status import Value
 from .store import ANY, Conflict, Submission
 
@@ -195,30 +193,17 @@ def boxed(ws) -> bool:
 
 @dataclass(frozen=True)
 class At:
-    """One submission's identity fields as they apply to it now, built once: its
-    placed fields (with its own regions), its print area, what reading each
-    would look at (`runner.sources`), and the sheets its boxes are on."""
+    """One submission's placed identity fields (with its own regions) and its print area."""
     fields: tuple[Field, ...]
     layout: Any
-    sources: Mapping[str, str]
-    made: Any                       # `store.Made`, None for a PDF handed in split
 
-    @property
-    def sheets(self) -> dict[str, Any]:
-        """The sheets its boxes are on: page (as text) -> `runner.sheet`."""
-        return {str(p): sheet(self.made, p) for p in sorted({f.region.page for f in self.fields}) or [1]}
-
-    def stale(self, got: Mapping[str, Value]) -> list[str]:
-        """The placed fields to read: with no value, or a value read from something else."""
-        return [f.label for f in self.fields
-                if f.label not in got or got[f.label].stale(self.sources.get(f.label))]
+    def unread(self, got: Mapping[str, Value]) -> list[str]:
+        """The placed fields with no value."""
+        return [f.label for f in self.fields if f.label not in got]
 
 
 def at(ws, sid: str) -> At:
-    g = group(ws)
-    layout = ws.layout(sid)
-    fields = tuple(f for f in ws.fields(sid, g) if f.region is not None)
-    return At(fields, layout, sources(ws, sid, g, fields, layout=layout), ws.store.made_of(sid))
+    return At(tuple(f for f in ws.fields(sid, group(ws)) if f.region is not None), ws.layout(sid))
 
 
 def values(ws, sid: str | None = None) -> dict[str, dict[str, Value]]:
@@ -230,16 +215,16 @@ def values(ws, sid: str | None = None) -> dict[str, dict[str, Value]]:
 
 
 def unread(ws) -> list[str]:
-    """Submissions with an identity field to read (`At.stale`)."""
+    """Submissions with a placed identity field that has no value."""
     got = values(ws)
-    return [s.id for s in ws.store.submissions() if at(ws, s.id).stale(got.get(s.id, {}))]
+    return [s.id for s in ws.store.submissions() if at(ws, s.id).unread(got.get(s.id, {}))]
 
 
-def read(runner, sid: str, *, fresh: bool = False) -> list:
-    """Read one submission's placed identity fields: `Runner.read` of the group, so
-    what a person verified stays. `fresh` asks the model again."""
+def read(runner, sid: str, *, again: bool = False) -> list:
+    """Read one submission's placed identity fields that have no value (`again`: also
+    those no person verified): `Runner.read` of the group."""
     labels = [f.label for f in placed(runner.ws, sid)]
-    return runner.read(sid, IDENTITY, labels=labels, fresh=fresh) if labels else []
+    return runner.read(sid, IDENTITY, labels=labels, missing_only=not again) if labels else []
 
 
 def usable(v: Value | None) -> str | None:
@@ -274,8 +259,7 @@ def typed(text: str) -> dict:
 def pick(ws, sid: str, person: Mapping | None, *, author: str | None, expect_rev: int | None,
          origin: str = 'manual') -> dict:
     """Name a submission: the person (`on_roster`, `typed`), or None to unname it.
-    `expect_rev` is the pick's revision the person saw (None: there was none). The
-    pick records the sheets its boxes were on: when they change, it is to confirm again."""
+    `expect_rev` is the pick's revision the person saw (None: there was none)."""
     s = ws.store.submission(sid)
     if s is None:
         raise KeyError(sid)
@@ -284,8 +268,7 @@ def pick(ws, sid: str, person: Mapping | None, *, author: str | None, expect_rev
         rev = None
     else:
         body = {c: str(person.get(c) or '') for c in COLUMNS}
-        rev = ws.store.write(sid, '', WHO, {**body, 'from': at(ws, sid).sheets}, origin=origin,
-                             author=author, expect_rev=expect_rev).rev
+        rev = ws.store.write(sid, '', WHO, body, origin=origin, author=author, expect_rev=expect_rev).rev
     return _named(ws, s, rev)
 
 
@@ -301,12 +284,6 @@ def _named(ws, s: Submission, rev: int | None) -> dict:
     w = who(ws, s.id)
     ws.store.put_submissions([Submission(s.id, w['name'], w['email'], s.pdf, w['id'])])
     return {**w, 'rev': rev}
-
-
-def recheck(body: Mapping, now: At) -> bool:
-    """A pick made while its boxes were on other sheets than they are now (the
-    submission was rewritten from changed sheets): to confirm again."""
-    return any(sheet(now.made, int(p)) != s for p, s in (body.get('from') or {}).items())
 
 
 def by_file(ws) -> int:
@@ -530,8 +507,8 @@ CACHE_LIMIT = 20_000        # proposals an overview cache holds before it starts
 
 def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None,
              ats: Mapping[str, At] | None = None) -> dict:
-    """Every submission (or `subs`) with its identity values, those to read
-    (`At.stale`), the proposal and the pick, the unconfirmed first (most doubtful
+    """Every submission (or `subs`) with its identity values, its placed fields
+    with no value (`At.unread`), the proposal and the pick, the unpicked first (most doubtful
     first), then the confirmed ones; who on the roster is picked for which
     submissions; and those nobody is picked for. `cache`, a dict the caller
     keeps, remembers proposals by value revisions and roster; `ats`, each
@@ -562,18 +539,18 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
     for sid in ids:
         a = (ats or {}).get(sid) or at(ws, sid)
         got = every.get(sid, {})
-        stale = a.stale(got)
-        fresh = {f.label: got[f.label] for f in a.fields if f.label not in stale}
-        read = {c: usable(v) for c, v in fresh.items()}
-        ck = (sid, tuple((c, v.rev) for c, v in fresh.items()), tuple(stale), rkey)
+        unread = a.unread(got)
+        have = {f.label: got[f.label] for f in a.fields if f.label in got}
+        read = {c: usable(v) for c, v in have.items()}
+        ck = (sid, tuple((c, v.rev) for c, v in have.items()), tuple(unread), rkey)
         prop = cache.get(ck)
         if prop is None:
             if any(read.values()):
                 prop = matcher.propose(read)
             else:
                 # nothing usable: still to read, could not be read, or every box blank
-                doubt = ('unread' if stale or not fresh else
-                         'unreadable' if any(v.marker for v in fresh.values()) else 'empty')
+                doubt = ('unread' if unread or not have else
+                         'unreadable' if any(v.marker for v in have.values()) else 'empty')
                 prop = {'doubt': doubt, 'candidates': []}
             cache[ck] = prop
         # who is already picked elsewhere is shown, never used to rank: a misreading must not cascade
@@ -581,18 +558,16 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
         pick_row = picks.get(sid)
         body = pick_row.body if pick_row is not None and isinstance(pick_row.body, dict) else None
         link = links.get(sid)
-        rows.append({'sub': sid, 'read': read, 'stale': stale,
+        rows.append({'sub': sid, 'read': read, 'unread': unread,
                      'values': {c: {'text': v.text, 'rev': v.rev, 'verified': v.verified, 'marker': v.marker}
                                 for c, v in got.items()},
                      'doubt': prop['doubt'], 'candidates': cands,
                      'who': ({**{c: body.get(c, "") for c in COLUMNS},
                               'person': roster[link]['key'] if link is not None else None,
-                              'twice': link is not None and len(taken[link]) > 1,
-                              'recheck': recheck(body, a)} if body else None),
+                              'twice': link is not None and len(taken[link]) > 1} if body else None),
                      'rev': pick_row.rev if pick_row is not None else None})
     rank = {d: i for i, d in enumerate(ORDER)}
-    done = lambda x: x['who'] is not None and not x['who']['recheck']
-    rows.sort(key=lambda x: (done(x), 0 if done(x) else rank[x['doubt']], x['sub']))
+    rows.sort(key=lambda x: (x['who'] is not None, 0 if x['who'] else rank[x['doubt']], x['sub']))
     return {'rows': rows, 'nobody': [p for i, p in enumerate(roster) if i not in taken],
             'taken': {roster[i]['key']: subs for i, subs in taken.items()},
-            'left': sum(1 for x in rows if not done(x))}
+            'left': sum(1 for x in rows if x['who'] is None)}
