@@ -249,6 +249,12 @@ def check(ctx):
   total. `Check(None)` is decided by a person only.
 - A setting a grader may change is a field with a default: `Field('huge_constant', default='10')`
   reads as `'10'`, verified, until a grader types another value (`exams/exam_03`, question 2).
+- A check's function (or a reader) may have `validate`: `validate(question, exam)`
+  for a check, `validate(what)` for a reader, raising `ValueError` for a
+  configuration that does not fit (the keyed check: its key names the
+  question's fields and parses). It runs when the package adds the question
+  and for every edit made in the app, so an edit the package would refuse is
+  refused there too, with the same message.
 - A question with two grades has two checks. Each reads what it needs
   (Exam 2's `answer` and `check` for "answer + work", Exam 3's two-function
   questions); nothing reads a check.

@@ -42,7 +42,7 @@ def test_printed_landmark_and_identity_regions_are_checked():
         define(fields=[printed(region=Region(1, 0, 0, 1000, 1001))])
     with pytest.raises(ValueError, match="landmark 'title'"):
         Exam('t', pages=2, landmarks=[Landmark('title', Region(0, 0, 0, 10, 10), ask="the title")])
-    with pytest.raises(ValueError, match="identity 'name'"):
+    with pytest.raises(ValueError, match="@identity: field 'name'"):
         Exam('t', pages=2, identity={'name': Field('name', Region(1, 10, 10, 5, 20))})
 
 

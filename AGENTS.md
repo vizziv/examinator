@@ -28,8 +28,9 @@ text. Answer keys never appear in any prompt.
 
 ```text
 src/examinator/
-  core/     definitions, store, status rules (the model: MODEL.md), runner, batch, workspace;
-            printed (fields read from the printing) and reading (one region, by the model);
+  core/     definitions (one validation for the package and overrides), store, status rules
+            (the model: MODEL.md), runner, batch, workspace, overrides;
+            ask (one region, asked of the model: printed fields, names) and reading;
             split (pure boundary logic) and intake (sources, plans, accepting into pdfs/);
             identity (roster, reading name/ID boxes, pure proposals, the pick)
   pdf/      page rendering, scan layout, orientation, writing submission PDFs

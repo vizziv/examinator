@@ -71,6 +71,11 @@ class Ask:
             raise ValueError(f"{what}: a field read by asking needs an `ask`")
         if not all(isinstance(k, str) and k.strip() and isinstance(v, str) for k, v in self.reads.items()):
             raise ValueError(f"{what}: `reads` maps readings (text) to values (text)")
+        try:
+            self.text()
+        except (KeyError, IndexError, ValueError) as e:
+            raise ValueError(f"{what}: the prompt has {{ask}} and no other braces (doubled: {{{{ }}}}): "
+                             f"{type(e).__name__} {e}") from None
 
     def text(self) -> str:
         """The prompt. `reads` keys are what is on the page; they never carry an answer key."""
