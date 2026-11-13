@@ -175,9 +175,12 @@
 
   const decide = (el, extra) => {
     const box = el.closest('.decide');
-    // What the decision is made against: the revisions on screen, not the newest ones.
-    const seen = JSON.parse($('parts').dataset.seen);
-    for (const i of inputs()) if (i.dataset.key in seen && i.dataset.rev !== '') seen[i.dataset.key] = Number(i.dataset.rev);
+    // What the decision is made against: every field on the page (those from other questions
+    // too) at the revision its input shows, null where it shows no value; never the newest
+    // ones a refresh learned of while a draft kept the form. A field the server counts on the
+    // page but this page does not show is missing here, so the server refuses the decision.
+    const seen = {};
+    for (const i of inputs()) seen[i.dataset.key] = revOf(i);
     return act('decide', {check: box.dataset.check, rev: revOf(box), seen, ...extra});
   };
   // Z / X / C / G grade the first open check (or the only one): its buttons carry those

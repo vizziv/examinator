@@ -3,7 +3,8 @@
 An `Orient` is a mirror (left to right) applied first, then `turn` quarter turns
 clockwise. Applying one to an image uses exact `transpose` operations only, so
 pixels move and are never resampled. Orientation exists only during intake:
-pages are written upright into `pdfs/`, and nothing downstream knows about it.
+pages are written upright into `pdfs/`, and nothing downstream turns a page
+(what intake made records each sheet's orientation, which only tags model calls).
 """
 from __future__ import annotations
 

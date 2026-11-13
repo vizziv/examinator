@@ -104,7 +104,7 @@ class Workspace:
 
     def layout(self, submission: str) -> Layout:
         """The defaults, with this submission's override on top.
-        The override is the artifact (submission, '', 'layout'):
+        The override is the row (submission, '', 'layout'):
         `{'cover_pages': int | None, 'scan_window': [l, t, r, b] | None}`."""
         o = self.store.get(submission, '', 'layout')
         body = o.body if o else {}
@@ -124,7 +124,7 @@ class Workspace:
 
     def selected_pages(self, submission: str, question: Question) -> tuple[tuple[int, ...], str]:
         """The question's printed pages for this submission, and the grader's note.
-        The override is the artifact (submission, question, 'pages'): `{'pages': [...], 'note': str}`."""
+        The override is the row (submission, question, 'pages'): `{'pages': [...], 'note': str}`."""
         o = self.store.get(submission, question.id, 'pages')
         if o and o.body.get('pages'):
             return tuple(o.body['pages']), o.body.get('note') or ""

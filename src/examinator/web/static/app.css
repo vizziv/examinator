@@ -197,7 +197,6 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 
 /* --- panels --- */
 .panel, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; box-shadow: var(--shadow); }
-.panel.attention { border-color: color-mix(in srgb, var(--unv-ink) 45%, var(--panel)); }
 details.panel > summary { margin: -5px -8px; padding: 5px 8px; border-radius: 6px; }
 details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0; }
 .plabel, .pname { color: var(--muted); font-size: 11.5px; font-weight: 600; min-width: 3.5em; }
@@ -373,7 +372,6 @@ progress { width: 20em; vertical-align: middle; accent-color: var(--accent); }
 #pv { position: relative; flex-basis: 100%; width: 420px; max-width: 420px; line-height: 0; border: 1px solid var(--line); }
 #pv-img { width: 100%; height: auto; }
 #pv-rect { position: absolute; border: 2px solid var(--accent2); background: color-mix(in srgb, var(--accent2) 8%, transparent); pointer-events: none; }
-body.scanwin #pages { padding: 0; }
 
 /* settings: keyboard */
 #keymap { border-collapse: collapse; flex-basis: 100%; max-width: 34em; }
@@ -496,7 +494,6 @@ details.fx-q > summary .tag { font-weight: 600; color: var(--accent2-text); back
 .fx-snips pre { margin: 2px 0; white-space: pre-wrap; }
 #filter-sum { max-width: 40em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #filter-sum.on { color: var(--accent2-text); background: var(--accent2-soft); padding: 1px 7px; border-radius: 9px; font-weight: 600; }
-body.scanwin #pages > p { margin: 0; padding: 8px 10px; }
 
 /* --- scans: intake --- */
 label.btn { display: inline-block; font: inherit; border: 1px solid var(--line-strong); border-radius: 4px; padding: 2px 8px;

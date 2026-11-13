@@ -144,6 +144,29 @@ def test_orientation_resolves_source_then_submission_then_sheet(stacked):
     assert at(5) == at(0).then(QUARTER)
 
 
+def test_a_sheet_that_changes_submission_keeps_how_it_looks(stacked):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    step = lambda op, **kw: intake.edit(ws, one.id, op, expect_rev=intake.plan(ws, one.id).rev, author='t', **kw)
+    body = lambda: intake.plan(ws, one.id).body
+    looks = lambda: [intake.sheet_orient(body(), i) for i in range(one.pages)]
+    step('turn', k=2)                               # submission 2: sheets 8..11, upside down
+    step('turn', k=2)
+    step('turn_page', sheet=13)                     # and one sheet of submission 3
+    before = looks()
+    assert before[8] == before[11] == HALF and before[12] == Orient() and before[13] == QUARTER
+    step('move', k=3, delta=-1)                     # sheet 11 now starts submission 3
+    assert starts(intake.plan(ws, one.id))[3] == 11 and looks() == before
+    step('move', k=3, delta=1)                      # and back: no sheet needs a turn of its own
+    assert looks() == before and body()['sheet_orient'] == {'13': QUARTER.to_json()}
+    step('cut', sheet=10)                           # a new submission inside the turned one
+    assert looks() == before
+    step('join', k=1)                               # submissions 1 and 2 become one
+    assert looks() == before
+    step('turn', k=1)                               # turning a submission still turns all of it
+    assert all(intake.sheet_orient(body(), i) == before[i].then(QUARTER) for i in range(4, 10))
+
+
 def test_a_turned_page_is_written_upright(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])

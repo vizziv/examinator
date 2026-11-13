@@ -64,6 +64,9 @@ class Services:
     def crop(self, submission, region):
         return self.ws.crop(submission, region)
 
+    def layout(self, submission):
+        return self.ws.layout(submission)
+
     def model(self, prompt, *, images, text, expect, reasoning, tag):
         if self._model is None:
             raise Unavailable("model unavailable")
@@ -151,10 +154,9 @@ class Runner:
 
     # --- read -------------------------------------------------------------------
 
-    def read(self, submission: str, qid: str, *, labels: Sequence[str] | None = None,
-             missing_only: bool = False, include_protected: bool = False, fresh: bool = False,
+    def read(self, submission: str, qid: str, *, missing_only: bool = False, include_protected: bool = False, fresh: bool = False,
              reasoning: bool = False) -> list[Outcome]:
-        """Read a question's fields (or some of them) and write what was read.
+        """Read a question's fields and write what was read.
         Values a person settled are skipped unless `include_protected`; with
         `missing_only`, only fields with no value are read. One outcome per reader run."""
         q = self.exam.questions[qid]
@@ -169,8 +171,6 @@ class Runner:
             targets = []
             for f in fields:
                 v = have.get(key(qid, f.label))
-                if labels is not None and f.label not in labels:
-                    continue
                 if missing_only and v is not None:
                     continue
                 if v is not None and v.settled == 'person' and not include_protected:

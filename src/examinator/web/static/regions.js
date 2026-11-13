@@ -124,10 +124,10 @@
       ? await request(`/s/${encodeURIComponent(sub)}/${encodeURIComponent(document.getElementById('question').dataset.q)}/region`,
                       {label: r.label, value: clear ? null : r.draft, rev: r.own_rev ?? null})
       : await request(clear ? '/exam/clear' : '/exam/set', {path: r.path, value: r.draft, rev: r.rev ?? null, sub});
-    if (res.status === 409) {    // keep the draft; saving again overwrites knowingly
+    if (res.status === 409) {    // keep the draft, take the revision saved now: saving again overwrites knowingly
       const cur = res.body.current || {};
-      if (own) r.own_rev = undefined; else r.rev = cur.rev ?? null;
-      say(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}${cur.value ? ': ' + JSON.stringify(cur.value) : ''}; reload`, true);
+      if (own) r.own_rev = cur.rev ?? null; else r.rev = cur.rev ?? null;
+      say(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}${cur.value ? ': ' + JSON.stringify(cur.value) : ''}; save again to overwrite`, true);
       return;
     }
     if (!res.ok) { say(res.body.error || "failed", true); return; }
@@ -164,7 +164,12 @@
     const body = {level, value: clear ? null : pa.draft};
     if (level !== 'all') body.rev = (level === 'own' ? pa.own_rev : pa.scan_rev) ?? null;
     const res = await request(`/s/${encodeURIComponent(sub)}/print-area`, body);
-    if (res.status === 409) { say("changed elsewhere; reload", true); return; }
+    if (res.status === 409) {    // as for a region: take the revision saved now, keep the draft
+      const cur = res.body.current || {};
+      if (level === 'own') pa.own_rev = cur.rev ?? null; else if (level === 'scan') pa.scan_rev = cur.rev ?? null;
+      say(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}; save again to overwrite`, true);
+      return;
+    }
     if (!res.ok) { say(res.body.error || "failed", true); return; }
     const before = pa.window;
     Object.assign(pa, res.body.print_area);

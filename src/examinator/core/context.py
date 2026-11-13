@@ -21,6 +21,8 @@ from .result import Undecided
 if TYPE_CHECKING:
     from PIL.Image import Image
 
+    from ..pdf.layout import Layout
+
 
 class Unavailable(RuntimeError):
     """Asked for something this run cannot provide (pages, the model)."""
@@ -64,6 +66,7 @@ class Services(Protocol):
 
     def pages(self, submission: str, question: Question) -> list['Image']: ...
     def crop(self, submission: str, region: Region) -> 'Image': ...
+    def layout(self, submission: str) -> 'Layout': ...
     def model(self, prompt: str, *, images: Sequence['Image'], text: str | None,
               expect: str, reasoning: bool, tag: tuple[str, str, str]) -> str: ...
     def memo(self, submission: str, key: str) -> str | None: ...
@@ -86,6 +89,10 @@ class ReadContext:
     def crop(self, region: Region) -> 'Image':
         """One rendered region, mapped through the scan layout."""
         return self._services().crop(self.submission, region)
+
+    def layout(self) -> 'Layout':
+        """This submission's scan layout (cover pages, print area): what a crop depends on."""
+        return self._services().layout(self.submission)
 
     def model(self, prompt: str, *, images: Sequence['Image'] = (), text: str | None = None,
               expect: str = 'text', step: str = 'read') -> str:

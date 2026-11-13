@@ -46,7 +46,9 @@ printed word; possibly with a `[REVIEW: ...]` marker).
 | **settled** | Someone stands behind the value: a person, or the reader that vouched for it. No badge. |
 
 One attribute, `settled by`: nobody, the reader, or a named person. That is the
-whole state. Choices made here:
+whole state. (In the code and on screen these are 'not_read', 'unverified' and
+'verified': `status.FIELD_STATES`, and the `settled` attribute of a `Value`.)
+Choices made here:
 
 - **"Typed by a person" and "read, then verified by a person" are the same
   state.** A person who sets a value settles it. Who wrote a value is history,
@@ -160,7 +162,9 @@ no value yet, and the app can reload the exam package without losing state.
 - The difference between a check's own question and other questions.
 - "Waits on another question", the trusted-fields list, verification per
   question, and the special no-grade question: it is fields with no check.
-- Names and IDs are unaffected: they stay their own hard-coded thing.
+- Names and IDs are not fields: who wrote a submission is `core.identity`. Its
+  name and ID boxes are exam data, edited like a field's region (overrides
+  under `@identity`), but they have no value, check or status here.
 
 ## Open, to settle by trying
 
@@ -184,7 +188,7 @@ no value yet, and the app can reload the exam package without losing state.
 | Printed reader; handwriting readers | `core/printed.py`; `std/readers.py` |
 | Overrides (exam-wide); a field's region for one submission | `core/overrides.py`; `Workspace.set_region` |
 | Batch: reads, then computes | `core/batch.py` |
-| One row table, keyed `(submission, kind, name)` | `core/store.py` |
+| One row table, addressed `(submission, name, kind)` | `core/store.py` |
 
 Choices made while building it:
 

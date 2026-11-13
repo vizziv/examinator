@@ -2,7 +2,7 @@
 
 An exam package may ship `fixtures.py` with `cases() -> list[Case]`. Each case
 becomes one fabricated submission: a scan-like PDF (cover pages, the printed
-page inset in the scan window, answers typed into the field regions), a roster
+page inset in the print area, answers typed into the field regions), a roster
 row, and scripted model replies, so the whole pipeline runs offline. Each
 reader writes its own replies (`reader.script(fields, given)`).
 
@@ -218,7 +218,7 @@ def _draw_answers(exam: Exam, case: Case, pages: list[Image.Image]) -> None:
 
 
 def _scan(exam: Exam, printed: list[Image.Image]) -> list[Image.Image]:
-    """Inset each printed page in the scan window and prepend cover pages."""
+    """Inset each printed page in the print area and prepend cover pages."""
     w, h = PAGE
     l, t, r, b = exam.scan_window
     box = (l * w // 1000, t * h // 1000, r * w // 1000, b * h // 1000)

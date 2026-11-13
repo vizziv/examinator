@@ -8,8 +8,11 @@ so edits keep history and carry revisions like everything else a grader edits.
 The plan also says how the sheets are turned, at three levels, each a turn (and
 mirror) added to the one above it: the whole source (`orient`), a submission
 (`core.split` entries' `orient`) and one sheet (`sheet_orient`, by sheet). A sheet
-is shown as `sheet_orient(body, i)` composes them; nothing else resolves it.
-Pages are written upright; after intake nothing knows orientation existed.
+is shown as `sheet_orient(body, i)` composes them; nothing else resolves it. A
+split edit that moves a sheet into another submission keeps how it looks (its
+own turn makes up the difference). Pages are written upright, and what intake
+made records each sheet's orientation (`Made.orient`), which identity uses to
+tag model calls; nothing downstream turns a page again.
 
 Accepting a plan writes the PDFs whose sheets (or orientation) changed and
 records, per submission, which sheets of which source it holds. A submission
@@ -37,7 +40,7 @@ from PIL import Image
 
 from ..pdf import pages as pdf_pages, render
 from ..pdf.layout import Layout
-from ..pdf.orient import IDENTITY, MIRROR, QUARTER, Orient
+from ..pdf.orient import ALL, IDENTITY, MIRROR, QUARTER, Orient
 from . import identity, reading, split
 from .defs import Landmark, digest
 from .reading import normalize
@@ -205,7 +208,7 @@ class LandmarkReader:
         image = None
         failed = False
         for lm in exam.landmarks:
-            key = reading.memo_key('landmark', lm.name, digest(lm), list(self.layout.window), o.code, i)
+            key = reading.region_key('landmark', lm.name, digest(lm), self.layout, o.code, i)
             hit = ws.store.memo(self.src.id, key)
             if hit is None:
                 if image is None:
@@ -343,10 +346,36 @@ def _turn_sheet(body: Mapping, n: int, sheet: Any, by: Orient) -> dict:
     return body
 
 
+def _keep_appearance(old: Mapping, new: Mapping, n: int) -> dict:
+    """`new` (a split edit of `old`) with every sheet turned as it was: a sheet that
+    lands in another submission would take that submission's turn, so its own
+    turn makes up the difference (and is dropped where none is needed)."""
+    new = dict(new)
+    own = dict(new.get(SHEET_ORIENT) or {})
+    bare = {**new, SHEET_ORIENT: {}}
+    for i in range(n):
+        was = sheet_orient(old, i)
+        if sheet_orient(new, i) == was:
+            continue
+        base = sheet_orient(bare, i)
+        fix = next(o for o in ALL if base.then(o) == was)
+        if fix.identity:
+            own.pop(str(i), None)
+        else:
+            own[str(i)] = fix.to_json()
+    if own:
+        new[SHEET_ORIENT] = own
+    else:
+        new.pop(SHEET_ORIENT, None)
+    return new
+
+
 def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | None = None,
          sheet: int | None = None, delta: int | None = None) -> Row:
     """One person's edit of a plan (see `core.split`), against the revision they saw.
-    Orientation, each a quarter turn clockwise more: `turn_source` (the whole
+    A split edit (move, cut, join, ...) leaves every sheet looking as it did, even
+    one that changes submission (`_keep_appearance`). Orientation, each a quarter
+    turn clockwise more: `turn_source` (the whole
     source; `flip_source` mirrors it), `turn` (submission `k`; `flip` mirrors it,
     `upright` drops its own), `turn_page` (one `sheet`)."""
     src = source(ws, id)
@@ -357,7 +386,7 @@ def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | 
         raise Conflict("the plan changed")
     n = src.pages
     if op in _SPLIT_EDITS:
-        body = _SPLIT_EDITS[op](cur.body, n, k, sheet, delta)
+        body = _keep_appearance(cur.body, _SPLIT_EDITS[op](cur.body, n, k, sheet, delta), n)
     elif op in _SOURCE_TURNS:
         body = _turn_source(cur.body, n, _SOURCE_TURNS[op])
     elif op in _ENTRY_TURNS:

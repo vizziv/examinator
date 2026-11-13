@@ -170,12 +170,22 @@ def test_post_needs_token(site):
     body = {'values': {'a/x': {'text': '9', 'rev': rev}}}
     assert site.client.post('/s/s1/a/save', json=body).status_code == 403
     assert site.client.post('/s/s1/a/save', json=body, headers={'X-Token': 'wrong'}).status_code == 403
-    assert site.client.post('/settings', data={'token': 'wrong', 'cover_pages': '1'}).status_code == 403
+    assert site.client.post('/settings', data={'token': site.token, 'cover_pages': '1'}).status_code == 403
     assert site.client.post('/runs/stop').status_code == 403
     assert site.value('s1', 'a/x').text == '1'
-    r = site.client.post('/s/s1/b/decide', data={'token': site.token, 'check': 'check', 'value': 'yes',
-                                                 'rev': '', 'seen': json.dumps(site.seen('s1', 'b'))})
-    assert r.status_code == 400 or r.status_code == 200      # a form: seen arrives as text
+    # the token header, then JSON only: no forms, no token in the body
+    seen = site.seen('s1', 'b')
+    r = site.client.post('/s/s1/b/decide', data={'check': 'check', 'value': 'yes', 'rev': '', 'seen': json.dumps(seen)},
+                         headers={'X-Token': site.token})
+    assert r.status_code == 415 and site.ws.store.get('s1', 'b/check', 'decision') is None
+    r = site.client.post('/s/s1/b/decide', content=b'{"check": ', headers={'X-Token': site.token,
+                                                                          'Content-Type': 'application/json'})
+    assert r.status_code == 400
+    assert site.post('/runs/stop', [1]).status_code == 400                 # not an object
+    big = {'values': {}, 'pad': 'x' * (2 << 20)}
+    assert site.post('/s/s1/a/save', big).status_code == 413
+    # a body is not even read without the token
+    assert site.client.post('/s/s1/a/save', json=big).status_code == 403
 
 
 def test_bad_host_and_origin(site):
@@ -304,6 +314,42 @@ def test_a_decision_against_a_changed_page_is_refused(site):
     assert site.ws.store.get('s1', 'a/x', 'decision') is None
 
 
+def page_seen(html):
+    """What question.js sends as `seen`: every input on the page, at the revision it shows."""
+    return {k: int(rev) if rev else None
+            for k, rev in re.findall(r'<(?:input|textarea) [^>]*data-key="([^"]+)" data-rev="([^"]*)"', html)}
+
+
+def test_a_decision_is_made_against_what_the_page_shows(site):
+    assert all(o.ok for o in site.runner.read('s1', 'a'))
+    site.runner.refresh('s1', questions=['a'])              # 'a' reads the printing, not read yet
+    seen = page_seen(site.get('/s/s1/a').text)
+    assert set(seen) == set(site.runner.page('s1', 'a'))   # other questions' fields included
+    assert seen['p/c1'] is None and seen['a/x'] is not None
+    assert all(o.ok for o in site.runner.read('s1', 'p'))  # read meanwhile: the page still shows no value
+    r = site.post('/s/s1/a/decide', {'check': 'x', 'value': True, 'rev': None, 'seen': seen})
+    assert r.status_code == 409 and site.ws.store.get('s1', 'a/x', 'decision') is None
+    seen = page_seen(site.get('/s/s1/a').text)              # reloaded: now it shows them
+    r = site.post('/s/s1/a/decide', {'check': 'x', 'value': True, 'rev': None, 'seen': seen})
+    assert r.status_code == 200 and site.state('s1', 'a', 'x').state == 'decided'
+
+
+def test_evidence_of_an_outdated_result_is_marked_stale(site):
+    site.run_all()
+    store = site.ws.store
+    row = store.get('s1', 'a/x', 'result')
+    store.write('s1', 'a/x', 'result', {**row.body, 'blocks': [{'type': 'note', 'text': "evidence"}]}, origin='auto')
+    assert site.decide('s1', 'a', 'x', True).status_code == 200
+    html = site.get('/s/s1/a').text
+    assert 'class="panel evidence"' in html and 'evidence stale' not in html
+    site.runner.set('s1', 'p', 'c1', 'two', author='other')     # the result (and the decision) is outdated now
+    assert site.state('s1', 'a', 'x').state == 'decided_outdated'
+    assert 'class="panel evidence stale"' in site.get('/s/s1/a').text
+    site.decide('s1', 'a', 'x', True)                           # decided again: the result is still outdated
+    assert site.state('s1', 'a', 'x').state == 'decided'
+    assert 'class="panel evidence stale"' in site.get('/s/s1/a').text
+
+
 def test_read_and_check_from_the_page(site):
     r = site.post('/s/s1/a/read', {})
     assert r.status_code == 200 and site.wait(r.json()['job'])['state'] == 'done'
@@ -345,6 +391,23 @@ def test_a_region_for_this_submission_only(site):
     assert r.status_code == 200 and not r.json()['own']
     assert site.post('/s/s1/p/region', {'label': 'c1', 'value': [1, 500, 0, 10, 10], 'rev': None}).status_code == 400
     assert site.post('/s/s1/p/region', {'label': 'zz', 'value': None, 'rev': None}).status_code == 400
+
+
+def test_a_region_conflict_says_what_is_saved_so_saving_again_overwrites(site):
+    path = '/s/s1/p/region'
+    first = site.post(path, {'label': 'c1', 'value': [1, 0, 0, 500, 100], 'rev': None}).json()
+    site.ws.set_region('s1', site.exam.questions['p'], 'c1', site.exam.questions['p'].fields[1].region,
+                       author='other', expect_rev=first['rev'])            # changed elsewhere
+    r = site.post(path, {'label': 'c1', 'value': [1, 0, 0, 600, 100], 'rev': first['rev']})
+    assert r.status_code == 409
+    cur = r.json()['current']
+    assert cur['who'] == 'other' and cur['value'] == [1, 0, 200, 1000, 400] and cur['rev'] != first['rev']
+    r = site.post(path, {'label': 'c1', 'value': [1, 0, 0, 600, 100], 'rev': cur['rev']})     # knowingly
+    assert r.status_code == 200 and r.json()['value'] == [1, 0, 0, 600, 100]
+    site.ws.set_region('s1', site.exam.questions['p'], 'c1', None, author='other')     # dropped elsewhere
+    r = site.post(path, {'label': 'c1', 'value': [1, 0, 0, 700, 100], 'rev': r.json()['rev']})
+    assert r.status_code == 409 and r.json()['current'] == {'rev': None, 'value': None, 'who': None}
+    assert site.post(path, {'label': 'c1', 'value': [1, 0, 0, 700, 100], 'rev': None}).status_code == 200
 
 
 # --- runs ---
@@ -414,14 +477,17 @@ def test_pages_and_layout_overrides(site):
     assert '/page/s1/1.jpg' in html and 'continues overleaf' in html
     assert site.post('/s/s1/a/pages', {'pages': '7'}).status_code == 400
     assert site.post('/s/s1/a/pages', {'pages': ''}).status_code == 200
-    r = site.post('/s/s1/layout', {'cover_pages': 1, 'print_area': '100 100 900 900'})
-    assert r.status_code == 200
+    assert site.post('/s/s1/print-area', {'level': 'own', 'value': '100 100 900 900', 'rev': None}).status_code == 200
+    assert site.post('/s/s1/layout', {'cover_pages': 1}).status_code == 200
     layout = site.ws.layout('s1')
     assert layout.cover_pages == 1 and layout.window == (100, 100, 900, 900)
-    assert site.post('/s/s1/layout', {'print_area': [900, 0, 100, 1000]}).status_code == 400
-    # cover pages alone keep the print area
+    # cover pages keep the print area, and the print area keeps the cover pages
     assert site.post('/s/s1/layout', {'cover_pages': 2}).status_code == 200
     assert site.ws.layout('s1') == Layout(2, (100, 100, 900, 900))
+    rev = site.ws.store.get('s1', '', 'layout').rev
+    assert site.post('/s/s1/print-area', {'level': 'own', 'value': [0, 0, 1000, 1000], 'rev': rev}).status_code == 200
+    assert site.ws.layout('s1') == Layout(2, (0, 0, 1000, 1000))
+    assert site.post('/s/s1/layout', {'cover_pages': 'x'}).status_code == 400
 
 
 def test_print_area_levels(site):
@@ -434,13 +500,18 @@ def test_print_area_levels(site):
     assert r.status_code == 200 and r.json()['print_area']['own'] == [100, 100, 900, 900]
     assert all(len(b.split(',')) == 4 for b in r.json()['boxes'].values()) and r.json()['boxes']
     rev = r.json()['print_area']['own_rev']
-    assert pa('own', [0, 0, 1000, 1000], rev=rev + 99).status_code == 409
+    r = pa('own', [0, 0, 1000, 1000], rev=rev + 99)
+    assert r.status_code == 409 and r.json()['current'] == {'rev': rev, 'value': [100, 100, 900, 900], 'who': 'tester'}
     r = pa('scan', [20, 20, 980, 980], rev=None)
     assert r.json()['print_area']['scan'] == [20, 20, 980, 980]
     assert r.json()['print_area']['window'] == [100, 100, 900, 900]          # its own wins
     r = pa('own', None, rev=rev)
     assert r.json()['print_area']['window'] == [20, 20, 980, 980]            # then the scan's
-    assert pa('scan', None, rev=r.json()['print_area']['scan_rev']).status_code == 200
+    scan_rev = r.json()['print_area']['scan_rev']
+    r = pa('scan', [30, 30, 970, 970], rev=None)                             # it exists already
+    assert r.status_code == 409 and r.json()['current']['rev'] == scan_rev
+    assert r.json()['current']['value'] == [20, 20, 980, 980]
+    assert pa('scan', None, rev=scan_rev).status_code == 200
     assert pa('all', [5, 5, 995, 995]).json()['print_area']['window'] == [5, 5, 995, 995]
     assert site.ws.scan_window == (5, 5, 995, 995)
     assert pa('all', None).json()['print_area']['window'] == list(site.exam.scan_window)

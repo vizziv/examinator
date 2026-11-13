@@ -14,7 +14,7 @@ from .client import ModelError, strip_fence
 
 @dataclass(frozen=True)
 class Call:
-    """One call to the model. `tag` is `(submission, question, stage)`."""
+    """One call to the model. `tag` is `(submission, question, step)`."""
     tag: tuple[str, str, str] | None
     prompt: str
     text: str | None
@@ -25,7 +25,7 @@ class Call:
 
 class FakeModel:
     """Answers from `script`: a callable `(call) -> str | None`, or a dict
-    keyed by `(submission, question, stage)`, `(question, stage)` or `stage`
+    keyed by `(submission, question, step)`, `(question, step)` or `step`
     (the most specific key wins) whose values are strings or callables
     `(call) -> str`. A call with no scripted answer raises `ModelError`."""
 
@@ -50,8 +50,8 @@ class FakeModel:
             return self.script(call)
         if call.tag is None:
             return None
-        submission, question, stage = call.tag
-        for key in ((submission, question, stage), (question, stage), stage):
+        submission, question, step = call.tag
+        for key in ((submission, question, step), (question, step), step):
             if key in self.script:
                 value = self.script[key]
                 return value(call) if callable(value) else value

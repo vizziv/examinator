@@ -10,7 +10,6 @@
     GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
     GET  /raw/{sub}/{q}/{check}/{path}   one evidence 'raw' block, sandboxed
     GET  /jobs/{id}                 background job state
-    GET  /scan                      scan window that follows the question page
     GET  /runs                      batch runs;  POST /runs/preview|start|stop,  GET /runs/status
     GET  /settings                  workspace defaults;  POST /settings
     GET  /exam                      exam data (overrides);  POST /exam/set|clear
@@ -21,9 +20,11 @@
     POST /scans/names/read          read the name and ID boxes with the model (a job)
     GET  /sheet/{src}/{index}.jpg   one sheet of a source (?o= orientation, ?w= width)
 
-Every POST takes a JSON object (or a form), needs the page token, and answers
-JSON: 403 bad token, 404 unknown target, 409 stale revision or plan, 400 input
-a grader should correct. Nothing here keeps module-level state; it all hangs
+Every POST needs the page token in an `X-Token` header and (but the upload)
+takes a JSON object of at most MAX_JSON bytes; it answers JSON: 403 bad token,
+415 not JSON, 413 too large, 404 unknown target, 409 stale revision or plan
+(with `current`, where the page can save again knowingly), 400 input a grader
+should correct. Nothing here keeps module-level state; it all hangs
 off `app.state`.
 """
 from __future__ import annotations
@@ -49,7 +50,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainT
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from ..core import batch, focus, grid, identity, intake, overrides, split
+from ..core import batch, focus, grid, identity, intake, overrides, split, status
 from ..core.context import CheckContext
 from ..core.defs import Bool, Check, Exam, Question, Region, key, split_key
 from ..core.printed import Printed
@@ -64,6 +65,7 @@ from .jobs import Batch, Jobs
 HERE = Path(__file__).parent
 LOOPBACK = ('127.0.0.1', 'localhost', '[::1]')
 MAX_BODY = 400_000          # characters of an edited artifact
+MAX_JSON = 2 << 20          # bytes of one JSON request body
 MAX_UPLOAD = 4 << 30        # bytes of one scanned PDF
 SHEET_WIDTHS = (140, 360, 1000)   # pixel widths a sheet is served at (0: as rendered)
 MAX_ROSTER = 2_000_000      # characters of roster text
@@ -355,7 +357,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     env.globals.update(labels=STATE_LABELS)
     jobs = Jobs()
     # Stored overrides apply from the start, whether or not the caller applied them.
-    with_overrides = overrides.refresh(exam, store)
+    overrides.refresh(exam, store)
     plans: OrderedDict[str, batch.Plan] = OrderedDict()
     lock = threading.Lock()
 
@@ -374,6 +376,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         html = env.get_template(name).render(exam=exam, token=token, root=root, model=have_model(), **ctx)
         return HTMLResponse(html)
 
+    def box(layout: Layout, region) -> str:
+        """Where a region's crop is on its scanned page, as the page's script reads it."""
+        return ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad))
+
     def target(request: Request, need_question: bool = True):
         """The submission and question a path names, looked up; never used as paths."""
         sub = store.submission(request.path_params['sub'])
@@ -386,24 +392,28 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise HTTPException(404)
         return sub, q
 
+    def token_ok(request: Request) -> bool:
+        return hmac.compare_digest(request.headers.get('x-token', '').encode(), token.encode())
+
     def action(fn: Callable[[Request, dict], Any]):
-        """A state-changing endpoint: token, body, and the errors graders can fix."""
+        """A state-changing endpoint: the token header first, then a JSON object
+        of at most MAX_JSON bytes, and the errors graders can fix."""
         async def endpoint(request: Request) -> Response:
-            data: Any = {}
-            try:
-                if 'json' in request.headers.get('content-type', ''):
-                    raw = await request.body()
-                    data = json.loads(raw) if raw else {}
-                else:
-                    data = dict(await request.form())
-            except Exception:
-                data = None
-            sent = request.headers.get('x-token') or (data.get('token') if isinstance(data, dict) else '') or ''
-            if not hmac.compare_digest(str(sent).encode(), token.encode()):
+            if not token_ok(request):
                 return JSONResponse({'error': "bad token"}, 403)
+            if request.headers.get('content-type', '').split(';')[0].strip().lower() != 'application/json':
+                return JSONResponse({'error': "expected JSON"}, 415)
+            raw = bytearray()
+            async for chunk in request.stream():
+                raw += chunk
+                if len(raw) > MAX_JSON:
+                    return JSONResponse({'error': "request too large"}, 413)
+            try:
+                data = json.loads(raw) if raw else {}
+            except ValueError:
+                data = None
             if not isinstance(data, dict):
                 return JSONResponse({'error': "bad request body"}, 400)
-            data.pop('token', None)
             try:
                 out = await run_in_threadpool(fn, request, data)
             except Conflict as e:
@@ -454,8 +464,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
                          'complete': row.complete, 'sort': row.points,
                          'hidden': bool(sel) and not focus.matches(table, sel, row.submission.id)})
-        return page('grid.html', rows=rows, columns=columns, questions=list(exam.questions.values()),
-                    focus=focus.active(table, sel), started=started)
+        return page('grid.html', rows=rows, columns=columns, focus=focus.active(table, sel), started=started)
 
     # --- focus ---
 
@@ -505,8 +514,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             index = layout.scan_index(region.page)
             if not 0 <= index < count:
                 return None
-            return {'index': index, 'box': ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad)),
-                    'path': path}
+            return {'index': index, 'box': box(layout, region), 'path': path}
 
         pages, note = ws.selected_pages(sub.id, q)
         # every scanned page, to scroll through; `on` marks this question's
@@ -530,7 +538,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                            'bool': isinstance(spec, Bool), 'min': getattr(spec, 'min', None),
                            'max': getattr(spec, 'max', None), 'counts': spec.counts,
                            'step': 1 if getattr(spec, 'type', None) is int else 'any',
-                           'stored': stored, 'current': st.state not in ('outdated', 'not_run'),
+                           'stored': stored,
+                           'current': stored is not None and status.current(
+                               stored, sheet.values, defn=exam.check_hash(q, c), code=exam.code_hash),
                            'params': stored.params if stored else {},
                            'plots': [b for b in blocks if b['type'] == 'plot'],
                            'rest': [b for b in blocks if b['type'] != 'plot']})
@@ -560,7 +570,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'typed': reader is None,
                 'crop': crop(region, overrides.join(qid, 'fields', label, 'region')),
                 'judged': judged.get(label, []) if qid == q.id else []})
-        seen = {f['key']: (f['rev'] if f['read'] else None) for f in fields}
         for n, f in enumerate(fields):
             f['n'] = n
         unsettled = [f for f in fields if f['read'] and f['settled'] is None and not f['marker']]
@@ -601,7 +610,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                               'edited': any(e['overridden'] for e in entries_)})
         readers_ = [r for r, _ in q.groups()]
         return page(
-            'question.html', sub=sub, q=q, checks=checks, fields=fields, seen=seen, waiting=waiting, waiting_other=waiting_other,
+            'question.html', sub=sub, q=q, checks=checks, fields=fields, waiting=waiting, waiting_other=waiting_other,
             scans=scans, history=history[:60], count=count, keyed=keyed,
             can_read=bool(readers_), off=bool(readers_) and not have_model(),
             pages=pages, note=note, pages_default=q.pages, layout=layout,
@@ -716,7 +725,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             if not (isinstance(value, list) and len(value) == 5):
                 raise Bad("a region is [page, left, top, right, bottom]")
             region = Region(*[_int(v, "region", 0, 1000) for v in value])
-        ws.set_region(sub.id, q, label, region, author=who(request), expect_rev=_rev(data))
+        try:
+            ws.set_region(sub.id, q, label, region, author=who(request), expect_rev=_rev(data))
+        except Conflict as e:
+            raise _row_conflict(e, sub.id, key(q.id, label), 'region', 'region') from None
         row = store.get(sub.id, key(q.id, label), 'region')
         r = ws.region(sub.id, q, label)
         return {'value': [r.page, r.left, r.top, r.right, r.bottom] if r else None,
@@ -735,15 +747,13 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return {'job': refresh(sub.id, q.id)}
 
     def set_layout(request, data):
-        """This submission's cover pages (empty: the default); its print area too, if sent."""
+        """This submission's cover pages (empty: the default); its print area is kept
+        (that is `set_print_area`'s)."""
         sub, _ = target(request, need_question=False)
         cover = data.get('cover_pages')
         cover = None if cover in (None, '') else _int(cover, "cover pages", 0, 99)
-        if 'print_area' in data:
-            window = _window(data.get('print_area'))
-        else:
-            kept = store.get(sub.id, '', 'layout')
-            window = (kept.body or {}).get('scan_window') if kept else None
+        kept = store.get(sub.id, '', 'layout')
+        window = (kept.body or {}).get('scan_window') if kept else None
         ws.set_layout(sub.id, cover_pages=cover, scan_window=window, author=who(request))
 
     def print_levels(sid: str) -> dict:
@@ -769,13 +779,19 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         if level == 'own':
             cur = store.get(sub.id, '', 'layout')
             cover = (cur.body or {}).get('cover_pages') if cur else None
-            ws.set_layout(sub.id, cover_pages=cover, scan_window=window, author=who(request),
-                          expect_rev=_rev(data))
+            try:
+                ws.set_layout(sub.id, cover_pages=cover, scan_window=window, author=who(request),
+                              expect_rev=_rev(data))
+            except Conflict as e:
+                raise _row_conflict(e, sub.id, '', 'layout', 'scan_window') from None
         elif level == 'scan':
             source = ws.source_of(sub.id)
             if source is None:
                 raise Bad("this submission was not split from a scan")
-            ws.set_source_window(source, window, author=who(request), expect_rev=_rev(data))
+            try:
+                ws.set_source_window(source, window, author=who(request), expect_rev=_rev(data))
+            except Conflict as e:
+                raise _row_conflict(e, source, '', 'print_area', 'scan_window') from None
         elif level == 'all':
             if window is None:
                 ws.clear_scan_window()
@@ -789,8 +805,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             for f in q.fields:
                 r = ws.region(sub.id, q, f.label)
                 if r is not None:
-                    boxes[overrides.join(qid, 'fields', f.label, 'region')] = ','.join(
-                        f'{v:.4f}' for v in layout.box(r, exam.crop_pad))
+                    boxes[overrides.join(qid, 'fields', f.label, 'region')] = box(layout, r)
         return {'print_area': print_levels(sub.id), 'boxes': boxes}
 
     # --- pages, raw blocks, jobs ---
@@ -862,12 +877,13 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             current: Batch | None = request.app.state.batch
             if current is not None and current.active:
                 raise Conflict("a run is already in progress")
-            fresh = batch.plan(exam, store, plan.selection, model_available=have_model(), regions=ws.fields)
-            if fresh.token != plan.token:
-                raise Conflict("the preview is out of date; preview again")
-            request.app.state.batch = Batch(batch.BatchRun(
-                runner, plan, parallel=_int(data.get('parallel', 2), "parallel", 1, 16),
-                reasoning=bool(data.get('reasoning'))))
+            run = batch.BatchRun(runner, plan, parallel=_int(data.get('parallel', 2), "parallel", 1, 16),
+                                 reasoning=bool(data.get('reasoning')))
+            try:
+                run.check()             # here, to answer at once; the run itself does not plan again
+            except batch.StalePlan:
+                raise Conflict("the preview is out of date; preview again") from None
+            request.app.state.batch = Batch(run)
             request.app.state.batch.start()
         return {'total': plan.count('run')}
 
@@ -916,8 +932,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         active = [{'path': p, 'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')}
                   for p, o in stored.items()]
         return page('exam.html', questions=questions, active=active, skipped=skipped,
-                    lines=overrides.describe_changes(exam, store),
-                    startup=[s.path for s in with_overrides])
+                    lines=overrides.describe_changes(exam, store))
 
     def _path(data: dict) -> str:
         path = data.get('path')
@@ -948,6 +963,14 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         o = store.overrides().get(path)
         e.current = {'rev': o.rev if o else None, 'value': o.value if o else None,
                      'who': (o.author or '?') if o else None}
+        return e
+
+    def _row_conflict(e: Conflict, owner: str, name: str, kind: str, field: str) -> Conflict:
+        """As `_conflict`, for a row of one submission or scan (a region, a print area):
+        what is saved now, so that saving again overwrites it knowingly."""
+        row = store.get(owner, name, kind)
+        e.current = {'rev': row.rev if row else None, 'value': (row.body or {}).get(field) if row else None,
+                     'who': (row.author or '?') if row else None}
         return e
 
     def exam_set(request, data):
@@ -1000,9 +1023,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'removed': intake.removed(ws, src.id), 'cursor': split.cursor(body),
                 'undo': intake.can_undo(ws, src.id), 'idboxes': idboxes(src.id)}
 
-    def box(layout: Layout, region) -> str:
-        return ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad))
-
     def idboxes(source: str | None) -> list[dict]:
         """Where the identity boxes are on a sheet of a source (the plan adds cover sheets)."""
         layout = Layout(0, ws.window_for_source(source))
@@ -1030,8 +1050,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return JSONResponse(plan_view(the_source(request)))
 
     async def scans_upload(request: Request) -> Response:
-        sent = request.headers.get('x-token') or ''
-        if not hmac.compare_digest(sent.encode(), token.encode()):
+        if not token_ok(request):
             return JSONResponse({'error': "bad token"}, 403)
         name = Path(request.query_params.get('name') or 'scan.pdf').name[:200] or 'scan.pdf'
         tmp = intake.sources_dir(ws) / f'.upload-{secrets.token_hex(8)}.part'

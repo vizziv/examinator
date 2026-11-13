@@ -23,8 +23,7 @@ is written '%2F'. Labels with dots ('4.1.a') need no escaping.
 What can be edited is what is plain data: text, numbers, booleans, a `Region`,
 page lists, a printed field's `reads` map, and key entries that are text or a
 choice (an object with an `accepted` tuple of texts). Functions are never
-editable, and neither are names used as addresses, result specs or stage
-wiring. A configuration field can opt out with
+editable, and neither are names used as addresses or result specs. A configuration field can opt out with
 `dataclasses.field(metadata={'override': False})`.
 
 The `Exam` keeps the questions as built (`exam.base`); `apply` recomputes
@@ -396,10 +395,6 @@ def _base_of(exam: Exam) -> dict[str, Question]:
     return exam.base
 
 
-def _item_json(cls: type, x: Any) -> dict:
-    return {k: _to_json(kind, getattr(x, k)) for k, (kind, _, _) in _item_fields(cls).items()}
-
-
 def editable(exam: Exam, question: str | None = None) -> list[Entry]:
     """Every editable value (of one question or exam list ('@<list>'), or of all),
     with base and current values. An item the package does not declare is listed
@@ -455,7 +450,7 @@ def apply(exam: Exam, mapping: Mapping[str, Any]) -> list[Skipped]:
             applied[path] = value
         except (ValueError, KeyError, TypeError) as e:
             skipped.append(Skipped(path, str(e)))
-    exam.overrides = applied     # first: a worker never runs older data than a stage's recorded hash
+    exam.overrides = applied     # first: a worker never runs older data than a result's recorded hash
     for qid, q in live.items():
         if qid.startswith(LIST):
             setattr(exam, qid[len(LIST):], q)

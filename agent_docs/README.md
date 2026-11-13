@@ -125,7 +125,7 @@ You will probably lead a team of subagents. What I would want in your position:
 1. **Read `LESSONS.md` and `EXAM3.md` before `DESIGN.md`.** The design only
    makes sense once you know what graders actually do and what went wrong before.
 2. **Write the interfaces yourself, first, as real stubs.** The exam-definition
-   types, the stage context, the store API, the evidence blocks. Typed
+   types, the reader and check contexts, the store API, the evidence blocks. Typed
    signatures and docstrings, no bodies. Everything else hangs off these, and
    parallel work is only safe once they exist. Expect to revise them once after
    the Exam 3 port; budget for that round.
@@ -162,8 +162,8 @@ boundary, test runner, and a synthetic-workspace generator: blank exam PDFs,
 a fabricated roster, and a scripted fake model.
 *Check:* one command creates a synthetic workspace; tests run.
 
-**M1 — Core, no UI.** Exam definition types, the SQLite store, the stage runner,
-workflow rules, and a command-line entry point that runs stages for a
+**M1 — Core, no UI.** Exam definition types, the SQLite store, the runner,
+workflow rules, and a command-line entry point that reads and checks a
 submission. Uses the fake model.
 *Check:* the toy exam runs end to end from the command line; workflow-rule tests
 cover every row of the table in `DESIGN.md` §7.

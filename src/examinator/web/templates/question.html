@@ -93,7 +93,7 @@
 <div id="split" role="separator" aria-orientation="vertical" title="drag to resize"></div>
 <section id="work"{% if keyed %} class="has-key"{% endif %}>
 
-<div id="parts" data-live data-seen='{{ seen|tojson }}' data-waiting='{{ waiting|tojson }}' data-waiting-other='{{ waiting_other|tojson }}' class="panel">
+<div id="parts" data-live data-waiting='{{ waiting|tojson }}' data-waiting-other='{{ waiting_other|tojson }}' class="panel">
 {% for c in checks %}
 {% set st = c.st %}
 <div class="part">

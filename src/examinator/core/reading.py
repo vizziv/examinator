@@ -29,7 +29,7 @@ def prompt(template: str, ask: str, expected: Iterable[str] = ()) -> str:
 def ask(call: Callable[..., str], template: str, question: str, image: Any,
         expected: Iterable[str] = ()) -> str | None:
     """One reading: `call(prompt, images=[image], expect='json')` (a model's
-    `complete` or a stage context's `model`), reduced to its `value`."""
+    `complete`, perhaps with a tag bound), reduced to its `value`."""
     return json_value(call(prompt(template, question, expected), images=[image], expect='json'))
 
 
@@ -61,5 +61,12 @@ def basis(thing: Any) -> str:
 
 def memo_key(kind: str, name: str, defn: str, *where: Any) -> str:
     """The memo key of one reading: what is read (`kind`, `name`), a digest of its
-    definition, and whatever else the crop depends on (scan window, orientation, ...)."""
+    definition, and whatever else the crop depends on (print area, orientation, ...)."""
     return ':'.join(str(x) for x in (kind, name, defn, *where))
+
+
+def region_key(kind: str, name: str, defn: str, layout: Any, *where: Any) -> str:
+    """The memo key of reading one region under a scan layout (`pdf.layout.Layout`):
+    its print area and cover pages say which scanned page is cropped, and where;
+    `where` adds anything else the crop depends on (a sheet's orientation, its index)."""
+    return memo_key(kind, name, defn, list(layout.window), layout.cover_pages, *where)

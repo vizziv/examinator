@@ -87,6 +87,27 @@ def test_a_field_without_a_region_is_not_read_until_it_has_one(tmp_path):
     ws.close()
 
 
+def test_a_printed_reading_is_remembered_per_crop_and_a_new_print_area_reads_again(env):
+    exam, ws, _ = env
+    replies = {'read:c1': '{"value": "1"}', 'read:c2': '{"value": "i"}'}
+    runner = Runner(exam, ws, model=FakeModel(lambda call: replies[call.tag[2]]))
+
+    def calls():
+        return len([c for c in runner.model.calls if c.tag[1] == 'p'])
+    assert all(o.ok for o in runner.read('s1', 'p'))
+    assert calls() == 2 and value(ws, 's1', 'p/c1').text == 'one'
+    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 2        # the same crops: remembered
+    replies.update({'read:c1': '{"value": "2"}', 'read:c2': '{"value": "ii"}'})
+    ws.set_layout('s1', cover_pages=None, scan_window=(50, 50, 950, 950), author='ta')    # another crop
+    assert all(o.ok for o in runner.read('s1', 'p'))
+    assert calls() == 4 and value(ws, 's1', 'p/c1').text == 'two'
+    ws.set_layout('s1', cover_pages=1, scan_window=(50, 50, 950, 950), author='ta')       # another page
+    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 6
+    ws.set_layout('s1', cover_pages=None, scan_window=None, author='ta')         # the first crop again
+    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 6
+    assert value(ws, 's1', 'p/c1').text == 'one'
+
+
 def test_a_failed_read_writes_nothing_and_says_why_structurally(env):
     exam, ws, runner = env
     runner.model.script.pop(('a', 'parse'))
@@ -261,3 +282,33 @@ def test_a_decision_needs_a_value_that_fits(env):
         runner.decide('s1', 'a', 'x', None, author='ta')
     with pytest.raises(ValueError):
         runner.decide('s1', 'a', 'x', 3, author='ta')
+
+
+# --- batch ---
+
+def test_a_batch_plan_is_stale_once_its_items_would_change(tmp_path):
+    from examinator.core import batch
+    exam = Exam('r', pages=1)
+    exam.question('info', pages=[1], fields=[Field('c', read=Printed("the cue", reads={'1': 'one'}))])
+    ws = workspace(tmp_path, exam, subs=('s1',))
+    runner = Runner(exam, ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
+    sel = batch.Selection(('s1',), ('info',))
+    plan = batch.plan(exam, ws.store, sel, model_available=True, regions=ws.fields)
+    assert [(i.question, i.action) for i in plan.items] == [('info', 'blocked')]
+    ws.set_region('s1', exam.questions['info'], 'c', Region(1, 0, 0, 500, 100), author='ta')    # no value changed
+    run = batch.BatchRun(runner, plan)
+    with pytest.raises(batch.StalePlan):
+        run.check()
+    with pytest.raises(batch.StalePlan):
+        run.run()
+    assert value(ws, 's1', 'info/c') is None
+    plan = batch.plan(exam, ws.store, sel, model_available=True, regions=ws.fields)
+    assert plan.count('run') == 1
+    run = batch.BatchRun(runner, plan)
+    run.check()                                     # checked just before: the run does not plan again
+    assert all(o.ok for o in run.run()) and value(ws, 's1', 'info/c').text == 'one'
+    run = batch.BatchRun(runner, plan)              # what it planned has happened: stale
+    with pytest.raises(batch.StalePlan):
+        run.run()
+    runner.close()
+    ws.close()

@@ -1,18 +1,18 @@
 """The SQLite store: one file per workspace, keyed rows.
 
-Everything stored per submission is a row `(submission, kind, name)` with a
-JSON body and a revision:
+Everything stored per submission is a row with a JSON body and a revision,
+addressed (as `get`, `write` and `delete` take it) by `(submission, name, kind)`:
 
-    kind        name                body
-    'value'     'question/label'    a field's value: {'text', 'settled', 'by'}   (`core.state`)
-    'result'    'question/check'    a check's result: grade, evidence, what it read
-    'decision'  'question/check'    a person's grade for a check, and what they saw
-    'pages'     'question'          the question's pages for this submission, and a note
-    'region'    'question/label'    a field's region for this submission
-    'layout'    ''                  this submission's cover pages and print area
-    'identity', 'who'   ''          intake: who wrote it (`core.identity`)
-    'split'     ''                  intake: a source's split plan (`submission` is the source id)
-    'print_area' ''                 a source's print area, for every submission from it (`submission`: the source id)
+    name                kind        body
+    'question/label'    'value'     a field's value: {'text', 'settled', 'by'}   (`core.status`)
+    'question/check'    'result'    a check's result: grade, evidence, what it read
+    'question/check'    'decision'  a person's grade for a check, and what they saw
+    'question'          'pages'     the question's pages for this submission, and a note
+    'question/label'    'region'    a field's region for this submission
+    ''                  'layout'    this submission's cover pages and print area
+    ''                  'identity', 'who'   intake: who wrote it (`core.identity`)
+    ''                  'split'     intake: a source's split plan (`submission` is the source id)
+    ''                  'print_area'   a source's print area, for every submission from it (`submission`: the source id)
 
 Every normal read is a keyed lookup. Every write may carry the `rev` the
 writer last saw; a mismatch raises `Conflict` and nothing changes. Revisions

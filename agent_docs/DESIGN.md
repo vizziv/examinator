@@ -225,6 +225,9 @@ create table source (...);  create table made (...);             -- intake
 create table memo (submission, key, value);                      -- model readings (printed fields, landmarks, boxes)
 ```
 
+In code and prose a row is written as the store's methods take it,
+`(submission, name, kind)`: `(sub, 'a/x', 'value')`, `(source id, '', 'split')`.
+
 Bodies: a value `{'text', 'settled': None | 'reader' | 'person', 'by'}`; a
 result `{'grade', 'fields', 'blocks', 'reads': {'question/label': rev | None},
 'defn', 'code', 'params'?}`; a decision `{'grade', 'seen': {'question/label':
@@ -285,7 +288,7 @@ the PDF's identity, the page and the resolution.
 - Page numbers in an exam definition are **printed exam pages**. A workspace has
   a default number of prepended cover pages (scanning services add them), and
   each submission can override it. The exam definition may supply the initial
-  defaults for cover pages and the scan window; the workspace's saved settings
+  defaults for cover pages and the print area; the workspace's saved settings
   take precedence once they exist.
 - A question names the `pages` that hold its answer (what its reader sees).
 - The printed page may be reduced and inset within the scanned page. The
@@ -441,7 +444,7 @@ submission into `pdfs/`; everything downstream is unchanged.
 - **Sources.** Each scanned PDF is kept unchanged as `sources/ID.pdf`, ID the
   start of its SHA-256 (so adding it twice is noticed); a `source` table lists
   them. CLI `examinator intake`, or a streamed upload on the Scans page.
-- **Split plan.** One row per source, `(source id, 'split', '')`, so it has
+- **Split plan.** One row per source, `(source id, '', 'split')`, so it has
   revisions and history like any grader edit. It is a list of *starts* (the
   sheet where each submission begins; its pages run to the next start, less
   dropped sheets), each marked confirmed or a guess, plus dropped sheets,
@@ -455,7 +458,8 @@ submission into `pdfs/`; everything downstream is unchanged.
   or, absent, the reading is the page number. Readings are taken only where
   needed: at the expected boundary, then neighbours back and forth (a page
   number jumps straight to the right place), and memoised per source, sheet,
-  landmark, orientation and scan window (`core/reading.py`, as for printed fields). A
+  landmark, orientation and print area (`core/reading.py`'s `region_key`, the key
+  printed fields and identity boxes use too, with their cover pages). A
   failed model call leaves its sheet unread, not read as nothing; the plan
   counts such sheets (`failed`) and is not marked checked when every call failed.
 - **Doubts** are computed, never stored: too few or too many pages, a first
@@ -512,8 +516,8 @@ submission into `pdfs/`; everything downstream is unchanged.
     roster field (`identity.ASKS`). `identity.boxes(ws)` (the live boxes with a
     region) is what reading, proposals and the pages use.
   - **Reading**: per written submission and box, through the model, memoised
-    per box (region and question), scan window and cover pages. Stored as the
-    row `(submission, 'identity', '')`, `{'fields', 'basis'}` (history like
+    per box (region and question), print area and cover pages. Stored as the
+    row `(submission, '', 'identity')`, `{'fields', 'basis'}` (history like
     any row; unchanged readings are not rewritten); a reading under an old
     box definition is ignored. A background job on the Scans page (and
     `intake --names`) reads only what `identity.unread` lists; hidden
@@ -528,7 +532,7 @@ submission into `pdfs/`; everything downstream is unchanged.
     with a reason, and gives a doubt: `agree`, `id`, `name`, `disagree`,
     `nobody`, `unread`. A person already picked elsewhere is flagged, not
     dropped, and comes after the others among equal scores. Computed on read, cached by reading revision and roster.
-  - **Picking**: every submission is named by its pick `(submission, 'who', '')`
+  - **Picking**: every submission is named by its pick `(submission, '', 'who')`
     (`{'name', 'id', 'email', 'key'}`), written by a person against the
     revision they saw. One programmatic way in, for PDFs handed in already
     split: a file name carrying exactly one roster ID as a whole run of

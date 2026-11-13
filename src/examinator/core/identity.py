@@ -27,7 +27,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from ..pdf.orient import Orient
 from .defs import Identity, digest
-from .reading import ask, basis, memo_key
+from .reading import ask, basis, region_key
 from . import overrides
 from .store import ANY, Row, Submission
 
@@ -269,7 +269,7 @@ def read(ws, sid: str, model, *, fresh: bool = False, prompt: str = IDENTITY_PRO
     layout = ws.layout(sid)
     values, failed = {}, []
     for f in fields:
-        key = memo_key('identity', f.name, basis(f), list(layout.window), layout.cover_pages)
+        key = region_key('identity', f.name, basis(f), layout)
         hit = None if fresh else ws.store.memo(sid, key)
         if hit is None:
             try:

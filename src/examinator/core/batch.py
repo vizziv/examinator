@@ -1,8 +1,10 @@
 """Batch reading: always planned and previewed first.
 
 `plan` lists exactly which questions will be read, what is skipped as
-protected or already present, and what is blocked. `BatchRun.run` refuses a
-plan whose `token` no longer matches the store. A batch has no check step:
+protected or already present, and what is blocked. Its `token` covers the
+selection, the values and the items themselves (so a region drawn or exam data
+changed since the preview counts too); `BatchRun.run` refuses a plan whose
+token no longer matches (`BatchRun.check`, which a caller may run first). A batch has no check step:
 checks recompute by themselves (`Runner.refresh`), and once every read has
 finished the batch refreshes each selected submission, so a check that reads
 another question's fields finds them. Cancelling stops queued work and lets
@@ -41,9 +43,9 @@ class Selection:
 
 @dataclass(frozen=True)
 class Item:
+    """Reading one question of one submission."""
     submission: str
     question: str
-    step: str                         # 'read'
     action: str
     reason: str = ""
 
@@ -71,8 +73,8 @@ def plan(exam: Exam, store: Store, selection: Selection, *, model_available: boo
         for qid in selection.questions:
             q = exam.questions[qid]
 
-            def add(step, action, reason=""):
-                items.append(Item(sub, qid, step, action, reason))
+            def add(action, reason=""):
+                items.append(Item(sub, qid, action, reason))
 
             fields = regions(sub, q) if regions is not None else q.fields
             readable = [f for f in fields if q.reader_of(f.label) is not None]
@@ -85,14 +87,15 @@ def plan(exam: Exam, store: Store, selection: Selection, *, model_available: boo
                           or not getattr(q.reader_of(f.label), 'needs_region', False)]
                 if not todo:
                     protected = any(v is not None and v.settled == 'person' for v in vals)
-                    add('read', 'skip_protected' if protected and not selection.missing_only else 'skip_present')
+                    add('skip_protected' if protected and not selection.missing_only else 'skip_present')
                 elif not placed:
-                    add('read', 'blocked', "no region")
+                    add('blocked', "no region")
                 elif not model_available and any(getattr(q.reader_of(f.label), 'uses_model', True)
                                                  for f in placed):
-                    add('read', 'blocked', "model unavailable")
+                    add('blocked', "model unavailable")
                 else:
-                    add('read', 'run', f"{len(placed)} field{'s' if len(placed) != 1 else ''}")
+                    add('run', f"{len(placed)} field{'s' if len(placed) != 1 else ''}")
+    seen.append([[i.submission, i.question, i.action, i.reason] for i in items])
     token = hashlib.sha256(json.dumps(seen, sort_keys=True).encode()).hexdigest()[:16]
     return Plan(selection, tuple(items), token)
 
@@ -107,25 +110,32 @@ class BatchRun:
     total: int = 0                   # reads, plus one refresh per submission
     done: int = 0
     state: str = 'ready'             # 'ready' | 'running' | 'done' | 'cancelled'
-    current: str = ''                # in progress: 'read' or 'check'
+    current: str = ''                # in progress: 'reading', then 'recomputing'
 
     def __post_init__(self):
         self.total = self.plan.count('run') + len(self.plan.selection.submissions)
         self._cancel = threading.Event()
         self._lock = threading.Lock()
+        self._checked = False
 
     def cancel(self) -> None:
         self._cancel.set()
 
-    def fresh(self) -> Plan:
+    def check(self) -> None:
+        """Raise `StalePlan` if planning again would give another plan. `run` checks
+        unless this was called just before (as the app does, to answer at once)."""
         r = self.runner
-        return plan(r.exam, r.store, self.plan.selection, model_available=r.model is not None,
-                    regions=r.ws.fields)
+        fresh = plan(r.exam, r.store, self.plan.selection, model_available=r.model is not None,
+                     regions=r.ws.fields)
+        if fresh.token != self.plan.token:
+            raise StalePlan("the preview is out of date")
+        self._checked = True
 
     def run(self) -> list[Outcome]:
         """Execute the plan. Blocks until finished or cancelled."""
-        if self.fresh().token != self.plan.token:
-            raise StalePlan("the preview is out of date")
+        if not self._checked:
+            self.check()
+        self._checked = False
         self.state = 'running'
         sel = self.plan.selection
 
@@ -141,8 +151,8 @@ class BatchRun:
             return None if self._cancel.is_set() else self.runner.refresh(sub, questions=sel.questions)
 
         with ThreadPoolExecutor(max_workers=max(1, self.parallel)) as pool:
-            for step, fn, todo in (('read', read, [i for i in self.plan.items if i.action == 'run']),
-                                   ('check', refresh, list(sel.submissions))):
+            for step, fn, todo in (('reading', read, [i for i in self.plan.items if i.action == 'run']),
+                                   ('recomputing', refresh, list(sel.submissions))):
                 self.current = step
                 for outs in pool.map(fn, todo):
                     if outs is None:

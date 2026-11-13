@@ -181,7 +181,7 @@ class Client:
     def body(self, prompt: str, *, images: Sequence[Any] = (), text: str | None = None,
              reasoning: bool = False) -> dict:
         """The request body: the fixed preamble, then one user message holding
-        the stage prompt, the supplied text as a labelled data block, and the
+        the prompt, the supplied text as a labelled data block, and the
         images."""
         content: list[dict] = [{'type': 'text', 'text': prompt}]
         if text is not None:

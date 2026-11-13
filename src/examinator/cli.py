@@ -147,7 +147,7 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
                          public_url=args.public_url)
         # A new or empty workspace opens on Scans, where submissions come from.
         start = '' if ws.store.submissions() else 'scans'
-        print(f"http://127.0.0.1:{args.port}/{start}" + ("" if model else "   (model unavailable: model stages are off)"))
+        print(f"http://127.0.0.1:{args.port}/{start}" + ("" if model else "   (no model: nothing is read)"))
         try:
             uvicorn.run(app, host='127.0.0.1', port=args.port, log_level='warning')
         finally:
@@ -164,7 +164,7 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
             print(f"{action}: {plan.count(action)}")
         if args.dry_run:
             for item in plan.items:
-                print(f"  {item.submission} {item.question} {item.step}: {item.action} {item.reason}")
+                print(f"  {item.submission} {item.question}: {item.action} {item.reason}")
             return 0
         outcomes = batch.BatchRun(runner, plan, parallel=args.parallel).run()
         for o in outcomes:

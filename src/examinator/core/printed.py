@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from .defs import digest, has_marker
-from .reading import json_value, memo_key, normalize, prompt
+from .reading import json_value, normalize, prompt, region_key
 
 if TYPE_CHECKING:
     from .context import ReadContext
@@ -86,7 +86,7 @@ class Printed:
                 reply = ctx.model(self.text(), images=[ctx.crop(f.region)], expect='json', step=f'read:{f.label}')
                 return json.dumps(json_value(reply))
             defn = digest({'region': f.region, 'ask': self.ask, 'reads': self.reads, 'prompt': self.prompt})
-            k = memo_key('printed', f'{ctx.question.id}/{f.label}', defn)
+            k = region_key('printed', f'{ctx.question.id}/{f.label}', defn, ctx.layout())
             out[f.label] = self.value(json.loads(ctx.remember(k, ask)))
         return out
 
