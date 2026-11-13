@@ -139,9 +139,13 @@ class Made:
     """A submission PDF written from a source: which sheets, and how they were turned."""
     submission: str
     source: str
-    pages: tuple[int, ...]
-    orient: Mapping[str, Any]
+    pages: tuple[int | None, ...]   # its PDF's pages: source sheets (None: a blank placeholder)
+    orient: tuple[int, ...]         # each page's quarter turns clockwise, as it was written upright
     made_at: str
+
+
+def _made(r) -> Made:
+    return Made(r[0], r[1], tuple(json.loads(r[2])), tuple(json.loads(r[3]) if r[3] else ()), r[4])
 
 
 def _row(r) -> Row:
@@ -428,19 +432,18 @@ class Store:
     def made(self) -> dict[str, Made]:
         with self._lock:
             rows = self._db.execute('select submission, source, pages, orient, made_at from made').fetchall()
-        return {r[0]: Made(r[0], r[1], tuple(json.loads(r[2])), json.loads(r[3]) if r[3] else {}, r[4])
-                for r in rows}
+        return {r[0]: _made(r) for r in rows}
 
     def made_of(self, submission: str) -> Made | None:
         with self._lock:
             r = self._db.execute('select submission, source, pages, orient, made_at from made where submission=?',
                                  (submission,)).fetchone()
-        return Made(r[0], r[1], tuple(json.loads(r[2])), json.loads(r[3]) if r[3] else {}, r[4]) if r else None
+        return _made(r) if r else None
 
     def set_made(self, m: Made) -> None:
         with self._lock:
             self._db.execute('insert or replace into made values (?,?,?,?,?)',
-                             (m.submission, m.source, json.dumps(list(m.pages)), json.dumps(dict(m.orient)),
+                             (m.submission, m.source, json.dumps(list(m.pages)), json.dumps(list(m.orient)),
                               m.made_at))
 
     def delete_made(self, submission: str) -> None:

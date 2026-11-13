@@ -45,9 +45,11 @@ class Workspace:
         self.store.close()
 
     def sync(self) -> int:
-        """Record every PDF in `pdfs/` as a submission, named by its pick."""
-        from . import identity
-        pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink()]
+        """Record every PDF in `pdfs/` as a submission, named by its pick (but not a
+        file an interrupted Accept left: `intake.unsettled`)."""
+        from . import identity, intake
+        stray = intake.unsettled(self)
+        pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink() and p.stem not in stray]
         known = {s.id for s in self.store.submissions()}
         self.store.put_submissions([Submission(p.stem, "", "", p.name) for p in pdfs if p.stem not in known])
         identity.by_file(self)

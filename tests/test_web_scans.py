@@ -104,6 +104,20 @@ def test_step_through_edits_and_undo(site):
     assert [e['start'] for e in plan['entries']][:2] == [0, 4]
 
 
+def test_the_page_gets_whose_each_sheet_is(site):
+    """The rule lives in Python: the page is told each sheet's submission and printed page."""
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    plan = client.get(f'/scans/{src}/plan').json()
+    plan = post(client, token, f'/scans/{src}/edit', {'op': 'drop', 'sheet': 4, 'rev': plan['rev']}).json()['plan']
+    assert plan['owner'][:9] == [0, 0, 0, 0, -1, 1, 1, 1, 1] and plan['slot'][4] is None
+    assert plan['slot'][5] == {'label': 'p1', 'before': []} and plan['entries'][1]['start'] == 5
+    assert plan['counts'] == {'open': 6, 'write': 6} and 4 not in plan['kept']
+    # a dropped sheet starts nothing, whatever the page asks
+    r = post(client, token, f'/scans/{src}/edit', {'op': 'cut', 'sheet': 4, 'rev': plan['rev']})
+    assert r.status_code == 400
+
+
 def test_check_turn_and_accept(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']

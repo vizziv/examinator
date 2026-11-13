@@ -3,8 +3,9 @@
 Turning an image uses exact `transpose` operations only, so pixels move and
 are never resampled.
 Orientation exists only during intake: pages are written upright into `pdfs/`,
-and nothing downstream turns a page (what intake made records each sheet's
-orientation, which only tags model calls).
+and nothing downstream turns a page. What intake made records each page's
+turn (`Made.orient`, one per page), only to tell whether a submission must be
+written again.
 """
 from __future__ import annotations
 
