@@ -167,21 +167,32 @@
   }
 
   // --- loading and editing the plan (the server says whose each page is and what it counts as) ---
-  async function load(id, keep) {
+  // The cursor: after a person's own edit it stays where they are working; after any other
+  // redraw from the server's plan (load, undo, guess again, read pages, a 409) it is the plan's (`adopt`).
+  function adopt(p) {
+    if (!plan || plan.id !== p.id) say('');
+    plan = p;
+    k = p.cursor ?? p.entries.length;
+    peek = null;
+  }
+  async function load(id) {
     const r = await request(`/scans/${encodeURIComponent(id)}/plan`);
     if (!r.ok) { flash('could not load the scan'); return; }
-    if (!keep || !plan || plan.id !== r.body.id) { say(''); k = r.body.cursor ?? r.body.entries.length; peek = null; }
-    plan = r.body;
+    adopt(r.body);
     if (current === 'split') history.replaceState(null, '', '#src=' + id);
     render();
   }
-  async function send(path, data) {
+  // `whole`: the answer replaces the plan as a whole (undo, guess again), not an edit of the person's.
+  async function send(path, data, whole) {
     const r = await request(`/scans/${encodeURIComponent(plan.id)}/${path}`, {rev: plan.rev, ...data});
     if (!r.ok) {
-      if (r.status !== 409 || !r.body.current) { flash(r.body.error || 'failed'); if (r.status === 409) await load(plan.id, true); }
+      if (r.status !== 409 || !r.body.current) { flash(r.body.error || 'failed'); if (r.status === 409) await load(plan.id); }
       return r;
     }
-    if (r.body.plan) { plan = r.body.plan; render(); }
+    if (r.body.plan) {
+      if (whole) adopt(r.body.plan); else plan = r.body.plan;
+      render();
+    }
     return r;
   }
   const S = steps(() => !!plan && current === 'split', () => { if (plan) render(); });
@@ -234,11 +245,8 @@
   S.register('split-turn-page', {available: () => !done(), run: async () => turned(await edit('turn_page', {sheet: focus()}))});
   S.register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: async () => turned(await edit('turn', {k}))});
   S.register('split-turn-source', {run: async () => turned(await edit('turn_source'))});
-  S.register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {})});
-  S.register('split-guess', {run: async () => {
-    const r = await send('propose', {length: $('s-length').value});
-    if (r && r.ok) { k = plan.cursor ?? plan.entries.length; peek = null; render(); }
-  }});
+  S.register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {}, true)});
+  S.register('split-guess', {run: () => send('propose', {length: $('s-length').value}, true)});
   S.register('split-read', {available: () => MODEL && LANDMARKS, long: true, run: async () => {
     say('reading pages…');
     const r = await send('propose', {check: true, length: $('s-length').value});
