@@ -45,8 +45,9 @@ header followed by (empty). Ignore other questions."""
 
 PARSE_ANSWERS = """\
 Normalize the supplied final-answer transcription into exactly this JSON, without \
-Markdown: {"label": {"value": "answer", "unsure": ""}, ...}, with one entry for \
-every supplied label and no other keys. Scalars use explicit multiplication, ** \
+Markdown: {"<answer label>": {"value": "answer", "unsure": ""}, ...}, with one \
+entry for every answer label listed below, keyed by that label exactly as written \
+(for example "A.1"), and no other keys. Scalars use explicit multiplication, ** \
 powers, sqrt/exp/log and lowercase variable names. An answer transcribed as \
 (empty) has the value "". Where the transcription says (unsure: why), give the \
 best reading as the value and the reason as "unsure"; otherwise "unsure" is "". \
@@ -56,9 +57,9 @@ or assess work. For a choice keep the chosen option text or letter."""
 PARSE_PSEUDOCODE = """\
 Convert the supplied pseudocode transcription to the restricted language below, \
 function by function, and reply with exactly this JSON, without Markdown: \
-{"function_name": {"value": "def function_name(...):\\n    ...", "unsure": ""}, ...}, \
+{"<function name>": {"value": "def <function name>(...):\\n    ...", "unsure": ""}, ...}, \
 one entry for every requested function and every helper function the student \
-wrote, each value the source of that one function. Preserve the student's \
+wrote, keyed by the function's name, each value the source of that one function. Preserve the student's \
 algorithm and all mistakes; copy every constant exactly. Do not repair missing \
 steps, constants, helpers or off-by-one mistakes. You may normalize syntax (e.g. \
 ^ to **) without changing the meaning. A requested function marked (empty), or \
