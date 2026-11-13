@@ -78,8 +78,21 @@ function steps(live, changed) {
   return {register, enqueue, busy: () => busy > 0};
 }
 
-// A crop is a window onto the cached full-page image: <span class="crop" data-src data-box="l,t,r,b">,
-// as wide as the grader's crop size (or its own data-width).
+// A crop is a window onto the cached full-page image: <span class="crop" data-src data-box="l,t,r,b">.
+// Its size follows the region's own size times the grader's crop scale (1 shows a page 1000 px
+// wide), no wider than the fields panel (half of it beside a multi-line value); or its own data-width.
+const CROP_SCALE = 1.2, CROP_MIN = 0.4, CROP_MAX = 3;
+const cropScale = () => Math.min(CROP_MAX, Math.max(CROP_MIN, Number(pref('cropScale', CROP_SCALE)) || CROP_SCALE));
+function setCropScale(value) {
+  setPref('cropScale', Math.min(CROP_MAX, Math.max(CROP_MIN, value)));
+  showCropScale();
+  drawCrops();
+}
+function showCropScale() {
+  const size = document.getElementById('crop-size'), n = document.getElementById('crop-n');
+  if (size) { size.value = cropScale(); fillRange(size); }
+  if (n) n.textContent = cropScale().toFixed(2).replace(/0$/, '') + '×';
+}
 function drawCrop(crop) {
   const [l, t, r, b] = crop.dataset.box.split(',').map(Number);
   let img = crop.firstElementChild;
@@ -91,7 +104,12 @@ function drawCrop(crop) {
     crop.append(img);
   }
   if (!img.naturalWidth || r <= l || b <= t) return;
-  const width = Number(crop.dataset.width) || pref('cropWidth', 360);
+  let width = Number(crop.dataset.width);
+  if (!width) {
+    width = (r - l) * 1000 * cropScale();
+    const room = crop.closest('.fields');
+    if (room) width = Math.min(width, Math.max(160, (room.clientWidth - 4) * (crop.closest('.field.code') ? 0.5 : 1)));
+  }
   const k = width / ((r - l) * img.naturalWidth);
   img.style.width = img.naturalWidth * k + 'px';
   img.style.marginLeft = -l * img.naturalWidth * k + 'px';
@@ -105,7 +123,7 @@ function drawCrops(root) {
 
 // The header spans the window, not the page, so it stays put when a wide page scrolls sideways.
 function sizeHeader() { document.documentElement.style.setProperty('--vw', document.documentElement.clientWidth + 'px'); }
-addEventListener('resize', sizeHeader);
+addEventListener('resize', () => { sizeHeader(); drawCrops(); });
 if (window.ResizeObserver) new ResizeObserver(sizeHeader).observe(document.documentElement);
 // A range's filled part (WebKit has no progress pseudo-element): --fill on the input.
 function fillRange(el) {
@@ -121,8 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
   drawCrops();
   const size = document.getElementById('crop-size');
   if (size) {
-    size.value = pref('cropWidth', 360);
-    fillRange(size);
-    size.addEventListener('input', () => { setPref('cropWidth', Number(size.value)); drawCrops(); });
+    showCropScale();
+    size.addEventListener('input', () => setCropScale(Number(size.value)));
   }
 });

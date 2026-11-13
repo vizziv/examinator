@@ -25,10 +25,6 @@
     msg.textContent = r.ok ? "saved" : r.body.error || "failed";
     msg.className = r.ok ? 'ok' : '';
   }});
-  const size = $('crop-size'), n = $('crop-n');
-  const shown = () => { n.textContent = size.value + ' px'; };
-  size.addEventListener('input', shown);
-  document.addEventListener('DOMContentLoaded', shown);
   preview();
   load();
 

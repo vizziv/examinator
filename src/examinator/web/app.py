@@ -553,7 +553,11 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'crop': crop(region, overrides.join(qid, 'fields', label, 'region')),
                 'judged': judged.get(label, []) if qid == q.id else []})
         seen = {f['key']: (f['rev'] if f['read'] else None) for f in fields}
-        waiting = [f['key'] for f in fields if f['read'] and f['settled'] is None and not f['marker']]
+        for n, f in enumerate(fields):
+            f['n'] = n
+        unsettled = [f for f in fields if f['read'] and f['settled'] is None and not f['marker']]
+        waiting = [f['key'] for f in unsettled if f['own']]           # what Verify here settles
+        waiting_other = [f['key'] for f in unsettled if not f['own']]
 
         history = []
         for f in fields:
@@ -588,7 +592,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                               'edited': any(e['overridden'] for e in entries_)})
         readers_ = [r for r, _ in q.groups()]
         return page(
-            'question.html', sub=sub, q=q, checks=checks, fields=fields, seen=seen, waiting=waiting,
+            'question.html', sub=sub, q=q, checks=checks, fields=fields, seen=seen, waiting=waiting, waiting_other=waiting_other,
             scans=scans, history=history[:60], count=count, keyed=keyed,
             can_read=bool(readers_), off=bool(readers_) and not have_model(),
             pages=pages, note=note, pages_default=q.pages, layout=layout,

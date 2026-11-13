@@ -277,7 +277,12 @@ a.navbtn.off { visibility: hidden; }
 /* a field: its label and state, the handwriting, and the value right under it */
 .fields { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-start; }
 .field { display: grid; grid-template-columns: minmax(9em, max-content); gap: 2px; }
-.field.code { flex: 1 1 100%; grid-template-columns: minmax(0, 1fr); }
+/* a multi-line value sits beside its handwriting, to compare line by line */
+.field.code { flex: 1 1 100%; grid-template-columns: max-content minmax(16em, 1fr); gap: 2px 8px; align-items: start; }
+.field.code .fhead { grid-column: 1 / -1; }
+.field.code:not(:has(.crop)) { grid-template-columns: minmax(0, 1fr); }
+details.others { margin-top: 6px; }
+details.others > .fields { margin-top: 4px; }
 .fhead { display: flex; gap: 6px; align-items: center; justify-content: space-between; min-height: 18px; }
 .field textarea { width: 100%; tab-size: 4; white-space: pre; line-height: 1.45; }
 .flabel { color: var(--muted); font-family: var(--mono); font-size: 12px; }

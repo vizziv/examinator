@@ -374,7 +374,7 @@ Screens for the first version:
 Details that graders relied on and should survive: keyboard navigation between
 students that keeps the current question; keys for verify, edit and save; a
 separate PDF window that follows the current student and question; drafts that
-are never silently discarded; an adjustable crop size.
+are never silently discarded; an adjustable crop scale (header slider, Ctrl+scroll).
 
 ### Words and colours on screen
 

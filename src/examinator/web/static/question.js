@@ -113,6 +113,8 @@
         if (dirty()) old.querySelector('.notice').hidden = false;
         else {
           const node = document.importNode(fresh, true);
+          const others = node.querySelector('#others');
+          if (others) others.open = !!old.querySelector('#others')?.open;
           old.replaceWith(node);
           snapshot();
           drawCrops(node);
@@ -146,13 +148,13 @@
   }
 
   // Save the values changed here (a person who sets a value verifies it); with `all`,
-  // verify every other value here too. False when something could not be saved or verified
+  // verify this question's other values too (`list`: 'waitingOther' for those read from other questions). False when something could not be saved or verified
   // (a conflict, a review marker), so V stays on this submission.
-  async function save(all) {
+  async function save(all, list = 'waiting') {
     flash('');
     const values = {};
     for (const el of changed()) values[el.dataset.key] = {text: el.value, rev: revOf(el)};
-    const verify = all ? JSON.parse($('parts').dataset.waiting || '[]')
+    const verify = all ? JSON.parse($('parts').dataset[list] || '[]')
       .filter(k => !(k in values))
       .map(k => ({key: k, rev: revOf(inputs().find(i => i.dataset.key === k))})) : [];
     if (!Object.keys(values).length && !verify.length) return true;
@@ -209,6 +211,14 @@
     for (const m of document.querySelectorAll('.fmenu[open]')) if (!m.contains(e.target)) m.open = false;
   });
 
+  // Ctrl+scroll over the work area changes the crop scale (a pinch on a trackpad arrives the same way).
+  $('work').addEventListener('wheel', e => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    setCropScale(cropScale() * Math.exp(-e.deltaY * 0.001));
+  }, {passive: false});
+  $('others')?.addEventListener('toggle', () => drawCrops($('others')));
+
   // --- actions: buttons (data-action) and keys trigger the same ones ---
   const entryOf = ctx => ctx.target?.closest?.('form.entry');
   const link = name => document.querySelector(`a[data-action="${name}"]`);
@@ -236,6 +246,7 @@
     'grade-number': {available: () => !!targetButton('num-set', 'number'),
                      run: ({el}) => (el ? setNumber(el) : target('number').querySelector('input').focus())},
     edit: {available: hasFields, run: () => inputs()[0].focus()},
+    'verify-others': {run: () => save(true, 'waitingOther')},
     // Rare, so in each field's menu: verify or unverify that one value.
     'verify-one': {run: ({el}) => act('save', {values: {}, verify: [{key: el.dataset.key, rev: revOf(el)}]})},
     unverify: {run: ({el}) => act('unverify', {key: el.dataset.key, rev: revOf(el)})},
