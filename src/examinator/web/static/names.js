@@ -16,14 +16,15 @@
   if (!main || !$('names')) return;
   let view = null, order = [], k = 0, ci = 0;
   let want = null;        // a submission to show once loaded (a link from Split or the roster: #sub=)
-  let taken = {};         // roster key -> the submissions it is picked for
+  let taken = {};         // roster key -> the submissions picked for that person (derived by the server)
 
   const live = () => !$('names').hidden && !!view;
   const row = () => (view && k < order.length ? view.byId[order[k]] : null);
   const cand = () => { const r = row(); return r && r.candidates.length ? r.candidates[ci % r.candidates.length] : null; };
   // How sure a proposal is: both agree is information, one of the two waits on a person, the rest are problems.
-  const DOUBT = {agree: '', id: 'unv', name: 'unv', disagree: 'bad', nobody: 'bad', empty: 'bad', unread: ''};
-  const verified = r => !!r.who;
+  const DOUBT = {agree: '', id: 'unv', email: 'unv', name: 'unv', disagree: 'bad', tie: 'bad', nobody: 'bad',
+    unreadable: 'bad', empty: 'bad', unread: ''};
+  const verified = r => !!r.who && !r.who.recheck;
 
   // --- the roster, searched in the browser: sent once with the page ---
   const fold = t => (t || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/['’`]/g, '');
@@ -58,8 +59,7 @@
     if (!r.ok) { flash('could not load names'); return; }
     view = r.body;
     view.byId = Object.fromEntries(view.rows.map(x => [x.sub, x]));
-    taken = {};
-    for (const x of view.rows) if (x.who && x.who.key) (taken[x.who.key] = taken[x.who.key] || []).push(x.sub);
+    taken = view.taken;
     // The order is fixed when first seen, so verifying does not reshuffle what is ahead.
     const known = new Set(order);
     // New submissions join the end: those with a proposal (V takes it) before those needing typing.
@@ -81,39 +81,42 @@
   }
   function go(j) { k = Math.max(0, Math.min(j, order.length)); ci = 0; pick.value = ''; hi = 0; render(); }
 
-  // Name the submission shown; afterwards one line says what was done, with an undo.
-  async function name(text) {
-    const r = row();
-    if (!r) return;
-    const before = r.who ? r.who.key || r.who.name : '';
-    const res = await request('/scans/who', {sub: r.sub, text, rev: r.rev});
-    if (!res.ok) { flash(res.body.error || 'failed'); await load(); return; }
-    said(r.sub, res.body.who.name, before);
+  // Naming is said about what is shown, when the key is pressed (or the item clicked): the
+  // submission, its pick's revision as seen, and one of {key} (a roster person), {text}
+  // (someone typed in), {restore} (undo) or nothing (unname). A statement about a revision
+  // that has since changed (Enter twice, a double click) does nothing.
+  const about = what => { const r = row(); return r ? {sub: r.sub, rev: r.rev, ...what} : null; };
+  async function name(said, next = true) {
+    const r = view.byId[said.sub];
+    if (!r || r.rev !== said.rev) return;
+    const here = row() === r, before = r.who ? r.who.name : '', was = r.rev;
+    const res = await request('/scans/who', said);
+    if (!res.ok) { flash(res.status === 409 ? 'changed elsewhere' : res.body.error || 'failed'); await load(); return; }
+    const now = res.body.who;
+    report(said.sub, now.name, before, was == null ? {sub: said.sub, rev: now.rev} : {sub: said.sub, rev: now.rev, restore: was});
     await load();
-    go(nextOpen(order, k, s => !verified(view.byId[s])));
+    if (next && here && row() && row().sub === said.sub) go(nextOpen(order, k, s => !verified(view.byId[s])));
   }
-  function said(sub, who, before) {
+  // One line says what was done, with an undo: itself a statement, made now.
+  function report(sub, who, before, undoing) {
     const undo = make('button', {type: 'button', className: 'quiet', textContent: 'undo', title: before ? `back to ${before}` : 'unname it'});
     undo.addEventListener('click', () => S.enqueue(async () => {
-      const r = view.byId[sub];
-      const res = await request('/scans/who', {sub, text: before, rev: r ? r.rev : null});
-      if (!res.ok) flash(res.body.error || 'failed');
       $('w-said').replaceChildren();
-      await load();
+      await name(undoing, false);
       go(order.indexOf(sub));
     }));
     $('w-said').replaceChildren(`${sub} → ${who || 'nobody'} · `, undo);
   }
 
   const S = steps(live, () => { if (view) render(); });
-  S.register('names-verify', {available: () => !!cand(), run: () => name(cand().key)});
+  S.register('names-verify', {available: () => !!cand(), bind: () => about({key: cand().key}), run: said => name(said)});
   S.register('names-down', {available: () => !!row() && row().candidates.length > 1, run: () => { ci += 1; render(); }});
   S.register('names-up', {available: () => !!row() && row().candidates.length > 1,
     run: () => { ci += row().candidates.length - 1; render(); }});
   S.register('names-skip', {available: () => k < order.length, run: () => go(k + 1)});
   S.register('names-back', {available: () => k > 0, run: () => go(k - 1)});
   S.register('names-type', {available: () => !!row(), run: () => { pick.focus(); pick.select(); }});
-  S.register('names-read', {available: () => !!main.dataset.model && !!view && view.fields.length > 0, long: true, run: async () => {
+  S.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, long: true, run: async () => {
     const r = await request('/scans/names/read', {});
     if (!r.ok) { flash(r.body.error || 'failed'); return; }
     $('msg').hidden = !r.body.n;
@@ -158,9 +161,8 @@
     }));
   }
   function choose(j) {
-    const x = items[j];
-    if (!x) return;
-    S.enqueue(() => name(x.free || x.key));
+    const x = items[j], said = x && about(x.free ? {text: x.free} : {key: x.key});
+    if (said) S.enqueue(() => name(said));
   }
   pick.addEventListener('input', () => { hi = 0; renderList(); });
   pick.addEventListener('focus', renderList);
@@ -175,7 +177,7 @@
       else { ci = hi; render(); }            // over the proposals: the one shown large follows
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      choose(hi);
+      if (!e.repeat) choose(hi);           // held down: once
     } else if (e.key === 'Escape' && pick.value) {
       e.preventDefault();                    // first Escape clears, the next leaves the box
       pick.value = '';
@@ -371,7 +373,7 @@
     input.addEventListener('keydown', e => {
       if (e.key !== 'Enter' || e.isComposing) return;
       e.preventDefault();
-      if (v && input.value === v.text) return;
+      if (e.repeat || (v && input.value === v.text)) return;
       S.enqueue(() => saveValue(r, name, {values: {[`@identity/${name}`]: {text: input.value, rev: v ? v.rev : null}}}));
     });
     const out = [make('span', {className: 'dim', textContent: name + ' '}), input];
@@ -397,8 +399,10 @@
     return el;
   }
   // With no boxes nothing is read: unverified is all there is to say.
-  const doubtTag = r => (r.who ? tag('', 'verified') : !r.crops.length ? tag('unv', 'unverified')
-    : tag(DOUBT[r.doubt], view.doubts[r.doubt]));
+  const doubtTag = r => (r.who && r.who.recheck ? tag('unv', 'pages changed', 'named before its pages changed: confirm again')
+    : r.who ? tag('', 'verified') : !r.crops.length ? tag('unv', 'unverified') : tag(DOUBT[r.doubt], view.doubts[r.doubt]));
+  const whoTags = r => (!r.who ? [] : [r.who.twice ? tag('bad', 'name twice') : '',
+    !r.who.person && view.roster ? tag('', 'not on the roster') : '']);
 
   function renderStep() {
     const r = row(), done = !r;
@@ -406,7 +410,7 @@
     $('w-main').hidden = done;
     $('w-sub').textContent = done ? (order.length ? 'done' : 'no submissions yet') : r.sub;
     $('w-pos').textContent = done ? '' : `${k + 1} of ${order.length}`;
-    $('w-tags').replaceChildren(...(done ? [] : [doubtTag(r), r.who && r.who.twice ? tag('bad', 'name twice') : '']));
+    $('w-tags').replaceChildren(...(done ? [] : [doubtTag(r), ...whoTags(r)]));
     if (done) return;
     // the crops and their values: keep a value being typed in when nothing about it changed
     const typing = document.activeElement && $('w-crops').contains(document.activeElement);
@@ -451,7 +455,7 @@
         make('td', {className: 'mono dim', textContent: read}),
         make('td', {}, r.who ? make('b', {textContent: `${r.who.name}${r.who.id ? ' · ' + r.who.id : ''}`})
           : c ? make('span', {className: 'dim', textContent: `${c.name} · ${c.id}?`}) : ''),
-        make('td', {}, r.who && r.who.twice ? tag('bad', 'name twice') : ''));
+        make('td', {}, ...whoTags(r)));
     });
     $('w-rows').tBodies[0].replaceChildren(...rows);
     $('w-nobody').hidden = !view.nobody.length;
@@ -459,11 +463,11 @@
   }
 
   function render() {
-    const left = view.left, n = view.rows.length, fields = view.fields.length;
+    const left = view.left, n = view.rows.length, fields = view.boxed;
     const counts = {}, stale = view.rows.filter(r => r.stale.length).length;
-    for (const r of view.rows) if (!r.who) counts[r.doubt] = (counts[r.doubt] || 0) + 1;
+    for (const r of view.rows) if (!verified(r)) counts[r.doubt] = (counts[r.doubt] || 0) + 1;
     $('w-sum').replaceChildren(!n ? tag('', 'no submissions yet') : left ? tag('unv', `${left} unverified`) : tag('', `all ${n} verified`),
-      ...['disagree', 'nobody', 'empty'].filter(d => counts[d]).map(d => tag(DOUBT[d], `${counts[d]} ${view.doubts[d]}`)),
+      ...['disagree', 'tie', 'nobody', 'unreadable', 'empty'].filter(d => counts[d]).map(d => tag(DOUBT[d], `${counts[d]} ${view.doubts[d]}`)),
       stale ? tag('', `${stale} to read`) : '');
     $('w-roster').textContent = view.roster ? `roster: ${view.roster}` : 'no roster yet';
     main.querySelector('[data-action="names-read"]').hidden = !fields;

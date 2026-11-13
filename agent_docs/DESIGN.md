@@ -551,11 +551,31 @@ submission into `pdfs/`; everything downstream is unchanged.
   list (`Busy`); a forced accept keeps the work and clears that submission's
   model memo. PDFs are written to temporary files and moved into place only
   after the store has committed, so a plan edit in between changes nothing.
-- **Who** (`core/identity.py`). A roster is optional. It is stored as a
+- **Who** (`core/identity.py`). Three rules hold throughout:
+  1. *An action is about what the person was looking at.* Each naming action
+     (take a proposal, pick from the list, type a name, unname, undo) is made
+     whole when the key is pressed: `{sub, rev, key | text | restore}`
+     (`steps(...).register(name, {bind, run})` in `common.js`). `rev` is
+     required; the server refuses a stale one (409, with the pick as it is
+     now) and an unknown key (400), and never reinterprets one as another.
+     Key repeats are ignored.
+  2. *Automatic matching acts only on unique evidence.* Each identifying
+     column (of a reading, a file name or a pick) supports some roster people;
+     a match needs them to single out one person. Ties and conflicts between
+     columns are doubts shown to a person, never resolved silently.
+  3. *A value a reader wrote records what it was read from*
+     (`runner.sources`: the reader's memo key, the region, the print area,
+     the scanned sheet and its turn). It needs reading again when that differs
+     from what it would read now (`Value.stale`); a value a person typed or
+     verified never does.
+
+  A roster is optional. It is stored as a
   setting, `[{'name', 'id', 'email', 'key'}]`, read from a CSV/TSV with a
-  header or from plain lines (name and ID, comma or tab, either order; the ID
-  is the part with no spaces and a digit). A preview (count, first rows,
-  unreadable lines) comes before saving. The Roster tab lists everyone on it
+  header (generic column names only) or from plain lines (name and ID, comma
+  or tab, either order; the ID is the part with no spaces and a digit). An
+  email or ID on two lines is a problem (so is a name, for people with
+  neither); `key` (email, else ID, else name) only addresses a person from
+  the page. A preview (count, first rows, problems) comes before saving. The Roster tab lists everyone on it
   (sent once with the page, filtered in the browser) with the submission each
   is picked for, a link to it on Names, or "unmatched".
   - **Identity fields**: `Exam(identity={'name': Field('name', Region(...)),
@@ -577,11 +597,10 @@ submission into `pdfs/`; everything downstream is unchanged.
     question page.
   - **Reading**: `identity.read(runner, sub)` is `Runner.read` of the group's
     placed fields (`intake --names`, the Scans page's background job).
-    `identity.unread` lists submissions with a placed field with no value, or
-    a value no person verified whose reading is not remembered under the
-    field's current region and layout (`Ask.memo_key`): a moved box is read
-    again. Accepting a rewritten submission drops its memo and what a reader
-    read in its identity fields, not what a person set, nor its pick. No
+    `identity.unread` lists submissions with a placed field with no value or
+    a stale one (rule 3): a moved box, or a sheet changed by intake, is read
+    again; meanwhile a stale value is no evidence. "Are there boxes" is one
+    predicate, `identity.boxed` (any submission's, its own included). No
     roster text ever reaches a prompt. Each value shows under its crop on
     the Names tab, where it can be corrected (Enter) or verified (✓), through
     the question page's save endpoint.
@@ -591,16 +610,27 @@ submission into `pdfs/`; everything downstream is unchanged.
     may mix letters and digits; then IDs within 2 edits for 8+ characters,
     1 for 4-7, none for shorter; names by
     order-insensitive token similarity, accents, case and punctuation folded)
-    with a reason, and gives a doubt: `agree`, `id`, `name`, `disagree`,
-    `nobody`, `empty`, `unread`, from the group's values (blank or marked
-    values are no evidence). A person already picked elsewhere is flagged,
+    with a reason, and gives a doubt (rule 2): each column read supports the
+    people it fits best (an ID or email the nearest within tolerance; a name
+    those within a margin of the best, if close enough); the people every
+    supporting column shares decide: one is `agree` (or `id`, `email`,
+    `name` when one column says anything), several `tie`, none `disagree`;
+    `nobody` when no column fits anyone. With nothing usable: `unread` (still
+    to read), `unreadable` (a review marker), `empty` (every box blank). A
+    person already picked elsewhere is flagged,
     never dropped or ranked lower: taken-ness never breaks a tie (one
     confident misreading must not cascade into a second wrong match). Computed
     on read, cached by value revisions and roster.
-  - **Picking**: every submission is named by its pick `(submission, '', 'who')`
-    (`{'name', 'id', 'email', 'key'}`), written by a person against the
-    revision they saw. One programmatic way in, for PDFs handed in already
-    split: a file name carrying exactly one roster ID as a whole run of
+  - **Picking**: every submission is named by its pick `(submission, '', 'who')`:
+    the person (`{'name', 'id', 'email'}`) and the sheets its boxes were on
+    (`'from'`), written by a person against the revision they saw. Who a
+    pick is on the current roster (and so "taken", "twice", "not on the
+    roster") is derived by unique exact evidence (`Matcher.find`: ID and
+    email where both have them, else the whole name), so a replaced roster
+    relinks every pick. A rewritten submission keeps its pick; if the sheet
+    under its boxes changed, the pick is to confirm again ("pages changed").
+    One programmatic way in, for PDFs handed in already
+    split: a file name carrying exactly one roster ID, that one person has, as a whole run of
     letters and digits (`identity.by_file`, on `sync` and when the roster is
     saved) becomes the pick (origin `'auto'`) of a submission that never had
     one; it shows on the Names tab as verified and is changed there like any

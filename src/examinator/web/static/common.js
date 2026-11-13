@@ -60,9 +60,14 @@ function nextOpen(list, from, open) {
 }
 
 // Steps that change server state, from keys and buttons alike: keys come faster than
-// replies, so they run one after another, each on the state the last left. A long step
-// (a model job, Accept) makes every step unavailable until it ends, so keys pressed
-// meanwhile are dropped, not replayed against a moved cursor. Errors are flashed.
+// replies, so they run one after another. A long step (a model job, Accept) makes every
+// step unavailable until it ends, so keys pressed meanwhile are dropped, not replayed
+// against a moved cursor. Errors are flashed.
+// A step about what the person is looking at says so when the key is pressed: `bind(ctx)`
+// returns the statement (its subject and the revision seen: {sub, rev, ...}), or null for
+// nothing to do, and `run` gets that statement however late it runs. The server refuses a
+// statement whose revision is no longer current (409), so a second press of the same key
+// before the page moved on does nothing.
 function steps(live, changed) {
   let chain = Promise.resolve(), busy = 0;
   const oops = err => { console.error(err); flash(`failed: ${(err && err.message) || err}`); };
@@ -74,7 +79,11 @@ function steps(live, changed) {
   }
   const register = (name, spec) => Actions.register(name, {
     available: ctx => live() && !busy && (!spec.available || spec.available(ctx)),
-    run: ctx => (spec.long ? long(spec.run, ctx) : enqueue(spec.run, ctx))});
+    run: ctx => {
+      const said = spec.bind ? spec.bind(ctx) : ctx;
+      if (said == null) return;
+      return spec.long ? long(spec.run, said) : enqueue(spec.run, said);
+    }});
   return {register, enqueue, busy: () => busy > 0};
 }
 

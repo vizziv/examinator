@@ -979,7 +979,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                               'write': sum(st != 'made' for st in states) + len(intake.removed(ws, src.id))}
         roster = [{k: p[k] for k in ('name', 'id', 'email', 'key')} for p in identity.people(ws)]
         return page('scans.html', sources=sources, counts=json.dumps(counts), people=roster,
-                    expected=intake.expected_length(ws), idboxes=json.dumps(boxes), fields=identity.placed(ws),
+                    expected=intake.expected_length(ws), idboxes=json.dumps(boxes), fields=identity.boxed(ws),
                     widths=json.dumps(SHEET_WIDTHS), made=len(store.submissions()),
                     handed=sum(1 for s in store.submissions() if s.id not in made))
 
@@ -1061,7 +1061,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     def scans_roster(request, data):
         """A roster as text (a CSV file's contents or pasted lines). `dry`: only
         say what would be read: how many people, the first few, the problems."""
-        text = data.get('text', data.get('csv'))
+        text = data.get('text')
         if not isinstance(text, str) or len(text) > MAX_ROSTER:
             raise Bad("expected roster text")
         people, problems = identity.read_roster(text)
@@ -1073,14 +1073,33 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return out
 
     def scans_who(request, data):
+        """Name one submission, as the person saw it: `{sub, rev}` and one of `key` (a
+        roster person), `text` (someone typed in), `restore` (a revision of the pick:
+        undo), or none of them (unname). `rev` is the pick's revision they saw (null:
+        none); anything else is refused (409, with the pick as it is now)."""
         sub = store.submission(str(data.get('sub')))
         if sub is None:
             raise Bad("unknown submission")
-        text = data.get('text')
-        if text is not None and not isinstance(text, str):
-            raise Bad("expected text")
-        kw = {'expect_rev': _rev(data)} if 'rev' in data else {}
-        return {'who': identity.set_who(ws, sub.id, text or '', author=who(request), **kw)}
+        rev = _rev(data)
+        said = [k for k in ('key', 'text', 'restore') if k in data]
+        if len(said) > 1:
+            raise Bad("one of key, text, restore")
+        try:
+            if 'restore' in data:
+                return {'who': identity.restore(ws, sub.id, _int(data['restore'], "restore", 0, 2**62), expect_rev=rev)}
+            if 'key' in data:
+                person = identity.on_roster(ws, data['key']) if isinstance(data['key'], str) else None
+                if person is None:
+                    raise Bad("not on the roster (it changed?): reload")
+            else:
+                person = identity.typed(data['text']) if 'text' in data else None
+            return {'who': identity.pick(ws, sub.id, person, author=who(request), expect_rev=rev)}
+        except Conflict as e:
+            cur = store.get(sub.id, '', identity.WHO)
+            e.current = {**identity.who(ws, sub.id), 'rev': cur.rev if cur else None}
+            raise
+        except KeyError:
+            raise Bad("nothing to undo") from None
 
     proposals: dict = {}        # identity.overview's cache: proposals by values and roster
 
@@ -1089,19 +1108,23 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         field is (its crop, this submission's own region); and the regions for every
         submission, for the box editor."""
         with lock:
-            view = identity.overview(ws, cache=proposals)
+            ats = {s.id: identity.at(ws, s.id) for s in store.submissions()}
+            view = identity.overview(ws, cache=proposals, ats=ats)
         paths = {f.label: overrides.join(IDENTITY, 'fields', f.label, 'region') for f in identity.group(ws).fields}
+        own: dict[str, dict] = {}           # each submission's own boxes, by scope
+        for o in store.all_overrides():
+            if o.path in paths.values():
+                own.setdefault(o.scope, {})[o.path] = o
         for row in view['rows']:
-            sid = row['sub']
-            layout = ws.layout(sid)
-            row['crops'] = [{'name': f.label, 'index': f.region.page - 1, 'box': box(layout, f.region)}
-                            for f in identity.placed(ws, sid)]
-            mine = ws.layers(sid).stored.get(SUBMISSION, {})
+            sid, a = row['sub'], ats[row['sub']]
+            row['crops'] = [{'name': f.label, 'index': f.region.page - 1, 'box': box(a.layout, f.region)}
+                            for f in a.fields]
+            mine = own.get(overrides.scope(SUBMISSION, sid), {})
             row['own'] = {c: {'value': mine[p].value, 'rev': mine[p].rev} for c, p in paths.items() if p in mine}
-            row['print_area'] = list(layout.print_area)     # for the boxes drawn on the page
+            row['print_area'] = list(a.layout.print_area)     # for the boxes drawn on the page
         stored = store.overrides()
         view['nobody'] = [identity.label(p) for p in view['nobody']]
-        view['fields'] = [{'name': f.label} for f in identity.placed(ws)]
+        view['boxed'] = any(a.fields for a in ats.values())
         view['columns'] = []
         for c, path in paths.items():           # the regions for every submission, for the box editor
             e = overrides.entry(exam, path)
@@ -1115,7 +1138,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     def scans_names_read(request, data):
         if not have_model():
             raise Bad("model unavailable")
-        if not any(identity.placed(ws, s.id) for s in store.submissions()):
+        if not identity.boxed(ws):
             raise Bad("no name or ID boxes: draw them first")
         fresh = bool(data.get('fresh'))
         subs = [s.id for s in store.submissions()] if fresh else identity.unread(ws)

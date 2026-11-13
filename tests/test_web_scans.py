@@ -151,11 +151,11 @@ def test_naming_and_a_forced_accept(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
     check_and_accept(client, token, src)
-    post(client, token, '/scans/roster', {'csv': (ws.root / 'roster.csv').read_text()})
-    label = identity.label(identity.people(ws)[4])
-    assert post(client, token, '/scans/who', {'sub': 's0005', 'text': label}).json()['who']['name'] == "Emery Sampleton"
+    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text()})
+    key = identity.people(ws)[4]['key']
+    assert post(client, token, '/scans/who', {'sub': 's0005', 'key': key, 'rev': None}).json()['who']['name'] == "Emery Sampleton"
     assert ws.store.submission('s0005').name == "Emery Sampleton"
-    assert post(client, token, '/scans/who', {'sub': 'nobody', 'text': label}).status_code == 400
+    assert post(client, token, '/scans/who', {'sub': 'nobody', 'key': key, 'rev': None}).status_code == 400
     # changing a written submission that has work: refused, then forced
     ws.store.write('s0002', 'parity/B', 'value', {'text': 'odd'}, origin='manual', author='t')
     plan = client.get(f'/scans/{src}/plan').json()
@@ -218,13 +218,14 @@ def test_names_read_confirm_cycle_skip(site):
     assert rows['s0006']['doubt'] == 'nobody' and rows['s0002']['candidates'][0]['why'] == "ID 1 off, name exact"
     # confirm the top proposal (V): by key, against the revision seen (none yet)
     top = rows['s0001']['candidates'][0]
-    r = post(client, token, '/scans/who', {'sub': 's0001', 'text': top['key'], 'rev': None})
+    r = post(client, token, '/scans/who', {'sub': 's0001', 'key': top['key'], 'rev': None})
     assert r.status_code == 200 and r.json()['who']['name'] == "Avery Testwell"
-    assert post(client, token, '/scans/who', {'sub': 's0001', 'text': top['key'], 'rev': None}).status_code == 409
+    r = post(client, token, '/scans/who', {'sub': 's0001', 'key': top['key'], 'rev': None})     # V twice: once
+    assert r.status_code == 409 and r.json()['current']['name'] == "Avery Testwell" and r.json()['current']['rev']
     # cycle to the second candidate (D), then confirm it
     second = rows['s0004']['candidates'][1]
     assert second['name'] == "Devon Fakely"
-    post(client, token, '/scans/who', {'sub': 's0004', 'text': second['key'], 'rev': None})
+    post(client, token, '/scans/who', {'sub': 's0004', 'key': second['key'], 'rev': None})
     # skip (S) writes nothing; s0006 is not on the roster: typed free text
     post(client, token, '/scans/who', {'sub': 's0006', 'text': "Finley Dummond", 'rev': None})
     view = client.get('/scans/names').json()
@@ -246,14 +247,60 @@ def test_roster_on_the_page_and_who_is_matched(site):
     assert 'id="ro-rows"' in html and 'id="ro-filter"' in html
     # the roster goes to the page once, as data: the picker and the table filter it in the browser
     assert all(p['name'] in html and p['id'] in html for p in people)
-    post(client, token, '/scans/who', {'sub': 's0005', 'text': people[4]['key']})
-    post(client, token, '/scans/who', {'sub': 's0003', 'text': people[4]['key']})
-    rows = {r['sub']: r for r in client.get('/scans/names').json()['rows']}
-    # a person picked twice: both submissions carry the key, and are flagged
-    assert rows['s0005']['who']['key'] == rows['s0003']['who']['key'] == people[4]['key']
+    post(client, token, '/scans/who', {'sub': 's0005', 'key': people[4]['key'], 'rev': None})
+    post(client, token, '/scans/who', {'sub': 's0003', 'key': people[4]['key'], 'rev': None})
+    view = client.get('/scans/names').json()
+    rows = {r['sub']: r for r in view['rows']}
+    # a person picked twice: both submissions are that roster person, and are flagged
+    assert rows['s0005']['who']['person'] == rows['s0003']['who']['person'] == people[4]['key']
     assert rows['s0005']['who']['twice'] and rows['s0003']['who']['twice']
+    assert view['taken'] == {people[4]['key']: ['s0003', 's0005']}
     # what the page needs to show the first page without boxes: the print area
     assert len(rows['s0001']['print_area']) == 4 and 'cover' not in rows['s0001']
+
+
+def test_naming_is_a_statement_about_what_was_seen(site):
+    """`/scans/who` takes the submission, the pick's revision seen and what to do; anything
+    stale is refused, never reinterpreted."""
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    check_and_accept(client, token, src)
+    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text()})
+    key = identity.people(ws)[0]['key']
+    who = lambda data: post(client, token, '/scans/who', {'sub': 's0001', **data})
+    assert who({'key': key}).status_code == 400                         # no revision seen: refused
+    r = who({'key': "12345", 'rev': None})                              # a key nobody has (a stale tab)
+    assert r.status_code == 400 and ws.store.get('s0001', '', identity.WHO) is None
+    assert who({'key': key, 'text': "x", 'rev': None}).status_code == 400
+    assert who({'text': "x" * 201, 'rev': None}).status_code == 400     # refused, not cut
+    first = who({'key': key, 'rev': None}).json()['who']
+    r = who({'text': "Someone Else", 'rev': None})                      # made against a revision gone
+    assert r.status_code == 409 and r.json()['current'] == {**identity.who(ws, 's0001'), 'rev': first['rev']}
+    typed = who({'text': "Finley Dummond, 95830142", 'rev': first['rev']}).json()['who']
+    assert (typed['name'], typed['id']) == ("Finley Dummond", "95830142")
+    back = who({'restore': first['rev'], 'rev': typed['rev']}).json()['who']           # undo
+    assert back['name'] == first['name'] and ws.store.submission('s0001').name == first['name']
+    gone = who({'rev': back['rev']}).json()['who']                                    # unname
+    assert gone['rev'] is None and ws.store.submission('s0001').name == ""
+    assert who({'restore': back['rev'], 'rev': None}).json()['who']['name'] == first['name']   # undo that
+    assert who({'restore': 1, 'rev': ws.store.get('s0001', '', identity.WHO).rev}).status_code == 400
+
+
+def test_a_box_for_one_submission_is_a_box(site):
+    """One question, "are there boxes", one answer: a box saved for one submission shows
+    "read names" and is read."""
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    check_and_accept(client, token, src)
+    for name in ('name', 'id'):
+        post(client, token, '/exam/set', {'path': f'@identity/fields/{name}/region', 'value': None, 'rev': None})
+    assert not client.get('/scans/names').json()['boxed'] and 'data-fields=""' in client.get('/scans').text
+    post(client, token, '/exam/set', {'path': '@identity/fields/name/region', 'value': [1, 100, 200, 800, 280],
+                                      'rev': None, 'scope': 'submission:s0002'})
+    assert client.get('/scans/names').json()['boxed'] and 'data-fields="1"' in client.get('/scans').text
+    r = post(client, token, '/scans/names/read', {})
+    assert r.json()['n'] == 1 and wait(client, r.json()['job'])['state'] == 'done'
+    assert identity.values(ws, 's0002')['s0002']['name'].text == "Blake Mockford"
 
 
 def test_drawing_the_name_boxes_for_every_submission(site):

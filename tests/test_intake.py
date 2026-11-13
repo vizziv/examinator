@@ -345,13 +345,13 @@ def test_roster_and_names(stacked):
     intake.accept(ws, one.id)
     assert identity.set_roster(ws, (ws.root / 'roster.csv').read_text()) == 10
     p = identity.people(ws)[2]
-    identity.set_who(ws, 's0003', identity.label(p), author='t')
+    identity.pick(ws, 's0003', p, author='t', expect_rev=None)
     assert ws.store.submission('s0003').name == "Casey Stubbs"
     assert ws.sync() == 6 and ws.store.submission('s0003').email == p['email']
     assert ws.store.submission('s0003').student == p['id']
-    identity.set_who(ws, 's0004', "Someone Unlisted", author='t')
+    rev = identity.pick(ws, 's0004', identity.typed("Someone Unlisted"), author='t', expect_rev=None)['rev']
     assert ws.store.submission('s0004').name == "Someone Unlisted"
-    identity.set_who(ws, 's0004', "", author='t')
+    identity.pick(ws, 's0004', None, author='t', expect_rev=rev)
     assert ws.store.submission('s0004').name == ""
     with pytest.raises(ValueError):
         identity.parse_roster("Email\nx@example.invalid\n")
@@ -370,7 +370,7 @@ def test_handed_pdfs_wait_on_names_unless_the_file_name_carries_an_id(tmp_path, 
     assert ws.store.submission('quiz-90000002').name == "Synthetic Student 02"
     assert identity.overview(ws)['left'] == n - 1
     # a person's word stands: a cleared pick is not taken from the file name again
-    identity.set_who(ws, 'quiz-90000002', "", author='t')
+    identity.pick(ws, 'quiz-90000002', None, author='t', expect_rev=ws.store.get('quiz-90000002', '', identity.WHO).rev)
     ws.sync()
     assert ws.store.submission('quiz-90000002').name == "" and identity.overview(ws)['left'] == n
     ws.close()

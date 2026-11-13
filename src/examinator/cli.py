@@ -75,7 +75,7 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
                   f"{len(r['removed'])} removed, {r['unchanged']} unchanged")
     if args.names:
         model = model or open_model(args, ws.root)
-        if model is None or not identity.placed(ws):
+        if model is None or not identity.boxed(ws):
             print("names: needs the model and identity fields with regions (Exam(identity={...}))", file=sys.stderr)
         else:
             runner = Runner(exam, ws, model=model)
