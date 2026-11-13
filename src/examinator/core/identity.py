@@ -36,7 +36,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from .defs import IDENTITY, Field, Question, digest, split_key
 from .runner import sheet, sources
 from .status import Value
-from .store import Submission
+from .store import ANY, Conflict, Submission
 
 WHO = 'who'
 COLUMNS = ('name', 'id', 'email')
@@ -141,8 +141,19 @@ def parse_roster(text: str) -> list[dict]:
     return people
 
 
-def set_roster(ws, text: str) -> int:
+def roster_rev(ws) -> str | None:
+    """The roster's revision (a digest of it; None: no roster)."""
+    people = ws.store.setting('people', [])
+    return digest(people)[:16] if people else None
+
+
+def set_roster(ws, text: str, *, expect_rev: Any = ANY) -> int:
+    """Replace the roster, against the revision the person saw (`expect_rev`)."""
     people = parse_roster(text)
+    if expect_rev is not ANY and roster_rev(ws) != expect_rev:
+        e = Conflict("the roster changed")
+        e.current = {'rev': roster_rev(ws), 'people': len(ws.store.setting('people', []))}
+        raise e
     ws.store.set_setting('people', people)
     by_file(ws)
     return len(people)

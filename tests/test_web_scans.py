@@ -56,6 +56,11 @@ def post(client, token, path, data):
     return client.post(path, json=data, headers={'X-Token': token})
 
 
+def read_names(client, token, **data):
+    """Read the name boxes, as a page showing the last run would ask."""
+    return post(client, token, '/scans/names/read', {'rev': client.get('/scans/names').json()['run'], **data})
+
+
 def upload(client, token, path, name='stack.pdf', **headers):
     return client.post(f'/scans/upload?name={name}', content=path.read_bytes(),
                        headers={'Content-Type': 'application/pdf', **({'X-Token': token} if token else {}), **headers})
@@ -165,7 +170,7 @@ def test_naming_and_a_forced_accept(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
     check_and_accept(client, token, src)
-    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text()})
+    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text(), 'rev': None})
     key = identity.people(ws)[4]['key']
     assert post(client, token, '/scans/who', {'sub': 's0005', 'key': key, 'rev': None}).json()['who']['name'] == "Emery Sampleton"
     assert ws.store.submission('s0005').name == "Emery Sampleton"
@@ -197,17 +202,19 @@ def test_sheet_images(site):
 def test_roster_paste_preview_then_save(site):
     client, token, ws, paths = site
     text = "Ada Lovelace, 31415926\n27182818\tAlan Turing\nGrace Hopper\n"
-    assert client.post('/scans/roster', json={'text': text, 'dry': True}).status_code == 403
-    assert post(client, 'wrong', '/scans/roster', {'text': text, 'dry': True}).status_code == 403
-    r = post(client, token, '/scans/roster', {'text': text, 'dry': True})
+    assert client.post('/scans/roster/preview', json={'text': text}).status_code == 403
+    assert post(client, 'wrong', '/scans/roster/preview', {'text': text}).status_code == 403
+    r = post(client, token, '/scans/roster/preview', {'text': text})
     body = r.json()
     assert r.status_code == 200 and body['people'] == 2 and body['problems'] == ["line 3: expected a name and an ID"]
     assert body['sample'][1] == {'name': "Alan Turing", 'id': "27182818", 'email': ""}
     assert identity.people(ws) == []                                    # a preview saves nothing
-    assert post(client, token, '/scans/roster', {'text': text}).status_code == 400      # problems: not saved
-    r = post(client, token, '/scans/roster', {'text': text.replace("Grace Hopper\n", "")})
+    assert post(client, token, '/scans/roster', {'text': text, 'rev': None}).status_code == 400   # problems: not saved
+    r = post(client, token, '/scans/roster', {'text': text.replace("Grace Hopper\n", ""), 'rev': None})
     assert r.status_code == 200 and [p['name'] for p in identity.people(ws)] == ["Ada Lovelace", "Alan Turing"]
-    r = client.post('/scans/roster', json={'text': text, 'dry': True},
+    again = post(client, token, '/scans/roster', {'text': "Ada Lovelace, 31415926\n", 'rev': None})
+    assert again.status_code == 409 and again.json()['current']['rev'] == r.json()['rev']     # it changed since
+    r = client.post('/scans/roster/preview', json={'text': text},
                     headers={'X-Token': token, 'Origin': 'http://evil.example'})
     assert r.status_code == 403
 
@@ -216,16 +223,16 @@ def test_names_read_confirm_cycle_skip(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
     check_and_accept(client, token, src)
-    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text()})
+    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text(), 'rev': None})
     view = client.get('/scans/names').json()
     assert view['left'] == 6 and {r['doubt'] for r in view['rows']} == {'unread'}
     assert [c['name'] for c in view['rows'][0]['crops']] == ['name', 'id']
     assert all(r['stale'] == ['name', 'id'] for r in view['rows'])
     # reading: a background job with the (scripted) model, refused without the token
     assert client.post('/scans/names/read', json={}).status_code == 403
-    r = post(client, token, '/scans/names/read', {})
+    r = read_names(client, token)
     assert r.json()['n'] == 6 and wait(client, r.json()['job'])['state'] == 'done'
-    assert post(client, token, '/scans/names/read', {}).json()['n'] == 0     # nothing left to read
+    assert read_names(client, token).json()['n'] == 0     # nothing left to read
     view = client.get('/scans/names').json()
     rows = {r['sub']: r for r in view['rows']}
     assert view['rows'][0]['sub'] == 's0004' and rows['s0004']['doubt'] == 'disagree'
@@ -255,7 +262,7 @@ def test_roster_on_the_page_and_who_is_matched(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
     check_and_accept(client, token, src)
-    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text()})
+    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text(), 'rev': None})
     html = client.get('/scans').text
     people = identity.people(ws)
     assert 'id="ro-rows"' in html and 'id="ro-filter"' in html
@@ -279,7 +286,7 @@ def test_naming_is_a_statement_about_what_was_seen(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
     check_and_accept(client, token, src)
-    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text()})
+    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text(), 'rev': None})
     key = identity.people(ws)[0]['key']
     who = lambda data: post(client, token, '/scans/who', {'sub': 's0001', **data})
     assert who({'key': key}).status_code == 400                         # no revision seen: refused
@@ -312,7 +319,7 @@ def test_a_box_for_one_submission_is_a_box(site):
     post(client, token, '/exam/set', {'path': '@identity/fields/name/region', 'value': [1, 100, 200, 800, 280],
                                       'rev': None, 'scope': 'submission:s0002'})
     assert client.get('/scans/names').json()['boxed'] and 'data-fields="1"' in client.get('/scans').text
-    r = post(client, token, '/scans/names/read', {})
+    r = read_names(client, token)
     assert r.json()['n'] == 1 and wait(client, r.json()['job'])['state'] == 'done'
     assert identity.values(ws, 's0002')['s0002']['name'].text == "Blake Mockford"
 
@@ -328,7 +335,7 @@ def test_drawing_the_name_boxes_for_every_submission(site):
     assert list(cols) == ['name', 'id', 'email'] and cols['email']['value'] is None     # not placed: "+ email"
     assert cols['name']['path'] == '@identity/fields/name/region' and cols['name']['rev'] is None
     assert cols['name']['value'] == cols['name']['base'] == [1, 100, 200, 800, 280]
-    wait(client, post(client, token, '/scans/names/read', {}).json()['job'])
+    wait(client, read_names(client, token).json()['job'])
     assert identity.unread(ws) == []
     before = {r['sub']: r['crops'] for r in view['rows']}
     # move the name box, for every submission; values read under the old box are read again
@@ -343,7 +350,7 @@ def test_drawing_the_name_boxes_for_every_submission(site):
     assert all(r['crops'][0]['box'] != before[r['sub']][0]['box'] for r in view['rows'])
     assert all(r['crops'][1]['box'] == before[r['sub']][1]['box'] for r in view['rows'])
     assert sorted(identity.unread(ws)) == sorted(before)                 # read again ...
-    r = post(client, token, '/scans/names/read', {})
+    r = read_names(client, token)
     assert r.json()['n'] == 6 and wait(client, r.json()['job'])['state'] == 'done'   # ... with the new box
     # one submission's own box: its crop alone moves, and it alone is read again
     own = {'path': path, 'value': [1, 100, 120, 800, 200], 'rev': None, 'scope': 'submission:s0003'}
@@ -376,8 +383,8 @@ def test_identity_values_set_and_verified_like_any_field(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
     check_and_accept(client, token, src)
-    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text()})
-    wait(client, post(client, token, '/scans/names/read', {}).json()['job'])
+    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text(), 'rev': None})
+    wait(client, read_names(client, token).json()['job'])
     row = {r['sub']: r for r in client.get('/scans/names').json()['rows']}['s0002']
     v = row['values']['id']
     assert v['text'] == "91786250" and v['verified'] is None
@@ -394,7 +401,7 @@ def test_the_group_is_not_graded_in_the_app(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
     check_and_accept(client, token, src)
-    wait(client, post(client, token, '/scans/names/read', {}).json()['job'])
+    wait(client, read_names(client, token).json()['job'])
     grid = client.get('/').text
     assert '@identity' not in grid
     assert '@identity' not in client.get('/read').text
@@ -411,14 +418,14 @@ def test_no_boxes_left_means_nothing_to_read(site):
     for name in ('name', 'id'):
         post(client, token, '/exam/set', {'path': f'@identity/fields/{name}/region', 'value': None, 'rev': None})
     assert identity.placed(ws) == ()
-    assert post(client, token, '/scans/names/read', {}).status_code == 400
+    assert read_names(client, token).status_code == 400
 
 
 def test_reading_names_needs_a_model(make_site):
     client, token, ws, paths = make_site(model=False)
     html = client.get('/scans').text
     assert 'data-model=""' in html and 'data-action="names-read" title="no model"' in html    # shown, dimmed
-    assert post(client, token, '/scans/names/read', {}).status_code == 400
+    assert read_names(client, token).status_code == 400
 
 
 def test_serve_starts_a_new_workspace_on_the_scans_page(tmp_path, monkeypatch, capsys):

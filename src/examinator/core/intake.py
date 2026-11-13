@@ -394,6 +394,13 @@ def _repair(ws) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def disturbed(ws, rows, gone) -> list[str]:
+    """The submissions with grading work that accepting (`outline`) would change or remove."""
+    def work(sid):
+        return ws.store.has_work(sid, besides=identity.IDENTITY + '/')
+    return [r['id'] for r in rows if r['state'] == 'changed' and work(r['id'])] + [s for s in gone if work(s)]
+
+
 def accept(ws, id: str, *, force: bool = False, expect_rev: Any = ANY) -> dict:
     """Accept the plan: every sheet becomes a person's (`split.accepted`), and its
     submissions are written into `pdfs/`. Unchanged ones are left alone; a
@@ -415,10 +422,7 @@ def accept(ws, id: str, *, force: bool = False, expect_rev: Any = ANY) -> dict:
     body = split.accepted(art.body)
     body.pop(UNDONE, None)
     rows, gone = outline(ws, id, body)
-
-    def work(sid):
-        return ws.store.has_work(sid, besides=identity.IDENTITY + '/')
-    busy = [r['id'] for r in rows if r['state'] == 'changed' and work(r['id'])] + [s for s in gone if work(s)]
+    busy = disturbed(ws, rows, gone)
     if busy and not force:
         raise Busy(busy)
     fresh = _next_ids(ws, {s.id for s in ws.store.submissions()} | set(ws.store.made()))

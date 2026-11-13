@@ -15,16 +15,17 @@
                                     every submission, one scan's, one submission's
     GET  /scans                     intake: sources, split plans, accept;  GET /scans/{src}/plan (JSON)
     POST /scans/upload?name=        a scanned PDF as the raw request body (streamed to disk)
-    POST /scans/{src}/{action}      edit propose undo accept;  POST /scans/roster, /scans/who
+    POST /scans/{src}/{action}      edit propose undo accept;  POST /scans/roster(/preview), /scans/who
     GET  /scans/names               who wrote each submission: identity values, proposals, picks (JSON)
     POST /scans/names/read          read the identity fields with the model (a job)
     GET  /sheet/{src}/{index}.jpg   one sheet of a source (?o= quarter turns, ?w= width)
 
 Every POST needs the page token in an `X-Token` header and (but the upload)
-takes a JSON object of at most MAX_JSON bytes; it answers JSON: 403 bad token,
-415 not JSON, 413 too large, 404 unknown target, 409 stale revision or a run
-in progress (with `current`, where the page can save again knowingly), 400
-input a grader should correct. Nothing here keeps module-level state; it all
+takes a JSON object of at most MAX_JSON bytes. A POST is a change or a query
+(DESIGN §13, Changes): a change names the revision the page drew (`rev`) and
+answers the new one. It answers JSON: 403 bad token, 415 not JSON, 413 too
+large, 404 unknown target, 409 stale revision or a run in progress (with
+`current`, what is there now), 400 input a grader should correct. Nothing here keeps module-level state; it all
 hangs off `app.state`.
 """
 from __future__ import annotations
@@ -36,6 +37,7 @@ import os
 import re
 import secrets
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -155,14 +157,30 @@ def _int(value: Any, what: str, lo: int, hi: int) -> int:
     return n
 
 
-def _rev(data: dict) -> int | None:
-    """The revision the page last saw; `null` means "does not exist yet"."""
+def _rev(data: dict) -> int | str | None:
+    """The revision the page was drawn with; `null` means "did not exist". A row's is a
+    number; a run's (a job id) or the roster's (a digest) is a short string."""
     if 'rev' not in data:
         raise Bad("rev is required")
     rev = data['rev']
     if rev is None or rev == '':
         return None
+    if isinstance(rev, str) and not rev.isdigit():
+        if len(rev) > 64:
+            raise Bad("rev: too long")
+        return rev
     return _int(rev, "rev", 0, 2**62)
+
+
+@contextmanager
+def now(current: Callable[[], Any]):
+    """A change refused as stale (Conflict) answers what is there now: `current()`."""
+    try:
+        yield
+    except Conflict as e:
+        if getattr(e, 'current', None) is None:
+            e.current = current()
+        raise
 
 
 def _strings(value: Any, allowed, what: str) -> tuple[str, ...]:
@@ -348,13 +366,15 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             try:
                 out = await run_in_threadpool(fn, request, data)
             except Conflict as e:
-                extra = getattr(e, 'current', None)
                 return JSONResponse({'error': str(e) or "changed elsewhere", 'conflict': True,
-                                     **({'current': extra} if extra is not None else {})}, 409)
+                                     'current': getattr(e, 'current', None)}, 409)
             except ValueError as e:
                 return JSONResponse({'error': str(e)[:300]}, 400)
             return JSONResponse({'ok': True, **(out or {})})
         return endpoint
+
+    read_slot = lambda sid, qid: f'read:{sid}/{qid}'
+    check_slot = lambda sid, qid, c: f'check:{sid}/{qid}/{c}'
 
     def refresh(sid: str, qid: str | None = None) -> str:
         """Recompute in the background what a change outdated (and this question's checks never run)."""
@@ -466,6 +486,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 judged.setdefault(label, []).append({'check': c.name, **j})
             spec = c.points
             checks.append({'name': c.name, 'column': q.column(c.name), 'st': st, 'glyph': glyph(st),
+                           'run': jobs.last(check_slot(sub.id, q.id, c.name)) or '',
                            'cls': value_class(st), 'fn': c.fn is not None,
                            'rev': decision.rev if decision else '', 'decided': decision is not None,
                            'bool': isinstance(spec, Bool), 'min': getattr(spec, 'min', None),
@@ -541,7 +562,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return page(
             'question.html', sub=sub, q=q, checks=checks, fields=fields, waiting=waiting, waiting_other=waiting_other,
             scans=scans, history=history[:60], count=count, keyed=keyed,
-            can_read=bool(readers_), off=bool(readers_) and not have_model(),
+            can_read=bool(readers_), read_run=jobs.last(read_slot(sub.id, q.id)) or '', off=bool(readers_) and not have_model(),
             pages=pages, pages_default=q.pages, own=own, extras=max(0, count - exam.pages),
             regions=regions, print_area=levels(lay, PRINT_AREA, overrides.entry(exam, PRINT_AREA).base, stored),
             scopes={'own': overrides.scope(SUBMISSION, sub.id), 'all': '',
@@ -559,38 +580,47 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise Bad("unknown field")
         return qid, label
 
-    def save_values(request, sub, data: dict, questions: dict | None = None) -> dict:
+    def value_rev(sid: str, k: str) -> int | None:
+        row = store.get(sid, k, 'value')
+        return row.rev if row else None
+
+    def save_values(request, sub, data: dict, questions: dict | None = None) -> tuple[dict, bool]:
         """Set the values a person changed (each verified by them), then verify
-        the ones listed: 'save', 'save and verify', 'verify all here'. Their new revisions."""
+        the ones listed: 'save', 'save and verify', 'verify all here'. Each names the
+        revision drawn. Their new revisions, and whether any was set."""
         changed, verify = data.get('values') or {}, data.get('verify') or []
         if not isinstance(changed, dict) or not isinstance(verify, list):
             raise Bad("unexpected content")
-        author, revs = who(request), {}
-        for k, item in changed.items():
-            qid, label = field_of(k, questions)
-            text = item.get('text') if isinstance(item, dict) else None
-            if not isinstance(text, str) or len(text) > MAX_BODY:
-                raise Bad("unexpected content")
-            v = runner.set(sub.id, qid, label, text, author=author, expect_rev=_rev(item))
-            revs[k] = v.rev
-        for item in verify:
-            k = item.get('key') if isinstance(item, dict) else None
-            qid, label = field_of(k, questions)
-            if k in revs:
-                continue            # set just now: verified by this person
-            runner.verify(sub.id, qid, label, author=author, expect_rev=_rev(item))
-        return revs
+        if not changed and not verify:
+            raise Bad("nothing to save")
+        keys = list(changed) + [i.get('key') for i in verify if isinstance(i, dict)]
+        author, revs, wrote = who(request), {}, False
+        with now(lambda: {'revs': {k: value_rev(sub.id, k) for k in keys if isinstance(k, str)}}):
+            for k, item in changed.items():
+                qid, label = field_of(k, questions)
+                text = item.get('text') if isinstance(item, dict) else None
+                if not isinstance(text, str) or len(text) > MAX_BODY:
+                    raise Bad("unexpected content")
+                v = runner.set(sub.id, qid, label, text, author=author, expect_rev=_rev(item))
+                revs[k], wrote = v.rev, True
+            for item in verify:
+                k = item.get('key') if isinstance(item, dict) else None
+                qid, label = field_of(k, questions)
+                if k in revs:
+                    continue            # set just now: verified by this person
+                revs[k] = runner.verify(sub.id, qid, label, author=author, expect_rev=_rev(item)).rev
+        return revs, wrote
 
     def save(request, data):
         sub, q = target(request)
-        revs = save_values(request, sub, data)
-        return {'revs': revs, 'job': refresh(sub.id, q.id) if revs else None}
+        revs, wrote = save_values(request, sub, data)
+        return {'revs': revs, 'job': refresh(sub.id, q.id) if wrote else None}
 
     def names_save(request, data):
         """The Names step's own save: the identity fields' values, typed or verified."""
         sub, _ = target(request, need_question=False)
-        revs = save_values(request, sub, data, {IDENTITY: exam.identity})
-        return {'revs': revs, 'job': refresh(sub.id) if revs else None}
+        revs, wrote = save_values(request, sub, data, {IDENTITY: exam.identity})
+        return {'revs': revs, 'job': refresh(sub.id) if wrote else None}
 
     def unverify(request, data):
         sub, q = target(request)
@@ -598,13 +628,19 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         rev = _rev(data)
         if rev is None:
             raise Bad("nothing to unverify")
-        runner.verify(sub.id, qid, label, author=who(request), expect_rev=rev, verified=False)
+        with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
+            v = runner.verify(sub.id, qid, label, author=who(request), expect_rev=rev, verified=False)
+        return {'rev': v.rev}
 
     def check_of(q: Question, data: dict):
         c = q.check(data.get('check')) if isinstance(data.get('check'), str) else None
         if c is None:
             raise Bad("unknown check")
         return c
+
+    def decision_rev(sid: str, q: Question, c: Check) -> int | None:
+        row = store.get(sid, key(q.id, c.name), 'decision')
+        return row.rev if row else None
 
     def decide(request, data):
         sub, q = target(request)
@@ -618,16 +654,21 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         if not isinstance(seen, dict):
             raise Bad("seen is required")
         seen = {str(k): _rev({'rev': v}) for k, v in seen.items()}
-        d = runner.decide(sub.id, q.id, c.name, value, author=who(request), flags=flags,
-                          expect_rev=_rev(data), seen=seen)
+        with now(lambda: {'rev': decision_rev(sub.id, q, c), 'seen': {k: value_rev(sub.id, k) for k in seen}}):
+            d = runner.decide(sub.id, q.id, c.name, value, author=who(request), flags=flags,
+                              expect_rev=_rev(data), seen=seen)
         return {'rev': d.rev}
 
     def clear(request, data):
         sub, q = target(request)
-        runner.clear(sub.id, q.id, check_of(q, data).name, expect_rev=_rev(data))
+        c = check_of(q, data)
+        with now(lambda: {'rev': decision_rev(sub.id, q, c)}):
+            runner.clear(sub.id, q.id, c.name, expect_rev=_rev(data))
+        return {'rev': None}
 
     def read(request, data):
-        """Read this question's fields again (not what a person verified, unless asked)."""
+        """Read this question's fields again (not what a person verified, unless asked).
+        A run: its revision is the last read of this question started (`read_run`)."""
         sub, q = target(request)
         if not have_model():
             raise Bad("model unavailable")
@@ -636,32 +677,38 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         def work():
             outs = runner.read(sub.id, q.id, include_protected=protected, fresh=True)
             return outs + runner.refresh(sub.id, questions=[q.id])
-        return {'job': jobs.start(work)}
+        job_ = jobs.start(work, slot=read_slot(sub.id, q.id), seen=_rev(data))
+        return {'job': job_, 'rev': job_}
 
     def run_check(request, data):
-        """A grader's explicit run of one check (one that timed out, say)."""
+        """A grader's explicit run of one check (one that timed out, say); a run, as above."""
         sub, q = target(request)
         c = check_of(q, data)
-        return {'job': jobs.start(lambda: runner.compute(sub.id, q.id, c.name))}
+        job_ = jobs.start(lambda: runner.compute(sub.id, q.id, c.name), slot=check_slot(sub.id, q.id, c.name),
+                          seen=_rev(data))
+        return {'job': job_, 'rev': job_}
 
     def to_default(request, data):
         """A field back to its default: its stored value dropped."""
         sub, q = target(request)
         qid, label = field_of(data.get('key'))
-        runner.unset(sub.id, qid, label, expect_rev=_rev(data))
-        return {'job': refresh(sub.id, q.id)}
+        with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
+            runner.unset(sub.id, qid, label, expect_rev=_rev(data))
+        return {'rev': None, 'job': refresh(sub.id, q.id)}
 
     def restore(request, data):
-        """A field's earlier value back, set by this person."""
+        """A field's earlier value (`restore`: its revision in the history) back, set by
+        this person, against the revision drawn (`rev`)."""
         sub, q = target(request)
         qid, label = field_of(data.get('key'))
-        rev = _rev(data)
-        old = next((h for h in store.history(sub.id, key(qid, label), 'value') if h.rev == rev), None)
+        old_rev = _rev({'rev': data.get('restore')})
+        old = next((h for h in store.history(sub.id, key(qid, label), 'value') if h.rev == old_rev), None)
         if old is None:
             raise Bad("no such version")
-        runner.set(sub.id, qid, label, str((old.body or {}).get('text', '')), author=who(request),
-                   expect_rev=_rev({'rev': data.get('expect')}))
-        return {'job': refresh(sub.id, q.id)}
+        with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
+            v = runner.set(sub.id, qid, label, str((old.body or {}).get('text', '')), author=who(request),
+                           expect_rev=_rev(data))
+        return {'rev': v.rev, 'job': refresh(sub.id, q.id)}
 
     def levels(lay, path: str, base, stored: dict) -> dict:
         """One value at each scope, for the scope editor: this submission's own ('own'),
@@ -718,7 +765,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return JSONResponse(info)
 
     def read_page(request: Request) -> Response:
-        return page('read.html', questions=list(exam.grading.values()),
+        return page('read.html', questions=list(exam.grading.values()), run=batch_now()['id'],
                     total=len(store.submissions()))
 
     def batch_plan(data: dict) -> batch.Plan:
@@ -745,26 +792,37 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                             'submissions': ids[:200]}
                            for (a, qn, r), ids in sorted(groups.items(), key=lambda kv: (rank[kv[0][0]], kv[0][1:]))]}
 
+    def batch_now() -> dict:
+        current: Batch | None = app.state.batch
+        return current.info() if current else {'id': None, 'state': 'idle'}
+
     def read_start(request, data):
-        """Read what the selection would read now (planned here, at the start)."""
-        with lock:
+        """Read what the selection would read now (planned here, at the start). A run:
+        `rev` is the batch the page last showed (null: none), refused while one runs."""
+        with lock, now(batch_now):
             current: Batch | None = request.app.state.batch
+            if (current.id if current else None) != _rev(data):
+                raise Conflict("another read started")
             if current is not None and current.active:
                 raise Conflict("a read is already in progress")
             plan = batch_plan(data)
             run = batch.BatchRun(runner, plan, parallel=_int(data.get('parallel', 2), "parallel", 1, 16))
             request.app.state.batch = Batch(run)
             request.app.state.batch.start()
-        return {'total': plan.count('read')}
+        return {'total': plan.count('read'), 'rev': request.app.state.batch.id}
 
     def read_status(request: Request) -> Response:
-        current: Batch | None = request.app.state.batch
-        return JSONResponse(current.info() if current else {'state': 'idle'})
+        return JSONResponse(batch_now())
 
     def read_stop(request, data):
-        current: Batch | None = request.app.state.batch
-        if current is not None:
+        """Stop the batch the page shows running (`rev`: its id)."""
+        rev = _rev(data)
+        with now(batch_now):
+            current: Batch | None = request.app.state.batch
+            if current is None or current.id != rev or not current.active:
+                raise Conflict("not running")
             current.run.cancel()
+        return {'rev': current.id}
 
     # --- settings ---
 
@@ -911,7 +969,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'entries': entries, 'dropped': split.dropped(body), 'missing': sorted(set(split.marks(body)[1])),
                 'readings': {i: None if r is None else f'p.{r + 1}' for i, r in split.readings(body).items()},
                 'removed': gone, 'cursor': split.cursor(body), 'counts': split_counts(body, rows, gone),
-                'undo': intake.can_undo(ws, src.id), 'idboxes': idboxes(src.id)}
+                'undo': intake.can_undo(ws, src.id), 'idboxes': idboxes(src.id),
+                'busy': intake.disturbed(ws, rows, gone)}
 
     def split_counts(body, rows, gone) -> dict:
         """What the workflow strip counts for a scan: first pages to verify, submissions to write or remove."""
@@ -935,6 +994,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             counts[src.id] = split_counts(body, *intake.outline(ws, src.id, body))
         roster = [{k: p[k] for k in ('name', 'id', 'email', 'key')} for p in identity.people(ws)]
         return page('scans.html', sources=sources, counts=json.dumps(counts), people=roster,
+                    roster_rev=identity.roster_rev(ws) or '',
                     expected=exam.pages, idboxes=json.dumps(boxes), fields=identity.boxed(ws),
                     widths=json.dumps(SHEET_WIDTHS), made=len(store.submissions()),
                     handed=sum(1 for s in store.submissions() if s.id not in made))
@@ -982,51 +1042,71 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             kw['sheet'] = _int(data['sheet'], "page", 0, src.pages - 1)
         if 'delta' in data:
             kw['delta'] = _int(data['delta'], "move", -1, 1)
-        intake.edit(ws, src.id, op, expect_rev=_rev(data), author=who(request), **kw)
-        return {'plan': plan_view(src)}
+        with now(lambda: plan_view(src)):
+            intake.edit(ws, src.id, op, expect_rev=_rev(data), author=who(request), **kw)
+        return planned(src)
 
     def scans_propose(request, data):
         src = the_source(request)
         length = data.get('length')
         length = None if length in (None, '') else _int(length, "pages per submission", 1, 999)
         kw = dict(length=length, author=who(request), expect_rev=_rev(data))
-        if data.get('check'):
-            if not have_model():
-                raise Bad("model unavailable")
-            if not exam.landmarks:
-                raise Bad("the exam declares no landmarks")
+        with now(lambda: plan_view(src)):
+            if data.get('check'):
+                if not have_model():
+                    raise Bad("model unavailable")
+                if not exam.landmarks:
+                    raise Bad("the exam declares no landmarks")
+                if intake.plan(ws, src.id).rev != kw['expect_rev']:
+                    raise Conflict("the plan changed")
 
-            def work():
-                intake.reguess(ws, src.id, model=runner.model, **kw)
-            return {'job': jobs.start(work)}
-        intake.reguess(ws, src.id, **kw)
-        return {'plan': plan_view(src)}
+                def work():
+                    intake.reguess(ws, src.id, model=runner.model, **kw)
+                # one reading of a scan's pages at a time: a run in the scan's slot, from the last one
+                return {'job': jobs.start(work, slot=f'split-read:{src.id}', seen=jobs.last(f'split-read:{src.id}')),
+                        'rev': kw['expect_rev']}
+            intake.reguess(ws, src.id, **kw)
+        return planned(src)
+
+    def planned(src) -> dict:
+        """After a change to a plan: the plan as it is now, and its revision."""
+        view = plan_view(src)
+        return {'plan': view, 'rev': view['rev']}
 
     def scans_undo(request, data):
         src = the_source(request)
-        intake.undo(ws, src.id, expect_rev=_rev(data))
-        return {'plan': plan_view(src)}
+        with now(lambda: plan_view(src)):
+            intake.undo(ws, src.id, expect_rev=_rev(data))
+        return planned(src)
 
     def scans_accept(request, data):
         src = the_source(request)
-        with lock:
-            report = intake.accept(ws, src.id, force=bool(data.get('force')),
-                                   expect_rev=_rev(data))
-        return {'report': report, 'plan': plan_view(src)}
+        try:
+            with lock:
+                report = intake.accept(ws, src.id, force=bool(data.get('force')), expect_rev=_rev(data))
+        except Conflict as e:           # stale, or work it would disturb (`busy`): the plan as it is now
+            e.current = plan_view(src)
+            raise
+        return {'report': report, **planned(src)}
 
-    def scans_roster(request, data):
-        """A roster as text (a CSV file's contents or pasted lines). `dry`: only
-        say what would be read: how many people, the first few, the problems."""
+    def roster_text(data: dict) -> str:
         text = data.get('text')
         if not isinstance(text, str) or len(text) > MAX_ROSTER:
             raise Bad("expected roster text")
-        people, problems = identity.read_roster(text)
-        out = {'people': len(people), 'problems': problems[:ROSTER_PROBLEMS],
-               'more': max(0, len(problems) - ROSTER_PROBLEMS),
-               'sample': [{'name': p['name'], 'id': p['id'], 'email': p['email']} for p in people[:ROSTER_SAMPLE]]}
-        if not data.get('dry'):
-            identity.set_roster(ws, text)
-        return out
+        return text
+
+    def scans_roster_preview(request, data):
+        """What a roster text (a CSV file's contents or pasted lines) would read as: how
+        many people, the first few, the problems. Changes nothing."""
+        people, problems = identity.read_roster(roster_text(data))
+        return {'people': len(people), 'problems': problems[:ROSTER_PROBLEMS],
+                'more': max(0, len(problems) - ROSTER_PROBLEMS),
+                'sample': [{'name': p['name'], 'id': p['id'], 'email': p['email']} for p in people[:ROSTER_SAMPLE]]}
+
+    def scans_roster(request, data):
+        """Replace the roster, against the one the page showed (`rev`)."""
+        identity.set_roster(ws, roster_text(data), expect_rev=_rev(data))
+        return {'rev': identity.roster_rev(ws)}
 
     def scans_who(request, data):
         """Name one submission, as the person saw it: `{sub, rev}` and one of `key` (a
@@ -1042,14 +1122,16 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise Bad("one of key, text, restore")
         try:
             if 'restore' in data:
-                return {'who': identity.restore(ws, sub.id, _int(data['restore'], "restore", 0, 2**62), expect_rev=rev)}
+                w = identity.restore(ws, sub.id, _int(data['restore'], "restore", 0, 2**62), expect_rev=rev)
+                return {'who': w, 'rev': w['rev']}
             if 'key' in data:
                 person = identity.on_roster(ws, data['key']) if isinstance(data['key'], str) else None
                 if person is None:
                     raise Bad("not on the roster (it changed?): reload")
             else:
                 person = identity.typed(data['text']) if 'text' in data else None
-            return {'who': identity.pick(ws, sub.id, person, author=who(request), expect_rev=rev)}
+            w = identity.pick(ws, sub.id, person, author=who(request), expect_rev=rev)
+            return {'who': w, 'rev': w['rev']}
         except Conflict as e:
             cur = store.get(sub.id, '', identity.WHO)
             e.current = {**identity.who(ws, sub.id), 'rev': cur.rev if cur else None}
@@ -1089,17 +1171,21 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         view['pad'] = exam.crop_pad
         view['doubts'] = identity.DOUBTS
         view['roster'] = len(identity.people(ws))
+        view['run'] = jobs.last('names-read')
         return JSONResponse(view)
 
     def scans_names_read(request, data):
+        """Read the name boxes: a run, against the last one the page showed (`rev`)."""
+        seen = _rev(data)
         if not have_model():
             raise Bad("model unavailable")
         if not identity.boxed(ws):
             raise Bad("no name or ID boxes: draw them first")
         fresh = bool(data.get('fresh'))
         subs = [s.id for s in store.submissions()] if fresh else identity.unread(ws)
-        return {'job': jobs.start_each([(s,) for s in subs], lambda sid: identity.read(runner, sid, fresh=fresh)),
-                'n': len(subs)}
+        job_ = jobs.start_each([(s,) for s in subs], lambda sid: identity.read(runner, sid, fresh=fresh),
+                               slot='names-read', seen=seen)
+        return {'job': job_, 'rev': job_, 'n': len(subs)}
 
     def sheet_image(request: Request) -> Response:
         """A sheet turned as asked (the page asks for the plan's orientation) and
@@ -1127,46 +1213,54 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise HTTPException(404)
         return FileResponse(out, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=3600'})
 
-    def post(path, fn):
-        return Route(path, action(fn), methods=['POST'])
+    def post(kind: str):
+        """A POST route of a kind: 'change' (names the revision drawn, refused when stale)
+        or 'query' (changes nothing: a POST only for its body). The route table says which."""
+        def route(path, fn):
+            endpoint = action(fn)
+            endpoint.kind = kind
+            return Route(path, endpoint, methods=['POST'])
+        return route
+    change, query = post('change'), post('query')
 
     routes = [
         Route('/', grid_page),
         Route('/filter', filter_page),
         Route('/focus/values', focus_values),
-        post(f'/s/{{sub}}/{IDENTITY}/save', names_save),        # the Names step's; the rest name graded questions
+        change(f'/s/{{sub}}/{IDENTITY}/save', names_save),        # the Names step's; the rest name graded questions
         Route('/s/{sub}/{q}', question_page),
-        post('/s/{sub}/{q}/save', save),
-        post('/s/{sub}/{q}/unverify', unverify),
-        post('/s/{sub}/{q}/decide', decide),
-        post('/s/{sub}/{q}/clear', clear),
-        post('/s/{sub}/{q}/read', read),
-        post('/s/{sub}/{q}/check', run_check),
-        post('/s/{sub}/{q}/default', to_default),
-        post('/s/{sub}/{q}/restore', restore),
+        change('/s/{sub}/{q}/save', save),
+        change('/s/{sub}/{q}/unverify', unverify),
+        change('/s/{sub}/{q}/decide', decide),
+        change('/s/{sub}/{q}/clear', clear),
+        change('/s/{sub}/{q}/read', read),
+        change('/s/{sub}/{q}/check', run_check),
+        change('/s/{sub}/{q}/default', to_default),
+        change('/s/{sub}/{q}/restore', restore),
         Route('/page/{sub}/{index:int}.jpg', page_image),
         Route('/image/{sub}/{q}/{check}/{digest}', evidence_image),
         Route('/jobs/{id}', job),
         Route('/read', read_page),
-        post('/read/plan', read_plan),
-        post('/read/start', read_start),
-        post('/read/stop', read_stop),
+        query('/read/plan', read_plan),
+        change('/read/start', read_start),
+        change('/read/stop', read_stop),
         Route('/read/status', read_status),
         Route('/settings', settings_page),
         Route('/exam', exam_page),
-        post('/exam/set', exam_set),
-        post('/exam/clear', exam_clear),
+        change('/exam/set', exam_set),
+        change('/exam/clear', exam_clear),
         Route('/scans', scans_page),
-        Route('/scans/upload', scans_upload, methods=['POST']),
-        post('/scans/roster', scans_roster),
-        post('/scans/who', scans_who),
+        Route('/scans/upload', scans_upload, methods=['POST']),     # a file, kept once by its digest
+        change('/scans/roster', scans_roster),
+        query('/scans/roster/preview', scans_roster_preview),
+        change('/scans/who', scans_who),
         Route('/scans/names', scans_names),
-        post('/scans/names/read', scans_names_read),
+        change('/scans/names/read', scans_names_read),
         Route('/scans/{src}/plan', scans_plan),
-        post('/scans/{src}/edit', scans_edit),
-        post('/scans/{src}/propose', scans_propose),
-        post('/scans/{src}/undo', scans_undo),
-        post('/scans/{src}/accept', scans_accept),
+        change('/scans/{src}/edit', scans_edit),
+        change('/scans/{src}/propose', scans_propose),
+        change('/scans/{src}/undo', scans_undo),
+        change('/scans/{src}/accept', scans_accept),
         Route('/sheet/{src}/{index:int}.jpg', sheet_image),
         Mount('/static', StaticFiles(directory=HERE / 'static'), name='static'),
     ]

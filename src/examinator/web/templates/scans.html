@@ -46,7 +46,7 @@ each submission becomes its own PDF when you accept the split.
 <label class="btn" title="CSV, or plain lines of name and ID">file <input type="file" id="roster" accept=".csv,.tsv,.txt,text/csv,text/plain" hidden></label>
 <span id="roster-read" class="dim"></span>
 <span class="grow"></span>
-<button type="button" id="roster-save" class="primary" disabled>Save roster</button>
+<button type="button" id="roster-save" data-action="roster-save" data-rev="{{ roster_rev }}" class="primary" disabled>Save roster</button>
 </div>
 <table id="roster-sample" class="dim" hidden></table>
 <ul id="roster-problems" hidden></ul>

@@ -208,7 +208,7 @@ def test_bad_host_and_origin(site):
     assert site.get('/', headers={'Host': '127.0.0.1.evil.example:8580'}).status_code == 400
     assert site.get('/', headers={'Host': 'localhost:8580'}).status_code == 200
     assert site.post('/read/stop', headers={'Origin': 'http://evil.example'}).status_code == 403
-    assert site.post('/read/stop', headers={'Origin': BASE}).status_code == 200
+    assert site.post('/read/plan', headers={'Origin': BASE}).status_code == 200
 
 
 def test_public_url_host_and_author(env):
@@ -297,9 +297,9 @@ def test_history_and_restore(site):
     site.run_all()
     site.runner.set('s1', 'a', 'x', "7", author='ta')
     html = site.get('/s/s1/a').text
-    m = re.search(r'data-action="restore" data-key="a/x" data-rev="(\d+)"', html)
+    m = re.search(r'data-action="restore" data-key="a/x" data-restore="(\d+)"', html)
     assert m
-    r = site.post('/s/s1/a/restore', {'key': 'a/x', 'rev': int(m.group(1)), 'expect': site.rev('s1', 'a/x')})
+    r = site.post('/s/s1/a/restore', {'key': 'a/x', 'restore': int(m.group(1)), 'rev': site.rev('s1', 'a/x')})
     assert r.status_code == 200 and site.value('s1', 'a/x').text == '1'
     assert site.value('s1', 'a/x').verified == 'person'
 
@@ -367,20 +367,23 @@ def test_evidence_of_an_outdated_result_is_marked_stale(site):
 
 
 def test_read_and_check_from_the_page(site):
-    r = site.post('/s/s1/a/read', {})
+    # a run names the last run of its kind the page showed (none yet: null)
+    r = site.post('/s/s1/a/read', {'rev': None})
     assert r.status_code == 200 and site.wait(r.json()['job'])['state'] == 'done'
+    assert f'data-action="read" data-rev="{r.json()["rev"]}"' in site.get('/s/s1/a').text
+    assert site.post('/s/s1/a/read', {'rev': None}).status_code == 409      # pressed twice: once
     assert site.value('s1', 'a/x').text == '1'
     assert site.state('s1', 'a', 'x').state == 'unverified'        # its own checks ran after the read
     site.runner.set('s1', 'a', 'x', "8", author='ta')
-    r = site.post('/s/s1/a/read', {})                               # a person's value stays
+    r = site.post('/s/s1/a/read', {'rev': r.json()['rev']})         # a person's value stays
     site.wait(r.json()['job'])
     assert site.value('s1', 'a/x').text == '8'
-    r = site.post('/s/s1/a/read', {'include_protected': True})
+    r = site.post('/s/s1/a/read', {'include_protected': True, 'rev': r.json()['rev']})
     site.wait(r.json()['job'])
     assert site.value('s1', 'a/x').text == '1'
-    r = site.post('/s/s1/a/check', {'check': 'x'})
+    r = site.post('/s/s1/a/check', {'check': 'x', 'rev': None})
     assert site.wait(r.json()['job'])['state'] == 'done'
-    assert site.post('/s/s1/a/check', {'check': 'nope'}).status_code == 400
+    assert site.post('/s/s1/a/check', {'check': 'nope', 'rev': None}).status_code == 400
 
 
 def test_a_field_with_a_default_on_the_page(tmp_path):
@@ -409,8 +412,8 @@ def test_reading_is_refused_without_a_model(env):
     exam, ws, runner = env
     runner.model = None
     site = Site(exam, ws, runner)
-    assert site.post('/s/s1/a/read', {}).status_code == 400
-    assert 'data-action="read" disabled' in site.get('/s/s1/a').text
+    assert site.post('/s/s1/a/read', {'rev': None}).status_code == 400
+    assert 'data-action="read" data-rev="" disabled' in site.get('/s/s1/a').text
 
 
 OWN = 'submission:s1'
@@ -472,14 +475,16 @@ def wait_batch(site):
 
 
 def test_batch_plan_run_status(site):
-    assert site.get('/read/status').json() == {'state': 'idle'}
+    assert site.get('/read/status').json() == {'id': None, 'state': 'idle'}
     r = site.post('/read/plan', {})
     assert r.status_code == 200
     plan = r.json()
     assert plan['counts']['read'] == 6 and plan['counts']['blocked'] == 0      # 3 reads, twice
-    r = site.post('/read/start', {'parallel': 2})
+    r = site.post('/read/start', {'parallel': 2, 'rev': None})
     assert r.status_code == 200 and r.json()['total'] == 6
+    assert site.post('/read/start', {'rev': None}).status_code == 409     # another started since it was shown
     info = wait_batch(site)
+    assert info['id'] == r.json()['rev']
     # every read, then one refresh per submission: the checks ran without being asked for
     assert info['state'] == 'done' and info['done'] == info['total'] == 8 and info['failures'] == []
     assert site.state('s2', 'b').state == 'unverified'
@@ -487,10 +492,10 @@ def test_batch_plan_run_status(site):
     assert again['counts']['read'] == 0 and again['counts']['skip_present'] > 0
     for bad in ({'questions': []}, {'submissions': ['ghost']}, {'questions': ['ghost']}):
         assert site.post('/read/plan', bad).status_code == 400
-        assert site.post('/read/start', bad).status_code == 400
+        assert site.post('/read/start', {**bad, 'rev': info['id']}).status_code == 400
     one = site.post('/read/plan', {'submissions': ['s2'], 'questions': ['b']}).json()
     assert one['counts']['read'] == 1 and one['groups'][0]['submissions'] == ['s2']
-    assert site.post('/read/stop').status_code == 200
+    assert site.post('/read/stop', {'rev': info['id']}).status_code == 409    # not running: nothing to stop
 
 
 def test_a_batch_never_replaces_what_a_person_set_unless_told(site):
@@ -498,10 +503,10 @@ def test_a_batch_never_replaces_what_a_person_set_unless_told(site):
     site.runner.set('s1', 'a', 'x', "9", author='ta')
     plan = site.post('/read/plan', {'submissions': ['s1'], 'questions': ['a']}).json()
     assert plan['counts']['read'] == 1                     # y is not verified: it is read
-    site.post('/read/start', {'submissions': ['s1'], 'questions': ['a']})
+    run = site.post('/read/start', {'submissions': ['s1'], 'questions': ['a'], 'rev': None}).json()['rev']
     wait_batch(site)
     assert site.value('s1', 'a/x').text == '9'
-    site.post('/read/start', {'submissions': ['s1'], 'questions': ['a'], 'include_protected': True})
+    site.post('/read/start', {'submissions': ['s1'], 'questions': ['a'], 'include_protected': True, 'rev': run})
     wait_batch(site)
     assert site.value('s1', 'a/x').text == '1'
 

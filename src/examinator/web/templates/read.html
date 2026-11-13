@@ -26,7 +26,7 @@ Without it, those are skipped. Decisions are never touched.</p>
 <p id="counts" aria-live="polite"></p>
 <details id="plan" class="panel"><summary>by question</summary><table class="ev" id="groups"></table></details>
 <div class="bar">
-<button type="button" id="start" data-action="read-start" class="primary" disabled>read</button>
+<button type="button" id="start" data-action="read-start" data-rev="{{ run or '' }}" class="primary" disabled>read</button>
 <button type="button" id="stop" data-action="read-stop" class="danger" disabled>stop</button>
 <span id="msg" role="status"></span>
 </div>

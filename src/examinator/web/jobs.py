@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
 from ..core.batch import BatchRun
+from ..core.store import Conflict
 
 KEEP = 300   # finished jobs remembered
 
@@ -30,10 +31,30 @@ class Jobs:
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='examinator-job')
         self._lock = threading.Lock()
         self._jobs: OrderedDict[str, dict] = OrderedDict()
+        self._slots: dict[str, str] = {}
 
-    def start(self, fn: Callable[[], Any]) -> str:
+    def last(self, slot: str) -> str | None:
+        """The last run started in `slot` (a kind of run on one subject): its revision."""
+        with self._lock:
+            return self._slots.get(slot)
+
+    def _claim(self, slot: str | None, seen: Any, id: str) -> None:
+        """A run is a change to its slot: refused unless the page saw the slot's last
+        run (`seen`) and that run has finished. Called with the lock held."""
+        if slot is None:
+            return
+        last = self._slots.get(slot)
+        running = last is not None and self._jobs.get(last, {}).get('state') == 'running'
+        if last != seen or running:
+            e = Conflict("already running" if running else "another run started")
+            e.current = {'rev': last, 'running': running}
+            raise e
+        self._slots[slot] = id
+
+    def start(self, fn: Callable[[], Any], slot: str | None = None, seen: Any = None) -> str:
         id = secrets.token_hex(8)
         with self._lock:
+            self._claim(slot, seen, id)
             self._jobs[id] = {'state': 'running', 'outcomes': []}
             for old in [k for k, v in self._jobs.items() if v['state'] != 'running'][:-KEEP]:
                 del self._jobs[old]
@@ -49,7 +70,7 @@ class Jobs:
         self._pool.submit(work)
         return id
 
-    def start_each(self, items: list, fn: Callable[..., Any]) -> str:
+    def start_each(self, items: list, fn: Callable[..., Any], slot: str | None = None, seen: Any = None) -> str:
         """One job over many items: `fn(*item)` for each, in order, with progress.
 
         The job adds `done` and `total`; `outcomes` keeps only what did not finish
@@ -57,6 +78,7 @@ class Jobs:
         id = secrets.token_hex(8)
         items = list(items)
         with self._lock:
+            self._claim(slot, seen, id)
             self._jobs[id] = {'state': 'running', 'outcomes': [], 'done': 0, 'total': len(items)}
 
         def work():
@@ -89,6 +111,7 @@ class Batch:
     """One batch run in its own thread."""
 
     def __init__(self, run: BatchRun):
+        self.id = secrets.token_hex(8)      # its revision: what Start and Stop name
         self.run = run
         self.error = ''
         self._thread = threading.Thread(target=self._work, name='examinator-batch', daemon=True)
@@ -111,7 +134,7 @@ class Batch:
         outcomes = list(run.outcomes)
         state = 'running' if self.active else 'failed' if self.error else run.state
         failures = [o for o in outcomes if not o.ok]
-        return {'state': state, 'done': run.done, 'total': run.total, 'current': run.current,
+        return {'id': self.id, 'state': state, 'done': run.done, 'total': run.total, 'current': run.current,
                 'error': self.error if state == 'failed' else '',
                 'failed': len(failures),
                 'failures': [{'submission': o.submission, 'question': o.question, 'step': o.step,
