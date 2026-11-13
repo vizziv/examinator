@@ -70,8 +70,7 @@ def test_a_check_whose_key_changes_is_recomputed_and_nothing_else_moves(tmp_path
     assert (s.state, s.value) == ('graded', False)
     after = snapshot(ws, 's1')
     assert {k: v for k, v in after.items() if k[0] == 'value'} == {k: v for k, v in before.items() if k[0] == 'value'}
-    old = ws.store.history('s1', 'q/check', 'result')
-    assert old and old[0].body['grade']['value'] is True                  # the old result stays in history
+    assert ws.store.history('s1', 'q/check', 'result') == []              # results keep no history
     runner.close()
     ws.close()
 

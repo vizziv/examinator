@@ -18,7 +18,7 @@ writer last saw; a mismatch raises `Conflict` and nothing changes. Revisions
 come from one workspace-wide counter, so a row that is deleted and recreated
 never reuses one. A write may keep the row's revision (`keep_rev`) when what
 changes is not its content (a value verified: same text, same revision).
-Replaced rows go to history.
+Replaced rows go to history, except results (computed, so recomputable).
 """
 from __future__ import annotations
 
@@ -255,6 +255,8 @@ class Store:
         return cur
 
     def _archive(self, cur: Row) -> None:
+        if cur.kind == 'result':       # computed, and recomputable: no history
+            return
         self._db.execute(
             f'insert into history select {COLUMNS}, ? from row where submission=? and kind=? and name=?',
             (_now(), cur.submission, cur.kind, cur.name))
