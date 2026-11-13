@@ -56,9 +56,10 @@
  data-cover="{{ layout.cover_pages }}" data-pad="{{ exam.crop_pad }}" data-first="{{ first_page }}" data-pages="{{ exam.pages }}">
 {% if regions or count %}
 <div id="rg" class="bar">
-<button type="button" id="rg-on" data-action="regions" aria-pressed="false" title="edit field regions and the print area on the scan">regions</button>
+<button type="button" id="rg-on" data-action="regions" aria-pressed="false" title="edit the field regions on the scan">regions</button>
+<button type="button" id="pa-on" data-action="print-area" aria-pressed="false" title="edit the print area: where the printed page sits on the scanned sheet">print area</button>
 <span id="rg-panel" class="bar" hidden>
-<select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.printed %} (printed){% endif %}</option>{% endfor %}<option value="#print-area" title="where the printed page sits on the scanned sheet">print area</option></select>
+<select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.printed %} (printed){% endif %}</option>{% endfor %}</select>
 <label id="rg-p">p <input type="number" class="rg-n" min="1" max="{{ exam.pages }}" aria-label="page"></label>
 <input type="number" class="rg-n" min="0" max="1000" aria-label="left" title="left">
 <input type="number" class="rg-n" min="0" max="1000" aria-label="top" title="top">
@@ -191,7 +192,7 @@
 <div class="bar">
 <label>cover pages <input type="number" id="lo-cover" min="0" max="99" size="3" value="{{ layout_over.cover_pages if layout_over and layout_over.cover_pages is not none else '' }}" placeholder="{{ layout.cover_pages }}"></label>
 <button type="button" data-action="layout">set for this submission</button>
-<span class="dim">print area: in regions mode</span>
+<span class="dim">print area: on the scan</span>
 </div>
 </details>
 

@@ -430,42 +430,42 @@ form.entry.k-region input[type=text], form.entry.k-pages input[type=text] { flex
 /* --- regions on the scan --- */
 #rg { position: sticky; top: 0; z-index: 3; background: var(--panel); padding: 3px 5px; border-bottom: 1px solid var(--line); }
 #rg .rg-n { width: 4.6em; }
-#rg-on[aria-pressed=true], #scan-toggle[aria-pressed=true] { border-color: var(--accent2); color: var(--accent2-text); background: var(--accent2-soft); }
-#rg-save.dirty { box-shadow: 0 0 0 2px var(--warn-bg), 0 0 0 3px var(--warn); }
+#rg-on[aria-pressed=true], #pa-on[aria-pressed=true], #scan-toggle[aria-pressed=true] { border-color: var(--accent2); color: var(--accent2-text); background: var(--accent2-soft); }
+#rg-save.dirty, #pa-save.dirty { box-shadow: 0 0 0 2px var(--warn-bg), 0 0 0 3px var(--warn); }
 #rg-msg { color: var(--muted); }
 #rg-msg.notice { color: var(--bad); }
+#rg-pa-btns, #rg-region-btns { display: contents; }
+#rg #rg-w, #rg #rg-h { width: 4.6em; }
+#scan.editing { overflow-x: hidden; }
 .sheet { position: relative; line-height: 0; }
+/* What is edited is orange (--accent2); what is shown for context is primary and inert:
+   the print area in regions mode (#scan.rg-regions), the regions in print mode (#scan.rg-print). */
 /* a box is what a crop shows: the region (.rin) inside a translucent band, the crop's padding */
 .rbox { --rc: var(--accent2); position: absolute; overflow: hidden; cursor: pointer; touch-action: none; }
-.rbox.printed { --rc: var(--accent); }
+#scan.rg-print .rbox { --rc: var(--accent); pointer-events: none; }
 .rin { position: absolute; border: 1.5px solid var(--rc); box-shadow: 0 0 0 999px color-mix(in srgb, var(--rc) 22%, transparent); }
 .rbox.sel { cursor: move; z-index: 1; }
 .rbox.sel .rin { background: color-mix(in srgb, var(--rc) 12%, transparent); box-shadow: 0 0 0 999px color-mix(in srgb, var(--rc) 40%, transparent); }
 .rbox.dirty .rin { border-style: dashed; }
-.rlabel { position: absolute; left: 11px; top: 0; font: 11px/1.3 var(--mono); padding: 0 3px; white-space: nowrap;
+.rlabel, .palabel { position: absolute; left: 11px; top: 0; font: 11px/1.3 var(--mono); padding: 0 3px; white-space: nowrap;
   background: var(--rc); color: #fff; opacity: .8; pointer-events: none; }
-.rh { position: absolute; width: 9px; height: 9px; background: var(--panel); border: 2px solid var(--rc); }
+.rbox.printed .rlabel { font-style: italic; }      /* a printed field's region */
+.rh { position: absolute; width: 9px; height: 9px; background: var(--panel); border: 2px solid var(--rc); z-index: 1; }
 .rh.nw { left: 0; top: 0; cursor: nwse-resize; } .rh.se { right: 0; bottom: 0; cursor: nwse-resize; }
 .rh.ne { right: 0; top: 0; cursor: nesw-resize; } .rh.sw { left: 0; bottom: 0; cursor: nesw-resize; }
-/* the print area: where the printed page sits on the sheet, the boundary regions live in (primary accent);
-   its edges (.pe) straddle the outline, to drag */
-#rg-pa-btns, #rg-region-btns { display: contents; }
-#scan.editing { overflow-x: hidden; }
-#rg #rg-w, #rg #rg-h { width: 4.6em; }
-.parea { position: absolute; z-index: 2; pointer-events: none; box-sizing: border-box;
-  outline: 2px solid var(--accent); outline-offset: -1px; }
+/* the print area: where the printed page sits on the sheet; in print mode, dragged inside to move it,
+   by its corners (.rh) or edges (.pe, straddling the outline) to resize it */
+.parea { --rc: var(--accent); position: absolute; z-index: 2; pointer-events: none; box-sizing: border-box;
+  outline: 2px solid var(--rc); outline-offset: -1px; }
+#scan.rg-print .parea { --rc: var(--accent2); pointer-events: auto; cursor: move; touch-action: none;
+  background: color-mix(in srgb, var(--rc) 6%, transparent); }
 .parea.dirty { outline-style: dashed; }
-.parea.sel { outline-width: 3px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
-.plabel { position: absolute; left: 3px; bottom: 3px; font: 10.5px/1.3 var(--mono); padding: 0 3px; white-space: nowrap;
-  background: var(--accent); color: var(--on-accent); opacity: .75; }
+.palabel { top: 1px; }
+.parea .rh { pointer-events: auto; touch-action: none; }
 .pe { position: absolute; pointer-events: auto; touch-action: none; }
-.pe.n, .pe.s { left: 6px; right: 6px; height: 8px; cursor: ns-resize; }
-.pe.e, .pe.w { top: 6px; bottom: 6px; width: 8px; cursor: ew-resize; }
+.pe.n, .pe.s { left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
+.pe.e, .pe.w { top: 10px; bottom: 10px; width: 8px; cursor: ew-resize; }
 .pe.n { top: -4px; } .pe.s { bottom: -4px; } .pe.e { right: -4px; } .pe.w { left: -4px; }
-.pe.nw, .pe.ne, .pe.sw, .pe.se { width: 12px; height: 12px; }
-.pe.nw { left: -5px; top: -5px; cursor: nwse-resize; } .pe.se { right: -5px; bottom: -5px; cursor: nwse-resize; }
-.pe.ne { right: -5px; top: -5px; cursor: nesw-resize; } .pe.sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
-.parea.sel .pe.nw, .parea.sel .pe.ne, .parea.sel .pe.sw, .parea.sel .pe.se { background: var(--panel); border: 2px solid var(--accent); box-sizing: border-box; }
 
 /* --- filter page --- */
 #fx-count { font-weight: 700; font-size: var(--fs-title); }

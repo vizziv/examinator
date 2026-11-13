@@ -1,16 +1,17 @@
 'use strict';
-// Region editing on the question page's scanned pages: field regions as rectangles to
-// drag (across pages too) and resize, saved as this submission's own region or as
-// every submission's (an exam-wide override, /exam/set). Either changes no value: read again.
+// Region editing on the question page's scanned pages, in one of two modes.
+// 'regions': field regions as rectangles to drag (across pages too) and resize, saved as
+// this submission's own region or as every submission's (an exam-wide override, /exam/set).
+// 'print': the print area, edited with the same controls (no page), saved for this
+// submission, for every submission from the same scan file, or for all (/s/{sub}/print-area).
+// Neither changes a value: read again. What is edited is drawn orange; the other, primary, for context.
 //
 // A region is [page, left, top, right, bottom] in per-mille of the printed page.
 // The scan shows the printed page inside the submission's print area (per-mille
 // of the scan), after its cover pages; so, as in pdf/layout.py `Layout.box`:
 //   scan fraction x = (wl + (wr - wl) * v / 1000) / 1000, and back
 //   v = (1000 * x - wl) * 1000 / (wr - wl).
-// The print area is drawn on every sheet and edited like a region (its edges and corners);
-// the region boxes follow its draft. It is saved for this submission, for every
-// submission from the same scan file, or for all (/s/{sub}/print-area).
+// The region boxes follow the print area's draft.
 (() => {
   const scan = document.getElementById('scan');
   const on = document.getElementById('rg-on');
@@ -18,7 +19,6 @@
   const $ = id => document.getElementById(id);
   const sub = document.getElementById('question').dataset.sub;
   const regions = JSON.parse(scan.dataset.regions);
-  const PA = '#print-area';
   const pa = JSON.parse(scan.dataset.print);   // own, scan, all (each saved level), window: the one in use
   pa.draft = [...pa.window];
   const cover = Number(scan.dataset.cover), pad = Number(scan.dataset.pad);
@@ -26,7 +26,8 @@
   const nums = [...document.querySelectorAll('.rg-n')];
   const pick = $('rg-pick'), msg = $('rg-msg');
   for (const r of regions) r.draft = r.region && [...r.region];
-  let sel = null, paSel = false, drag = null;
+  let mode = '', sel = null, drag = null;       // mode: '', 'regions' or 'print'
+  const pm = () => mode === 'print';
 
   // per-mille of the printed page -> fraction of the scan, through a print area (the draft's by default)
   const fx = (v, w = pa.draft) => (w[0] + (w[2] - w[0]) * v / 1000) / 1000;
@@ -35,12 +36,32 @@
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const dirty = r => !same(r.draft, r.region);
   const paDirty = () => !same(pa.draft, pa.window);
-  // what the number boxes edit, as [page, left, top, right, bottom] (the print area has no page)
-  const cur = () => paSel ? [0, ...pa.draft] : sel && sel.draft;
-  const put = d => { if (paSel) pa.draft = d.slice(1); else sel.draft = d; };
+  // the rectangle being edited, as [page, left, top, right, bottom]: the selected region, or the print area (page 0)
+  const cur = () => pm() ? [0, ...pa.draft] : sel && sel.draft;
+  const put = d => { if (pm()) pa.draft = d.slice(1); else sel.draft = d; };
+  // moved by (dx, dy), kept on the page; resized by the handle `h` ('n', 'se', ...), kept above a minimum size
+  function shift([p, l, t, r, b], dx, dy) {
+    const mx = Math.round(Math.min(Math.max(dx, -l), 1000 - r)), my = Math.round(Math.min(Math.max(dy, -t), 1000 - b));
+    return [p, l + mx, t + my, r + mx, b + my];
+  }
+  function resize([p, l, t, r, b], h, dx, dy) {
+    const min = pm() ? 50 : 5;
+    return [p, h.includes('w') ? Math.min(clamp(l + dx), r - min) : l,
+               h.includes('n') ? Math.min(clamp(t + dy), b - min) : t,
+               h.includes('e') ? Math.max(clamp(r + dx), l + min) : r,
+               h.includes('s') ? Math.max(clamp(b + dy), t + min) : b];
+  }
   const say = (text, bad) => { msg.textContent = text; msg.classList.toggle('notice', !!bad); };
 
   const sheet = page => scan.querySelector(`.sheet[data-index="${cover + page - 1}"]`);
+  // grips to resize by: corner handles (and, on the print area, its edges)
+  function grips(el, kinds, cls) {
+    for (const h of kinds) {
+      const g = make('i', {className: `${cls} ${h}`});
+      g.dataset.h = h;
+      el.append(g);
+    }
+  }
 
   // A box covers what a crop shows: the region and the padding around it (the translucent
   // band). Its inner frame, `.rin`, is the region itself.
@@ -54,54 +75,49 @@
     box.firstElementChild.style.inset = `${py} ${px}`;
   }
 
-  // The print area on a sheet: an outline with edges and corners to drag.
+  // The print area on a sheet: an outline; in print mode, with edges and corners to drag.
   function printArea() {
     const [l, t, r, b] = pa.draft;
-    const el = make('div', {className: `parea${paSel ? ' sel' : ''}${paDirty() ? ' dirty' : ''}`},
-                    make('span', {className: 'plabel', textContent: 'print area'}));
+    const el = make('div', {className: `parea${paDirty() ? ' dirty' : ''}`},
+                    make('span', {className: 'palabel', textContent: 'print area'}));
     Object.assign(el.style, {left: l / 10 + '%', top: t / 10 + '%', width: (r - l) / 10 + '%', height: (b - t) / 10 + '%'});
-    for (const h of ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se']) {
-      const edge = make('i', {className: 'pe ' + h, title: 'print area'});
-      edge.dataset.pe = h;
-      el.append(edge);
+    if (pm()) {
+      grips(el, ['n', 's', 'e', 'w'], 'pe');
+      grips(el, ['nw', 'ne', 'sw', 'se'], 'rh');
     }
     return el;
   }
 
   function draw() {
     for (const el of scan.querySelectorAll('.rbox, .parea')) el.remove();
-    if (!scan.classList.contains('editing')) return;
+    if (!mode) return;
     for (const s of scan.querySelectorAll('.sheet')) s.append(printArea());
     for (const r of regions) {
       if (!r.draft) continue;
       const s = sheet(r.draft[0]);
       if (!s) continue;
+      const editing = mode === 'regions' && r === sel;
       const inner = make('div', {className: 'rin'}, make('span', {className: 'rlabel', textContent: r.label}));
-      const box = make('div', {className: `rbox${r.printed ? ' printed' : ''}${r === sel ? ' sel' : ''}${dirty(r) ? ' dirty' : ''}`}, inner);
+      const box = make('div', {className: `rbox${r.printed ? ' printed' : ''}${editing ? ' sel' : ''}${dirty(r) ? ' dirty' : ''}`}, inner);
       box.dataset.path = r.path;
-      if (r === sel) for (const h of ['nw', 'ne', 'sw', 'se']) {
-        const handle = make('i', {className: 'rh ' + h});
-        handle.dataset.h = h;
-        inner.append(handle);
-      }
+      if (editing) grips(inner, ['nw', 'ne', 'sw', 'se'], 'rh');
       place(box, r.draft);
       s.append(box);
     }
-    pick.options[pick.selectedIndex]?.classList.toggle('dirty', paSel ? paDirty() : !!sel && dirty(sel));
+    pick.options[pick.selectedIndex]?.classList.toggle('dirty', !!sel && dirty(sel));
     $('rg-save').classList.toggle('dirty', !!sel && dirty(sel));
-    $('pa-save').classList.toggle('dirty', paSel && paDirty());
+    $('pa-save').classList.toggle('dirty', paDirty());
     Actions.enable($('rg'));
   }
 
-  // The number boxes from the selection (except the one being typed in), and which buttons show.
+  // The number boxes from what is edited (except the one being typed in), and which controls show.
   function inputs(typing) {
     const d = cur();
     nums.forEach((n, i) => { if (n !== typing) n.value = d ? d[i] : ''; });
     if ($('rg-w') !== typing) $('rg-w').value = d ? d[3] - d[1] : '';
     if ($('rg-h') !== typing) $('rg-h').value = d ? d[4] - d[2] : '';
-    $('rg-p').hidden = paSel;
-    $('rg-region-btns').hidden = paSel;
-    $('rg-pa-btns').hidden = !paSel;
+    pick.hidden = $('rg-p').hidden = $('rg-region-btns').hidden = pm();
+    $('rg-pa-btns').hidden = !pm();
     $('rg-clear-own').hidden = !sel || !sel.own;
     $('rg-clear-all').hidden = !sel || !sel.stored;
     $('pa-save-scan').hidden = !pa.source;
@@ -112,18 +128,8 @@
   const paFrom = () => pa.own ? "this submission's" : pa.scan ? "this scan's" : "all submissions'";
 
   function select(path, reveal) {
-    if (path === PA) {
-      sel = null;
-      paSel = true;
-      pick.value = PA;
-      say(`print area · ${paFrom()}`);
-      inputs();
-      draw();
-      return;
-    }
     sel = regions.find(r => r.path === path) || null;
     if (!sel) return;
-    paSel = false;
     pick.value = sel.path;
     if (!sel.draft) {
       sel.draft = [first, 100, 100, 900, 200];   // a field without a region: start somewhere visible
@@ -133,6 +139,24 @@
     draw();
     if (reveal) scan.querySelector('.rbox.sel')?.scrollIntoView({block: 'nearest', behavior: 'smooth'});
     if (!sheet(sel.draft[0])) say(`page ${sel.draft[0]} not scanned`, true);
+  }
+
+  // Editing mode `m` on, or off when it is on already.
+  function toggle(m) {
+    mode = mode === m ? '' : m;
+    scan.classList.toggle('editing', !!mode);     // either mode
+    scan.classList.toggle('rg-regions', mode === 'regions');
+    scan.classList.toggle('rg-print', pm());
+    on.setAttribute('aria-pressed', mode === 'regions');
+    $('pa-on').setAttribute('aria-pressed', pm());
+    $('rg-panel').hidden = !mode;
+    if (mode === 'regions') select(sel ? sel.path : pick.value);
+    else {
+      say(pm() ? `print area · ${paFrom()}` : '');
+      inputs();
+      draw();
+    }
+    Actions.enable($('rg'));
   }
 
   // The crops on this page show the saved region, with the display padding.
@@ -217,13 +241,8 @@
     if (moved) document.dispatchEvent(new CustomEvent('entry-saved', {detail: {reread: ['print area']}}));
   }
 
-  Actions.register('regions', {run: () => {
-    const editing = scan.classList.toggle('editing');
-    on.setAttribute('aria-pressed', editing);
-    $('rg-panel').hidden = !editing;
-    if (editing && !sel && !paSel) select(pick.value); else draw();
-    Actions.enable($('rg'));
-  }});
+  Actions.register('regions', {available: () => regions.length > 0, run: () => toggle('regions')});
+  Actions.register('print-area', {run: () => toggle('print')});
   pick.addEventListener('change', () => select(pick.value, true));
   nums.forEach((n, i) => n.addEventListener('input', () => {
     const d = cur();
@@ -242,72 +261,64 @@
     inputs(e.target);
     draw();
   });
-  Actions.register('print-save-own', {available: () => paSel, run: () => savePrint('own', false)});
-  Actions.register('print-save-scan', {available: () => paSel && !!pa.source, run: () => savePrint('scan', false)});
-  Actions.register('print-save-all', {available: () => paSel, run: () => savePrint('all', false)});
-  Actions.register('print-clear-own', {available: () => paSel && !!pa.own, run: () => savePrint('own', true)});
-  Actions.register('print-clear-scan', {available: () => paSel && !!pa.scan, run: () => savePrint('scan', true)});
-  Actions.register('print-undo', {available: () => paSel, run: () => {
+  Actions.register('print-save-own', {available: pm, run: () => savePrint('own', false)});
+  Actions.register('print-save-scan', {available: () => pm() && !!pa.source, run: () => savePrint('scan', false)});
+  Actions.register('print-save-all', {available: pm, run: () => savePrint('all', false)});
+  Actions.register('print-clear-own', {available: () => pm() && !!pa.own, run: () => savePrint('own', true)});
+  Actions.register('print-clear-scan', {available: () => pm() && !!pa.scan, run: () => savePrint('scan', true)});
+  Actions.register('print-undo', {available: pm, run: () => {
     pa.draft = [...pa.window];
     say('');
     inputs();
     draw();
   }});
-  Actions.register('region-save-own', {available: () => !!sel && !!sel.draft, run: () => save(true, false)});
-  Actions.register('region-save-all', {available: () => !!sel && !!sel.draft, run: () => save(false, false)});
-  Actions.register('region-clear-own', {available: () => !!sel && !!sel.own, run: () => save(true, true)});
-  Actions.register('region-clear-all', {available: () => !!sel && !!sel.stored, run: () => save(false, true)});
-  Actions.register('region-undo', {available: () => !!sel, run: () => {
+  const regionOn = () => mode === 'regions' && !!sel;
+  Actions.register('region-save-own', {available: () => regionOn() && !!sel.draft, run: () => save(true, false)});
+  Actions.register('region-save-all', {available: () => regionOn() && !!sel.draft, run: () => save(false, false)});
+  Actions.register('region-clear-own', {available: () => regionOn() && !!sel.own, run: () => save(true, true)});
+  Actions.register('region-clear-all', {available: () => regionOn() && !!sel.stored, run: () => save(false, true)});
+  Actions.register('region-undo', {available: regionOn, run: () => {
     sel.draft = sel.region && [...sel.region];
     say('');
     inputs();
     draw();
   }});
+  Actions.enable($('rg'));
 
-  // --- dragging: the body moves the region (onto another page too), a corner handle resizes it ---
+  // --- dragging: inside moves what is edited (a region onto another page too), a handle or edge resizes it ---
   const back = (x, lo, hi) => (1000 * x - lo) * 1000 / (hi - lo);       // scan fraction -> per-mille of the printed page
   scan.addEventListener('pointerdown', e => {
-    if (e.button !== 0) return;
-    const edge = e.target.closest('.pe');
-    if (edge) {       // the print area: taking hold of an edge or corner selects it, and drags at once
-      const rect = edge.closest('.sheet').getBoundingClientRect();
-      if (!paSel) select(PA);
-      drag = {pa: true, h: edge.dataset.pe, x: e.clientX, y: e.clientY, d: [...pa.draft],
-              kx: 1000 / rect.width, ky: 1000 / rect.height};   // pixels -> per-mille of the scan
-      scan.setPointerCapture(e.pointerId);
-      e.preventDefault();
-      return;
+    if (e.button !== 0 || !mode) return;
+    const h = e.target.dataset.h || '';
+    if (pm()) {
+      const area = e.target.closest('.parea');
+      if (!area) return;
+      const rect = area.parentElement.getBoundingClientRect();
+      drag = {h, x: e.clientX, y: e.clientY, d: cur(), kx: 1000 / rect.width, ky: 1000 / rect.height};  // pixels -> per-mille of the scan
+    } else {
+      const box = e.target.closest('.rbox');
+      if (!box) return;
+      if (box.dataset.path !== sel?.path) { select(box.dataset.path); return; }
+      const rect = box.parentElement.getBoundingClientRect();
+      const [, l, t] = sel.draft, [wl, wt, wr, wb] = pa.draft;
+      drag = {h, x: e.clientX, y: e.clientY, d: [...sel.draft],
+              // where in the region it was taken hold of, in per-mille of the printed page
+              ox: back((e.clientX - rect.left) / rect.width, wl, wr) - l, oy: back((e.clientY - rect.top) / rect.height, wt, wb) - t,
+              // pixels -> per-mille of the printed page
+              kx: 1e6 / (rect.width * (wr - wl)), ky: 1e6 / (rect.height * (wb - wt))};
     }
-    const box = e.target.closest('.rbox');
-    if (!box) return;
-    if (box.dataset.path !== sel?.path) { select(box.dataset.path); return; }
-    const rect = box.parentElement.getBoundingClientRect();
-    const [, l, t] = sel.draft, [wl, wt, wr, wb] = pa.draft;
-    drag = {h: e.target.dataset.h || '', x: e.clientX, y: e.clientY, d: [...sel.draft],
-            // where in the region it was taken hold of, in per-mille of the printed page
-            ox: back((e.clientX - rect.left) / rect.width, wl, wr) - l, oy: back((e.clientY - rect.top) / rect.height, wt, wb) - t,
-            // pixels -> per-mille of the printed page
-            kx: 1e6 / (rect.width * (wr - wl)), ky: 1e6 / (rect.height * (wb - wt))};
     scan.setPointerCapture(e.pointerId);
     e.preventDefault();
   });
   scan.addEventListener('pointermove', e => {
     if (!drag) return;
     const dx = (e.clientX - drag.x) * drag.kx, dy = (e.clientY - drag.y) * drag.ky;
-    if (drag.pa) {
-      const [l, t, r, b] = drag.d, h = drag.h, min = 50;
-      pa.draft = [h.includes('w') ? Math.min(clamp(l + dx), r - min) : l,
-                  h.includes('n') ? Math.min(clamp(t + dy), b - min) : t,
-                  h.includes('e') ? Math.max(clamp(r + dx), l + min) : r,
-                  h.includes('s') ? Math.max(clamp(b + dy), t + min) : b];
-      inputs();
-      draw();
-      return;
-    }
-    const [p, l, t, r, b] = drag.d, [wl, wt, wr, wb] = pa.draft;
     let d;
-    if (!drag.h) {
+    if (drag.h) d = resize(drag.d, drag.h, dx, dy);
+    else if (pm()) d = shift(drag.d, dx, dy);
+    else {
       // the page under the pointer (the one it is on, when between pages)
+      const [, l, t, r, b] = drag.d, [wl, wt, wr, wb] = pa.draft;
       const over = [...scan.querySelectorAll('.sheet')].find(s => {
         const q = s.getBoundingClientRect();
         return e.clientY >= q.top && e.clientY < q.bottom;
@@ -317,17 +328,10 @@
       const nl = Math.min(Math.max(back((e.clientX - q.left) / q.width, wl, wr) - drag.ox, 0), 1000 - w);
       const nt = Math.min(Math.max(back((e.clientY - q.top) / q.height, wt, wb) - drag.oy, 0), 1000 - h);
       d = [page, nl, nt, nl + w, nt + h].map(Math.round);
-    } else {
-      const h = drag.h, min = 5;
-      d = [p, h.includes('w') ? Math.min(clamp(l + dx), r - min) : l,
-              h.includes('n') ? Math.min(clamp(t + dy), b - min) : t,
-              h.includes('e') ? Math.max(clamp(r + dx), l + min) : r,
-              h.includes('s') ? Math.max(clamp(b + dy), t + min) : b];
     }
-    const turned = d[0] !== sel.draft[0];
-    sel.draft = d;
-    const box = scan.querySelector('.rbox.sel');
-    if (turned) draw(); else if (box) place(box, d);
+    const box = !pm() && d[0] === sel.draft[0] && scan.querySelector('.rbox.sel');
+    put(d);
+    if (box) place(box, d); else draw();      // the print area moves every box with it
     inputs();
   });
   const drop = () => { if (drag) { drag = null; draw(); } };
@@ -336,18 +340,14 @@
 
   // --- keyboard: arrows move by 1 (Shift: 10); with Alt they move the bottom-right corner ---
   document.addEventListener('keydown', e => {
-    if (!sel || !sel.draft || !scan.classList.contains('editing')) return;
+    const d = mode && cur();
+    if (!d) return;
     if (e.target.matches?.('input, textarea, select') || e.ctrlKey || e.metaKey) return;
     const step = e.shiftKey ? 10 : 1;
     const move = {ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step]}[e.key];
     if (!move) return;
     e.preventDefault();
-    const [p, l, t, r, b] = sel.draft;
-    const [dx, dy] = move;
-    sel.draft = e.altKey
-      ? [p, l, t, Math.max(clamp(r + dx), l + 5), Math.max(clamp(b + dy), t + 5)]
-      : [p, l + Math.min(Math.max(dx, -l), 1000 - r), t + Math.min(Math.max(dy, -t), 1000 - b),
-         r + Math.min(Math.max(dx, -l), 1000 - r), b + Math.min(Math.max(dy, -t), 1000 - b)];
+    put(e.altKey ? resize(d, 'se', ...move) : shift(d, ...move));
     inputs();
     draw();
   });

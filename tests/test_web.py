@@ -423,6 +423,9 @@ def test_pages_and_layout_overrides(site):
 
 def test_print_area_levels(site):
     site.ws.store.set_made(Made('s1', 'src1', (0,), {}, 'now'))
+    html = site.get('/s/s1/a').text                 # two editing modes; the region picker lists fields only
+    assert 'data-action="regions"' in html and 'data-action="print-area"' in html
+    assert '#print-area' not in html and 'data-action="print-save-scan"' in html
     pa = lambda level, value, **kw: site.post('/s/s1/print-area', {'level': level, 'value': value, **kw})
     r = pa('own', [100, 100, 900, 900], rev=None)
     assert r.status_code == 200 and r.json()['print_area']['own'] == [100, 100, 900, 900]

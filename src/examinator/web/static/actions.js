@@ -27,7 +27,7 @@ const Actions = (() => {
     ['grade-right', "grade: correct"], ['grade-wrong', "grade: incorrect"], ['grade-blank', "grade: blank"],
     ['grade-number', "grade: number box"],
     ['edit', "edit: first field"], ['save', "save"],
-    ['grid', "grid"], ['regions', "regions on/off"],
+    ['grid', "grid"], ['regions', "regions on/off"], ['print-area', "print area on/off"],
     ['search', "search"], ['leave-field', "leave field"], ['run-preview', "runs: preview"],
     ['cell-left', "grid: cell left", 'grid'], ['cell-right', "grid: cell right", 'grid'],
     ['cell-up', "grid: cell up", 'grid'], ['cell-down', "grid: cell down", 'grid'],
