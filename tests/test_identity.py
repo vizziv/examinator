@@ -359,7 +359,7 @@ def test_picks_confirm_flag_twice_and_name_submissions(written):
     assert {r['sub']: r for r in identity.overview(ws)['rows']}['s0006']['who']['person'] == gray['key']
     identity.pick(ws, 's0006', None, author='t', expect_rev=rev)
     assert ws.store.submission('s0006').name == ""
-    assert ws.sync() == 10 and ws.store.submission('s0007').student == "96174385"
+    assert ws.sync() == 0 and ws.store.submission('s0007').student == "96174385"
 
 
 def test_who_is_taken_never_changes_a_proposal(written):
@@ -420,7 +420,9 @@ def test_rewriting_a_submission_drops_its_unverified_readings(written):
     identity.pick(ws, 's0001', identity.people(ws)[0], author='t', expect_rev=None)
     one = ws.store.made()['s0001'].source
     intake.edit(ws, one, 'drop', sheet=3, expect_rev=intake.plan(ws, one).rev, author='t')
-    assert intake.accept(ws, one)['rewritten'] == ['s0001']               # names are not grading work
+    with pytest.raises(intake.Busy):                                    # named: asked about first
+        intake.accept(ws, one)
+    assert intake.accept(ws, one, allow=['s0001'])['rewritten'] == ['s0001']
     row = identity.overview(ws, ['s0001'])['rows'][0]
     assert texts(ws, 's0001') == {'id': "90412873"} and row['unread'] == ['name']
     assert row['who']['name'] == "Avery Testwell" and ws.store.submission('s0001').name == "Avery Testwell"
@@ -428,7 +430,7 @@ def test_rewriting_a_submission_drops_its_unverified_readings(written):
     calls = len(model.calls)
     identity.read(runner, 's0001')
     assert len(model.calls) == calls + 1 and texts(ws, 's0001')['name'] == "Avery Testwell"   # memo dropped too
-    # grading values: only a forced Accept rewrites a submission with grading work; the same rule
+    # grading values: the same rule
     runner._put_read('s0001', 'areas', 'A.1', "4", False, False)                 # read, unverified
     runner._put_read('s0001', 'areas', 'side', "red", True, False)              # read, vouched by the reader
     runner._put_read('s0001', 'areas', 'A.2', "4*x", False, False)
@@ -438,7 +440,7 @@ def test_rewriting_a_submission_drops_its_unverified_readings(written):
     intake.edit(ws, one, 'turn_page', sheet=0, expect_rev=intake.plan(ws, one).rev, author='t')
     with pytest.raises(intake.Busy):
         intake.accept(ws, one)
-    assert intake.accept(ws, one, force=True)['rewritten'] == ['s0001']
+    assert intake.accept(ws, one, allow=['s0001'])['rewritten'] == ['s0001']
     got = {k: v.text for k, v in runner.values('s0001').items()}
     assert got == {'areas/A.2': "4*x", 'parity/B': "even", '@identity/id': "90412873", '@identity/name': "Avery Testwell"}
     assert identity.who(ws, 's0001')['name'] == "Avery Testwell"

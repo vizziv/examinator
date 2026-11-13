@@ -149,7 +149,7 @@ def test_check_turn_and_accept(site):
     assert plan['readings']['4'] == 'p.1'
     assert plan['turn'][17] == 2 and plan['order'] == list(range(24))
     assert r.status_code == 200 and len(r.json()['report']['new']) == 6
-    assert len(list(ws.pdfs.glob('*.pdf'))) == 6
+    assert len(list(ws.made.iterdir())) == 6 and not list(ws.pdfs.iterdir())
     assert client.get('/').status_code == 200 and 's0005' in client.get('/').text
 
 
@@ -193,14 +193,20 @@ def test_naming_and_a_forced_accept(site):
     assert post(client, token, '/scans/who', {'sub': 's0005', 'key': key, 'rev': None}).json()['who']['name'] == "Emery Sampleton"
     assert ws.store.submission('s0005').name == "Emery Sampleton"
     assert post(client, token, '/scans/who', {'sub': 'nobody', 'key': key, 'rev': None}).status_code == 400
-    # changing a written submission that has work: refused, then forced
+    # changing a written submission that has work, or a name: refused, then allowed, by id
     ws.store.write('s0002', 'parity/B', 'value', {'text': 'odd'}, origin='manual', author='t')
     plan = client.get(f'/scans/{src}/plan').json()
     plan = post(client, token, f'/scans/{src}/edit', {'op': 'drop', 'sheet': 6, 'rev': plan['rev']}).json()['plan']
+    plan = post(client, token, f'/scans/{src}/edit', {'op': 'drop', 'sheet': 17, 'rev': plan['rev']}).json()['plan']
+    busy = [{'id': 's0002', 'change': 'rewrite', 'said': ['grading']}, {'id': 's0005', 'change': 'rewrite', 'said': ['pick']}]
+    assert plan['busy'] == busy
     r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
-    assert r.status_code == 409 and r.json()['current']['busy'] == ['s0002']
-    r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev'], 'force': True})
-    assert r.json()['report']['rewritten'] == ['s0002']
+    assert r.status_code == 409 and r.json()['current']['busy'] == busy
+    r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev'], 'allow': ['s0002']})
+    assert r.status_code == 409                         # s0005 is named: not agreed to
+    assert post(client, token, f'/scans/{src}/accept', {'rev': plan['rev'], 'allow': 's0002'}).status_code == 400
+    r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev'], 'allow': ['s0002', 's0005']})
+    assert r.json()['report']['rewritten'] == ['s0002', 's0005'] and ws.store.submission('s0005').name == "Emery Sampleton"
 
 
 def test_sheet_images(site):

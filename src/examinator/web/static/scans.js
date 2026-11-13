@@ -3,8 +3,9 @@
 // 1 add scans, 2 split them into submissions, 3 the roster, 4 names (names.js), then Read.
 // The line under the strip says what to do next.
 //
-// Split: one first page at a time, large, with its neighbours; verify it (V) or move it
-// a page earlier (A) or later (D). Clicking any small page shows it large the same way;
+// Split: one first page at a time, large, with its neighbours; verify the submission (V: it
+// is these pages, and nothing guessed after it moves it) or move its first page a page
+// earlier (A) or later (D). Clicking any small page shows it large the same way;
 // on a page that is not a first page, A and D look around and Shift+V starts a submission
 // there. The page shown can be marked extra (kept, not a printed page) or have a missing
 // page marked before it, and moved one place in the pile (the plan is one ordered list of
@@ -77,7 +78,7 @@
       if (peek !== null) return 'not a first page';
       if (!done() && open && plan.entries[k] && !plan.entries[k].verified) return 'is this the first page of a submission?';
       const mine = counts[plan.id];
-      if (mine.open) return `next: verify ${plural(mine.open, 'first page')}`;
+      if (mine.open) return `next: verify ${plural(mine.open, 'submission')}`;
       if (mine.write) return `next: Accept (writes ${plural(mine.write, 'submission')})`;
       if (open || write) return 'next: the other scans';
       return after();
@@ -267,14 +268,20 @@
       await load(plan.id);
       say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`, 'bad');      // failed, or lost
     }, true)});
-  // Accept, having said what it would disturb (submissions with grading work it changes or removes).
+  // Accept, having said what it would disturb: written submissions it rewrites or removes that
+  // something was said or done about. The person agrees to exactly those (`allow`).
+  const SAID = {pick: 'named', grading: 'graded', boxes: 'own boxes'};
+  const AFTER = {rewrite: 'Rewritten: the name, decisions and values a person verified stay; readings and own boxes go.',
+                 remove: 'Removed: the submission and all of it go.'};
   register('split-accept', {run: () => {
     const flagged = plan.entries.filter(e => e.doubts.length).length;
     const unverified = plan.entries.filter(open).length;
     if ((flagged || unverified) && !confirm(`${flagged} flagged, ${unverified} unverified. Write the submissions anyway?`)) return;
-    const busy = plan.busy, many = busy.length > 1;
-    if (busy.length && !confirm(`${busy.join(', ')} already ${many ? 'have' : 'has'} grading work, and the split changes or removes ${many ? 'them' : 'it'}. Rewrite anyway? What people typed, verified or decided stays; unverified readings are dropped.`)) return;
-    return send('accept', {force: busy.length > 0}, b => {
+    const busy = plan.busy;
+    const said = busy.map(b => `${b.id} (${b.said.map(w => SAID[w]).join(', ')}): ${b.change === 'remove' ? 'removed' : 'rewritten'}`);
+    const after = [...new Set(busy.map(b => b.change))].map(c => AFTER[c]);
+    if (busy.length && !confirm([...said, '', ...after, 'Accept anyway?'].join('\n'))) return;
+    return send('accept', {allow: busy.map(b => b.id)}, b => {
       const x = b.report;
       made += x.new.length - x.removed.length;
       say(`written: ${x.new.length} new, ${x.rewritten.length} rewritten, ${x.removed.length} removed, ${x.unchanged} unchanged`);
@@ -311,7 +318,7 @@
                  new: ['unv', 'to write', 'not on disk yet: Accept writes it']};
   function badges(e) {
     const [cls, text, title] = STATE[e.state];
-    return [e.verified ? tag('', 'verified', 'its first page is verified') : tag('unv', 'unverified', 'its first page is a guess'),
+    return [e.verified ? tag('', 'verified', 'a person said it is these pages') : tag('unv', 'unverified', 'nobody has verified these pages'),
             tag(cls, text, title), ...e.doubts.map(d => tag('bad', d)),
             e.pages.some(i => plan.turn[i]) ? tag('', 'turned', 'some of its pages are turned') : ''];
   }

@@ -1,7 +1,7 @@
 """Intake: from stacks of scans to one PDF per submission.
 
-    WORKSPACE/sources/ID.pdf     each scanned PDF as added, never changed (ID: start of its SHA-256)
-    WORKSPACE/pdfs/s0001.pdf     one per submission, written when a plan is accepted
+    WORKSPACE/sources/ID.pdf          each scanned PDF as added, never changed (ID: start of its SHA-256)
+    WORKSPACE/made/s0001-TOKEN.pdf    a submission's PDF as Accept wrote it, never changed
 
 A source's split plan (`core.split`) is the row `(source id, '', 'split')`,
 so edits keep history and carry revisions like everything else a grader edits.
@@ -18,20 +18,28 @@ and Accept alike. Ids are opaque, allocated once, never reused.
 Accepting writes the PDFs whose sheets (or orientation) changed. A
 submission's PDF is the exam's printed pages in order, page p at index p - 1,
 with a blank placeholder where a page is missing (None in `Made.pages`), then
-its extra sheets in order (`split.lay_out`), written upright. A submission
-that would change or disappear while it has grading work (identity fields are
-not grading work) is not touched unless the caller insists (`force`): `Busy`
-names them. A rewritten submission's pages are new: what was remembered from
-the old ones goes, and so does every value a reader wrote that no person typed
-or verified (identity fields and grading alike): those fields are not read.
-What a person typed or verified, and the pick, stay.
+its extra sheets in order (`split.lay_out`), written upright.
 
-The store says "written" only about files in place: files are moved into
-`pdfs/` before the store records them, and the ids being placed are noted
-first (`PENDING`), so a crash anywhere leaves a state the next Accept repairs:
-a placed file the store never recorded is deleted, not taken for a submission
-(`unsettled`, which `Workspace.sync` skips), and a submission whose file may
-not match its record, or is missing, counts as not written.
+**A written file is never changed; the store names the file.** Each PDF Accept
+writes gets a fresh name in `made/` (`Made.file`); one commit records the plan,
+`made` (the file included) and the submissions, so the store and the files it
+names agree whatever fails, wherever. A file in `made/` that no `made` row
+names is garbage, deleted at the start and end of every Accept (`sweep`).
+`pdfs/` holds only PDFs a person put there (handed in already split, adopted by
+`Workspace.sync`), so nothing Accept writes is ever taken for one. Accepts run
+one at a time (the server's lock).
+
+**Accept speaks for a person.** It makes every sheet of the plan a person's,
+recorded under the person accepting. A written submission it would rewrite or
+remove that something was said or done about (a pick, grading work, boxes of
+its own: `disturbed`) is not touched unless the person said it may be
+(`allow`); `Busy` names the others. A rewritten submission has new pages
+(`repaged`): what was read from the old ones goes (the model's memo, every
+value no person verified), and so does where things are on them (its own
+regions and print area, drawn on the old pages; a region on a sheet it no
+longer has would not even validate); what a person said about the student
+stays (values a person verified, decisions, the pick). A removed submission
+is gone; its id is never reused.
 
 Who a submission is stays an attribute: the id is opaque and never changes.
 The roster, the identity fields, and the person a grader picks are
@@ -43,17 +51,17 @@ import functools
 import hashlib
 import json
 import os
+import secrets
 import shutil
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Collection, Mapping
 
 from PIL import Image
 
 from ..pdf import pages as pdf_pages, render
 from ..pdf.orient import turn
-from . import identity, split
+from . import identity, overrides, split
 from .ask import Printed
 from .defs import Landmark, digest
 from .reading import normalize, region_key
@@ -233,7 +241,7 @@ def reguess(ws, id: str, *, model=None, length: int | None = None,
     """Guess the plan again and write it (`split.guess`): every start and drop nobody
     has spoken for, checked with the landmarks when there is a model. `length`
     changes the expected length. `failed` in the plan counts the sheets a failed
-    model call left unread; a check where every call failed does not count as checked."""
+    model call left unread."""
     src = source(ws, id)
     cur = plan(ws, id)
     if cur is None or not cur.body:
@@ -256,7 +264,6 @@ def reguess(ws, id: str, *, model=None, length: int | None = None,
             body['readings'].pop(str(i), None)
         if read.failed:
             body['failed'] = len(read.failed)
-    body['checked'] = read is not None and not read.all_failed
     body.pop(UNDONE, None)
     return ws.store.write(id, '', PLAN, body, origin='manual' if author else 'auto', author=author,
                           expect_rev=expect_rev)
@@ -343,39 +350,22 @@ def undo(ws, id: str, *, expect_rev: Any) -> Row:
 
 # --- what is written, and accepting -------------------------------------------------
 
-PENDING = 'intake_pending'      # setting: ids whose files are being placed or removed
-
-
-def _pending(ws) -> set[str]:
-    return set(ws.store.setting(PENDING, []))
-
-
-def unsettled(ws) -> set[str]:
-    """Files in `pdfs/` an Accept placed but never recorded (or was removing): not submissions."""
-    made = ws.store.made()
-    return {s for s in _pending(ws) if s not in made}
-
-
 def outline(ws, id: str, body: Mapping | None = None) -> tuple[list[dict], list[str]]:
     """Per submission of the plan (or `body`), what is written: `id` (the written
     submission it is, by `split.link`, else None), `state` ('new': not written;
-    'made': written as planned; 'changed': written otherwise, or its file is
-    missing or may not match its record), `pages` (its PDF's pages: `split.written`,
-    None a missing page) and their turns. Then the written submissions no run is."""
+    'made': written as planned; 'changed': written otherwise), `pages` (its PDF's
+    pages: `split.written`, None a missing page) and their turns. Then the written
+    submissions no run is."""
     body = plan(ws, id).body if body is None else body
     made = {s: m for s, m in ws.store.made().items() if m.source == id}
     ids, gone = split.link(split.runs(body), {s: m.pages for s, m in made.items()})
-    pending, turns = _pending(ws), split.turns(body)
+    turns = split.turns(body)
     out = []
     for sid, lay in zip(ids, split.layouts(body, ws.exam.pages)):
         pages = split.written(lay)
         orient = [0 if i is None else turns[i] for i in pages]
-        if sid is None:
-            state = 'new'
-        else:
-            m = made[sid]
-            same = list(m.pages) == pages and list(m.orient) == orient
-            state = 'made' if same and sid not in pending and (ws.pdfs / f'{sid}.pdf').exists() else 'changed'
+        state = 'new' if sid is None else \
+            'made' if (list(made[sid].pages), list(made[sid].orient)) == (pages, orient) else 'changed'
         out.append({'id': sid, 'state': state, 'pages': pages, 'orient': orient})
     return out, gone
 
@@ -391,62 +381,74 @@ def _next_ids(ws, taken: set[str]):
             yield sid, n
 
 
-def _repair(ws) -> None:
-    """What an interrupted Accept left: placed files the store never recorded are
-    deleted (the rest stay pending, so they count as not written), and temporary
-    files are swept."""
-    stray = unsettled(ws)
-    for sid in stray:
-        (ws.pdfs / f'{sid}.pdf').unlink(missing_ok=True)
-    if stray:
-        ws.store.set_setting(PENDING, sorted(_pending(ws) - stray))
-    for tmp in ws.pdfs.glob('.*.part'):
-        tmp.unlink(missing_ok=True)
+def sweep(ws) -> None:
+    """Delete every file in `made/` that no `made` row names."""
+    named = {m.file for m in ws.store.made().values()}
+    for path in ws.made.iterdir():
+        if path.name not in named:
+            path.unlink(missing_ok=True)
 
 
-def disturbed(ws, rows, gone) -> list[str]:
-    """The submissions with grading work that accepting (`outline`) would change or remove."""
-    def work(sid):
-        return ws.store.has_work(sid, besides=identity.IDENTITY + '/')
-    return [r['id'] for r in rows if r['state'] == 'changed' and work(r['id'])] + [s for s in gone if work(s)]
+SAID = ('pick', 'grading', 'boxes')     # what `disturbed` names
 
 
-def forget_reads(ws, sid: str) -> None:
-    """A submission's pages changed: drop what was read from the old ones (the memo,
-    and values a reader wrote that no person typed or verified)."""
+def disturbed(ws, rows, gone) -> list[dict]:
+    """The written submissions accepting (`outline`) would rewrite or remove that
+    something was said or done about: `{'id', 'change': 'rewrite' | 'remove', 'said'}`,
+    `said` naming the pick, grading work (a value, result or decision outside the
+    identity group) and boxes of its own (overrides at its scope)."""
+    out = []
+    for sid, change in [(r['id'], 'rewrite') for r in rows if r['state'] == 'changed'] + [(s, 'remove') for s in gone]:
+        said = [what for what, there in zip(SAID, (
+            ws.store.get(sid, '', identity.WHO) is not None,
+            ws.store.has_work(sid, besides=identity.IDENTITY + '/'),
+            bool(ws.store.overrides(overrides.scope(overrides.SUBMISSION, sid))))) if there]
+        if said:
+            out.append({'id': sid, 'change': change, 'said': said})
+    return out
+
+
+def repaged(ws, sid: str) -> None:
+    """A submission's pages changed: what was read from the old ones goes (the memo, and
+    every value no person verified), and so does where things are on them (its own
+    overrides: regions, print area). Values a person verified, decisions and
+    the pick stay: they are about the student."""
     ws.store.clear_memo(sid)
     for r in ws.store.all(kinds=['value'], submission=sid):
-        if r.origin != 'manual' and (r.body or {}).get('verified') != 'person':
+        if (r.body or {}).get('verified') != 'person':
             ws.store.delete(sid, r.name, 'value')
+    scope = overrides.scope(overrides.SUBMISSION, sid)
+    for path in ws.store.overrides(scope):
+        ws.store.clear_override(path, scope=scope)
 
 
-def accept(ws, id: str, *, force: bool = False, expect_rev: Any = ANY) -> dict:
-    """Accept the plan: every sheet becomes a person's (`split.accepted`), and its
-    submissions are written into `pdfs/`. Unchanged ones are left alone; a
-    written submission no run is any more is removed. Raises `Busy` if a
-    submission with grading work would change or go, unless `force`.
+def accept(ws, id: str, *, author: str | None = None, allow: Collection[str] = (), expect_rev: Any = ANY) -> dict:
+    """A person (`author`) accepts the plan: every sheet becomes theirs (`split.accepted`),
+    and its submissions are written. Unchanged ones are left alone; a written
+    submission no run is any more is removed. Raises `Busy` if one that something
+    was said or done about would be rewritten or removed (`disturbed`), unless the
+    person said it may be (`allow`: its id).
 
-    In order: the PDFs are written to temporary files; the ids about to be placed
-    are noted (with the id counter), in one commit that also checks the plan has
-    not changed; the files are moved into place; the store records them (the
-    plan, `made`, the submissions) in one commit; removed files are deleted; the
-    note is cleared. A crash at any point is repaired by the next Accept."""
+    The PDFs are written under fresh names; one commit checks the plan has not
+    changed and records the plan, `made` and the submissions; then the files no
+    row names any more are deleted. Nothing named is ever overwritten, so a failure
+    anywhere leaves the store and the files it names as they were or as accepted."""
     src = source(ws, id)
     art = plan(ws, id)
     if art is None:
         raise KeyError(id)
     if expect_rev is not ANY and art.rev != expect_rev:
         raise Conflict("the plan changed")
-    _repair(ws)
+    sweep(ws)
     body = split.accepted(art.body)
     body.pop(UNDONE, None)
     rows, gone = outline(ws, id, body)
-    busy = disturbed(ws, rows, gone)
-    if busy and not force:
+    busy = [b['id'] for b in disturbed(ws, rows, gone) if b['id'] not in allow]
+    if busy:
         raise Busy(busy)
     fresh = _next_ids(ws, {s.id for s in ws.store.submissions()} | set(ws.store.made()))
     next_n = None
-    report = {'new': [], 'rewritten': [], 'removed': [], 'unchanged': 0}
+    report = {'new': [], 'rewritten': [], 'removed': list(gone), 'unchanged': 0}
     writes = []
     for r in rows:
         if r['state'] == 'made':
@@ -456,43 +458,26 @@ def accept(ws, id: str, *, force: bool = False, expect_rev: Any = ANY) -> dict:
             r['id'], next_n = next(fresh)
         writes.append(r)
         report['new' if r['state'] == 'new' else 'rewritten'].append(r['id'])
-    path = source_path(ws, src)
-    tmps: dict[str, Path] = {}
+    path, folder, now = source_path(ws, src), ws.made, _now()
     try:
         for r in writes:
-            tmps[r['id']] = ws.pdfs / f'.{r["id"]}.{os.getpid()}.{threading.get_ident()}.part'
-            pdf_pages.write(path, list(zip(r['pages'], r['orient'])), tmps[r['id']])
+            r['file'] = f'{r["id"]}-{secrets.token_hex(6)}.pdf'
+            pdf_pages.write(path, list(zip(r['pages'], r['orient'])), folder / r['file'])
         with ws.store.transaction():
-            if ws.store.get(id, '', PLAN).rev != art.rev:
-                raise Conflict("the plan changed")
+            cur = ws.store.write(id, '', PLAN, body, origin='manual', author=author, expect_rev=art.rev)
             if next_n is not None:
                 ws.store.set_setting('intake_next', next_n)
-            ws.store.set_setting(PENDING, sorted(_pending(ws) | set(tmps) | set(gone)))
-        for sid, tmp in tmps.items():
-            os.replace(tmp, ws.pdfs / f'{sid}.pdf')
+            for r in writes:
+                sid = r['id']
+                ws.store.set_made(Made(sid, id, tuple(r['pages']), tuple(r['orient']), now, r['file']))
+                ws.store.put_submissions([identity.submission(ws, sid, '')])
+                if r['state'] == 'changed':
+                    repaged(ws, sid)
+            for sid in gone:
+                repaged(ws, sid)
+                ws.store.delete_made(sid)
+                ws.store.delete_submission(sid)
     finally:
-        for tmp in tmps.values():
-            tmp.unlink(missing_ok=True)
-    now = _now()
-    with ws.store.transaction():
-        if body != art.body:
-            cur = ws.store.write(id, '', PLAN, body, origin='manual', author=art.author, expect_rev=art.rev)
-        elif ws.store.get(id, '', PLAN).rev != art.rev:
-            raise Conflict("the plan changed")
-        else:
-            cur = art
-        for r in writes:
-            sid = r['id']
-            ws.store.set_made(Made(sid, id, tuple(r['pages']), tuple(r['orient']), now))
-            ws.store.put_submissions([identity.submission(ws, sid, f'{sid}.pdf')])
-            forget_reads(ws, sid)
-        for sid in gone:
-            ws.store.delete_made(sid)
-            ws.store.delete_submission(sid)
-            report['removed'].append(sid)
-    for sid in gone:
-        (ws.pdfs / f'{sid}.pdf').unlink(missing_ok=True)
-    ws.store.set_setting(PENDING, sorted(_pending(ws) - set(tmps) - set(gone)))
+        sweep(ws)
     report['rev'] = cur.rev
     return report
-
