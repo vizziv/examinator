@@ -102,7 +102,8 @@ def matrix(samples, d: int) -> np.ndarray:
 
 
 def inside(mask: np.ndarray, points: np.ndarray, plot=None) -> Fit:
-    """A support test from a boolean mask over the samples."""
+    """A support test from a boolean mask over the samples; `plot` draws its
+    figure when shown (`functools.partial(plots.scatter, ...)`)."""
     n, off = len(mask), int((~mask).sum())
     if off == 0:
         return Fit('correct', None, None, f"support ok (n = {n})", plot)
@@ -147,11 +148,11 @@ class Part:
     shown: int = 8                                  # samples previewed per dump
 
     def add(self, name: str, fit: Fit, samples=None, *, plot: bool = True) -> Fit:
-        """Record a test; its plot is shown if `plot` or if it failed."""
+        """Record a test; its plot is drawn and shown if `plot` or if it failed."""
         self.fits.append(fit)
         self.tests.append([name, fit.outcome or '?', fit.note])
         if fit.plot is not None and (plot or fit.outcome == 'incorrect'):
-            self.plots.append(fit.plot)
+            self.plots.append(fit.plot())
         if samples is not None:
             self.dumps.append([name, preview(samples, self.shown)])
         return fit

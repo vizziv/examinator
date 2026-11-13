@@ -7,6 +7,7 @@ sampler that passes with either is left for a person.
 """
 import math
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 
@@ -72,7 +73,7 @@ def judge(program, region: Region) -> checks.Part:
     xy = points(samples)
     if xy is None:
         return part.settle('incorrect', "a sample is not a point [x, y]")
-    scatter = plots.scatter(xy[:, 0], xy[:, 1], title="snow_cone()", xlabel="x", ylabel="y")
+    scatter = partial(plots.scatter, xy[:, 0], xy[:, 1], title="snow_cone()", xlabel="x", ylabel="y")
     on = np.isfinite(xy).all(axis=1) & region.inside(xy[:, 0], xy[:, 1])
     support = part.add("support", checks.inside(on, xy, scatter))
     if support.outcome != 'correct':

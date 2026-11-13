@@ -3,6 +3,7 @@ discs, an upper half disc and a triangle, without accept-reject."""
 import math
 import time
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 
@@ -95,7 +96,7 @@ def check_program(program: pseudocode.Program, region: Region) -> checks.Part:
     except checks.Stop as stop:
         return part.stop("ice_cream()", stop)
     piece = region.piece(p)
-    scatter = plots.scatter(p[:, 0], p[:, 1], title="ice_cream()", xlabel="x", ylabel="y")
+    scatter = partial(plots.scatter, p[:, 0], p[:, 1], title="ice_cream()", xlabel="x", ylabel="y")
     if part.add("region", checks.inside(piece >= 0, p, scatter), raw).outcome != 'correct':
         return part.combine()
     share = region.areas / region.areas.sum()

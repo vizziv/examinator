@@ -110,14 +110,14 @@ def test_parts_and_evidence():
     assert part.note == ""
     other = checks.Part('2').stop("g(1)", checks.Stop('incorrect', "line 2: boom"))
     assert (other.outcome, other.note) == ('incorrect', "g(1): line 2: boom")
-    body = settle(Bool(), checks.result(other, "def f():\n    pass\n"))
+    body = settle(Bool(), checks.result(other, "def f():\n    pass\n")).body
     assert body['grade']['value'] is False
     assert body['fields'] == {'2': {'outcome': 'incorrect', 'note': "g(1): line 2: boom"}}
-    body = settle(Bool(), checks.result(part, "src", ran="run"))
+    body = settle(Bool(), checks.result(part, "src", ran="run")).body
     assert body['grade']['value'] is True and body['fields'] == {'1': {'outcome': 'correct'}}
     shown = str(body['blocks'])
     assert "'Tests'" in shown and "Samples" in shown and "Source" in shown and "As run" in shown
-    undecided = settle(Bool(), checks.result(checks.Part('3').settle(None, "why"), "src"))
+    undecided = settle(Bool(), checks.result(checks.Part('3').settle(None, "why"), "src")).body
     assert undecided['grade'] == {'value': None, 'flags': [], 'reason': "why"}
 
 

@@ -4,6 +4,7 @@ Each reads only its own field: 7.1 runs with a trusted `poisson_dist`, so it doe
 not depend on the student's 7.2."""
 import math
 import time
+from functools import partial
 from itertools import combinations
 
 import numpy as np
@@ -86,8 +87,8 @@ def independence(a: np.ndarray, b: np.ndarray, title: str) -> sampling.Fit:
     if not math.isfinite(p):
         return sampling.Fit(None, None, None, "chi-square did not run", None)
     failed = p < sampling.ALPHA
-    plot = plots.scatter(a, b, title=title, xlabel="count in first interval",
-                         ylabel="count in second interval") if failed else None
+    plot = partial(plots.scatter, a, b, title=title, xlabel="count in first interval",
+                   ylabel="count in second interval") if failed else None
     return sampling.Fit('incorrect' if failed else 'correct', p, stat, f"independence p = {p:.2g}", plot)
 
 

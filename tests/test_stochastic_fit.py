@@ -1,11 +1,12 @@
 """examinator_kits.stochastic.fit (formerly std.sampling): seeded synthetic samples only."""
-import base64
 import json
 
 import numpy as np
 import pytest
 from scipy import stats
 
+from examinator import Bool, Result
+from examinator.core.result import settle
 from examinator_kits.stochastic import fit as sampling
 from examinator_kits.stochastic.fit import ALPHA, Fit, chi_square, combine, ks, projected_ks, support
 
@@ -23,11 +24,11 @@ def poisson_pmf(mu):
 
 
 def check_blocks(fit, tone):
-    blocks = [b.to_json() for b in fit.blocks()]
+    blocks = settle(Bool(), Result(None, blocks=fit.blocks())).body['blocks']
     json.loads(json.dumps(blocks, allow_nan=False))
     assert blocks[-1] == {'type': 'note', 'text': fit.note, 'tone': tone}
-    for block in blocks[:-1]:
-        assert block['type'] == 'image' and base64.b64decode(block['data']).startswith(b'\x89PNG')
+    for block, drawn in zip(blocks[:-1], fit.blocks()):
+        assert block['type'] == 'image' and drawn.data.startswith(b'\x89PNG')
     return blocks
 
 
@@ -210,7 +211,7 @@ def test_projected_ks_rejects_wrong_joint_law_with_correct_marginals():
 def test_projected_ks_seeded():
     a, b = normals(1, 500), normals(2, 500)
     first, again = projected_ks(a, b, seed=3), projected_ks(a, b, seed=3)
-    assert first == again and first.plot.to_json() == again.plot.to_json()
+    assert first == again and first.plot().data == again.plot().data
     assert projected_ks(a, b, seed=3).note != projected_ks(a, b, seed=4, projections=5).note
 
 
