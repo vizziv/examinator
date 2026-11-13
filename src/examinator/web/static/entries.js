@@ -31,23 +31,19 @@
     return text;
   }
   const revOf = form => (form.dataset.rev === '' ? null : Number(form.dataset.rev));
-  const say = (form, text, bad) => {
-    const m = form.querySelector('.emsg');
-    m.textContent = text;
-    m.classList.toggle('notice', !!bad);
-  };
-  const short = v => { const s = JSON.stringify(v) ?? ''; return s.length > 80 ? s.slice(0, 80) + '…' : s; };
+  // Each entry's own message line, where its changes say how they went.
+  const say = (form, text) => Line(form.querySelector('.emsg')).say(text);
 
   // A refusal keeps the draft and takes the revision saved now: saving again overwrites knowingly.
   function send(form, clear) {
     const path = form.dataset.path;
     const data = clear ? {path, rev: revOf(form), sub} : {path, value: readEntry(form), rev: revOf(form), sub};
-    say(form, '…');
     return Changes.send(`override::${path}`, clear ? '/exam/clear' : '/exam/set', data, {
+      line: Line(form.querySelector('.emsg')),
       redraw: cur => {
         form.dataset.rev = cur.rev ?? '';
-        say(form, cur.rev == null ? "reverted elsewhere; save again to overwrite"
-                                  : `now ${short(cur.value)}; save again to overwrite`, true);
+        const now = cur.rev == null ? "the package's" : brief(cur.value);
+        return !clear ? Changes.kept(now) : cur.rev == null ? "reverted elsewhere already" : `changed elsewhere to ${now}: revert again to drop it`;
       },
       done: b => saved(form, clear, b)});
   }
@@ -120,11 +116,12 @@
   // A scan's or a submission's own value: back to what applies to the others.
   Actions.register('scoped-revert', {run: ({el}) => {
     if (!confirm("Drop this own value?")) return;
-    const m = el.parentElement.querySelector('.emsg'), {path, scope} = el.dataset;
+    const {path, scope} = el.dataset;
     return Changes.send(`override:${scope}:${path}`, '/exam/clear', {path, scope, rev: el.dataset.rev === '' ? null : Number(el.dataset.rev)}, {
+      line: Line(el.parentElement.querySelector('.emsg')),
       redraw: cur => {
         el.dataset.rev = cur.rev ?? '';
-        m.textContent = cur.rev == null ? "gone already" : `now ${short(cur.value)}; revert again to drop it`;
+        return cur.rev == null ? "dropped elsewhere already" : `changed elsewhere to ${brief(cur.value)}: revert again to drop it`;
       },
       done: b => {
         el.closest('tr').remove();

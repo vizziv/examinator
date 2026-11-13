@@ -1,7 +1,7 @@
 'use strict';
 // The Read page: what the options would read, shown live; one button reads it.
 (() => {
-  const form = document.getElementById('sel'), msg = document.getElementById('msg');
+  const form = document.getElementById('sel'), line = Line('msg');
   const start = document.getElementById('start'), stop = document.getElementById('stop');
   const order = session('order', null);
   let timer = null, planning = null, toRead = 0, running = false;
@@ -57,12 +57,11 @@
   const shown = () => start.dataset.rev || null;
   Changes.redraw = () => poll();
   Actions.register('read-start', {available: () => !start.disabled, run: () => {
-    msg.textContent = '';
     if (flag('include_protected') && !confirm("Read again, replacing values a person set or verified?")) return;
     return Changes.send('batch', '/read/start', {...selection(), parallel: Number(form.parallel.value), rev: shown()},
-                        {done: () => poll()});
+                        {line, done: () => poll()});
   }});
-  Actions.register('read-stop', {available: () => !stop.disabled, run: () => Changes.send('batch', '/read/stop', {rev: shown()})});
+  Actions.register('read-stop', {available: () => !stop.disabled, run: () => Changes.send('batch', '/read/stop', {rev: shown()}, {line})});
 
   async function poll() {
     const r = await request('/read/status');

@@ -56,6 +56,7 @@
   const dirty = () => changed().length > 0;
   function touched() {
     form().classList.toggle('dirty', dirty());
+    form().querySelector('[data-action=discard]').hidden = !dirty();
     for (const el of inputs()) el.closest('.field').classList.toggle('dirty', el.value !== el.dataset.orig);
     try {
       if (dirty()) {
@@ -64,19 +65,32 @@
       } else sessionStorage.removeItem(draftKey());
     } catch (e) { /* private mode */ }
   }
-  // A draft left behind, possibly written against older values: bring it back with the
-  // revisions it was made against, so saving it cannot overwrite newer work.
+  // The draft over values that changed under it (left behind in this tab, or changed
+  // elsewhere while typed): each input already shows the server's value and revision; the
+  // person's text goes back on top, against that revision, so saving overwrites knowingly.
+  // Said once, on the form's line, with what each value is now.
+  const line = Line('ed-msg');
+  function keep(drafts) {
+    const moved = [];
+    for (const d of drafts) {
+      const el = inputs().find(i => i.dataset.key === d.key);
+      if (!el || d.text === el.dataset.orig) continue;        // gone, or now the same: nothing is lost
+      if (String(d.rev) !== el.dataset.rev) {
+        moved.push(`${brief(el.dataset.orig)} (${el.closest('.field').querySelector('.flabel').textContent.trim()})`);
+      }
+      if (el.value !== d.text) el.value = d.text;
+    }
+    touched();
+    if (!moved.length) return null;
+    const text = Changes.kept(moved.join(', '));
+    line.say(text, 'bad');
+    return text;
+  }
   function adopt() {
     snapshot();
     let saved = null;
     try { saved = JSON.parse(sessionStorage.getItem(draftKey())); } catch (e) { /* private mode */ }
-    for (const d of Array.isArray(saved) ? saved : []) {
-      const el = inputs().find(i => i.dataset.key === d.key);
-      if (!el) continue;
-      el.value = d.text;
-      if (String(d.rev) !== el.dataset.rev) { el.dataset.rev = d.rev; form().querySelector('.notice').hidden = false; }
-    }
-    touched();
+    keep(Array.isArray(saved) ? saved : []);
   }
   snapshot();
   // Shown later than drawn (prerendered ahead, or back from the back/forward cache): the
@@ -88,13 +102,15 @@
   addEventListener('beforeunload', e => { if (dirty()) e.preventDefault(); });
 
   // --- live refresh: re-read this page and swap what the server marks data-live ---
+  // The values: those with no draft take the server's; a draft is kept (`keep`). Answers the
+  // message said about a draft kept over a changed value, else null.
   async function refresh() {
     let doc;
     try {
       const res = await fetch(location.href, {headers: {Accept: 'text/html'}});
-      if (!res.ok) return;
+      if (!res.ok) return null;
       doc = new DOMParser().parseFromString(await res.text(), 'text/html');
-    } catch (e) { return; }
+    } catch (e) { return null; }
     for (const fresh of doc.querySelectorAll('[data-live]')) {
       const old = $(fresh.id);
       if (!old || served.get(fresh.id) === fresh.outerHTML) continue;
@@ -105,26 +121,34 @@
       drawCrops(node);
       Actions.hints(node);
     }
+    let said = null;
     const fresh = doc.getElementById('ed-fields'), old = form();
     if (fresh && old) {
-      const revs = () => inputs().map(i => `${i.dataset.key}@${i.dataset.rev}`).join();
-      const freshRevs = [...fresh.querySelectorAll('[data-key]:is(input, textarea)')]
-        .map(i => `${i.dataset.key}@${i.dataset.rev}`).join();
-      if (freshRevs !== revs()) {
-        if (dirty()) old.querySelector('.notice').hidden = false;
-        else {
-          const node = document.importNode(fresh, true);
-          const others = node.querySelector('#others');
-          if (others) others.open = !!old.querySelector('#others')?.open;
-          old.replaceWith(node);
-          snapshot();
-          drawCrops(node);
-          Actions.hints(node);
+      const now = new Map([...fresh.querySelectorAll('[data-key]:is(input, textarea)')].map(i => [i.dataset.key, i]));
+      const same = now.size === inputs().length && inputs().every(i => now.has(i.dataset.key));
+      if (!same && !dirty()) {          // other fields: drawn anew
+        const node = document.importNode(fresh, true);
+        const others = node.querySelector('#others');
+        if (others) others.open = !!old.querySelector('#others')?.open;
+        old.replaceWith(node);
+        snapshot();
+        drawCrops(node);
+        Actions.hints(node);
+      } else if (inputs().some(i => now.has(i.dataset.key) && now.get(i.dataset.key).dataset.rev !== i.dataset.rev)) {
+        const drafts = changed().map(el => ({key: el.dataset.key, text: el.value, rev: el.dataset.rev}));
+        for (const el of inputs()) {
+          const f = now.get(el.dataset.key);
+          if (!f) continue;
+          if (el.value === el.dataset.orig) el.value = f.value;
+          el.dataset.orig = f.value;
+          el.dataset.rev = f.dataset.rev;
         }
+        said = keep(drafts);
       }
     }
     ready();
     inFilter();
+    return said;
   }
 
   async function settle(body) {          // wait for the background job an action started
@@ -142,7 +166,8 @@
   // Every change here is about this page's one subject (this submission's question) as
   // drawn, sent through Changes, one chain per row; a refusal redraws the page.
   Changes.redraw = () => refresh();
-  const act = (row, path, data) => Changes.send(row, `${base}/${path}`, data, {done: settle});
+  // The values' changes say how they went on the form's line; the others in the header.
+  const act = (row, path, data) => Changes.send(row, `${base}/${path}`, data, {done: settle, line: row === 'values' ? line : null});
 
   // Set this submission's own value of the exam data at `el.dataset.path` (null: drop it),
   // then reload. A refusal takes the revision saved now: setting again overwrites knowingly.
@@ -150,7 +175,7 @@
     const path = el.dataset.path, scope = JSON.parse($('scan').dataset.scopes).own;
     return Changes.send(`override:${scope}:${path}`, value === null ? '/exam/clear' : '/exam/set',
       {path, scope, value, rev: revOf(el), sub},
-      {done: () => location.reload(), redraw: cur => { el.dataset.rev = cur.rev ?? ''; }});
+      {done: () => location.reload(), redraw: cur => { el.dataset.rev = cur.rev ?? ''; return Changes.kept(brief(cur.value)); }});
   }
 
   // Save the values changed here (a person who sets a value verifies it); with `all`,
@@ -159,7 +184,6 @@
   // conflict, a review marker), so V stays on this submission. `leaving`: the page is left
   // on the answer, so what the save started is not waited for (it runs on the server).
   function save(all, list = 'waiting', leaving = false) {
-    flash('');
     const values = {}, edited = changed();
     for (const el of edited) values[el.dataset.key] = {text: el.value, rev: revOf(el)};
     const verify = all ? JSON.parse($('parts').dataset[list] || '[]')
@@ -168,15 +192,13 @@
     if (!edited.length && !verify.length) return Promise.resolve({});
     const sent = edited.map(el => [el, el.value]);
     return Changes.send('values', `${base}/save`, {values, verify}, {
-      redraw: () => { form().querySelector('.notice').hidden = false; refresh(); },
+      line, ends: leaving, redraw: () => refresh(),
       done: async b => {
-        try { sessionStorage.removeItem(draftKey()); } catch (e) { /* private mode */ }
         for (const [el, text] of sent) {
           if (el.value === text) el.dataset.orig = text;
           if (b.revs && el.dataset.key in b.revs) el.dataset.rev = b.revs[el.dataset.key];
         }
         touched();
-        form().querySelector('.notice').hidden = true;
         if (!leaving) await settle(b);
       }});
   }

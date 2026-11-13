@@ -23,8 +23,8 @@
   let names = null;       // from names.js: {n, left, unread, proposal}
   let current = null;     // the step shown
 
-  const msg = $('msg');
-  const say = text => { msg.textContent = text || ''; msg.hidden = !text; };
+  // The line under the strip: how the last change on the step shown went (a change there replaces it).
+  const line = Line('msg'), say = (text, tone) => line.say(text, tone);
   const sheet = (i, w) => `${ROOT}/sheet/${encodeURIComponent(plan.id)}/${i}.jpg?o=${plan.turn[i]}&w=${w}`;
   const near = (i, d) => plan.order[plan.order.indexOf(i) + d] ?? -1;     // a neighbour in the pile, else -1
   const reading = i => plan.readings[i] || '';
@@ -102,7 +102,7 @@
           method: 'POST', body: file, headers: {'Content-Type': 'application/pdf', 'X-Token': meta('token')}});
         body = await res.json();
       } catch (err) { /* reported below */ }
-      if (!res || !res.ok) { say(''); flash(`${file.name}: ${body.error || 'failed'}`); return; }
+      if (!res || !res.ok) { say(`${file.name}: ${body.error || 'failed'}`, 'bad'); return; }
       if (!body.new) flash(`${file.name}: already added`, 'ok');
       location.hash = 'src=' + body.id;
     }
@@ -175,7 +175,7 @@
   }
   async function load(id) {
     const r = await request(`/scans/${encodeURIComponent(id)}/plan`);
-    if (!r.ok) { flash('could not load the scan'); return; }
+    if (!r.ok) { say("could not load the scan", 'bad'); return; }
     adopt(r.body);
     if (current === 'split') history.replaceState(null, '', '#src=' + id);
     render();
@@ -185,7 +185,7 @@
   function send(path, data, then, long) {
     const id = plan.id, mine = b => b && b.id === id && plan.id === id;
     return Changes.send(`plan:${id}`, `/scans/${encodeURIComponent(id)}/${path}`, {rev: plan.rev, ...data}, {
-      long,
+      long, line,
       redraw: cur => { if (mine(cur)) { adopt(cur); render(); } },
       done: async b => {
         if (mine(b.plan)) { plan = b.plan; render(); }
@@ -247,14 +247,13 @@
   register('split-turn-source', {run: () => edit('turn_source', {}, turned)});
   register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {}, whole)});
   register('split-guess', {run: () => send('propose', {length: $('s-length').value}, whole)});
-  register('split-read', {available: () => MODEL && LANDMARKS, run: () => {
-    say('reading pages…');
-    return send('propose', {check: true, length: $('s-length').value}, async b => {
+  register('split-read', {available: () => MODEL && LANDMARKS, run: () =>
+    send('propose', {check: true, length: $('s-length').value}, async b => {
+      say("reading pages…");
       const job = await waitJob(b.job);
-      say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`);
       await load(plan.id);
-    }, true);
-  }});
+      say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`, 'bad');
+    }, true)});
   // Accept, having said what it would disturb (submissions with grading work it changes or removes).
   register('split-accept', {run: () => {
     const flagged = plan.entries.filter(e => e.doubts.length).length;
