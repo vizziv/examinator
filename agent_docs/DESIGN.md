@@ -105,7 +105,7 @@ script its own replies for a synthetic workspace (`script`).
   stored, shown or verified.
 - `std.readers.code(entries)`: transcribe, then one parse per code field into
   the pseudocode language; `then=` rewrites the source deterministically.
-- `core.printed.Printed`: a field's own reader of printed text (§5).
+- `core.ask.Printed`: a field's own reader of printed text (§5).
 
 A **check** is `fn(ctx) -> Result` (or a bare grade), wrapped as
 `Check(fn, points, timeout=, isolate=)`. `ctx.read(label)` reads its own
@@ -221,12 +221,11 @@ create table row (
   rev        integer not null,   -- from one workspace-wide counter; never reused
   primary key (submission, kind, name)
 );
-create table history (...);       -- the same plus replaced_at; written on every change
+create table history (...);       -- the same plus replaced_at; a replaced value, decision or plan (not a result)
 create table submission (id text primary key, name text, email text, pdf text, student text);
 create table setting (key text primary key, value text);        -- roster, counters
 create table override (scope, path, value, author, updated_at, rev,   -- live edits of exam data:
-  primary key (scope, path));    -- scope '' (the exam), 'source:<id>', 'submission:<id>'
-create table override_history (...);
+  primary key (scope, path));    -- scope '' (the exam), 'source:<id>', 'submission:<id>'; no history
 create table source (...);  create table made (...);             -- intake
 create table memo (submission, key, value);                      -- model readings (printed fields, landmarks, boxes)
 ```
@@ -297,13 +296,31 @@ the PDF's identity, the page and the resolution.
   (`core/overrides.py`) is a value at a path and a **scope**: the exam (every
   submission), a source scan (every submission intake split from that file) or
   one submission. The value in force for a submission is its own, else its
-  scan's, else the exam's, else the package's (`overrides.Layers`, behind
-  `Workspace.layout`, `fields`, `region`, `selected_pages`). Which scopes a kind
+  scan's, else the exam's, else the package's. Which scopes a kind
   of value may be set at is one table (`overrides.SCOPES`): a region and pages
   for the exam or a submission, the print area at all three; everything else for the exam only. The
-  identity fields' regions are field regions like any (exam or submission). One validator (`overrides.validate`) serves every scope;
-  every scope has revisions, history and conflicts alike; the app sets and
-  clears them all through `/exam/set` and `/exam/clear` with a `scope`.
+  identity fields' regions are field regions like any (exam or submission).
+  Every scope has revisions and conflicts alike (no history); the app sets and
+  clears them all through `/exam/set` and `/exam/clear` with a `scope`. Three
+  principles keep this simple:
+  1. **An override is a change to the definition**, valid exactly when the
+     definition with it applied is valid. The definition is a set of roots
+     (`Exam.roots`: each question, and the print area as '@print_area'); there
+     is one validation, `Exam.validate` (regions, pages, defaults, each reader's
+     and check's own `validate`, such as a key that must parse), which the
+     package's questions and every override go through, on a copy with the
+     change. A scope enters only as context: one submission's extra sheets are
+     pages it may name. A stored override that no longer validates is skipped
+     and reported (the Exam data page).
+  2. **An open workspace always has its overrides applied.** Opening one
+     applies the exam's (`Workspace.refresh`, repeated by every exam-wide
+     edit); what holds for one submission is `Layers` (`Workspace.layers`,
+     `question`, `layout`, `fields`, `selected_pages`), the one resolver the
+     CLI, the app and the runner use.
+  3. **A group that stands apart is reachable only through its own step.**
+     The grading routes, the grid and `run -q` resolve questions in
+     `exam.grading`, which leaves out '@identity'; the Names step saves its
+     values through its own route.
 - Page numbers in an exam definition are **printed exam pages**, and a
   submission's PDF has printed page p at index p - 1, then its extra sheets
   (intake writes it so: §16; a blank placeholder stands for a page not
@@ -323,7 +340,7 @@ the PDF's identity, the page and the resolution.
 - Each question's selected pages can be overridden per submission, for answers
   that continue onto extra-space pages; pages beyond the exam's name that
   submission's extra sheets in order (exam pages + 1 is its first), checked
-  against how many it has (`Workspace.selected_pages` keeps those it has).
+  against how many it has; so may its own regions.
 - Render with PDFium at about 160 DPI. PDFium must not be used from several
   threads at once; confine it to a worker. Cache rendered pages, and cut crops
   from the cache.
@@ -451,7 +468,7 @@ Do not build these in M1–M3. Do not block them either.
 
 | Later feature | What the core must already provide |
 | --- | --- |
-| Live editing of exam data (keys, regions, prompt notes) | **Built** (`core/overrides.py`, the Exam page and the question page's editors). Plain data addressed by path, stored in the `override` table with history; an edit outdates exactly the checks whose definition it changes, which are recomputed. |
+| Live editing of exam data (keys, regions, prompt notes) | **Built** (`core/overrides.py`, the Exam page and the question page's editors). Plain data addressed by path, stored in the `override` table (no history); an edit outdates exactly the checks whose definition it changes, which are recomputed. |
 | Live-editable logic (small rules) | Grade rules are functions of outcomes. A restricted interpreter (the pseudocode interpreter with a rules profile, or an embedded hermetic language) could supply such a function from stored text. |
 | Filter and search facets (group by normalized answer; search comments in code) | **Built** (`core/focus.py`). A facet is a small function of one submission's view (values, statuses), computed on read in one query and cached by the store's version. |
 | Listing which grades changed after a check changed | Not built. Results keep no history; it would compare old and new results at recompute time (MODEL.md). |

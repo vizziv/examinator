@@ -27,7 +27,8 @@ code (a region, pages, the print area, a printed field's expected readings, an
 answer key) at a **scope**. It is stored in the workspace and wins while it
 exists; clearing it brings the next scope's value back. A value may also be
 left unset in code and given only as an override. A field that cannot be read
-yet is simply not read.
+yet is simply not read. An override is valid exactly when the definition with
+it is: the one validation the package goes through (`Exam.validate`) decides.
 
 | Scope | Applies to | May set (`overrides.SCOPES`) |
 | --- | --- | --- |
@@ -209,7 +210,7 @@ no value yet, and the app can reload the exam package without losing state.
 | Stored value, result, decision; the status table; totals | `core/status.py` |
 | The small changes (read, set, verify, compute, decide, clear) | `core/runner.py` |
 | Asking about one region (`Ask`, `Printed`); handwriting readers | `core/ask.py`; `std/readers.py` |
-| Overrides at every scope; what applies to one submission (`Layers`) | `core/overrides.py`; `Workspace.layout`, `fields` |
+| Overrides at every scope; what applies to one submission (`Layers`) | `core/overrides.py`; `Workspace.layers`, `question`, `layout` |
 | Batch: reads, then computes | `core/batch.py` |
 | One row table, addressed `(submission, name, kind)` | `core/store.py` |
 
