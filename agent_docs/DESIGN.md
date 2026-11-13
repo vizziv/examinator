@@ -117,6 +117,11 @@ question's selected pages. If one of them is missing, the field is not read
 too: its transcript would be of part of the answer. So no reader is called
 without its images.
 
+**A reader reads a submission, never a scan.** A submission exists only once a
+person has accepted its scan's split (or handed it in already split), so its
+pages are upright, and a reader is not expected to notice an upside-down page
+(turning is done on Split, before Accept; see Intake).
+
 - `std.readers.answers()`: transcribe the pages (or crops), then parse the
   transcript into one value per field. Two model calls; the transcript is not
   stored, shown or verified.
@@ -635,6 +640,12 @@ Do not build these in M1–M3. Do not block them either.
 Examinator takes stacks of scans (many students per PDF) and writes one PDF per
 submission into `made/`; everything downstream is unchanged (`Workspace.pdf_path`
 gives a submission's file, written or handed in).
+**Nothing is read from a scan before a person has accepted its split, except
+Split's page readings (landmarks)**: a submission exists only once Accept writes
+it (or a person hands its PDF in already split, into `pdfs/`), and every other
+reader, name boxes included, reads a submission. So a reader may assume its pages
+are the right way up and is not expected to notice an upside-down page: turning
+is done on Split, before Accept.
 
 - **Sources.** Each scanned PDF is kept unchanged as `sources/ID.pdf`, ID the
   start of its SHA-256 (so adding it twice is noticed); a `source` table lists

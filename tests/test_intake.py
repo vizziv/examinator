@@ -101,6 +101,26 @@ def test_check_with_landmarks_flags_the_awkward_cases(stacked):
     assert len(model.calls) == calls                 # memoised: a re-run reads nothing again
 
 
+def test_nothing_is_read_from_a_scan_before_its_split_is_accepted(stacked):
+    """Until a person accepts a scan's split there are no submissions, so nothing
+    can be read from it but Split's page readings (landmarks)."""
+    from examinator.core.runner import Runner
+    ws, paths, model = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    intake.reguess(ws, one.id, model=model)
+    assert model.calls and {c.tag[2] for c in model.calls} == {'landmark'}
+    assert ws.store.submissions() == [] and identity.unread(ws) == []
+    runner = Runner(ws, model=model)
+    try:
+        for qid in [*ws.exam.questions, identity.IDENTITY]:      # what would be s0001 is not there
+            assert not any(o.ok for o in runner.read('s0001', qid))
+        assert {c.tag[2] for c in model.calls} == {'landmark'}
+        intake.accept(ws, one.id, author='t')                   # a person's statement: now there are
+        assert identity.unread(ws) and all(o.ok for o in identity.read(runner, 's0001'))
+    finally:
+        runner.close()
+
+
 def test_turning_the_scan_and_a_submission(stacked):
     ws, paths, model = stacked
     two, _ = intake.add_source(ws, paths[1])
