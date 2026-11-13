@@ -66,7 +66,7 @@ imported relatively (`from . import keys`).
 | --- | --- |
 | `name` | the submission id |
 | `answers` | `{question: {label: text or None}}` for the fields its reader reads (`None` is blank); for a question with one such field (pseudocode), the text itself |
-| `printed` | `{question: {printed field label: what is printed}}`: which printing this case has. A reading of the field's `reads`, or the value it reads to; `None`: the model cannot read it |
+| `printed` | `{question: {printed field label: what is printed}}`: which printing this case has: what the model reads there; `None`: the model cannot read it |
 | `expect` | `{grid column: value}`. The column is the question id when it has one check, else `question.check`. A value, `'blank'`, or `None` (must not count: undecided, or waiting for a person) |
 | `blank` | optional path of the blank PDF of this printing to draw on; otherwise placeholder pages |
 
@@ -102,7 +102,7 @@ exam.question('areas', title="Areas", pages=[2], fields=[...], read=..., check=.
 | `Exam(pages=)` | printed pages in one copy of the exam |
 | `print_area` | where the printed page sits in a scan: left, top, right, bottom, per-mille; default the whole sheet. Exam data: the app can override it for all submissions, a scan file or one submission (a question page's print-area mode, the Exam data page). Page numbers are always printed pages: intake writes each submission's PDF with printed page p as its page p (a placeholder where one was not scanned), then its extra sheets |
 | `crop_pad` | per-mille padding around every crop (default 12) |
-| `question(pages=)` | the printed pages holding the answer: what the reader sees. A grader can change them per submission (an extra-space page; pages beyond the exam's are that submission's extra sheets, in order) |
+| `question(pages=)` | the printed pages holding the answer: what the reader sees. Not editable in the app. An answer continued on an extra sheet is reached by moving a field's region there for that submission (pages beyond the exam's are its extra sheets, in order): a field read from its region (printed, or `answers(crops=True)`) is then read from that sheet; a reader of whole pages never sees it, so a person types that value |
 | `fields=` | the question's fields (§4) |
 | `read=` | the reader of the fields that have no reader of their own (§5). Without one, a person types them |
 | `check=` / `checks=` | one check (named `'check'`), or several by name: `checks={'answer': ..., 'work': ...}`. None: the question only holds fields (the exam's printing, which other questions read) |
@@ -135,26 +135,26 @@ changes as Python lines to copy into the package.
 
 ```python
 Field('side', Region(2, 0, 60, 1000, 240),
-      read=Printed("the printed side length of the square, as a number",
-                   reads={'2': 'red', '3': 'green', '5': 'blue'}))
+      read=Printed("the printed side length of the square, as a number (2, 3 or 5)"))
 ```
 
 - `ask` finishes the sentence "Report: ..." in a fixed prompt about printed
-  text. The `reads` keys are listed to the model as expected readings: printed
-  text, never keys. Readings are normalised (case, spaces, one layer of
-  brackets or quotes, a trailing `.` or `%`); give several readings for one
-  value when models write it differently. Without `reads`, the value is the
-  reading itself.
-- A reading that is absent, or not one of `reads`, becomes a value with a
-  review marker. Nothing is guessed.
-- With `reads`, an expected reading is **vouched for**: nobody need verify it.
-  `Printed(..., verify=True)` makes a person verify it anyway.
+  text, and says what to expect and in what form: the reading is the value,
+  printed text, never a key. Both `ask` and the prompt are editable in the app.
+- A reading that is absent becomes a value with a review marker. Nothing is
+  guessed.
+- A printed value is **vouched for** unless it carries a review marker: nobody
+  need verify it. `Printed(..., verify=True)` makes a person verify it anyway.
+  A value no key expects is caught by the check: a key per value with no key
+  for it is undecided, saying which ("no key for side = 7").
 - **Two shapes.** A question that needs its own printing holds the printed field
   itself (the toy exam's `side`). When printings switch groups of questions,
   put the printed fields in one question of their own with no checks,
   `exam.question('info', pages=[...], fields=[...printed...])`, declared first,
   and let the other questions' checks read it (Exams 1-3). Two printed fields
-  that must agree catch a misreading (`fields.agree(...)`).
+  that must agree catch a misreading (`fields.agree(...)`); when their texts
+  differ by field, `fields.table(value, {'95': 'original', '90': 'alternate'})`
+  names each field's printing first (a text not in the table is undecided).
 
 Keep the facts about the printed versions in `versions.py`, with an
 environment variable naming the blanks' directory, so fixtures draw each case
@@ -179,7 +179,7 @@ exam = Exam('x', pages=4, identity={
 Any of `'name'`, `'id'`, `'email'`; a region may be None, and the mapping may
 be left out: boxes are then drawn on the Scans page's Names tab (for every
 submission, or one). A field without a reader is read by
-`Ask(<what to ask about that column>)`. `Ask(ask, reads=..., verify=...)`
+`Ask(<what to ask about that column>)`. `Ask(ask, prompt=..., verify=...)`
 asks the model one thing about a field's region, by default about
 handwriting; `Printed` is the same about printed text; any reader works (one
 that vouches for its value verifies it). These fields are never graded; a
@@ -293,8 +293,7 @@ required=())`; or any `fn({label: outcome}) -> grade`, as the toy exam's
   question's field (`fields.value('q5_conf', question='info')`), fields that
   must agree (`fields.agree(...)`), or any `fn(ctx) -> value` that raises
   `Undecided` when it cannot tell (`Printing` in `exams/exam_02/versions.py`).
-  When the fields `by` names have `reads`, the key's names must be exactly their
-  values (checked at definition).
+  A value with no key is undecided when it is read ("no key for side = 7").
 - **Symbols:** `symbols=['x']`, or assumptions (`{'x': 'positive'}`; also
   `negative`, `nonnegative`, `nonpositive`, `nonzero`, `real`, `integer`,
   `rational`; `'positive indexed'` declares `s[i]`).
@@ -410,7 +409,7 @@ blanks skip without them.
 
 - [ ] `selftest` prints `ok`, with cases for every printing, a wrong answer, a blank answer and an unread printed field
 - [ ] every region lands on its box or printed text on every blank
-- [ ] the printed fields' readings, checked against each blank's text, give the right key for every printing
+- [ ] the printed fields' values, checked against each blank's text, give the right key for every printing
 - [ ] the no-key-in-prompt test passes
 - [ ] every custom key entry and grade rule has a unit test, including its undecided case
 - [ ] the library is unchanged, or changed only generically, with `uv run pytest` passing
@@ -427,7 +426,7 @@ blanks skip without them.
   notation the parser rejects is `None`, never `'incorrect'`.
 - **Reading more than you use**: every field a check reads must be verified
   before its grade counts.
-- **Callables where data would do**: text keys, `Choice` entries, `reads`,
+- **Callables where data would do**: text keys, `Choice` entries, asks,
   regions and notes can be edited live in the app; a key inside a function cannot.
 - **Fixtures derived from the keys**, so a wrong key passes its own self-test.
   Write answers out independently, in other notations too.

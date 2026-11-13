@@ -27,13 +27,13 @@ TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
 S1 = overrides.scope(overrides.SUBMISSION, 's1')
 
 
-def tiny(*, key='2', reads=None, ask=ASKS['name'], prompt=HANDWRITTEN_PROMPT, print_area=(0, 0, 1000, 1000),
+def tiny(*, key='2', ask=ASKS['name'], prompt=HANDWRITTEN_PROMPT, print_area=(0, 0, 1000, 1000),
          region=Region(1, 0, 500, 500, 600)):
     """A small exam, each of whose values an override may change."""
     exam = Exam('tiny', pages=1, print_area=print_area,
                 identity={'name': Field('name', Region(1, 100, 100, 800, 200), read=Ask(ask, prompt=prompt))})
     exam.question('p', pages=[1], fields=[
-        Field('c', Region(1, 0, 0, 1000, 100), read=Printed("cue", reads=reads or {'1': 'one', '2': 'two'}))])
+        Field('c', Region(1, 0, 0, 1000, 100), read=Printed("cue"))])
     exam.question('k', pages=[1], fields=[Field('x', region)], read=Parse(), check=math.keyed({'x': key}))
     exam.question('m', pages=[1], fields=[Field('y')], read=Parse(),
                   check=math.keyed({'one': {'y': '1'}, 'two': {'y': '2'}}, by=fields.value('c', question='p')))
@@ -46,7 +46,6 @@ BAD = [   # path, value, the same definition as the package would write it
     ('@identity/fields/name/read/ask', "", dict(ask="")),
     ('@identity/fields/name/read/prompt', "x {y} z", dict(prompt="x {y} z")),     # every read would fail
     ('k/checks/check/key/x', "(((", dict(key="(((")),                             # every check would fail
-    ('p/fields/c/read/reads', {'1': 'one'}, dict(reads={'1': 'one'})),             # m's key 'two': unreachable
     ('@print_area', [0, 0, 1000, 1001], dict(print_area=(0, 0, 1000, 1001))),
     ('k/fields/x/region', [2, 0, 0, 10, 10], dict(region=Region(2, 0, 0, 10, 10))),
 ]
@@ -72,7 +71,7 @@ def test_an_override_is_refused_as_the_package_would_be(tmp_path, path, value, b
 
 def test_an_override_the_definition_accepts_is_applied(tmp_path):
     ws = workspace(tmp_path, tiny())
-    overrides.set(ws, 'p/fields/c/read/reads', {'1': 'one', '2': 'two', 'I': 'one'}, author='ta')
+    overrides.set(ws, 'p/fields/c/read/ask', "the cue, as a word (one or two)", author='ta')
     overrides.set(ws, 'k/checks/check/key/x', '1 + 1', author='ta')
     overrides.set(ws, '@identity/fields/name/read/prompt', "Read {ask}; {{\"value\": ...}}", author='ta')
     assert ws.exam.identity.field('name').read.text().startswith("Read " + ASKS['name'])
@@ -97,13 +96,13 @@ def test_the_package_goes_through_the_same_validation():
 
 
 def test_a_submission_may_name_its_extra_sheets(tmp_path):
-    """One submission's extra sheets widen the pages it may name, as context to the one
-    validation: a region there is read from that sheet."""
+    """One submission's extra sheets widen the pages a region may sit on, as context to the
+    one validation (a question's pages stay the package's): a region there is read from that sheet."""
     exam = tiny()
     ws = workspace(tmp_path, exam)
     sheets = [Image.new('RGB', (200, 260), c) for c in ('white', 'black')]
     sheets[0].save(ws.pdfs / 's1.pdf', 'PDF', save_all=True, append_images=sheets[1:])      # one extra sheet
-    for path, value in (('k/fields/x/region', [2, 0, 0, 500, 100]), ('k/pages', [1, 2])):
+    for path, value in (('k/fields/x/region', [2, 0, 0, 500, 100]),):
         with pytest.raises(ValueError, match=r"page 2 is not a printed page \(1..1\)$"):
             overrides.set(ws, path, value, author='ta')                                   # every submission: no
         with pytest.raises(ValueError, match=r"page 2 is not a printed page \(1..1\)$"):
@@ -112,9 +111,15 @@ def test_a_submission_may_name_its_extra_sheets(tmp_path):
     with pytest.raises(ValueError, match=r"page 3 is not a printed page \(1..1\) or an extra sheet \(2..2\)"):
         overrides.set(ws, 'k/fields/x/region', [3, 0, 0, 500, 100], scope=S1, author='ta')
     q = exam.questions['k']
-    assert ws.layers('s1').question(q.id).field('x').region == Region(2, 0, 0, 500, 100) and ws.layers('s1').question(q.id).pages == (1, 2)
+    assert ws.layers('s1').question(q.id).field('x').region == Region(2, 0, 0, 500, 100) and ws.layers('s1').question(q.id).pages == (1,)
     assert ws.layers('s2').question(q.id).field('x').region == q.field('x').region and ws.layers('s2').question(q.id).pages == (1,)
     assert ws.crop('s1', ws.layers('s1').question(q.id).field('x').region).getpixel((5, 5))[0] < 50          # from the black sheet
+    # a printed field moved there is read from there
+    overrides.set(ws, 'p/fields/c/region', [2, 0, 0, 500, 100], scope=S1, author='ta')
+    runner = Runner(ws, model=FakeModel({('p', 'read:c'): '{"value": "one"}'}))
+    assert all(o.ok for o in runner.read('s1', 'p'))
+    assert runner.model.calls[-1].images[0].getpixel((5, 5))[0] < 50
+    runner.close()
     ws.close()
 
 

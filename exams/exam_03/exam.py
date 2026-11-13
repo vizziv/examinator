@@ -45,9 +45,13 @@ SHINY = Bool(counts=False)       # the second part of a pseudocode question does
 
 # --- the printing: two printed fields per choice, in a question of their own -----
 
+# printed field -> {a text it may show: the printing it shows it on}, the first text per printing as printed
+TEXTS: dict[str, dict[str, str]] = {}
+
+
 def printed(label, region, ask, original, alternate):
-    reads = {**{text: 'original' for text in original}, **{text: 'alternate' for text in alternate}}
-    return Field(label, region=region, read=Printed(ask, reads=reads))
+    TEXTS[label] = {**{text: 'original' for text in original}, **{text: 'alternate' for text in alternate}}
+    return Field(label, region=region, read=Printed(ask))
 
 
 # On the alternate printing explanations C and D swap, so both sentences are on the page:
@@ -75,7 +79,7 @@ exam.question(
 
 def bit(*labels):
     """One choice: its printed fields, which must agree."""
-    return fields.agree(*(fields.value(label, question='info') for label in labels))
+    return fields.agree(*(fields.table(fields.value(label, question='info'), TEXTS[label]) for label in labels))
 
 
 BIT1 = bit('q5_confidence', 'q9_observations')

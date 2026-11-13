@@ -33,7 +33,7 @@ from .store import Store, Submission
 class Workspace:
     def __init__(self, root: str | Path, exam: Exam, *, create: bool = False):
         self.root = Path(root)
-        self.exam = exam.with_roots(exam.base)      # the workspace's own: `refresh` makes it live
+        self.exam = exam            # until `refresh` makes the workspace's own
         self.pdfs = self.root / 'pdfs'
         if not self.pdfs.is_dir():
             if not create:
@@ -50,12 +50,8 @@ class Workspace:
         """Make this workspace's definition the package's plus the exam-wide overrides
         stored here: part of opening a workspace, and of every exam-wide edit. Those
         that no longer validate are skipped (`skipped`; every scope's:
-        `skipped_overrides`). `exam` stays the same object, so whoever holds it sees
-        the new definition: its overrides change first, so a check worker never runs
-        older data than a result's recorded hash."""
-        live, self.skipped = overrides.apply(self.exam, {path: o.value for path, o in self.store.overrides().items()})
-        self.exam.overrides = live.overrides
-        vars(self.exam).update(vars(live))
+        `skipped_overrides`). `exam` is replaced: whoever reads it reads it anew."""
+        self.exam, self.skipped = overrides.apply(self.exam, {path: o.value for path, o in self.store.overrides().items()})
         return self.skipped
 
     def skipped_overrides(self) -> list[overrides.Skipped]:
@@ -88,8 +84,8 @@ class Workspace:
 
     def layers(self, submission: str | None = None, *, source: str | None = None) -> overrides.Layers:
         """The definition for one submission (or a source scan's sheets): `question`
-        (its regions, its pages: printed pages and, one submission's own choice, its
-        extra sheets, numbered on from the exam's last page), `layout`."""
+        (its regions: one may sit on the submission's extra sheets, numbered on from
+        the exam's last page), `layout`."""
         return overrides.Layers(self, submission=submission, source=source)
 
     def layout(self, submission: str) -> Layout:

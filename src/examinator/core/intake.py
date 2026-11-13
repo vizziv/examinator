@@ -180,7 +180,7 @@ def page_of(lm: Landmark, text: str | None) -> int | None:
 
 def ask(lm: Landmark) -> Printed:
     """How a landmark is read: printed text, asked about like a printed field."""
-    return Printed(lm.ask, reads={k: str(v) for k, v in (lm.reads or {}).items()})
+    return Printed(lm.ask)
 
 
 class LandmarkReader:

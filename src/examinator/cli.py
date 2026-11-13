@@ -115,7 +115,7 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
         import uvicorn
         from .web.app import create_app
         runner = Runner(ws, model=model)
-        app = create_app(exam, ws, runner, author=args.author or getpass.getuser(),
+        app = create_app(ws, runner, author=args.author or getpass.getuser(),
                          public_url=args.public_url)
         # A new or empty workspace opens on Scans, where submissions come from.
         start = '' if ws.store.submissions() else 'scans'

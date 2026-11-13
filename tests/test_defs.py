@@ -33,8 +33,8 @@ def test_a_field_region_off_the_printed_page(region, said):
     assert said in str(e.value)
 
 
-def printed(label='side', region=Region(1, 0, 0, 1000, 100), reads=None, ask="the printed letter"):
-    return Field(label, region, read=Printed(ask, reads={'a': 'x', 'b': 'y'} if reads is None else reads))
+def printed(label='side', region=Region(1, 0, 0, 1000, 100), ask="the printed letter"):
+    return Field(label, region, read=Printed(ask))
 
 
 def test_printed_landmark_and_identity_regions_are_checked():
@@ -76,11 +76,9 @@ def test_question_pages_are_printed_pages():
         define(pages=[1, 4])
 
 
-def test_a_printed_field_needs_an_ask_and_text_readings_and_may_wait_for_its_region():
+def test_a_printed_field_needs_an_ask_and_may_wait_for_its_region():
     with pytest.raises(ValueError, match="q: field 'side': a field read by asking needs an `ask`"):
         define(fields=[printed(ask=" ")])
-    with pytest.raises(ValueError, match="q: field 'side': `reads` maps readings"):
-        define(fields=[printed(reads={'a': 1})])
     q = define(fields=[printed(region=None)])          # not read until its region is set
     assert q.labels == ('side',) and q.written == () and q.groups()[0][1][0].region is None
 
@@ -124,19 +122,15 @@ def test_a_key_names_the_questions_fields():
         define(check=math.keyed({'1': '1', '2': '2'}))
 
 
-def test_a_key_per_value_is_picked_by_a_field_whose_readings_it_names():
+def test_a_key_per_value_is_picked_by_a_field():
     fields_ = [printed(), ANSWER]
-    with pytest.raises(ValueError, match=r"q: the key is one per value of side.*\['y'\] have no key.*\['z'\] are not"):
-        define(fields=fields_, check=math.keyed({'x': {'1': '1'}, 'z': {'1': '2'}}, by='side'))
     with pytest.raises(ValueError, match="q: a key per value needs `by=`"):
         define(check=math.keyed({'x': {'1': '1'}}))
     with pytest.raises(ValueError, match="q: `by=` picks one of several keys"):
         define(fields=fields_, check=math.keyed({'1': '1'}, by='side'))
     with pytest.raises(ValueError, match="q: q has no field 'width'"):
         define(fields=fields_, check=math.keyed({'x': {'1': '1'}}, by='width'))
-    define(fields=fields_, check=math.keyed({'X': {'1': '1'}, 'y': {'1': '2'}}, by='side'))   # names fold case
-    # a field without `reads` (or the exam's own function) does not say what it reads to
-    define(fields=[printed(reads={}), ANSWER], check=math.keyed({'7': {'1': '1'}}, by='side'))
+    define(fields=fields_, check=math.keyed({'X': {'1': '1'}, 'y': {'1': '2'}}, by='side'))   # any values
     define(check=math.keyed({'7': {'1': '1'}}, by=lambda ctx: '7'))
 
 
@@ -147,13 +141,13 @@ def test_a_key_picked_by_another_questions_field():
     with pytest.raises(ValueError, match="q: no question 'info' .declare it before"):
         exam.question('q', pages=[1], fields=[ANSWER], check=math.keyed(key, by=by))
     assert 'q' not in exam.questions                    # a question that fails is not added
-    exam.question('info', pages=[1], fields=[printed('one'), printed('two', region=Region(1, 0, 100, 1000, 200),
-                                                                     reads={'c': 'x', 'd': 'y', 'e': 'w'})])
+    exam.question('info', pages=[1], fields=[printed('one'), printed('two', region=Region(1, 0, 100, 1000, 200))])
     exam.question('q', pages=[1], fields=[ANSWER], check=math.keyed(key, by=by))
     with pytest.raises(ValueError, match="q2: info has no field 'three'"):
         exam.question('q2', pages=[1], fields=[ANSWER], check=math.keyed(key, by=fields.value('three', question='info')))
-    with pytest.raises(ValueError, match=r"q3: the key is one per value of info two.*\['w'\] have no key"):
-        exam.question('q3', pages=[1], fields=[ANSWER], check=math.keyed(key, by=fields.value('two', question='info')))
+    with pytest.raises(ValueError, match="q3: info has no field 'three'"):
+        exam.question('q3', pages=[1], fields=[ANSWER], check=math.keyed(key, by=fields.agree(
+            fields.table(fields.value('three', question='info'), {'a': 'x'}))))
 
 
 def test_points():

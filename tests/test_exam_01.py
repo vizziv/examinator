@@ -46,10 +46,15 @@ def values(exam, qid, answers, info=None):
     return out
 
 
+def printed_as(printing):
+    """What `info`'s printed fields read on the 'original' or the 'alternate' printing."""
+    return importlib.import_module(f'{EXAM.name}.versions').printed_on(0 if printing == 'original' else 1)['info']
+
+
 def outcomes(exam, qid, answers, printing=None):
     """Run one question's check directly on answers, with every printed field of
-    `info` read as `printing` (or not read): `({label: outcome}, result)`."""
-    info = None if printing is None else {f.label: printing for f in exam.questions['info'].fields}
+    `info` read as on `printing` (or not read): `({label: outcome}, result)`."""
+    info = None if printing is None else printed_as(printing)
     body = try_check(exam, qid, 'check', values(exam, qid, answers, info))
     return {label: f['outcome'] for label, f in body['fields'].items()}, body
 
@@ -82,7 +87,7 @@ def test_definition(exam, pkg):
     assert exam.pages == 16 and exam.print_area == (0, 0, 1000, 1000)
     info = exam.questions['info']
     assert info.checks == () and list(info.fields) == versions.FIELDS
-    assert all(isinstance(f.read, Printed) and set(f.read.reads.values()) == {'original', 'alternate'}
+    assert all(isinstance(f.read, Printed) and set(versions.TEXTS[f.label].values()) == {'original', 'alternate'}
                for f in info.fields)
     labels = {f.label: f for f in info.fields}
     assert set(versions.PRINTING) == set(VARIED)
@@ -104,8 +109,8 @@ def test_definition(exam, pkg):
 
 @needs_blanks
 def test_versions_match_the_printed_blanks(exam, pkg):
-    """What each printed field of `info` reads to agrees with the text printed in each
-    blank, and the field's region holds that text."""
+    """What each printed field of `info` reads names the printing of each blank, and
+    the field's region holds that text."""
     import pypdfium2
     versions = pkg('versions')
     printed = {      # field -> (pattern in the page's text, the match that marks the original printing)
@@ -127,7 +132,7 @@ def test_versions_match_the_printed_blanks(exam, pkg):
                 found = re.search(pattern, page.get_textpage().get_text_range(), re.S)
                 assert found, (alt, f.label)
                 want = 'original' if found[1].strip() == original else 'alternate'
-                assert versions.printed_on(alt)['info'][f.label] == want, (alt, f.label)
+                assert versions.TEXTS[f.label][versions.printed_on(alt)['info'][f.label]] == want, (alt, f.label)
                 w, h = page.get_size()
                 r = f.region
                 inside = page.get_textpage().get_text_bounded(
@@ -195,7 +200,7 @@ def test_q2_the_printing_read_from_info_selects_the_key(exam, pkg):
     # Info not read, or its two fields disagreeing: undecided.
     body = try_check(exam, 'q2', 'check', values(exam, 'q2', answers['original']['q2']))
     assert body['grade']['value'] is None and "info q1_parameter not read" in body['grade']['reason']
-    split = {f.label: 'original' for f in exam.questions['info'].fields} | {'q2_m_goal': 'alternate'}
+    split = printed_as('original') | {'q2_m_goal': printed_as('alternate')['q2_m_goal']}
     body = try_check(exam, 'q2', 'check', values(exam, 'q2', answers['original']['q2'], split))
     assert body['grade']['value'] is None and "disagree" in body['grade']['reason']
     assert set(body['reads']) == {'info/q1_parameter', 'info/q2_m_goal'}       # what it read, nothing more
@@ -218,13 +223,13 @@ def test_disagreeing_printed_fields_wait_for_a_grader(exam, pkg, tmp_path):
             runner.verify('split', *k.split('/'), author='ta', expect_rev=v.rev)
         runner.refresh('split', questions=['q2', 'q4', 'q5'])
         assert {k: v.text for k, v in runner.values('split').items() if k.startswith('info/')} == \
-            {f'info/{k}': v for k, v in {**versions.printed_on(0)['info'], 'q5_function': 'alternate'}.items()}
+            {f'info/{k}': v for k, v in printed['info'].items()}
         assert (status(runner, 'split', 'q2').state, status(runner, 'split', 'q2').value) == ('graded', True)
         for qid in ('q4', 'q5'):
             st = status(runner, 'split', qid)
             assert (st.state, st.value, st.counts) == ('to_decide', None, False), qid
         rev = runner.values('split')['info/q5_function'].rev
-        runner.set('split', 'info', 'q5_function', 'original', author='ta', expect_rev=rev)
+        runner.set('split', 'info', 'q5_function', 'unit_cone', author='ta', expect_rev=rev)
         assert status(runner, 'split', 'q4').state == status(runner, 'split', 'q5').state == 'outdated'
         assert status(runner, 'split', 'q2').state == 'graded'          # it never read that field
         runner.refresh('split')

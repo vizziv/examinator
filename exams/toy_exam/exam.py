@@ -30,14 +30,13 @@ AREAS = ['A.1', 'A.2', 'A.3']
 exam.question(
     'areas', title="Areas", pages=[2],
     fields=[Field('side', Region(2, 0, 60, 1000, 240),         # printed, not written: the version
-                  read=Printed("the printed side length of the square, as a number",
-                               reads={'2': 'red', '3': 'green', '5': 'blue'}))]
+                  read=Printed("the printed side length of the square, as a number (2, 3 or 5)"))]
            + [Field(label, Region(2, 400, top, 900, top + 120)) for label, top in zip(AREAS, [300, 480, 660])],
     read=readers.answers(symbols=['x']),
     check=Check(math.keyed(symbols={'x': 'positive'}, by='side', grade=count_correct, key={
-                    'red':   dict(zip(AREAS, ['4', '4*x', '2*x**2'])),
-                    'green': dict(zip(AREAS, ['9', '6*x', '3*x**2'])),
-                    'blue':  dict(zip(AREAS, ['25', '10*x', '5*x**2']))}),
+                    '2': dict(zip(AREAS, ['4', '4*x', '2*x**2'])),
+                    '3': dict(zip(AREAS, ['9', '6*x', '3*x**2'])),
+                    '5': dict(zip(AREAS, ['25', '10*x', '5*x**2']))}),
                 Number(int, min=0, max=3)))
 
 exam.question(

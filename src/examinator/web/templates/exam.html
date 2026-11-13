@@ -18,7 +18,7 @@ Regions and the print area are easiest to adjust on a question page (scan, “re
 
 <details id="active" class="panel"{% if active or skipped %} open{% endif %}>
 <summary>overrides <span class="dim">{{ active|length }}</span>{% if skipped %} <span class="tag bad">{{ skipped|length }} not applied</span>{% endif %}</summary>
-{% for s in skipped %}<p class="notice">not applied: <code>{{ s.path }}</code> — {{ s.reason }}</p>{% endfor %}
+{% for s in skipped %}<p class="notice">not applied ({{ s.where }}): <code>{{ s.path }}</code> — {{ s.reason }}</p>{% endfor %}
 {% if active %}
 <table class="ev">
 <tr><th>path</th><th>by</th><th>at</th></tr>

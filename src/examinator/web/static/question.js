@@ -315,16 +315,6 @@
       return run('read', {include_protected: all});
     }},
     check: {run: ({el}) => run('check', {check: el.dataset.check})},
-    // This submission's own pages (none, or the question's: drop them); beyond the exam's: its extra sheets.
-    pages: {run: () => {
-      const list = $('pg-list');
-      const parts = list.value.split(/[\s,]+/).filter(Boolean);
-      const pages = parts.every(p => /^\d+$/.test(p)) ? parts.map(Number) : list.value;    // else the server explains
-      const clear = !parts.length || String(pages) === list.dataset.default;
-      return override({path: list.dataset.path, scope: JSON.parse(scan.dataset.scopes).own, value: pages, clear, sub,
-                       rev: () => rev($('pg-list')), take: cur => { $('pg-list').dataset.rev = cur.rev ?? ''; }},
-                      {done: () => refresh()});
-    }},
   };
   for (const [name, spec] of Object.entries(actions)) Actions.register(name, spec);
   // After the first frame (shown, not drawn ahead), the likeliest first: the browser renders them in turn.

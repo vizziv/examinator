@@ -45,12 +45,12 @@ def yes(ctx):
 def make_exam(notes="", trust=False):
     exam = Exam('mini', pages=2)
     exam.question(          # the printing: no checks, two printed fields that 'a' reads; with `trust`,
-                            # a reading that is one of those expected needs no person
+                            # what the reader reads needs no person
         'p', pages=[1],
         fields=[Field('c1', Region(1, 0, 0, 1000, 200),
-                      read=Printed("first cue", reads={'1': 'one', '2': 'two'}, verify=not trust)),
+                      read=Printed("first cue", verify=not trust)),
                 Field('c2', Region(1, 0, 200, 1000, 400),
-                      read=Printed("second cue", reads={'i': 'one', 'ii': 'two'}, verify=not trust))])
+                      read=Printed("second cue", verify=not trust))])
     exam.question(
         'a', pages=[1], fields=[Field('x'), Field('y')], read=Parse(notes),
         checks={'x': Check(exact('x'), isolate=False), 'y': Check(exact('y'), isolate=False)})
@@ -59,8 +59,8 @@ def make_exam(notes="", trust=False):
 
 
 SCRIPT = {
-    ('p', 'read:c1'): '{"value": "1"}',
-    ('p', 'read:c2'): '{"value": "i"}',
+    ('p', 'read:c1'): '{"value": "one"}',
+    ('p', 'read:c2'): '{"value": "one"}',
     ('a', 'parse'): '{"x": "1", "y": "2"}',
     ('b', 'parse'): '{"x": "yes"}',
 }

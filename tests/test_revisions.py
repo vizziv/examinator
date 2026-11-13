@@ -68,7 +68,7 @@ def sites(tmp_path):
     runner = Runner(ws, model=FakeModel(dict(SCRIPT)))
     runner.read('s1', 'a')
     runner.set('s1', 'a', 'y', "2", author='t')
-    q = Client(create_app(exam, ws, runner, author='tester'))
+    q = Client(create_app(ws, runner, author='tester'))
     q.wait(q.app.state.startup)
 
     toy = load_exam(TOY)
@@ -76,7 +76,7 @@ def sites(tmp_path):
     paths = synth.stacks(toy, root)
     tws = Workspace(root, toy, create=True)
     trunner = Runner(tws, model=synth.fake_model(root))
-    s = Client(create_app(toy, tws, trunner, author='tester'))
+    s = Client(create_app(tws, trunner, author='tester'))
     src = s.client.post('/scans/upload?name=a.pdf', content=paths[0].read_bytes(),
                         headers={'Content-Type': 'application/pdf', 'X-Token': s.token}).json()['id']
     plan = s.get(f'/scans/{src}/plan').json()
