@@ -97,8 +97,18 @@ A **reader** reads some fields of one submission: `reader.read(ctx, fields) ->
 {label: text}`. Its context gives the question's selected pages, crops of
 regions (with this submission's regions), and the loopback model (`ctx.model(prompt, images=, text=, expect=,
 step=)`; `step` tags the call). A reader may vouch for a value
-(`vouches(field, text)`), need a region (`needs_region`), offer facets, and
-script its own replies for a synthetic workspace (`script`).
+(`vouches(field, text)`), read each field's region rather than the question's
+pages (`needs_region`), offer facets, and script its own replies for a
+synthetic workspace (`script`).
+
+**A read needs its pages.** Whether a field can be read is decided once, from
+the pages its reader would look at (`runner.unreadable`): a region reader, the
+page of the field's region ("no region" without one); any other reader, every
+one of the question's selected pages. If one of them is missing, the field is
+not read ("page missing"), and a whole-page reader with only some of its pages
+waits too: its transcript would be of part of the answer. The runner, the
+batch plan and the question page use that one rule, so no reader is called
+without its images.
 
 - `std.readers.answers()`: transcribe the pages (or crops), then parse the
   transcript into one value per field. Two model calls; the transcript is not
@@ -173,13 +183,30 @@ Result(grade, fields={'1.1': 'correct', '1.2': Judgement('incorrect', expected='
   undecided grade is undecided. Points declare whether they count toward the
   total (`counts=`); `Bool(worth=)` sets what a true grade is worth.
 - Per-field judgements are shown beside the field: an outcome, optionally the
-  expected answer and a short note. Blocks are shown below, images first.
+  expected answer and a short note. Blocks are shown below, top-level images
+  first in a row of figures.
 - Blocks come from a small vocabulary (`std.blocks`): note, table, code
   excerpt, collapsed details, and image (a PNG, JPEG, GIF, WebP or SVG file's
-  bytes, stored base64 in the result and served from its own URL with its
-  type, `nosniff` and a sandboxing CSP; shown with `<img>`, so an SVG runs
-  nothing; inverted in dark mode as scans are). Plots are images an exam or
-  kit renders (the stochastic kit uses matplotlib).
+  bytes; shown with `<img>`, so an SVG runs nothing; inverted in dark mode as
+  scans are). A block is an object or the plain dict it stands for.
+- **One stored shape, enforced at one boundary.** `result.settle` turns what a
+  check returned into what is stored (`Record`), in the check's process (the
+  worker sends the record across its pipe): the grade through the check's
+  points, every block, however written, against the block grammar and limits
+  (image type, 2 MB per image, 8 MB per result, details 8 deep). What does not
+  fit is a check error ("the check returned ..."), stored as an undecided
+  result, never a bad row. There each image gets its digest and its bytes
+  leave the result: they are stored once per result in the `image` table,
+  written and dropped with it; the block keeps `{digest, media_type, alt,
+  title}`. Everything after `settle` trusts the shape: the page renders the
+  stored blocks as they are, and `/image/{sub}/{q}/{check}/{digest}` serves an
+  image only if that result shows it (immutable: the digest names the
+  content; its type, `nosniff`, a sandboxing CSP).
+- **A kit figure is a pure function of its arguments.** The stochastic kit's
+  plots (matplotlib) draw under a fixed style that ignores ambient settings,
+  bound every size by one rule, treat text as literal unless asked for math,
+  and show a figure that cannot be drawn as a short note. A test plot is drawn
+  only when shown.
 - **Nothing computes from evidence.** The grade is the check's own.
 
 ## 7. Whether a grade counts
@@ -240,7 +267,9 @@ result `{'grade', 'fields', 'blocks', 'reads': {'question/label': rev | None},
 rev | None}}`.
 
 - Every read on the normal path is a keyed lookup. The grid and the filter
-  page load every row in one query, leaving result blocks out.
+  page load every row in one query, leaving result blocks out. A result's
+  images are rows of their own (`image`: submission, name, digest), replaced
+  with the result and gone with it or its submission.
 - A revision changes only when content changes (`keep_rev` for a value
   verified or unverified). Writing the body a row already has is a no-op.
 - All writes by people carry the revision they saw; a mismatch is rejected and
@@ -309,9 +338,8 @@ the PDF's identity, the page and the resolution.
   (intake writes it so: §16; a blank placeholder stands for a page not
   scanned). Nothing downstream offsets a page. `Workspace.missing(sub)` is the
   printed pages a submission does not have (a placeholder, or the PDF ends
-  first): nothing on them is read (`Runner.read`: "page missing"; the Read
-  page counts it blocked, like a field with no region), and a reader is never
-  shown a placeholder (`ctx.pages()` leaves them out).
+  first): no field whose reader would look at them is read (§4, "A read
+  needs its pages").
 - A question names the `pages` that hold its answer (what its reader sees).
 - The printed page may be reduced and inset within the scanned page. The
   **print area** (`print_area`: left, top, right, bottom, per-mille of the
