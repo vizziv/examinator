@@ -162,6 +162,16 @@ def test_theme_and_actions_are_static_and_controls_declare_actions(site):
     assert 'class="c cell s-' in grid and 'title="incomplete' in grid
 
 
+def test_a_field_on_a_missing_page_says_so_and_is_not_planned(site):
+    from PIL import Image as PILImage
+    PILImage.new('RGB', (200, 260), 'white').save(site.ws.pdfs / 's1.pdf', 'PDF')     # s1 lost page 2
+    html = site.get('/s/s1/b').text
+    assert '>page missing</span>' in html
+    assert '>page missing</span>' not in site.get('/s/s2/b').text
+    plan = site.post('/read/plan', {'questions': ['b']}).json()
+    assert 'page missing' in json.dumps(plan)
+
+
 def test_page_image(site):
     r = site.get('/page/s1/0.jpg')
     assert r.status_code == 200 and r.headers['content-type'] == 'image/jpeg' and r.content[:2] == b'\xff\xd8'

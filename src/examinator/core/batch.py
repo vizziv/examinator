@@ -18,10 +18,10 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from .defs import Exam, key
-from .runner import Outcome, Runner
+from .defs import key
+from .runner import Outcome, Runner, unreadable
 from .status import Sheet
-from .store import Store
+from .workspace import Workspace
 
 ACTIONS = ('read', 'skip_protected', 'skip_present', 'blocked')
 
@@ -52,36 +52,33 @@ class Plan:
         return sum(1 for i in self.items if i.action == action)
 
 
-def plan(exam: Exam, store: Store, selection: Selection, *, model_available: bool,
-         regions=None, missing=None) -> Plan:
-    """`regions(submission, question) -> fields with this submission's regions`
-    (`Workspace.fields`); without it, the exam's regions. `missing(submission)
-    -> printed pages it does not have` (`Workspace.missing`): a field there is not read."""
+def plan(ws: Workspace, selection: Selection, *, model_available: bool) -> Plan:
+    """What reading `selection` in this workspace would do now. A field its reader
+    cannot read (`runner.unreadable`: no region, a page missing) is not counted."""
+    exam, store = ws.exam, ws.store
     items: list[Item] = []
     for sub in selection.submissions:
         sheet = Sheet.of(store.all(submission=sub, kinds=('value',)))
-        gone = missing(sub) if missing is not None else set()
+        gone = ws.missing(sub)
         for qid in selection.questions:
             q = exam.questions[qid]
 
             def add(action, reason=""):
                 items.append(Item(sub, qid, action, reason))
 
-            fields = regions(sub, q) if regions is not None else q.fields
-            readable = [f for f in fields if q.reader_of(f.label) is not None]
+            readable = [f for f in q.fields if q.reader_of(f.label) is not None]
             if readable:
+                why = unreadable(ws, sub, q, gone)
                 vals = [sheet.values.get(key(qid, f.label)) for f in readable]
                 todo = [f for f, v in zip(readable, vals)
                         if not (selection.missing_only and v is not None)
                         and not (v is not None and v.verified == 'person' and not selection.include_protected)]
-                off = [f for f in todo if f.region is not None and f.region.page in gone]
-                placed = [f for f in todo if f not in off and (
-                    f.region is not None or not getattr(q.reader_of(f.label), 'needs_region', False))]
+                placed = [f for f in todo if f.label not in why]
                 if not todo:
                     protected = any(v is not None and v.verified == 'person' for v in vals)
                     add('skip_protected' if protected and not selection.missing_only else 'skip_present')
                 elif not placed:
-                    add('blocked', "page missing" if off else "no region")
+                    add('blocked', ", ".join(sorted({why[f.label] for f in todo})))
                 elif not model_available and any(getattr(q.reader_of(f.label), 'uses_model', True)
                                                  for f in placed):
                     add('blocked', "model unavailable")

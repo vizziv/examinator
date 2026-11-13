@@ -58,9 +58,8 @@ class Services:
         self.ws, self._model, self._memo = workspace, model, memo
 
     def pages(self, submission, question):
-        gone = self.ws.missing(submission)          # a placeholder is never shown to a reader
-        return [self.ws.page_image(submission, p) for p in self.ws.selected_pages(submission, question)
-                if p not in gone]
+        # all there: a reader of pages runs only when none is missing (`unreadable`)
+        return [self.ws.page_image(submission, p) for p in self.ws.selected_pages(submission, question)]
 
     def crop(self, submission, region):
         return self.ws.crop(submission, region)
@@ -91,6 +90,35 @@ def structural(e: Exception) -> str:
     if isinstance(e, (Unavailable, BadOutput)) or type(e).__name__ == 'ModelError':
         return str(e)
     return type(e).__name__
+
+
+def looks_at(reader: Any, f: Field, pages: Sequence[int]) -> tuple[int, ...]:
+    """The pages reading field `f` with `reader` looks at: its region's page for a
+    reader of regions (`needs_region`; none without a region), else all of the
+    question's `pages`."""
+    if getattr(reader, 'needs_region', False):
+        return (f.region.page,) if f.region is not None else ()
+    return tuple(pages)
+
+
+def unreadable(ws: Workspace, submission: str, q: Question, gone: set[int] | None = None) -> dict[str, str]:
+    """Why each field of `q` that its reader cannot read now cannot be, by label:
+    'no region', 'no pages', or 'page missing' (a page it would look at is not in
+    this submission's PDF; `gone`: `Workspace.missing`). A field not listed can be
+    read. A read needs its pages: a reader of the question's pages reads only
+    when all of them are there, so no reader is ever called without images. The
+    one rule for the runner, the batch plan and the question page."""
+    selected = ws.selected_pages(submission, q)
+    gone = ws.missing(submission) if gone is None else gone
+    out = {}
+    for reader, fields in replace(q, fields=ws.fields(submission, q)).groups():
+        for f in fields:
+            pages = looks_at(reader, f, selected)
+            if not pages:
+                out[f.label] = 'no region' if getattr(reader, 'needs_region', False) else 'no pages'
+            elif gone.intersection(pages):
+                out[f.label] = 'page missing'
+    return out
 
 
 def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields: Sequence[Field],
@@ -158,7 +186,7 @@ class Runner:
         q = self.exam.questions[qid]
         resolved = replace(q, fields=self.ws.fields(submission, q))
         have = self.values(submission)
-        gone = self.ws.missing(submission)
+        why = unreadable(self.ws, submission, q)
         outs = []
 
         def out(status, detail=""):
@@ -177,15 +205,13 @@ class Runner:
                 targets.append(f)
             if not targets:
                 continue
-            if getattr(reader, 'needs_region', False):
-                bare = [f.label for f in targets if f.region is None]
-                if bare:
-                    out('blocked', f"no region: {', '.join(bare)}")
-                targets = [f for f in targets if f.region is not None]
-            off = [f.label for f in targets if f.region is not None and f.region.page in gone]
-            if off:                 # never read from a placeholder
-                out('blocked', f"page missing: {', '.join(off)}")
-                targets = [f for f in targets if f.label not in off]
+            blocked: dict[str, list[str]] = {}
+            for f in targets:
+                if f.label in why:
+                    blocked.setdefault(why[f.label], []).append(f.label)
+            for reason, labels in blocked.items():
+                out('blocked', f"{reason}: {', '.join(labels)}")
+            targets = [f for f in targets if f.label not in why]
             if not targets:
                 continue
             if getattr(reader, 'uses_model', True) and self.model is None:

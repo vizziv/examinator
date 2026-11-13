@@ -202,7 +202,7 @@ def test_a_batch_reads_everything_before_any_check(env):
     """A check that reads the printing (another question) finds it."""
     from examinator.core import batch
     exam, ws, runner = env
-    plan = batch.plan(exam, ws.store, batch.Selection(('s1',), tuple(exam.grading)), model_available=True)
+    plan = batch.plan(ws, batch.Selection(('s1',), tuple(exam.grading)), model_available=True)
     run = batch.BatchRun(runner, plan, parallel=1)
     outs = run.run()
     steps = [o.step for o in outs]

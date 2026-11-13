@@ -56,7 +56,7 @@ from ..core.defs import IDENTITY, Bool, Check, Exam, Question, key, split_key
 from ..core.as_python import describe_changes
 from ..core.overrides import EXAM, SOURCE, SUBMISSION
 from ..core.reading import normalize
-from ..core.runner import Runner
+from ..core.runner import Runner, unreadable
 from ..core.store import Conflict
 from ..core.workspace import PRINT_AREA, Workspace
 from ..pdf.layout import Layout
@@ -479,7 +479,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         own = [key(q.id, label) for label in q.labels]
         keys = own + [k for c in checks if c['stored'] for k in c['stored'].reads if k not in own]
         keys = list(dict.fromkeys(keys))
-        fields = []
+        fields, why = [], {}         # why: per question, the fields that cannot be read now
         for k in keys:
             qid, label = split_key(k)
             other = exam.questions.get(qid)
@@ -489,6 +489,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             v = sheet.values.get(k)
             reader = other.reader_of(label)
             region = ws.region(sub.id, other, label)
+            if qid not in why:
+                why[qid] = unreadable(ws, sub.id, other, gone)
             fields.append({
                 'key': k, 'qid': qid, 'label': label, 'own': qid == q.id,
                 'title': label if qid == q.id else f"{qid} {label}",
@@ -499,6 +501,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'printed': isinstance(reader, Printed), 'ask': getattr(reader, 'ask', ''),
                 'typed': reader is None, 'default': f.default,
                 'crop': crop(region, overrides.join(qid, 'fields', label, 'region')),
+                'blocked': why[qid].get(label),         # 'page missing', 'no region': not read
                 'judged': judged.get(label, []) if qid == q.id else []})
         for n, f in enumerate(fields):
             f['n'] = n
@@ -713,7 +716,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise Bad("nothing selected")
         sel = batch.Selection(subs, questions, missing_only=bool(data.get('missing_only')),
                               include_protected=bool(data.get('include_protected')))
-        return batch.plan(exam, store, sel, model_available=have_model(), regions=ws.fields, missing=ws.missing)
+        return batch.plan(ws, sel, model_available=have_model())
 
     def read_plan(request, data):
         plan = batch_plan(data)
