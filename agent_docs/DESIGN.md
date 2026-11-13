@@ -468,7 +468,11 @@ same way:
   *query* (the route table says which: `change(...)`, `run(...)`, `query(...)`
   in `web/app.py`). A change requires the revision drawn (`rev`, or each
   item's in a multi-value save) and answers the new one; a stale one is
-  refused with 409, the reason in `error` and `current`, what is there now. A
+  refused with 409, the reason in `error` and `current`, what is there now.
+  The reason is in the page's words, written where the kind of row is known
+  (`store.Conflict` carries only which row: `runner.worded` names a field by
+  its label, "x changed"; `identity.stale`, "the name changed: now Kit
+  Absentia"; intake, "the plan changed"). A
   run (a read, a check, a batch, reading the name boxes, reading a scan's
   pages) names no revision: a slot runs one thing at a time, and a second
   while one runs is refused as "already running". Every answer is JSON, an
@@ -777,8 +781,10 @@ gives a submission's file, written or handed in).
   1. *A naming is a change like any other* (§13, Changes): `{sub, rev, key |
      text | restore}` (take a proposal, pick from the list, type a name, unname,
      undo), about the submission drawn, against the pick's revision last drawn. The server refuses a stale `rev` (409,
-     with the pick as it is now) and an unknown key (400), and never
-     reinterprets one as another.
+     with the pick as it is now, saying who it is now) and an unknown key (400), and never
+     reinterprets one as another. A named submission is shown as it is: its
+     name large, V not offered, until W/S step onto its proposals; after a
+     refused naming the page shows it so, and V does not act on a stale proposal.
   2. *Automatic matching acts only on unique evidence.* Each identifying
      column (of a reading, a file name or a pick) supports some roster people;
      a match needs them to single out one person. Ties and conflicts between

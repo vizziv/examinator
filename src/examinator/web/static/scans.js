@@ -89,6 +89,7 @@
     const fields = names.fields > 0;
     if (names.unread && fields && MODEL) return 'next: read the name boxes';
     if (!PEOPLE) return 'next: add a roster';
+    if (!names.proposal && names.named) return 'named; next: D';
     if (!names.proposal) return MODEL || !fields ? 'type the name or ID' : 'no model: type names';
     return 'is this who wrote it?';
   }

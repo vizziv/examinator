@@ -272,6 +272,7 @@ def test_names_read_confirm_cycle_skip(site):
     assert r.status_code == 200 and r.json()['who']['name'] == "Avery Testwell"
     r = post(client, token, '/scans/who', {'sub': 's0001', 'key': top['key'], 'rev': None})     # V twice: once
     assert r.status_code == 409 and r.json()['current']['name'] == "Avery Testwell" and r.json()['current']['rev']
+    assert r.json()['error'] == "the name changed: now Avery Testwell"        # who it is now, in the page's words
     # cycle to the second candidate (D), then confirm it
     second = rows['s0004']['candidates'][1]
     assert second['name'] == "Devon Fakely"

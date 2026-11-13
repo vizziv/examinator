@@ -17,6 +17,7 @@ the revision they saw; a mismatch raises `store.Conflict`.
 """
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, replace
 from typing import AbstractSet, Any, Mapping, Protocol, Sequence
 
@@ -30,6 +31,27 @@ from .workspace import Workspace
 
 DEFAULT_TIMEOUT = 60.0
 MAX_DETAIL = 20_000      # characters of a traceback shown
+
+
+def worded(e: Conflict) -> Conflict:
+    """A conflict on a field value or a decision, in the page's words: the field's
+    label ("A.1 changed"), "the decision changed"."""
+    if e.kind == 'value':
+        return Conflict(f"{(e.name or '').partition('/')[2] or e.name} changed", name=e.name, kind=e.kind)
+    if e.kind == 'decision':
+        return Conflict("the decision changed", name=e.name, kind=e.kind)
+    return e
+
+
+def _in_words(fn):
+    """A person's change whose conflicts are `worded`."""
+    @functools.wraps(fn)
+    def run(*args, **kw):
+        try:
+            return fn(*args, **kw)
+        except Conflict as e:
+            raise worded(e) from None
+    return run
 
 
 class Model(Protocol):
@@ -312,7 +334,7 @@ class Runner:
             self.store.write(submission, key(qid, check), 'result', body, origin='auto', images=got.images,
                              guard={(k, 'value'): None if rev == DEFAULT else rev for k, rev in reads.items()})
         except Conflict as e:
-            return out('discarded', str(e))
+            return out('discarded', str(worded(e)))
         return out('done')
 
     def refresh(self, submission: str) -> list[Outcome]:
@@ -350,6 +372,7 @@ class Runner:
             raise ValueError(f"no field {label!r} in {qid}")
         return f
 
+    @_in_words
     def set(self, submission: str, qid: str, label: str, text: str, *, author: str | None,
             expect_rev: Any = ANY) -> Value:
         """A person's value. It is verified by them, unless it carries a review marker."""
@@ -367,12 +390,14 @@ class Runner:
         return Value.of(self.store.write(submission, k, 'value', new.body(), origin='manual', author=author,
                                          expect_rev=expect_rev, keep_rev=keep))
 
+    @_in_words
     def unset(self, submission: str, qid: str, label: str, *, expect_rev: Any = ANY) -> None:
         """Drop a field's stored value: back to its default (only a field with one)."""
         if self._field(qid, label).default is None:
             raise ValueError(f"{label} has no default")
         self.store.delete(submission, key(qid, label), 'value', expect_rev=expect_rev)
 
+    @_in_words
     def verify(self, submission: str, qid: str, label: str, *, author: str | None, expect_rev: int,
                verified: bool = True) -> Value:
         """Verify the value as it stands (or, `verified=False`, unverify it). Same revision."""
@@ -380,7 +405,7 @@ class Runner:
         k = key(qid, label)
         row = self.store.get(submission, k, 'value')
         if row is None or row.rev != expect_rev:
-            raise Conflict(f"{label} changed")
+            raise Conflict(name=k, kind='value')
         cur = Value.of(row)
         if verified and cur.marker:
             raise ValueError("resolve review markers before verifying")
@@ -402,6 +427,7 @@ class Runner:
                     out.append(k)
         return out
 
+    @_in_words
     def decide(self, submission: str, qid: str, check: str, value: Any, *, author: str | None,
                flags: Sequence[str] = (), reason: str | None = None, expect_rev: Any = ANY,
                seen: Mapping[str, int | None] | None = None) -> Decision:
@@ -420,12 +446,13 @@ class Runner:
         if seen is not None:
             for k, rev in now.items():
                 if k not in seen or seen[k] != rev:
-                    raise Conflict(f"{k.partition('/')[2] or k} changed")
+                    raise Conflict(name=k, kind='value')
         row = self.store.write(submission, key(qid, check), 'decision', {'grade': grade.to_json(), 'seen': now},
                                origin='manual', author=author, expect_rev=expect_rev,
                                guard={(k, 'value'): rev for k, rev in now.items()})
         return Decision.of(row)
 
+    @_in_words
     def clear(self, submission: str, qid: str, check: str, *, expect_rev: Any = ANY) -> None:
         """Remove a decision: the check's own result shows again."""
         self.store.delete(submission, key(qid, check), 'decision', expect_rev=expect_rev)

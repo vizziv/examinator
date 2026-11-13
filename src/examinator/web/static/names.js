@@ -15,12 +15,18 @@
   const main = $('scans');
   if (!main || !$('names')) return;
   let view = null, order = [], k = 0, ci = 0;
+  let looking = false;    // on a named submission, the person stepped onto its proposals (W/S)
   let want = null;        // a submission to show once loaded (a link from Split or the roster: #sub=)
   let taken = {};         // roster key -> the submissions picked for that person (derived by the server)
 
   const live = () => !$('names').hidden && !!view;
   const row = () => (view && k < order.length ? view.byId[order[k]] : null);
-  const cand = () => { const r = row(); return r && r.candidates.length ? r.candidates[ci % r.candidates.length] : null; };
+  // The proposal shown large, which V takes: none on a named submission (it is shown as it is,
+  // named) until the person steps onto its proposals.
+  const cand = () => {
+    const r = row();
+    return r && r.candidates.length && (!r.who || looking) ? r.candidates[ci % r.candidates.length] : null;
+  };
   // How sure a proposal is: both agree is information, one of the two waits on a person, the rest are problems.
   const DOUBT = {agree: '', id: 'unv', email: 'unv', name: 'unv', disagree: 'bad', tie: 'bad', nobody: 'bad',
     unreadable: 'bad', empty: 'bad', unread: ''};
@@ -79,7 +85,7 @@
     want = null;
     if (j >= 0) go(j);
   }
-  function go(j) { k = Math.max(0, Math.min(j, order.length)); ci = 0; pick.value = ''; hi = 0; valueLine.say(''); render(); }
+  function go(j) { k = Math.max(0, Math.min(j, order.length)); ci = 0; looking = false; pick.value = ''; hi = 0; valueLine.say(''); render(); }
 
   // Naming is said about what is shown, when the key is pressed (or the item clicked): the
   // submission and one of {key} (a roster person), {text} (someone typed in), {restore} (undo)
@@ -94,7 +100,8 @@
     if (!r) return;
     let was = null;           // the pick it replaces
     return Changes.send(`who:${said.sub}`, '/scans/who', () => ({...said, rev: was = view.byId[said.sub]?.rev ?? null}), {
-      line: step, ends: next, redraw: () => load(), done: async b => {
+      // refused as stale: the submission as it is now (named), so V does not act on what was shown
+      line: step, ends: next, redraw: () => { looking = false; return load(); }, done: async b => {
         const here = row() && row().sub === said.sub;
         report(said.sub, b.who.name, before, was == null ? {sub: said.sub} : {sub: said.sub, restore: was});
         await load();
@@ -113,9 +120,11 @@
   const S = {register: (name, spec) => Actions.register(name, {...spec,
     available: ctx => live() && !Changes.busy() && (!spec.available || spec.available(ctx))})};
   S.register('names-verify', {available: () => !!cand(), run: () => name(about({key: cand().key}))});
-  S.register('names-down', {available: () => !!row() && row().candidates.length > 1, repeat: true, run: () => { ci += 1; render(); }});
-  S.register('names-up', {available: () => !!row() && row().candidates.length > 1, repeat: true,
-    run: () => { ci += row().candidates.length - 1; render(); }});
+  // W / S: the other proposals; on a named submission, the first press shows the first
+  const stepping = () => !!row() && row().candidates.length > (row().who && !looking ? 0 : 1);
+  const look = d => { const r = row(); if (r.who && !looking) { looking = true; ci = 0; } else ci += d; render(); };
+  S.register('names-down', {available: stepping, repeat: true, run: () => look(1)});
+  S.register('names-up', {available: stepping, repeat: true, run: () => look(row().candidates.length - 1)});
   S.register('names-skip', {available: () => k < order.length, repeat: true, run: () => go(k + 1)});
   S.register('names-back', {available: () => k > 0, repeat: true, run: () => go(k - 1)});
   S.register('names-type', {available: () => !!row(), run: () => { pick.focus(); pick.select(); }});
@@ -184,7 +193,7 @@
       if (!items.length) return;
       hi = (hi + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
       if (pick.value.trim()) renderList();
-      else { ci = hi; render(); }            // over the proposals: the one shown large follows
+      else { ci = hi; looking = true; render(); }      // over the proposals: the one shown large follows
     } else if (e.key === 'Enter') {
       e.preventDefault();
       choose(hi);
@@ -454,7 +463,7 @@
       if (c.taken) why.push(make('span', {className: 'bad', textContent: ` (already ${c.taken})`}));
     } else if (!named) why.push('no proposal: type the name or ID');
     $('w-why').replaceChildren(...why);
-    $('w-other').replaceChildren(named ? make('span', {}, make('span', {className: 'dim', textContent: 'verified: '}),
+    $('w-other').replaceChildren(named && c ? make('span', {}, make('span', {className: 'dim', textContent: 'verified: '}),
       make('b', {textContent: `${named.name}${named.id ? ' · ' + named.id : ''}`})) : '');
     renderList();
     const next = view.byId[order[k + 1]];
@@ -493,7 +502,7 @@
     renderBoxes();
     renderStep();
     renderRows();
-    main.dispatchEvent(new CustomEvent('names', {detail: {n, left, unread, proposal: !!cand(), fields}}));
+    main.dispatchEvent(new CustomEvent('names', {detail: {n, left, unread, proposal: !!cand(), named: !!(row() && row().who), fields}}));
     Actions.hints();
     Actions.enable(main);
   }

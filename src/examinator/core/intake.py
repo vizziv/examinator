@@ -164,6 +164,14 @@ def plan(ws, id: str) -> Row | None:
     return ws.store.get(id, '', PLAN)
 
 
+def _put(ws, id: str, body: dict, **kw) -> Row:
+    """Write a source's plan; a stale write is refused as "the plan changed"."""
+    try:
+        return ws.store.write(id, '', PLAN, body, **kw)
+    except Conflict:
+        raise Conflict("the plan changed", name='', kind=PLAN) from None
+
+
 def page(ws, src: Source, sheet: int, turns: int = 0) -> Image.Image:
     """One sheet, turned."""
     return turn(ws.renderer.page(source_path(ws, src), sheet), turns)
@@ -269,8 +277,7 @@ def reguess(ws, id: str, *, model=None, length: int | None = None,
         if read.failed:
             body['failed'] = len(read.failed)
     body.pop(UNDONE, None)
-    return ws.store.write(id, '', PLAN, body, origin='manual' if author else 'auto', author=author,
-                          expect_rev=expect_rev)
+    return _put(ws, id, body, origin='manual' if author else 'auto', author=author, expect_rev=expect_rev)
 
 
 # A person's edits: (plan, sheet, delta) -> new plan. An edit of a submission names it by
@@ -325,7 +332,7 @@ def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None,
         raise ValueError("unknown edit")
     body = _EDITS[op](cur.body, sheet, delta)
     body.pop(UNDONE, None)
-    return ws.store.write(id, '', PLAN, body, origin='manual', author=author, expect_rev=cur.rev)
+    return _put(ws, id, body, origin='manual', author=author, expect_rev=cur.rev)
 
 
 UNDONE = 'undone'       # in a plan brought back by undo: the revision it was brought back from
@@ -349,7 +356,7 @@ def undo(ws, id: str, *, expect_rev: Any) -> Row:
     if old is None:
         raise ValueError("nothing to undo")
     body = {**old.body, UNDONE: old.body.get(UNDONE, old.rev)}
-    return ws.store.write(id, '', PLAN, body, origin=old.origin, author=old.author, expect_rev=expect_rev)
+    return _put(ws, id, body, origin=old.origin, author=old.author, expect_rev=expect_rev)
 
 
 # --- what is written, and accepting -------------------------------------------------
@@ -472,7 +479,7 @@ def accept(ws, id: str, *, author: str | None = None, allow: Collection[str] = (
             r['file'] = f'{r["id"]}-{secrets.token_hex(6)}.pdf'
             pdf_pages.write(path, list(zip(r['pages'], r['orient'])), folder / r['file'])
         with ws.store.transaction():
-            cur = ws.store.write(id, '', PLAN, body, origin='manual', author=author, expect_rev=art.rev)
+            cur = _put(ws, id, body, origin='manual', author=author, expect_rev=art.rev)
             if next_n is not None:
                 ws.store.set_setting('intake_next', next_n)
             for r in writes:

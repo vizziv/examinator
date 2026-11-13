@@ -85,7 +85,15 @@ MADE = 'submission, source, pages, orient, made_at, file'
 
 
 class Conflict(Exception):
-    """A write was rejected because something it depended on has changed."""
+    """A write was rejected because something it depended on has changed: the row
+    (`name`, `kind`) or override (`name`: its path). The message is for a person,
+    so it is written where the kind of thing is known, in the page's words
+    (`runner`: a field, a decision; `identity`: the name; `intake`: the plan);
+    the store's own says only that something changed."""
+
+    def __init__(self, message: str = "changed elsewhere", *, name: str | None = None, kind: str | None = None):
+        super().__init__(message)
+        self.name, self.kind = name, kind
 
 
 class _Any:
@@ -262,11 +270,11 @@ class Store:
     def _check(self, submission, name, kind, expect_rev, guard) -> Row | None:
         cur = self.get(submission, name, kind)
         if expect_rev is not ANY and (cur.rev if cur else None) != expect_rev:
-            raise Conflict(f"{name or kind} changed")
+            raise Conflict(name=name, kind=kind)
         for (other, k), rev in (guard or {}).items():
             g = self.get(submission, other, k)
             if (g.rev if g else None) != rev:
-                raise Conflict(f"{other or k} changed")
+                raise Conflict(name=other, kind=k)
         return cur
 
     def _archive(self, cur: Row) -> None:
@@ -360,7 +368,7 @@ class Store:
     def _check_override(self, scope: str, path: str, expect_rev) -> Override | None:
         cur = self.overrides(scope).get(path)
         if expect_rev is not ANY and (cur.rev if cur else None) != expect_rev:
-            raise Conflict(f"{path} changed")
+            raise Conflict(name=path, kind='override')
         return cur
 
     def set_override(self, path: str, value: Any, *, scope: str = '', author: str | None,

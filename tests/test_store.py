@@ -39,8 +39,9 @@ def test_expect_rev_and_guard(store):
     a = store.write('s', 'q/x', 'value', {'text': '1'}, origin='auto')
     with pytest.raises(Conflict):
         store.write('s', 'q/x', 'value', {'text': '2'}, origin='auto', expect_rev=None)
-    with pytest.raises(Conflict, match="q/x changed"):
+    with pytest.raises(Conflict) as e:                  # which row; the words are the caller's
         store.write('s', 'q/c', 'result', {}, origin='auto', guard={('q/x', 'value'): a.rev + 1})
+    assert (e.value.name, e.value.kind, str(e.value)) == ('q/x', 'value', "changed elsewhere")
     with pytest.raises(Conflict):
         store.write('s', 'q/c', 'result', {}, origin='auto', guard={('q/y', 'value'): 3})
     store.write('s', 'q/c', 'result', {}, origin='auto', guard={('q/x', 'value'): a.rev, ('q/y', 'value'): None})

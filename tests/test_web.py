@@ -304,7 +304,7 @@ def test_save_conflict_keeps_the_stored_value(site):
     rev = site.rev('s1', 'a/x')
     site.runner.set('s1', 'a', 'x', "5", author='other', expect_rev=rev)
     r = site.post('/s/s1/a/save', {'values': {'a/x': {'text': 'mine', 'rev': rev}}})
-    assert r.status_code == 409 and r.json()['conflict']
+    assert r.status_code == 409 and r.json()['conflict'] and r.json()['error'] == "x changed"     # as the page names it
     assert site.value('s1', 'a/x').text == '5'
     assert site.post('/s/s1/a/save', {'values': {'a/x': {'text': 'mine'}}}).status_code == 400    # no rev
     assert site.post('/s/s1/a/save', {'values': {'a/nope': {'text': 'x', 'rev': None}}}).status_code == 400
@@ -393,6 +393,7 @@ def test_a_decision_is_made_against_what_the_page_shows(site):
     assert all(o.ok for o in site.runner.read('s1', 'p'))  # read meanwhile: the page still shows no value
     r = site.post('/s/s1/a/decide', {'check': 'x', 'value': True, 'rev': None, 'seen': seen})
     assert r.status_code == 409 and site.ws.store.get('s1', 'a/x', 'decision') is None
+    assert r.json()['error'] == "c1 changed"
     seen = page_seen(site.get('/s/s1/a').text)              # reloaded: now it shows them
     r = site.post('/s/s1/a/decide', {'check': 'x', 'value': True, 'rev': None, 'seen': seen})
     assert r.status_code == 200 and site.state('s1', 'a', 'x').state == 'decided'
