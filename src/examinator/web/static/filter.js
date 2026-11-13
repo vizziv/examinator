@@ -27,6 +27,7 @@
     const col = data.values[f.id];
     const seen = new Set((Array.isArray(sel[f.id]) ? sel[f.id] : []));
     for (const vals of Object.values(col)) for (const v of vals) seen.add(v);
+    for (const v of f.order) seen.add(v);       // a facet with known values (state, grade) lists them all
     const box = make('div', {className: 'facet'}, make('b', {textContent: f.label}));
     if (!seen.size) { box.append(make('span', {className: 'dim', textContent: ' —'})); return box; }
     const list = make('div', {className: 'fx-list'});
