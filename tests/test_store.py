@@ -52,8 +52,6 @@ def test_history(store):
     store.write('s', '', 'split', "two", origin='manual', author='ta')
     store.write('s', '', 'split', "three", origin='manual', author='ta')
     assert [h.body for h in store.history('s', '', 'split')] == ["two", "one"]
-    store.purge_history()
-    assert store.history('s', '', 'split') == []
 
 
 def test_rows_all_and_dropping_large_parts(store):

@@ -69,8 +69,8 @@ def both(exam, qid, answers):
 
 
 def status(runner, sub, qid, check='check'):
-    q = runner.exam.questions[qid]
-    return runner.sheet(sub).status(runner.exam, q, q.check(check))
+    q = runner.ws.exam.questions[qid]
+    return runner.sheet(sub).status(runner.ws.exam, q, q.check(check))
 
 
 def text_of(runner, sub, qid):
@@ -93,7 +93,7 @@ def test_selftest(exam, tmp_path):
 
 
 def test_definition(exam, pkg):
-    assert list(exam.grading) == ['info'] + [f'q{i}' for i in range(1, 10)]
+    assert list(exam.questions) == ['info'] + [f'q{i}' for i in range(1, 10)]
     assert exam.pages == 22 and exam.print_area == (0, 0, 1000, 1000)
     info = exam.questions['info']
     assert info.checks == () and info.read is None and all(isinstance(f.read, Printed) for f in info.fields)
@@ -111,7 +111,7 @@ def test_definition(exam, pkg):
     assert exam.questions['q2'].read.then is pkg('huge_constants').rewrite
     assert exam.questions['q7'].read.then is None
     groups = {}
-    for q in exam.grading.values():
+    for q in exam.questions.values():
         if q.id in ('info', 'q2', 'q7'):
             continue
         assert [c.name for c in q.checks] == ['check'] and q.columns() == [q.id] and q.check('check').points.counts
@@ -490,7 +490,7 @@ def env(exam, pkg, tmp_path):
     root = synth.generate(exam, tmp_path / 'ws', [case])
     ws = Workspace(root, exam)
     ws.sync()
-    runner = Runner(exam, ws, model=synth.fake_model(root))
+    runner = Runner(ws, model=synth.fake_model(root))
     yield ws, runner
     runner.close()
     ws.close()
@@ -581,7 +581,7 @@ def test_disagreeing_printed_fields_are_undecided_until_a_grader_corrects_info(e
     root = synth.generate(exam, tmp_path / 'ws', [case])
     ws = Workspace(root, exam)
     ws.sync()
-    runner = Runner(exam, ws, model=synth.fake_model(root))
+    runner = Runner(ws, model=synth.fake_model(root))
     try:
         for qid in ('info', 'q5'):
             assert all(o.ok for o in runner.read(S, qid))
@@ -612,10 +612,10 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
     ws = Workspace(root, exam)
     ws.sync()
     model = synth.fake_model(root)
-    runner = Runner(exam, ws, model=model)
+    runner = Runner(ws, model=model)
     try:
         for sub in ws.store.submissions():
-            for qid in exam.grading:
+            for qid in exam.questions:
                 assert all(o.ok for o in runner.read(sub.id, qid))
     finally:
         runner.close()

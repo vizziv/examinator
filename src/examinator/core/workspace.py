@@ -10,6 +10,11 @@
 Every submission is named by its pick (`core.identity`), made on the scans
 page. For PDFs handed in already split there is one programmatic way in: a file
 name that carries a roster ID (`identity.by_file`).
+
+A workspace has its own definition, `exam`: the package's with the exam-wide
+overrides stored here (`refresh`). The package's `Exam` is never changed, and
+everything reads the definition through the workspace: for one submission,
+through `layers` (its own overrides and its scan's on top).
 """
 from __future__ import annotations
 
@@ -20,14 +25,14 @@ from PIL import Image
 from ..pdf.layout import Layout
 from ..pdf.render import Renderer
 from . import overrides
-from .defs import PRINT_AREA, Exam, Field, Question, Region
+from .defs import PRINT_AREA, Exam, Region
 from .store import Store, Submission
 
 
 class Workspace:
     def __init__(self, root: str | Path, exam: Exam, *, create: bool = False):
         self.root = Path(root)
-        self.exam = exam
+        self.exam = exam.with_roots(exam.base)      # the workspace's own: `refresh` makes it live
         self.pdfs = self.root / 'pdfs'
         if not self.pdfs.is_dir():
             if not create:
@@ -40,11 +45,25 @@ class Workspace:
         self.skipped: list[overrides.Skipped] = self.refresh()
 
     def refresh(self) -> list[overrides.Skipped]:
-        """Apply the exam-wide overrides stored here to the exam: part of opening a
-        workspace, and of every exam-wide edit. Those that no longer validate are
-        skipped (`skipped`)."""
-        self.skipped = overrides.apply(self.exam, {path: o.value for path, o in self.store.overrides().items()})
+        """Make this workspace's definition the package's plus the exam-wide overrides
+        stored here: part of opening a workspace, and of every exam-wide edit. Those
+        that no longer validate are skipped (`skipped`; every scope's:
+        `skipped_overrides`). `exam` stays the same object, so whoever holds it sees
+        the new definition: its overrides change first, so a check worker never runs
+        older data than a result's recorded hash."""
+        live, self.skipped = overrides.apply(self.exam, {path: o.value for path, o in self.store.overrides().items()})
+        self.exam.overrides = live.overrides
+        vars(self.exam).update(vars(live))
         return self.skipped
+
+    def skipped_overrides(self) -> list[overrides.Skipped]:
+        """Every stored override that does not apply, at every scope (the exam's, each
+        scan's, each submission's), each with its scope."""
+        out = list(self.skipped)
+        for sc in sorted({o.scope for o in self.store.all_overrides() if o.scope}):
+            level, id = overrides.parse_scope(sc)
+            out += [s for s in self.layers(**{level: id}).check() if s.scope == sc]
+        return out
 
     def close(self) -> None:
         self.store.close()
@@ -67,24 +86,18 @@ class Workspace:
     # submission intake made from that file), else the exam's, else the package's.
 
     def layers(self, submission: str | None = None, *, source: str | None = None) -> overrides.Layers:
+        """The definition for one submission (or a source scan's sheets): `question`
+        (its regions, its pages: printed pages and, one submission's own choice, its
+        extra sheets, numbered on from the exam's last page), `layout`."""
         return overrides.Layers(self, submission=submission, source=source)
-
-    def question(self, submission: str, qid: str) -> Question:
-        """A question as it is for one submission (its regions, its pages)."""
-        return self.layers(submission).root(qid)
 
     def layout(self, submission: str) -> Layout:
         """This submission's print area."""
-        return Layout(self.layers(submission).root(PRINT_AREA))
+        return self.layers(submission).layout
 
     def source_layout(self, source: str | None) -> Layout:
         """A source scan's sheets, with its print area."""
-        return Layout(self.layers(source=source).root(PRINT_AREA))
-
-    def selected_pages(self, submission: str, question: Question) -> tuple[int, ...]:
-        """The question's pages for this submission: printed pages, and (one
-        submission's own choice) its extra sheets, numbered on from the exam's last page."""
-        return self.question(submission, question.id).pages
+        return self.layers(source=source).layout
 
     def missing(self, submission: str) -> set[int]:
         """The printed pages this submission's PDF does not have: intake wrote a
@@ -103,14 +116,6 @@ class Workspace:
             return max(0, self.scan_page_count(submission) - self.exam.pages)
         except Exception:
             return 0
-
-    def fields(self, submission: str, question: Question) -> tuple[Field, ...]:
-        """The question's fields with this submission's regions."""
-        return self.question(submission, question.id).fields
-
-    def region(self, submission: str, question: Question, label: str) -> Region | None:
-        """A field's region for this submission (None: unset, not read)."""
-        return next((f.region for f in self.fields(submission, question) if f.label == label), None)
 
     # --- pages and crops ---
 

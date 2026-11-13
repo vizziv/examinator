@@ -61,7 +61,7 @@ def sites(tmp_path):
     exam with a synthetic stack split, accepted and on a roster (the rest)."""
     exam = mini()
     ws = workspace(tmp_path / 'q', exam)
-    runner = Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
+    runner = Runner(ws, model=FakeModel(dict(SCRIPT)))
     runner.read('s1', 'a')
     runner.set('s1', 'a', 'y', "2", author='t')
     q = Client(create_app(exam, ws, runner, author='tester'))
@@ -71,7 +71,7 @@ def sites(tmp_path):
     root = tmp_path / 'toy'
     paths = synth.stacks(toy, root)
     tws = Workspace(root, toy, create=True)
-    trunner = Runner(toy, tws, model=synth.fake_model(root))
+    trunner = Runner(tws, model=synth.fake_model(root))
     s = Client(create_app(toy, tws, trunner, author='tester'))
     src = s.client.post('/scans/upload?name=a.pdf', content=paths[0].read_bytes(),
                         headers={'Content-Type': 'application/pdf', 'X-Token': s.token}).json()['id']

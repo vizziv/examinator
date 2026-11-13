@@ -3,7 +3,7 @@
     GET  /                          grid (?focus=... applies a shared focus)
     GET  /filter                    the filter page: facets of every question
     GET  /focus/values              facet values for all submissions (?sub=: one), JSON
-    GET  /s/{sub}/{q}               question page (a question graders work through: `exam.grading`)
+    GET  /s/{sub}/{q}               question page (a question graders work through: `exam.questions`)
     POST /s/{sub}/{q}/{action}      save unverify decide clear read check default restore
     POST /s/{sub}/@identity/save    the Names step's values (the identity fields)
     GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
@@ -59,7 +59,7 @@ from ..core.defs import IDENTITY, PRINT_AREA, Bool, Check, Exam, Question, key, 
 from ..core.as_python import describe_changes
 from ..core.overrides import EXAM, SOURCE, SUBMISSION
 from ..core.reading import normalize
-from ..core.runner import Runner, unreadable
+from ..core.runner import Runner, to_read
 from ..core.store import Conflict
 from ..core.workspace import Workspace
 from ..pdf.layout import Layout
@@ -330,14 +330,14 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def target(request: Request, need_question: bool = True):
         """The submission and question a path names, looked up; never used as paths.
-        Only a question graders work through (`exam.grading`): a group kept apart
+        Only a question graders work through (`exam.questions`): a group kept apart
         is reached through its own step's routes."""
         sub = store.submission(request.path_params['sub'])
         if sub is None:
             raise HTTPException(404)
         if not need_question:
             return sub, None
-        q = exam.grading.get(request.path_params['q'])
+        q = exam.questions.get(request.path_params['q'])
         if q is None:
             raise HTTPException(404)
         return sub, q
@@ -389,18 +389,18 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         def todo(q, check=None) -> dict:      # the column's state facet, and its values still to do
             name, values = focus.state_facet(q, check)
             return {'facet': f'{q.id}/{name}', 'todo': ' '.join(values)}
-        for q in exam.grading.values():
+        for q in exam.questions.values():
             for c in q.checks:
                 columns.append({'q': q, 'name': q.column(c.name), 'counts': c.points.counts, **todo(q, c.name)})
             if not q.checks:        # no checks: the column shows how its fields stand
                 columns.append({'q': q, 'name': q.id, 'counts': False, **todo(q)})
         sel = selection(request.query_params.get('focus'))
         table = values() if sel else {}
-        rows, started, graded = [], False, exam.grading     # started: anything of a graded question
+        rows, started, graded = [], False, exam.questions     # started: anything of a graded question
         for row in grid.load(exam, store):
             cells = []
             started = started or any(split_key(k)[0] in graded for k in (*row.sheet.values, *row.sheet.results))
-            for q in exam.grading.values():
+            for q in exam.questions.values():
                 for c in q.checks:
                     st = row.status[(q.id, c.name)]
                     cells.append({'qid': q.id, 'col': q.column(c.name), 'state': st.state,
@@ -467,7 +467,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 return None
             return {'index': region.page - 1, 'box': box(layout, region), 'path': path}
 
-        pages = ws.selected_pages(sub.id, q)
+        pages = ws.layers(sub.id).question(q.id).pages
         # every page of the PDF, to scroll through: the printed pages (a missing one is its
         # placeholder), then the extra sheets; `on` marks this question's
         scans = [{'index': i, 'on': i + 1 in pages,
@@ -505,15 +505,15 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         fields, why = [], {}         # why: per question, the fields that cannot be read now
         for k in keys:
             qid, label = split_key(k)
-            other = exam.questions.get(qid)
+            other = exam.group(qid)
             f = other.field(label) if other else None
             if f is None:
                 continue
             v = sheet.values.get(k)
             reader = other.reader_of(label)
-            region = ws.region(sub.id, other, label)
+            region = ws.layers(sub.id).question(qid).field(label).region
             if qid not in why:
-                why[qid] = unreadable(ws, sub.id, other, gone)
+                why[qid] = to_read(ws.layers(sub.id).question(qid), sheet.values, gone, include_protected=True).blocked
             fields.append({
                 'key': k, 'qid': qid, 'label': label, 'own': qid == q.id,
                 'title': label if qid == q.id else f"{qid} {label}",
@@ -541,7 +541,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                                 'verified': b.get('verified'), 'text': str(b.get('text', ''))[:300]})
         history.sort(key=lambda h: h['at'], reverse=True)
 
-        qids = list(exam.grading)
+        qids = list(exam.questions)
         i = qids.index(q.id) if q.id in qids else None
         lay = ws.layers(sub.id)
         stored = store.overrides()
@@ -573,7 +573,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def field_of(k: Any, questions: dict | None = None) -> tuple[str, str]:
         """A field of the questions graders work through (or of `questions`), by key."""
-        questions = exam.grading if questions is None else questions
+        questions = exam.questions if questions is None else questions
         if not isinstance(k, str) or '/' not in k:
             raise Bad("unknown field")
         qid, label = split_key(k)
@@ -728,7 +728,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         layout = Layout(lay.root(PRINT_AREA))
         return {overrides.join(qid, 'fields', f.label, 'region'): {'index': f.region.page - 1,
                                                                     'box': box(layout, f.region)}
-                for qid in exam.questions for f in lay.root(qid).fields if f.region is not None}
+                for qid in exam.groups() for f in lay.root(qid).fields if f.region is not None}
 
     # --- pages, evidence images, jobs ---
 
@@ -766,7 +766,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return JSONResponse(info)
 
     def read_page(request: Request) -> Response:
-        return page('read.html', questions=list(exam.grading.values()), run=batch_now()['id'],
+        return page('read.html', questions=list(exam.questions.values()), run=batch_now()['id'],
                     total=len(store.submissions()))
 
     def batch_plan(data: dict) -> batch.Plan:
@@ -775,7 +775,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         subs = data.get('submissions')
         subs = tuple(known) if subs is None else _strings(subs, set(known), "submissions")
         questions = data.get('questions')
-        questions = tuple(exam.grading) if questions is None else _strings(questions, exam.grading, "questions")
+        questions = tuple(exam.questions) if questions is None else _strings(questions, exam.questions, "questions")
         if not subs or not questions:
             raise Bad("nothing selected")
         sel = batch.Selection(subs, questions, missing_only=bool(data.get('missing_only')),
@@ -838,12 +838,12 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         by_q: dict[str, list] = {}
         for e in overrides.editable(exam):
             by_q.setdefault(overrides.split(e.path)[0], []).append(entry_view(e, revs))
-        questions = [{'id': qid, 'title': "print area" if qid == PRINT_AREA else exam.questions[qid].title,
+        questions = [{'id': qid, 'title': "print area" if qid == PRINT_AREA else exam.group(qid).title,
                       'entries': items} for qid, items in by_q.items()]
         skipped = [{'path': s.path, 'reason': s.reason} for s in ws.skipped]
         active = [{'path': p, 'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')}
                   for p, o in stored.items()]
-        names, first = {s.id: s.name for s in store.sources()}, next(iter(exam.grading), None)
+        names, first = {s.id: s.name for s in store.sources()}, next(iter(exam.questions), None)
         scoped = []             # what one scan or one submission has of its own
         for o in store.all_overrides():
             if not o.scope:
@@ -858,7 +858,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                            'where': names.get(id_, id_) if level == SOURCE else id_,
                            'gone': store.submission(id_) is None if level == SUBMISSION else id_ not in names,
                            'href': (f'/scans#sub={id_}' if root == IDENTITY else
-                                    f'/s/{id_}/{root if root in exam.grading else first}' if first else None)
+                                    f'/s/{id_}/{root if root in exam.questions else first}' if first else None)
                            if level == SUBMISSION else None,
                            'path': o.path, 'text': show_value(kind, o.value), 'rev': o.rev,
                            'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')})

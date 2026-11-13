@@ -1,8 +1,10 @@
 """Batch reading.
 
 `plan` lists exactly which questions a selection would read, what it skips as
-protected or already present, and what is blocked; the app shows it live as
-the options change, and a run plans again when it starts. A batch has no
+protected or already present, and what is blocked: per question, what
+`runner.to_read` says, the computation each read then executes. The app shows
+it live as the options change, and a run plans again when it starts. Only
+questions graders work through are selected (`Exam.questions`). A batch has no
 check step: checks recompute by themselves (`Runner.refresh`), and once every
 read has finished the batch refreshes each selected submission, so a check
 that reads another question's fields finds them. Cancelling stops queued work
@@ -18,8 +20,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from .defs import key
-from .runner import Outcome, Runner, unreadable
+from .runner import PROTECTED, Outcome, Runner, to_read
 from .status import Sheet
 from .workspace import Workspace
 
@@ -41,6 +42,7 @@ class Item:
     question: str
     action: str
     reason: str = ""
+    fields: int = 0         # how many fields it reads
 
 
 @dataclass(frozen=True)
@@ -53,37 +55,28 @@ class Plan:
 
 
 def plan(ws: Workspace, selection: Selection, *, model_available: bool) -> Plan:
-    """What reading `selection` in this workspace would do now. A field its reader
-    cannot read (`runner.unreadable`: no region, a page missing) is not counted."""
+    """What reading `selection` in this workspace would do now: per question with a
+    field that has a reader, what `runner.to_read` says. A question that reads a
+    field is 'read' (it may also have fields blocked: those are not counted);
+    one that reads none is 'blocked' if a field asked for cannot be read now,
+    else skipped ('skip_protected' or 'skip_present')."""
     exam, store = ws.exam, ws.store
+    for qid in selection.questions:
+        if qid not in exam.questions:
+            raise KeyError(qid)
     items: list[Item] = []
     for sub in selection.submissions:
-        sheet = Sheet.of(store.all(submission=sub, kinds=('value',)))
-        gone = ws.missing(sub)
+        values = Sheet.of(store.all(submission=sub, kinds=('value',))).values
+        gone, lay = ws.missing(sub), ws.layers(sub)
         for qid in selection.questions:
-            q = exam.questions[qid]
-
-            def add(action, reason=""):
-                items.append(Item(sub, qid, action, reason))
-
-            readable = [f for f in q.fields if q.reader_of(f.label) is not None]
-            if readable:
-                why = unreadable(ws, sub, q, gone)
-                vals = [sheet.values.get(key(qid, f.label)) for f in readable]
-                todo = [f for f, v in zip(readable, vals)
-                        if not (selection.missing_only and v is not None)
-                        and not (v is not None and v.verified == 'person' and not selection.include_protected)]
-                placed = [f for f in todo if f.label not in why]
-                if not todo:
-                    protected = any(v is not None and v.verified == 'person' for v in vals)
-                    add('skip_protected' if protected and not selection.missing_only else 'skip_present')
-                elif not placed:
-                    add('blocked', ", ".join(sorted({why[f.label] for f in todo})))
-                elif not model_available and any(getattr(q.reader_of(f.label), 'uses_model', True)
-                                                 for f in placed):
-                    add('blocked', "model unavailable")
-                else:
-                    add('read', f"{len(placed)} field{'s' if len(placed) != 1 else ''}")
+            r = to_read(lay.question(qid), values, gone, missing_only=selection.missing_only,
+                        include_protected=selection.include_protected, model=model_available)
+            if r.count:
+                items.append(Item(sub, qid, 'read', f"{r.count} field{'s' if r.count != 1 else ''}", r.count))
+            elif r.blocked:
+                items.append(Item(sub, qid, 'blocked', ", ".join(sorted(set(r.blocked.values())))))
+            elif r.why:
+                items.append(Item(sub, qid, 'skip_protected' if PROTECTED in r.why.values() else 'skip_present'))
     return Plan(selection, tuple(items))
 
 

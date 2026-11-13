@@ -190,8 +190,8 @@ no value yet, and the app can reload the exam package without losing state.
   group (`defs.IDENTITY`, '@identity') has one field per roster column (name,
   ID, email; those the exam maps placed, the others drawn in the app): values,
   verifying, reads, regions at every scope, all as for any field. It is kept
-  apart from grading (`Question.apart`: no grid column, total, facet or batch
-  read; read on the Names step). Who wrote a submission is then one stored
+  apart from grading: not one of `Exam.questions` (no grid column, total,
+  facet or batch read), reached only by its name; read on the Names step. Who wrote a submission is then one stored
   pick per submission, a person's choice among proposals computed purely from
   those values and the roster (`core.identity`). The pick records the person;
   their place on the roster is derived. Automatic matching acts only on
@@ -214,10 +214,11 @@ no value yet, and the app can reload the exam package without losing state.
 | Field, Check, Question, Exam, points (`Bool`, `Number`) | `core/defs.py` |
 | What a check returns (`Result`, `Judgement`, `Undecided`) | `core/result.py` |
 | `ctx.read` (recorded reads), the reader's context | `core/context.py` |
+| What a read reads, and why not (`to_read`) | `core/runner.py` |
 | Stored value, result, decision; the status table; totals | `core/status.py` |
 | The small changes (read, set, verify, compute, decide, clear) | `core/runner.py` |
 | Asking about one region (`Ask`, `Printed`); handwriting readers | `core/ask.py`; `std/readers.py` |
-| Overrides at every scope; what applies to one submission (`Layers`) | `core/overrides.py`; `Workspace.layers`, `question`, `layout` |
+| A workspace's own definition (`Workspace.exam`); overrides at every scope; what applies to one submission (`Layers`: `question`, `layout`) | `core/workspace.py`; `core/overrides.py`; `Workspace.layers` |
 | Batch: reads, then computes | `core/batch.py` |
 | One row table, addressed `(submission, name, kind)` | `core/store.py` |
 

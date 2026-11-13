@@ -33,8 +33,8 @@ class Site:
     """A test client that sends the page token on POST, as the page's script does."""
 
     def __init__(self, exam, ws, runner, **kw):
-        self.exam, self.ws, self.runner = exam, ws, runner
-        self.app = create_app(exam, ws, runner, author='tester', **kw)
+        self.exam, self.ws, self.runner = ws.exam, ws, runner      # the workspace's definition
+        self.app = create_app(ws.exam, ws, runner, author='tester', **kw)
         self.client = TestClient(self.app, base_url=BASE)
         self.wait(self.app.state.startup)
         html = self.client.get('/').text
@@ -422,7 +422,7 @@ def test_a_field_with_a_default_on_the_page(tmp_path):
     exam.question('q', pages=[1], fields=[Field('k', default='10')],
                   check=Check(lambda ctx: int(ctx.read('k')) > 5, isolate=False))
     ws = workspace(tmp_path, exam, subs=('s1',))
-    site = Site(exam, ws, Runner(exam, ws))
+    site = Site(exam, ws, Runner(ws))
     site.runner.refresh('s1', questions=['q'])
     html = site.get('/s/s1/q').text
     assert 'placeholder="default 10"' in html and '>default</span>' in html and 'data-region="' not in html
@@ -457,7 +457,7 @@ def test_a_region_for_this_submission_only(site):
     assert r.status_code == 200 and lv['own'] == lv['value'] == [1, 0, 0, 500, 100] and lv['own_rev'] == r.json()['rev']
     assert 'reread' not in r.json() and r.json()['job'] is None
     assert site.value('s1', 'p/c1').text == 'one'                 # no value changes
-    assert site.ws.region('s2', site.exam.questions['p'], 'c1') == site.exam.questions['p'].fields[0].region
+    assert site.ws.layers('s2').question('p').field('c1').region == site.exam.questions['p'].fields[0].region
     html = site.get('/s/s1/p').text
     layout = site.ws.layout('s1')
     from examinator import Region
@@ -548,14 +548,14 @@ def test_pages_of_one_submission(site):
     own = lambda path, value, rev=None: site.post('/exam/set' if value is not None else '/exam/clear',
                                                   {'path': path, 'value': value, 'rev': rev, 'scope': OWN})
     assert own('a/pages', [1, 2]).status_code == 200
-    assert site.ws.selected_pages('s1', site.exam.questions['a']) == (1, 2)
-    assert site.ws.selected_pages('s2', site.exam.questions['a']) == (1,)
+    assert site.ws.layers('s1').question('a').pages == (1, 2)
+    assert site.ws.layers('s2').question('a').pages == (1,)
     assert '/page/s1/1.jpg' in site.get('/s/s1/a').text
     assert own('a/pages', [7]).status_code == 400 and own('a/pages', []).status_code == 400
     assert own('a/note', "continues overleaf").status_code == 400          # no such thing
     rev = site.ws.store.overrides(OWN)['a/pages'].rev
     assert own('a/pages', None, rev).status_code == 200
-    assert site.ws.selected_pages('s1', site.exam.questions['a']) == (1,)
+    assert site.ws.layers('s1').question('a').pages == (1,)
     assert own('@print_area', [100, 100, 900, 900]).status_code == 200
     assert site.ws.layout('s1') == Layout((100, 100, 900, 900)) and site.ws.layout('s2') == Layout((0, 0, 1000, 1000))
 
@@ -695,13 +695,13 @@ def ksite(tmp_path):
     """The keyed exam (keys held as data), every value read and verified, every check run."""
     exam = make_keyed_exam()
     ws = workspace(tmp_path, exam)
-    runner = Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
+    runner = Runner(ws, model=FakeModel(dict(SCRIPT)))
     for sid in ('s1', 's2'):
-        for qid in exam.grading:
+        for qid in exam.questions:
             assert all(o.ok for o in runner.read(sid, qid))
         for k, v in runner.values(sid).items():
             runner.verify(sid, *k.split('/'), author='t', expect_rev=v.rev)
-        runner.refresh(sid, questions=list(exam.grading))
+        runner.refresh(sid, questions=list(exam.questions))
     yield Site(exam, ws, runner)
     runner.close()
     ws.close()
@@ -726,7 +726,7 @@ def test_exam_page_lists_entries(site):
 def test_exam_page_of_the_toy_exam(tmp_path):
     exam = load_exam(TOY)
     ws = Workspace(tmp_path / 'ws', exam, create=True)
-    runner = Runner(exam, ws)
+    runner = Runner(ws)
     try:
         r = Site(exam, ws, runner).get('/exam')
         assert r.status_code == 200
@@ -798,17 +798,17 @@ def test_key_override_outdates_and_recomputes(ksite):
 def test_overrides_survive_a_new_app(tmp_path):
     exam = make_keyed_exam()
     ws = workspace(tmp_path, exam)
-    runner = Runner(exam, ws)
+    runner = Runner(ws)
     site = Site(exam, ws, runner)
     assert site.post('/exam/set', {'path': 'p/fields/c1/read/ask', 'value': "again", 'rev': None}).status_code == 200
     runner.close()
     ws.close()
     exam = make_keyed_exam()                 # a fresh package, nothing applied
     ws = Workspace(tmp_path / 'ws', exam)
-    runner = Runner(exam, ws)
+    runner = Runner(ws)
     try:
         site = Site(exam, ws, runner)
-        assert exam.questions['p'].fields[0].read.ask == "again"
+        assert ws.exam.questions['p'].fields[0].read.ask == "again" and exam.questions['p'].fields[0].read.ask == "first cue"
         assert 'package: <code>first cue</code>' in site.get('/exam').text
     finally:
         runner.close()

@@ -334,10 +334,6 @@ class Store:
             return self.write(submission, name, kind, old.body, origin=old.origin, author=old.author,
                               expect_rev=expect_rev)
 
-    def purge_history(self) -> None:
-        with self._lock:
-            self._db.execute('delete from history')
-
     def _tx(self):
         return _Tx(self._db)
 

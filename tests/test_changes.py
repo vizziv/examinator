@@ -31,7 +31,7 @@ def build(*, labels=('a', 'b'), key=None, points=Bool(), extra_check='', questio
 def graded(tmp_path, exam):
     """A workspace where q is read, verified and graded for 's1', with a decision on 's2'."""
     ws = workspace(tmp_path, exam)
-    runner = Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
+    runner = Runner(ws, model=FakeModel(dict(SCRIPT)))
     for sub in ('s1', 's2'):
         runner.read(sub, 'q')
         for k, v in runner.values(sub).items():
@@ -46,7 +46,7 @@ def reopen(ws, runner, exam):
     runner.close()
     ws.close()
     ws = Workspace(ws.root, exam)
-    return ws, Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
+    return ws, Runner(ws, model=FakeModel(dict(SCRIPT)))
 
 
 def snapshot(ws, sub):
@@ -54,8 +54,8 @@ def snapshot(ws, sub):
 
 
 def st(runner, sub, qid, check):
-    q = runner.exam.questions[qid]
-    return runner.sheet(sub).status(runner.exam, q, q.check(check))
+    q = runner.ws.exam.questions[qid]
+    return runner.sheet(sub).status(runner.ws.exam, q, q.check(check))
 
 
 def test_a_check_whose_key_changes_is_recomputed_and_nothing_else_moves(tmp_path):
@@ -149,9 +149,9 @@ def test_a_check_removed_and_restored(tmp_path):
 def test_points_change_totals_follow_at_once(tmp_path):
     from examinator.core import grid
     ws, runner = graded(tmp_path, build())
-    assert [r.points for r in grid.load(runner.exam, ws.store)] == [1.0, 0.0]
+    assert [r.points for r in grid.load(runner.ws.exam, ws.store)] == [1.0, 0.0]
     ws, runner = reopen(ws, runner, build(points=Bool(worth=3)))
-    assert [r.points for r in grid.load(runner.exam, ws.store)] == [3.0, 0.0]
+    assert [r.points for r in grid.load(runner.ws.exam, ws.store)] == [3.0, 0.0]
     assert st(runner, 's1', 'q', 'check').state == 'graded'               # points are not the check's definition
     runner.close()
     ws.close()
@@ -172,9 +172,9 @@ def test_how_a_field_is_read_changes_and_no_value_changes(tmp_path):
     assert [st(runner, 's1', 'q', 'check').state, st(runner, 's2', 'q', 'check').state] == ['graded', 'decided']
     # a field removed from the package: its own region is ignored, not deleted; restoring the name restores it
     ws, runner = reopen(ws, runner, build(labels=('a',)))
-    fields = ws.fields('s1', runner.exam.questions['q'])         # opening applies the exam's override of 'a'
+    fields = ws.layers('s1').question('q').fields         # opening applies the exam's override of 'a'
     assert [(f.label, f.region) for f in fields] == [('a', Region(1, 0, 0, 500, 100))]
     ws, runner = reopen(ws, runner, build())
-    assert ws.region('s1', runner.exam.questions['q'], 'b').top == 100
+    assert ws.layers('s1').question('q').field('b').region.top == 100
     runner.close()
     ws.close()

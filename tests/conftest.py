@@ -79,10 +79,10 @@ def workspace(tmp_path, exam, subs=('s1', 's2')):
 
 @pytest.fixture
 def env(tmp_path):
-    """(exam, workspace, runner) with two synthetic submissions and a scripted model."""
-    exam = make_exam()
-    ws = workspace(tmp_path, exam)
-    runner = Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
-    yield exam, ws, runner
+    """(exam, workspace, runner) with two synthetic submissions and a scripted model;
+    `exam` is the workspace's definition."""
+    ws = workspace(tmp_path, make_exam())
+    runner = Runner(ws, model=FakeModel(dict(SCRIPT)))
+    yield ws.exam, ws, runner
     runner.close()
     ws.close()

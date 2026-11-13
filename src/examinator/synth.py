@@ -75,7 +75,7 @@ def given(q: Question, body: Any) -> dict[str, str | None]:
 
 def check_cases(exam: Exam, cases: list[Case]) -> None:
     """`BadCase` naming the case and the key for any case that does not fit the exam."""
-    columns = [col for q in exam.grading.values() if q.checks for col in q.columns()]
+    columns = [col for q in exam.questions.values() if q.checks for col in q.columns()]
     names = [c.name for c in cases]
     for case in cases:
         def bad(what):
@@ -83,9 +83,9 @@ def check_cases(exam: Exam, cases: list[Case]) -> None:
         if names.count(case.name) > 1:
             raise bad("two cases have this name")
         for qid, body in case.answers.items():
-            q = exam.grading.get(qid)
+            q = exam.questions.get(qid)
             if q is None:
-                raise bad(f"answers: no question {qid!r} (questions: {list(exam.grading)})")
+                raise bad(f"answers: no question {qid!r} (questions: {list(exam.questions)})")
             written = [f.label for f in q.written]
             if isinstance(body, Mapping):
                 unknown = [k for k in body if k not in written]
@@ -96,7 +96,7 @@ def check_cases(exam: Exam, cases: list[Case]) -> None:
             elif len(written) != 1:
                 raise bad(f"answers[{qid!r}]: expected {{label: text or None}} for the fields {written}")
         for qid, values in case.printed.items():
-            q = exam.grading.get(qid)
+            q = exam.questions.get(qid)
             if q is None:
                 raise bad(f"printed: no question {qid!r}")
             printed = [f.label for f in q.fields if isinstance(f.read, Printed)]
@@ -161,7 +161,7 @@ def _printed_pages(exam: Exam, case: Case, renderer: Renderer) -> list[Image.Ima
             im = Image.new('RGB', PAGE, 'white')
             d = ImageDraw.Draw(im)
             d.text((40, 30), f"{exam.title}  (synthetic)  page {p}", fill='black', font=_font(18))
-            for q in exam.grading.values():
+            for q in exam.questions.values():
                 for f in q.fields:
                     if f.region is None or f.region.page != p:
                         continue
@@ -249,7 +249,7 @@ def script_for(exam: Exam, case: Case, who: Mapping[str, str | None] | None = No
         if callable(make):
             for step, reply in make(fields, {f.label: who.get(f.label) for f in fields}).items():
                 script[f'{g.id}|{step}'] = reply
-    for qid, q in exam.grading.items():
+    for qid, q in exam.questions.items():
         for reader, fields in q.groups():
             make = getattr(reader, 'script', None)
             if not callable(make):
@@ -357,19 +357,20 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
     generate(exam, root, cases)
     ws = Workspace(root, exam)
     ws.sync()
-    runner = Runner(exam, ws, model=fake_model(root))
+    exam = ws.exam
+    runner = Runner(ws, model=fake_model(root))
     problems = []
     try:
         for case in cases:
-            for qid in exam.grading:
+            for qid in exam.questions:
                 runner.read(case.name, qid)
             for k, v in runner.values(case.name).items():
                 if not v.is_verified and not v.marker:
                     qid, label = k.split('/', 1)
                     runner.verify(case.name, qid, label, author='selftest', expect_rev=v.rev)
-            runner.refresh(case.name, questions=list(exam.grading))
+            runner.refresh(case.name, questions=list(exam.questions))
             sheet = runner.sheet(case.name)
-            for qid, q in exam.grading.items():
+            for qid, q in exam.questions.items():
                 for c in q.checks:
                     col = q.column(c.name)
                     if col not in case.expect:

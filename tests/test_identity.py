@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from examinator import load_exam, synth
-from examinator.core import focus, grid, identity, intake, overrides
+from examinator.core import batch, focus, grid, identity, intake, overrides
 from examinator.core.defs import IDENTITY
 from examinator.core.identity import Matcher, distance, name_score, name_tokens, propose, read_roster
 from examinator.core.runner import Runner
@@ -223,7 +223,7 @@ def written(tmp_path):
     intake.reguess(ws, two.id, model=model)
     intake.accept(ws, two.id)
     identity.set_roster(ws, (root / 'roster.csv').read_text())
-    runner = Runner(toy, ws, model=model)
+    runner = Runner(ws, model=model)
     yield ws, runner, model
     runner.close()
     ws.close()
@@ -266,7 +266,7 @@ def test_moving_a_box_changes_no_value_and_reading_again_is_asked(written):
     g = ws.exam.identity
     path, scope = '@identity/fields/name/region', overrides.scope(overrides.SUBMISSION, 's0001')
     overrides.set(ws, path, [1, 100, 120, 800, 200], scope=scope, author='t')
-    assert ws.region('s0001', g, 'name').top == 120 and ws.region('s0002', g, 'name') == g.field('name').region
+    assert ws.layers('s0001').question(g.id).field('name').region.top == 120 and ws.layers('s0002').question(g.id).field('name').region == g.field('name').region
     assert {sid: runner.values(sid) for sid in before} == before                  # no value changed
     row = identity.overview(ws, ['s0001'])['rows'][0]
     assert 's0001' not in identity.unread(ws) and row['unread'] == [] and row['read']['name'] == "Avery Testwell"
@@ -293,7 +293,9 @@ def test_the_group_is_kept_apart_from_grading(written):
     assert all(q != IDENTITY for q, _ in row.status) and IDENTITY not in row.fields
     assert IDENTITY not in {d['id'] for d in focus.describe_facets(exam)}
     assert not any(k.startswith(IDENTITY) for k in focus.values_table(exam, ws.store))
-    assert IDENTITY not in exam.grading and IDENTITY in exam.questions
+    assert IDENTITY not in exam.questions and exam.group(IDENTITY) is exam.identity     # asked for by name
+    with pytest.raises(KeyError):           # a batch selects among the questions graders work through
+        batch.plan(ws, batch.Selection(('s0001',), (IDENTITY,)), model_available=True)
 
 
 def test_the_awkward_cases(written):
@@ -449,10 +451,10 @@ def test_a_failed_call_is_no_reading(tmp_path):
     ws = Workspace(root, toy, create=True)
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    broken = Runner(toy, ws, model=FakeModel({}))
+    broken = Runner(ws, model=FakeModel({}))
     assert {o.status for o in identity.read(broken, 's0001')} == {'failed'}
     assert texts(ws, 's0001') == {} and 's0001' in identity.unread(ws)
-    identity.read(Runner(toy, ws, model=synth.fake_model(root)), 's0001')
+    identity.read(Runner(ws, model=synth.fake_model(root)), 's0001')
     assert texts(ws, 's0001')['id'] == "90412873"
     ws.close()
 
@@ -465,7 +467,7 @@ def test_a_box_drawn_in_the_app_is_read_on_synthetic_stacks(tmp_path):
     root = tmp_path / 'ws'
     paths = synth.stacks(toy, root)
     bare = Exam('bare', pages=toy.pages, print_area=toy.print_area, landmarks=toy.landmarks)
-    for qid, q in toy.grading.items():
+    for qid, q in toy.questions.items():
         bare.questions[qid] = q
     ws = Workspace(root, bare, create=True)
     one, _ = intake.add_source(ws, paths[0])
@@ -473,7 +475,7 @@ def test_a_box_drawn_in_the_app_is_read_on_synthetic_stacks(tmp_path):
     assert identity.placed(ws) == () and identity.unread(ws) == []
     overrides.set(ws, '@identity/fields/name/region', [1, 100, 100, 800, 200], author='t')
     assert [f.label for f in identity.placed(ws)] == ['name'] and identity.unread(ws)[0] == 's0001'
-    runner = Runner(bare, ws, model=synth.fake_model(root))
+    runner = Runner(ws, model=synth.fake_model(root))
     identity.read(runner, 's0001')
     assert texts(ws, 's0001') == {'name': "Avery Testwell"}
     ws.close()

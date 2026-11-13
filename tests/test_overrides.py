@@ -1,10 +1,13 @@
 """Overrides: live edits of exam data. Everything here is synthetic."""
 from pathlib import Path
 
+import dataclasses
+
 import pytest
 
 from examinator import Check, Exam, Field, Printed, Region, load_exam
 from examinator.core import overrides
+from examinator.core.defs import IDENTITY
 from examinator.core.as_python import describe_changes
 from examinator.core.runner import Runner
 from examinator.core.store import Conflict
@@ -18,7 +21,7 @@ TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
 
 
 def hashes(exam):
-    return {(qid, c.name): exam.check_hash(q, c) for qid, q in exam.grading.items() for c in q.checks}
+    return {(qid, c.name): exam.check_hash(q, c) for qid, q in exam.questions.items() for c in q.checks}
 
 
 def make_keyed_exam():
@@ -43,21 +46,21 @@ def kenv(tmp_path):
     """(exam, workspace, runner) for the keyed exam, every value read and verified, every check run."""
     exam = make_keyed_exam()
     ws = workspace(tmp_path, exam)
-    runner = Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
+    runner = Runner(ws, model=FakeModel(dict(SCRIPT)))
     for sid in ('s1', 's2'):
-        for qid in exam.grading:
+        for qid in exam.questions:
             assert all(o.ok for o in runner.read(sid, qid))
         for k, v in runner.values(sid).items():
             runner.verify(sid, *k.split('/'), author='t', expect_rev=v.rev)
-        runner.refresh(sid, questions=list(exam.grading))
-    yield exam, ws, runner
+        runner.refresh(sid, questions=list(exam.questions))
+    yield ws.exam, ws, runner
     runner.close()
     ws.close()
 
 
 def status(runner, sid, qid, check='check'):
-    q = runner.exam.questions[qid]
-    st = runner.sheet(sid).status(runner.exam, q, q.check(check))
+    q = runner.ws.exam.questions[qid]
+    st = runner.sheet(sid).status(runner.ws.exam, q, q.check(check))
     return st.state, st.value
 
 
@@ -93,24 +96,25 @@ def test_apply_and_clear_restore_the_base_exactly():
     exam = load_exam(TOY)
     before = hashes(exam)
     base = dict(exam.questions)
-    skipped = overrides.apply(exam, {'areas/fields/A.1/region': [2, 400, 310, 900, 430],
-                                     'areas/checks/check/key/red/A.2': '2*2*x',
-                                     'parity/checks/check/key/B': ['odd'],
-                                     'areas/pages': [2, 3]})
+    live, skipped = overrides.apply(exam, {'areas/fields/A.1/region': [2, 400, 310, 900, 430],
+                                           'areas/checks/check/key/red/A.2': '2*2*x',
+                                           'parity/checks/check/key/B': ['odd'],
+                                           'areas/pages': [2, 3]})
     assert skipped == []
-    q = exam.questions['areas']
+    q = live.questions['areas']
     assert q.fields[1].region == Region(2, 400, 310, 900, 430) and q.pages == (2, 3)
     assert q.check('check').fn.key['red']['A.2'] == '2*2*x'
     assert list(q.check('check').fn.key) == ['red', 'green', 'blue']       # order kept
-    assert exam.questions['parity'].check('check').fn.key['B'].accepted == ('odd',)
-    assert exam.base['parity'].check('check').fn.key['B'].accepted == ('even', 'E', 'option 1')
+    assert live.questions['parity'].check('check').fn.key['B'].accepted == ('odd',)
+    assert live.base['parity'].check('check').fn.key['B'].accepted == ('even', 'E', 'option 1')
     assert base['areas'].fields[1].region == Region(2, 400, 300, 900, 420)    # nothing mutated
-    assert hashes(exam) != before
-    entries = {e.path: e for e in overrides.editable(exam)}
+    assert exam.questions == base and exam.overrides == {} and hashes(exam) == before   # the package untouched
+    assert hashes(live) != before
+    entries = {e.path: e for e in overrides.editable(live)}
     assert entries['areas/pages'].overridden and entries['areas/pages'].current == [2, 3]
-    assert overrides.apply(exam, {}) == []
-    assert hashes(exam) == before
-    assert all(exam.questions[qid] is base[qid] for qid in base)
+    back, skipped = overrides.apply(live, {})
+    assert skipped == [] and hashes(back) == before
+    assert all(back.questions[qid] is base[qid] for qid in base)
 
 
 def test_validation():
@@ -133,11 +137,63 @@ def test_validation():
 
 def test_stale_overrides_are_skipped_and_reported():
     exam = load_exam(TOY)
-    skipped = overrides.apply(exam, {'areas/fields/Z.9/region': [2, 0, 0, 10, 10], 'gone/pages': [1],
-                                     'areas/pages': [7], 'areas/read/notes': "Answers are integers."})
+    live, skipped = overrides.apply(exam, {'areas/fields/Z.9/region': [2, 0, 0, 10, 10], 'gone/pages': [1],
+                                           'areas/pages': [7], 'areas/read/notes': "Answers are integers."})
     assert sorted(s.path for s in skipped) == ['areas/fields/Z.9/region', 'areas/pages', 'gone/pages']
-    assert exam.questions['areas'].read.notes == "Answers are integers."
-    assert exam.overrides == {'areas/read/notes': "Answers are integers."}
+    assert live.questions['areas'].read.notes == "Answers are integers."
+    assert live.overrides == {'areas/read/notes': "Answers are integers."}
+
+
+@dataclasses.dataclass(frozen=True)
+class OnPage:
+    """A check whose configuration must agree with where its field is."""
+    page: int = 1
+
+    def __call__(self, ctx):
+        return None
+
+    def validate(self, q, exam):
+        if q.field('x').region.page != self.page:
+            raise ValueError("x is not on the configured page")
+
+
+def test_overrides_valid_only_together_are_applied_together(tmp_path):
+    """One scope's overrides of one root go in together when the definition with all of
+    them is valid, though each alone (in path order) is not; at a submission's scope too."""
+    exam = Exam('t', pages=2)
+    exam.question('q', pages=[1, 2], fields=[Field('x', Region(1, 0, 0, 10, 10))], check=Check(OnPage(), isolate=False))
+    both = {'q/checks/check/page': 2, 'q/fields/x/region': [2, 0, 0, 10, 10]}
+    live, skipped = overrides.apply(exam, both)
+    assert skipped == [] and live.questions['q'].field('x').region.page == 2
+    live, skipped = overrides.apply(exam, {**both, 'q/pages': [9]})        # one breaks them: the rest stand
+    assert [s.path for s in skipped] == ['q/pages'] and live.questions['q'].field('x').region.page == 2
+    live, skipped = overrides.apply(exam, {**both, 'q/fields/x/region': [9, 0, 0, 10, 10]})     # nothing fits
+    assert len(skipped) == 2 and live.questions['q'] is exam.questions['q']
+    ws = workspace(tmp_path, exam, subs=('s1',))
+    try:
+        for path, value in both.items():
+            ws.store.set_override(path, value, author='ta')
+        ws.refresh()
+        assert ws.skipped == [] and ws.exam.questions['q'].check('check').fn.page == 2
+    finally:
+        ws.close()
+
+
+def test_skipped_overrides_are_reported_at_every_scope(tmp_path):
+    exam = make_exam()
+    ws = workspace(tmp_path, exam)
+    try:
+        ws.store.set_override('a/fields/x/region', [9, 0, 0, 10, 10], scope='submission:s1', author='ta')
+        ws.store.set_override('gone/pages', [1], scope='submission:s2', author='ta')
+        ws.store.set_override('@print_area', [5, 5, 4, 4], scope='source:src9', author='ta')
+        ws.store.set_override('a/pages', [9], author='ta')
+        ws.refresh()
+        got = {(s.scope, s.path) for s in ws.skipped_overrides()}
+        assert got == {('submission:s1', 'a/fields/x/region'), ('submission:s2', 'gone/pages'),
+                       ('source:src9', '@print_area'), ('', 'a/pages')}
+        assert ws.layers('s1').question('a').field('x').region == ws.exam.questions['a'].field('x').region
+    finally:
+        ws.close()
 
 
 # --- the identity fields: a group like any other ------------------------------------------
@@ -153,16 +209,17 @@ def test_identity_fields_are_exam_data():
         assert entries[f'@identity/fields/{f.label}/read/ask'].kind == 'text'
     assert '@identity/pages' not in entries     # no page to show
     base = exam.identity
-    skipped = overrides.apply(exam, {'@identity/fields/name/region': [1, 100, 190, 820, 290],
-                                     '@identity/fields/id/region': None,
-                                     '@identity/fields/email/region': [1, 10, 10, 300, 60]})
+    live, skipped = overrides.apply(exam, {'@identity/fields/name/region': [1, 100, 190, 820, 290],
+                                           '@identity/fields/id/region': None,
+                                           '@identity/fields/email/region': [1, 10, 10, 300, 60]})
     assert skipped == []
-    g = exam.identity
+    g = live.identity
     assert g.field('name').region == Region(1, 100, 190, 820, 290) and g.field('name').read == base.field('name').read
     assert g.field('id').region is None                         # taken away: not read
     assert g.field('email').region == Region(1, 10, 10, 300, 60)    # a column the package left unplaced
-    assert exam.base['@identity'] is base                       # nothing mutated
-    assert overrides.apply(exam, {}) == [] and exam.identity is base
+    assert exam.base['@identity'] is base and exam.identity is base     # nothing mutated
+    back, skipped = overrides.apply(live, {})
+    assert skipped == [] and back.identity is base
     for path, value in [('@identity/fields/name/region', [1, 500, 0, 400, 100]), ('@identity/fields/nick/region', [1, 1, 1, 2, 2]),
                         ('@identity/fields/name/label', 'x'), ('@identity', 1), ('@landmarks/x', 1)]:
         with pytest.raises(ValueError):
@@ -181,7 +238,7 @@ def test_identity_field_changes_described_as_python(tmp_path):
                    for x in lines)
         assert any(x.startswith('@identity/fields/email/region: None -> Region(1, 10, 10, 300, 60)') for x in lines)
         overrides.clear(ws, '@identity/fields/email/region')
-        assert exam.identity.field('email').region is None
+        assert ws.exam.identity.field('email').region is None
     finally:
         ws.close()
 
@@ -220,10 +277,10 @@ def test_set_and_describe_changes(env):
     assert lines[0].startswith('a/fields/x/region: None -> Region(1, 400, 310, 900, 430)  (ta, ')
     fresh = make_exam()                 # a fresh session sees the same exam: opening the workspace applies it
     other = Workspace(ws.root, fresh)
-    assert other.skipped == [] and fresh.questions['p'].fields[0].read.reads == {'1': 'one'}
+    assert other.skipped == [] and other.exam.questions['p'].fields[0].read.reads == {'1': 'one'}
     other.close()
     overrides.clear(ws, 'p/fields/c1/read/reads')
-    assert exam.questions['p'].fields[0].read.reads == {'1': 'one', '2': 'two'}
+    assert ws.exam.questions['p'].fields[0].read.reads == {'1': 'one', '2': 'two'}
 
 
 def test_choice_described_as_python(tmp_path):
@@ -301,7 +358,7 @@ def test_isolated_worker_sees_overrides(tmp_path):
     assert exam.questions['k'].check('check').isolate
     (tmp_path / 'ws' / 'pdfs').mkdir(parents=True)
     ws = Workspace(tmp_path / 'ws', exam)
-    runner = Runner(exam, ws)
+    runner = Runner(ws)
     try:
         runner.set('s', 'k', 'x', '2', author='t')
         assert runner.compute('s', 'k', 'check').ok
@@ -354,7 +411,7 @@ def test_scopes_are_stored_as_text():
 def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
     exam, ws = scoped
     put = lambda path, value, scope: overrides.set(ws, path, value, scope=scope, author='ta')
-    region = lambda sid: ws.region(sid, exam.questions['a'], 'x')
+    region = lambda sid: ws.layers(sid).question('a').field('x').region
     base = exam.questions['a'].field('x').region
     # a region: the submission's, else the exam's, else the package's (no scan scope)
     assert region('s1') == region('s2') == base
@@ -365,7 +422,7 @@ def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
     with pytest.raises(ValueError):
         put('a/fields/x/region', [1, 2, 2, 8, 8], SRC)
     # pages
-    pages = lambda sid: ws.selected_pages(sid, exam.questions['a'])
+    pages = lambda sid: ws.layers(sid).question('a').pages
     put('a/pages', [1, 2], '')
     assert pages('s1') == pages('s2') == (1, 2)
     put('a/pages', [2], S1)
@@ -393,7 +450,7 @@ def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
     assert pages('s1') == (1,)
     # an identity field's region, for one submission too (a student who wrote their name elsewhere)
     put('@identity/fields/name/region', [1, 1, 1, 5, 5], S1)
-    assert ws.region('s1', exam.identity, 'name') == Region(1, 1, 1, 5, 5) and ws.region('s2', exam.identity, 'name') is None
+    assert ws.layers('s1').question(IDENTITY).field('name').region == Region(1, 1, 1, 5, 5) and ws.layers('s2').question(IDENTITY).field('name').region is None
     with pytest.raises(ValueError, match="not set for one submission"):
         put('@identity/fields/name/read/ask', "x", S1)
 
@@ -428,13 +485,13 @@ def test_one_validator_for_every_scope(scoped):
             overrides.set(ws, path, value, scope=scope, author='ta')
     # a value stored below the exam that no longer fits is not applied, like one for the exam
     ws.store.set_override('a/fields/x/region', [9, 0, 0, 5, 5], scope=S1, author='ta')
-    assert ws.region('s1', exam.questions['a'], 'x') == exam.questions['a'].field('x').region
+    assert ws.layers('s1').question('a').field('x').region == exam.questions['a'].field('x').region
 
 
 def test_changes_below_the_exam_outdate_no_check(scoped):
     exam, ws = scoped
     before = {qc: exam.check_hash(exam.questions[qc[0]], exam.questions[qc[0]].check(qc[1])) for qc in
-              [(qid, c.name) for qid, q in exam.grading.items() for c in q.checks]}
+              [(qid, c.name) for qid, q in exam.questions.items() for c in q.checks]}
     change = overrides.set(ws, 'a/fields/x/region', [1, 0, 0, 5, 5], scope=S1, author='ta')
     assert change.checks == ()
     change = overrides.set(ws, '@print_area', [5, 5, 995, 995], scope=SRC, author='ta')
@@ -454,6 +511,22 @@ def test_the_change_list_has_the_print_area(scoped):
     assert entries['@print_area'].current == [5, 5, 995, 995] and entries['@print_area'].overridden
     fresh = make_exam()
     other = Workspace(ws.root, fresh)
-    assert other.skipped == [] and fresh.print_area == (5, 5, 995, 995)
+    assert other.skipped == [] and other.exam.print_area == (5, 5, 995, 995)
     assert fresh.base['@print_area'] == (0, 0, 1000, 1000)
     other.close()
+
+
+def test_a_replaced_check_is_let_go(kenv):
+    """The check-hash cache holds only the checks of the definition in force: a check an
+    edit replaced is not kept alive by it."""
+    import gc
+    import weakref
+    exam, ws, runner = kenv
+    overrides.set(ws, 'a/checks/x/key/one/x', '2', author='ta')
+    q = ws.exam.questions['a']
+    ws.exam.check_hash(q, q.check('x'))
+    gone = weakref.ref(q.check('x'))
+    del q
+    overrides.set(ws, 'a/checks/x/key/one/x', '3', author='ta')
+    gc.collect()
+    assert gone() is None

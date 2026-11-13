@@ -101,13 +101,20 @@ step=)`; `step` tags the call). A reader may vouch for a value
 pages (`needs_region`), offer facets, and script its own replies for a
 synthetic workspace (`script`).
 
-**A read needs its pages.** Whether a field can be read is decided once, from
-the pages its reader would look at (`runner.unreadable`): a region reader, the
-page of the field's region ("no region" without one); any other reader, every
-one of the question's selected pages. If one of them is missing, the field is
-not read ("page missing"), and a whole-page reader with only some of its pages
-waits too: its transcript would be of part of the answer. The runner, the
-batch plan and the question page use that one rule, so no reader is called
+**What a read reads is one computation**, `runner.to_read`: a pure function
+of the question as it is for the submission, its stored values, the pages its
+PDF lacks and the read's options (only some fields, missing only, include
+protected, whether there is a model). It returns, per reader, the fields to
+read and, for every other field with a reader, why not: 'not asked',
+'present', 'protected', or blocked ('no region', 'page missing', 'model
+unavailable'). `Runner.read` executes exactly that, the batch plan counts
+exactly that, and the question page shows its blocked reasons.
+
+**A read needs its pages.** A region reader looks at the page of the field's
+region ("no region" without one); any other reader at every one of the
+question's selected pages. If one of them is missing, the field is not read
+("page missing"), and a whole-page reader with only some of its pages waits
+too: its transcript would be of part of the answer. So no reader is called
 without its images.
 
 - `std.readers.answers()`: transcribe the pages (or crops), then parse the
@@ -343,17 +350,23 @@ the PDF's identity, the page and the resolution.
      and check's own `validate`, such as a key that must parse), which the
      package's questions and every override go through, on a copy with the
      change. A scope enters only as context: one submission's extra sheets are
-     pages it may name. A stored override that no longer validates is skipped
-     and reported (the Exam data page).
-  2. **An open workspace always has its overrides applied.** Opening one
-     applies the exam's (`Workspace.refresh`, repeated by every exam-wide
-     edit); what holds for one submission is `Layers` (`Workspace.layers`,
-     `question`, `layout`, `fields`, `selected_pages`), the one resolver the
-     CLI, the app and the runner use.
-  3. **A group that stands apart is reachable only through its own step.**
-     The grading routes, the grid and `run -q` resolve questions in
-     `exam.grading`, which leaves out '@identity'; the Names step saves its
-     values through its own route.
+     pages it may name. One scope's overrides of one root go in together when
+     the definition with all of them validates, else all but the one that
+     breaks them, else one by one in path order. A stored override that does
+     not validate is skipped and reported, at every scope alike
+     (`Workspace.skipped_overrides`; the Exam data page shows the exam's).
+  2. **A workspace's definition is its own.** `Workspace.exam` is the
+     package's definition with the exam's overrides (`overrides.apply`, at
+     opening and after every exam-wide edit); the package's `Exam` is never
+     changed, and the runner, the CLI and the app read the definition through
+     the workspace. What holds for one submission is `Layers`
+     (`Workspace.layers(sub)`: `question(id)`, `layout`), the one resolver,
+     each root resolved once.
+  3. **A group that stands apart is reached only by its name.**
+     `exam.questions` are the questions graders work through; the identity
+     group is `exam.identity` (or `exam.group('@identity')`), so the grading
+     routes, the grid, batch reads and `run -q` cannot reach it by accident;
+     the Names step saves its values through its own route.
 - Page numbers in an exam definition are **printed exam pages**, and a
   submission's PDF has printed page p at index p - 1, then its extra sheets
   (intake writes it so: §16; a blank placeholder stands for a page not
@@ -718,9 +731,9 @@ submission into `pdfs/`; everything downstream is unchanged.
     built-in group `@identity` (`defs.identity_group`): one field per roster
     column (`name`, `id`, `email`), those not mapped with no region. A field
     without a reader of its own is read by `Ask(defs.ASKS[column])`, about
-    the handwriting. The group is a question in `exam.questions` with
-    `apart=True`; `exam.grading` (the grid, totals, filter facets, the Read
-    page, batch reads, prev/next question) leaves it out. Everything else is
+    the handwriting. The group is `exam.identity` (`apart=True`), not one of
+    `exam.questions` (the grid, totals, filter facets, the Read page, batch
+    reads, prev/next question). Everything else is
     a field's: values with revisions, history and `verified`; `Runner.read`,
     `set`, `verify`; re-read protection; regions at exam and submission scope
     (`@identity/fields/<column>/region`, the Exam data page); scripted

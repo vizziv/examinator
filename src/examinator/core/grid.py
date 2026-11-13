@@ -32,7 +32,7 @@ def sheets(store: Store, submission: str | None = None) -> dict[str, Sheet]:
 
 def row(exam: Exam, sub: Submission, sheet: Sheet) -> Row:
     status = sheet.statuses(exam)
-    fields = {qid: fields_state(q, sheet.values) for qid, q in exam.grading.items() if not q.checks}
+    fields = {qid: fields_state(q, sheet.values) for qid, q in exam.questions.items() if not q.checks}
     points, complete = total(exam, status)
     return Row(sub, sheet, status, fields, points, complete)
 

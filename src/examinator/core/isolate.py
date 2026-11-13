@@ -148,7 +148,7 @@ def _worker(exam_path: str) -> None:
     out = os.fdopen(os.dup(sys.stdout.fileno()), 'wb')
     sys.stdout = sys.stderr            # stray prints must not corrupt the protocol
     inp = sys.stdin.buffer.fileno()
-    exam = load_exam(exam_path)
+    exam = live = load_exam(exam_path)
     _send(out, {'ready': True})
     applied: dict = {}
     while True:
@@ -160,12 +160,12 @@ def _worker(exam_path: str) -> None:
         try:
             if (req.get('overrides') or {}) != applied:
                 applied = req.get('overrides') or {}
-                apply(exam, applied)
-            q = exam.questions[req['question']]
+                live, _ = apply(exam, applied)
+            q = live.questions[req['question']]
             c = q.check(req['check'])
             ctx = CheckContext(submission=req['submission'], question=q, check=c.name,
                                values={k: tuple(v) for k, v in (req.get('values') or {}).items()},
-                               fields=exam.fields())
+                               fields=live.fields())
             reply = {'record': settle(c.points, c.fn(ctx)).to_json()}
         except Undecided as e:
             reply = {'undecided': str(e)}

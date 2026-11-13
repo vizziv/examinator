@@ -96,7 +96,7 @@ def test_a_malformed_return_is_undecided_with_the_structural_reason(tmp_path):
         'nan': Check(lambda ctx: float('nan'), points=NUMBER, isolate=False),
         'shape': Check(lambda ctx: Result(True, {'x': ['correct']}), isolate=False)})
     ws = workspace(tmp_path, exam, subs=('s1',))
-    runner = Runner(exam, ws)
+    runner = Runner(ws)
     try:
         for name in ('nan', 'shape'):
             assert runner.compute('s1', 'q', name).ok
@@ -132,7 +132,7 @@ def test_a_bad_result_is_stored_as_undecided_with_the_reason(tmp_path):
     exam.question('q', pages=[1], fields=[Field('x', default='1')],
                   checks={'bad': Check(bad_image, isolate=False), 'good': Check(plots, isolate=False)})
     ws = workspace(tmp_path, exam, subs=('s1',))
-    runner = Runner(exam, ws)
+    runner = Runner(ws)
     try:
         assert runner.compute('s1', 'q', 'bad').ok
         body = ws.store.get('s1', 'q/bad', 'result').body
@@ -175,7 +175,7 @@ def test_an_isolated_check_passes_the_same_shape(tmp_path):
     exam = load_exam(pkg)
     (tmp_path / 'ws' / 'pdfs').mkdir(parents=True)
     ws = Workspace(tmp_path / 'ws', exam)
-    runner = Runner(exam, ws)
+    runner = Runner(ws)
     try:
         assert runner.compute('s', 'q', 'figure').ok and runner.compute('s', 'q', 'bad').ok
         body = ws.store.get('s', 'q/figure', 'result').body

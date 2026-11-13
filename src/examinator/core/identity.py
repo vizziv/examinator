@@ -181,8 +181,8 @@ def group(ws) -> Question:
 
 def placed(ws, sid: str | None = None) -> tuple[Field, ...]:
     """The identity fields with a region: every submission's (or this submission's)."""
-    g = group(ws)
-    return tuple(f for f in (g.fields if sid is None else ws.fields(sid, g)) if f.region is not None)
+    g = group(ws) if sid is None else ws.layers(sid).question(IDENTITY)
+    return tuple(f for f in g.fields if f.region is not None)
 
 
 def boxed(ws) -> bool:
@@ -203,7 +203,8 @@ class At:
 
 
 def at(ws, sid: str) -> At:
-    return At(tuple(f for f in ws.fields(sid, group(ws)) if f.region is not None), ws.layout(sid))
+    lay = ws.layers(sid)
+    return At(tuple(f for f in lay.question(IDENTITY).fields if f.region is not None), lay.layout)
 
 
 def values(ws, sid: str | None = None) -> dict[str, dict[str, Value]]:
