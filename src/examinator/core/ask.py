@@ -9,8 +9,10 @@ landmarks.
 `Ask` asks `ask` about the field's region with its `prompt` (by default about
 handwriting); `Printed` is `Ask` with a prompt about the PRINTED text. The
 reading is the value: what to expect, and in what form, is the `ask`'s to say.
-A reading that is absent (null) becomes a value with a review marker, which
-waits for a person; an empty reading is a blank value.
+What the reply makes of the field is the reading layer's one rule
+(`core.reading.value`): BLANK is the blank value, and a reply that states no
+value (null, empty, missing) is not read: a review marker, with the printed
+quote if the model gave one, which waits for a person.
 
 A reader **vouches** for a value when `verify` is off and the value carries no
 review marker: such a value is verified by the reader, and nobody need verify
@@ -32,7 +34,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from .defs import has_marker
-from .reading import json_value
+from .reading import BLANK, json_object, statement, value
 
 if TYPE_CHECKING:
     from .context import ReadContext
@@ -42,15 +44,17 @@ HANDWRITTEN_PROMPT = """\
 Read the HANDWRITTEN text in this image of a region of an exam page.
 Report: {ask}.
 Answer with exactly this JSON, without Markdown: {{"value": "the text as written"}}
-Copy the handwriting character by character, even where it looks misspelled or incomplete. Use "" for the value if nothing is written there, and null if the writing is unreadable."""
+Copy the handwriting character by character, even where it looks misspelled or incomplete. \
+If nothing is handwritten there, the value is "BLANK". If the writing is unreadable, or the image \
+does not show such a region the right way up, the value is JSON null (not the string "null")."""
 
 PRINTED_PROMPT = """\
 Read the PRINTED text in this image of an exam page region. Ignore all handwriting.
 Report: {ask}.
 Answer with exactly this JSON, without Markdown: {{"quote": "a short quote of the printed text you relied on", "value": "the value"}}
-Use null for the value if the printed text is unreadable or absent. Do not infer the value from anything other than the printed text in this image."""
-
-NOT_READ = "[REVIEW: not read]"
+Copy the value exactly as it is printed, with no added words, units or formatting. If the printed \
+text is unreadable or absent, give JSON null for the value (not the string "null"). Do not infer \
+the value from anything other than the printed text in this image."""
 
 
 @dataclass(frozen=True)
@@ -76,26 +80,32 @@ class Ask:
         """The prompt."""
         return self.prompt.format(ask=self.ask)
 
-    def call(self, complete: Callable[..., str], image: Any) -> str | None:
+    def reply(self, complete: Callable[..., str], image: Any) -> dict:
         """The one model call: `complete(prompt, images=[image], expect='json')` (a
-        model's `complete`, perhaps with a tag bound), reduced to the reading."""
-        return json_value(complete(self.text(), images=[image], expect='json'))
+        model's `complete`, perhaps with a tag bound), as a JSON object ({} if it is not one)."""
+        return json_object(complete(self.text(), images=[image], expect='json'))
 
-    def value(self, reading: str | None) -> str:
-        """The field's value for one reading: itself, or marked for a person when there is none."""
-        return NOT_READ if reading is None else reading.strip()
+    def call(self, complete: Callable[..., str], image: Any) -> str | None:
+        """The reading the reply states (`reading.statement`), or None."""
+        return statement(self.reply(complete, image).get('value'))
+
+    def value(self, reply: Mapping[str, Any]) -> str:
+        """The field's value for one reply (`reading.value`)."""
+        return value(reply.get('value'), also=reply.get('quote'))
 
     def vouches(self, f: 'Field', text: str) -> bool:
         """A person need not verify this value."""
         return not self.verify and bool(text.strip()) and not has_marker(text)
 
     def read(self, ctx: 'ReadContext', fields: Sequence['Field']) -> dict[str, str]:
-        return {f.label: self.value(self.call(functools.partial(ctx.model, step=f'read:{f.label}'), ctx.crop(f.region)))
+        return {f.label: self.value(self.reply(functools.partial(ctx.model, step=f'read:{f.label}'), ctx.crop(f.region)))
                 for f in fields}
 
     def script(self, fields: Sequence['Field'], given: Mapping[str, Any]) -> dict[str, str]:
-        return {f'read:{f.label}': json.dumps({'quote': "synthetic", 'value': given[f.label]})
-                for f in fields if f.label in given}
+        """The replies that read `given` ({label: text, '' blank, None unreadable})."""
+        def reply(text):
+            return {'quote': None, 'value': None} if text is None else {'quote': "synthetic", 'value': text or BLANK}
+        return {f'read:{f.label}': json.dumps(reply(given[f.label])) for f in fields if f.label in given}
 
 
 @dataclass(frozen=True)

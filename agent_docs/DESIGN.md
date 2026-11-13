@@ -120,8 +120,18 @@ without its images.
 - `std.readers.answers()`: transcribe the pages (or crops), then parse the
   transcript into one value per field. Two model calls; the transcript is not
   stored, shown or verified.
-- `std.readers.code(entries)`: transcribe, then one parse per code field into
-  the pseudocode language; `then=` rewrites the source deterministically.
+- `std.readers.code(entries)`: transcribe, then convert the question's code
+  once into the pseudocode language (two model calls per question). The
+  program splits: each field takes its requested functions and the helpers
+  they call, but no function another field requests (`Code.split`, from
+  `pseudocode.functions`, which works from lines and so splits code that does
+  not parse); a review marker in one function stays out of other fields.
+  `then=` rewrites each field's source deterministically.
+
+What a reply makes of a field is one rule (`core.reading.value`): a stated
+value, `''` for an explicit BLANK, and `[REVIEW: not read]` for anything else.
+For code, a requested function the reply does not define is not read, and one
+whose body is only `pass` or comments (the printed `# TODO`) is blank.
 - `core.ask.Printed`: a field's own reader of printed text (§5).
 
 A **check** is `fn(ctx) -> Result` (or a bare grade), wrapped as

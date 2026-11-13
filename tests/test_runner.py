@@ -52,8 +52,8 @@ def test_a_printed_reading_is_vouched_for_unless_flagged_and_handwriting_never()
     from examinator import Ask
     f = Field('c', Region(1, 0, 0, 10, 10))
     printed = Printed("the printed number")
-    assert printed.vouches(f, "30") and printed.value(" 30 ") == "30"
-    assert not printed.vouches(f, printed.value(None))                  # not read: a marker
+    assert printed.vouches(f, "30") and printed.value({'value': " 30 "}) == "30"
+    assert not printed.vouches(f, printed.value({'value': None}))       # not read: a marker
     assert not printed.vouches(f, "[REVIEW: smudged] 3?") and not printed.vouches(f, "")
     assert not Printed("the printed number", verify=True).vouches(f, "30")
     assert not Ask("the student's name").vouches(f, "Ann")             # handwriting: a person verifies

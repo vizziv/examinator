@@ -71,6 +71,13 @@ Choices made here:
   never one a person verified.
 - **A value with a review marker cannot be verified.** A marker is not a state.
 - **Blank is a value** (empty text, read as such). It differs from not read.
+- **Silence is not a value.** A read gives a field a value only from an
+  explicit statement about that field in the model's reply; blank only from an
+  explicit BLANK. Anything else (the field missing from the reply, null, an
+  empty or "null" string, a reply that is not what was asked) stores
+  `[REVIEW: not read]`, with whatever the model did say after it: never
+  vouched, never verifiable as it stands; a person must look
+  (`core.reading.value`, the one rule every reader uses).
 - **Reading again and getting the same value changes nothing**: same revision,
   still verified, nothing downstream moves.
 - **No transcript, no memo.** Whatever a reader does on the way to the value

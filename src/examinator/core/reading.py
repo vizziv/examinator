@@ -1,22 +1,57 @@
-"""Small helpers for readings: the `value` of a model's JSON reply, the normal
-form of a printed reading, and the memo key of reading one landmark region
-(intake's, which re-reads every sheet whenever it plans a split)."""
+"""What a model's reply makes of a field: the one rule every reader uses, plus
+small helpers (the normal form of a printed reading, the memo key of reading a
+landmark region, which intake re-reads whenever it plans a split).
+
+**Silence is not a value.** A field gets a value only from an explicit
+statement about that field in the model's reply:
+
+    "some text"           the value
+    "BLANK"               the blank value '' (the prompt says this is how to state it)
+    anything else         NOT_READ: the key missing, null, "", the string "null",
+                          a reply that is not what was asked for
+
+A field that is not read carries a review marker, so it is never vouched for
+and a person must look before any grade that reads it counts; what the model
+did say, if anything, follows the marker.
+"""
 from __future__ import annotations
 
 import json
 import re
 from typing import Any
 
+BLANK = 'BLANK'                         # how a model states that nothing is written
+NOT_READ = "[REVIEW: not read]"
+_NULLS = ('', 'null')       # (not "None": an answer may be that word)
 
-def json_value(out: str) -> str | None:
-    """The `value` of a model's JSON reply, as text; None if absent, null or not JSON."""
-    try:
-        value: Any = json.loads(out).get('value')
-    except (ValueError, AttributeError):
+
+def statement(said: Any) -> str | None:
+    """What a model stated as one reading, as text (a number or list as its JSON),
+    or None when it stated nothing: absent, null, empty, or the string "null"."""
+    if said is None:
         return None
-    if value is not None and not isinstance(value, str):
-        value = json.dumps(value)
-    return value
+    text = said.strip() if isinstance(said, str) else json.dumps(said)
+    return None if text.lower() in _NULLS else text
+
+
+def value(said: Any, *, also: Any = None) -> str:
+    """A field's value from what the model said about that field (see the module).
+    `also`: what else it said (a quote, say), kept after the marker when the field
+    is not read."""
+    text = statement(said)
+    if text is None:
+        extra = statement(also)
+        return NOT_READ if extra is None else f"{NOT_READ} {extra}"
+    return '' if text == BLANK else text
+
+
+def json_object(out: str) -> dict:
+    """A model's reply as a JSON object; {} when it is not one (nothing stated)."""
+    try:
+        data = json.loads(out)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def normalize(reading: str) -> str:

@@ -196,9 +196,13 @@ read=readers.code({'2.1': ['weibull'], '2.2': ['weibullish']}, language=LANGUAGE
 
 A reader reads all its fields of one submission in one go: transcribe the
 question's pages, then turn the transcript into one value per field (text;
-`''` is blank). The transcript is not stored. `symbols` and `functions` are
-notation hints for the prompt. `then` rewrites parsed source deterministically
-(`exams/exam_03/huge_constants.py`); the rewritten source is the value.
+`''` is blank, and only when the model says BLANK; a field the reply says
+nothing about is `[REVIEW: not read]`). The transcript is not stored.
+`symbols` and `functions` are notation hints for the prompt. For code, the
+question's code is converted once and each field takes its own functions and
+the helpers they call (not another field's functions). `then` rewrites each
+field's source deterministically (`exams/exam_03/huge_constants.py`); the
+rewritten source is the value.
 
 **Prompts.** The defaults are values in `examinator.std.prompts`. Add to them
 with `notes=`; do not rewrite them. Keep notes in `notes.py` and about notation
