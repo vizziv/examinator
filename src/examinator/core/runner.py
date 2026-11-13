@@ -223,7 +223,7 @@ class Runner:
         `missing_only`, only fields with no value are read. One outcome per reader run."""
         resolved = self.ws.question(submission, qid)
         have = self.values(submission)
-        why = unreadable(self.ws, submission, q)
+        why = unreadable(self.ws, submission, resolved)
         outs = []
 
         def out(status, detail=""):
