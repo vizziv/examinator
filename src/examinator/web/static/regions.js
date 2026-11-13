@@ -32,11 +32,16 @@
 
   const sheet = page => scan.querySelector(`.sheet[data-index="${cover + page - 1}"]`);
 
+  // A box covers what a crop shows: the region and the padding around it (the translucent
+  // band). Its inner frame, `.rin`, is the region itself.
   function place(box, d) {
-    box.style.left = fx(d[1]) * 100 + '%';
-    box.style.top = fy(d[2]) * 100 + '%';
-    box.style.width = (fx(d[3]) - fx(d[1])) * 100 + '%';
-    box.style.height = (fy(d[4]) - fy(d[2])) * 100 + '%';
+    const w = fx(d[3] + pad) - fx(d[1] - pad), h = fy(d[4] + pad) - fy(d[2] - pad);
+    box.style.left = fx(d[1] - pad) * 100 + '%';
+    box.style.top = fy(d[2] - pad) * 100 + '%';
+    box.style.width = w * 100 + '%';
+    box.style.height = h * 100 + '%';
+    const px = (fx(d[1]) - fx(d[1] - pad)) / w * 100 + '%', py = (fy(d[2]) - fy(d[2] - pad)) / h * 100 + '%';
+    box.firstElementChild.style.inset = `${py} ${px}`;
   }
 
   function draw() {
@@ -46,13 +51,13 @@
       if (!r.draft) continue;
       const s = sheet(r.draft[0]);
       if (!s) continue;
-      const box = make('div', {className: `rbox${r.printed ? ' printed' : ''}${r === sel ? ' sel' : ''}${dirty(r) ? ' dirty' : ''}`},
-                       make('span', {className: 'rlabel', textContent: r.label}));
+      const inner = make('div', {className: 'rin'}, make('span', {className: 'rlabel', textContent: r.label}));
+      const box = make('div', {className: `rbox${r.printed ? ' printed' : ''}${r === sel ? ' sel' : ''}${dirty(r) ? ' dirty' : ''}`}, inner);
       box.dataset.path = r.path;
       if (r === sel) for (const h of ['nw', 'ne', 'sw', 'se']) {
         const handle = make('i', {className: 'rh ' + h});
         handle.dataset.h = h;
-        box.append(handle);
+        inner.append(handle);
       }
       place(box, r.draft);
       s.append(box);

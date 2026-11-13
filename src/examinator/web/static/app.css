@@ -435,15 +435,18 @@ form.entry.k-region input[type=text], form.entry.k-pages input[type=text] { flex
 #rg-msg { color: var(--muted); }
 #rg-msg.notice { color: var(--bad); }
 .sheet { position: relative; line-height: 0; }
-.rbox { --rc: var(--accent2); position: absolute; border: 1.5px solid var(--rc); background: color-mix(in srgb, var(--rc) 7%, transparent); cursor: pointer; touch-action: none; }
+/* a box is what a crop shows: the region (.rin) inside a translucent band, the crop's padding */
+.rbox { --rc: var(--accent2); position: absolute; overflow: hidden; cursor: pointer; touch-action: none; }
 .rbox.printed { --rc: var(--accent); }
-.rbox.sel { border-width: 2px; cursor: move; background: color-mix(in srgb, var(--rc) 16%, transparent); }
-.rbox.dirty { border-style: dashed; }
-.rlabel { position: absolute; left: 0; bottom: 100%; font: 11px/1.3 var(--mono); padding: 0 3px; white-space: nowrap;
-  background: var(--rc); color: #fff; pointer-events: none; }
-.rh { position: absolute; width: 10px; height: 10px; background: var(--panel); border: 2px solid var(--rc); }
-.rh.nw { left: -6px; top: -6px; cursor: nwse-resize; } .rh.se { right: -6px; bottom: -6px; cursor: nwse-resize; }
-.rh.ne { right: -6px; top: -6px; cursor: nesw-resize; } .rh.sw { left: -6px; bottom: -6px; cursor: nesw-resize; }
+.rin { position: absolute; border: 1.5px solid var(--rc); box-shadow: 0 0 0 999px color-mix(in srgb, var(--rc) 22%, transparent); }
+.rbox.sel { cursor: move; z-index: 1; }
+.rbox.sel .rin { background: color-mix(in srgb, var(--rc) 12%, transparent); box-shadow: 0 0 0 999px color-mix(in srgb, var(--rc) 40%, transparent); }
+.rbox.dirty .rin { border-style: dashed; }
+.rlabel { position: absolute; left: 11px; top: 0; font: 11px/1.3 var(--mono); padding: 0 3px; white-space: nowrap;
+  background: var(--rc); color: #fff; opacity: .8; pointer-events: none; }
+.rh { position: absolute; width: 9px; height: 9px; background: var(--panel); border: 2px solid var(--rc); }
+.rh.nw { left: 0; top: 0; cursor: nwse-resize; } .rh.se { right: 0; bottom: 0; cursor: nwse-resize; }
+.rh.ne { right: 0; top: 0; cursor: nesw-resize; } .rh.sw { left: 0; bottom: 0; cursor: nesw-resize; }
 
 /* --- filter page --- */
 #fx-count { font-weight: 700; font-size: var(--fs-title); }
