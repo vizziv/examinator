@@ -27,7 +27,7 @@
   const NAMES = {read: "will read", skip_protected: "skipped, protected", skip_present: "skipped, present", blocked: "blocked"};
   async function plan() {
     const mine = planning = {};
-    const r = await request('/read/plan', selection());
+    const r = await Changes.query('/read/plan', selection());
     if (mine !== planning) return;          // a newer change asked again
     const counts = document.getElementById('counts'), table = document.getElementById('groups');
     counts.replaceChildren();
@@ -53,18 +53,21 @@
     later();
   }});
 
-  Actions.register('read-start', {available: () => !start.disabled, run: async () => {
+  // The subject is the batch run: Start names the last one shown (start.dataset.rev), Stop the one shown running.
+  const shown = () => start.dataset.rev || null;
+  Changes.redraw = () => poll();
+  Actions.register('read-start', {available: () => !start.disabled, run: () => {
     msg.textContent = '';
     if (flag('include_protected') && !confirm("Read again, replacing values a person set or verified?")) return;
-    const r = await request('/read/start', {...selection(), parallel: Number(form.parallel.value)});
-    if (!r.ok) { msg.textContent = r.body.error || "failed"; return; }
-    poll();
+    return Changes.send('batch', '/read/start', {...selection(), parallel: Number(form.parallel.value), rev: shown()},
+                        {done: () => poll()});
   }});
-  Actions.register('read-stop', {available: () => !stop.disabled, run: () => request('/read/stop', {})});
+  Actions.register('read-stop', {available: () => !stop.disabled, run: () => Changes.send('batch', '/read/stop', {rev: shown()})});
 
   async function poll() {
     const r = await request('/read/status');
     const s = r.body;
+    if (r.ok) start.dataset.rev = s.id || '';
     if (!r.ok || s.state === 'idle') return;
     document.getElementById('progress').hidden = false;
     const bar = document.getElementById('bar');

@@ -127,55 +127,45 @@
     await refresh();
   }
 
-  async function act(path, data) {
-    flash('');
-    const r = await request(`${base}/${path}`, data);
-    if (r.status === 409) { flash("changed elsewhere"); await refresh(); return false; }
-    if (!r.ok) { flash(r.body.error || "failed"); return false; }
-    await settle(r.body);
-    return true;
-  }
+  // Every change here is about this page's one subject (this submission's question) as
+  // drawn, sent through Changes, one chain per row; a refusal redraws the page.
+  Changes.redraw = () => refresh();
+  const act = (row, path, data) => Changes.send(row, `${base}/${path}`, data, {done: settle});
 
-  // Set this submission's own value of the exam data at `el.dataset.path` (null: drop it).
-  // A conflict takes the revision saved now: setting again overwrites knowingly.
-  async function own(el, value) {
-    flash('');
-    const scope = JSON.parse($('scan').dataset.scopes).own, rev = revOf(el);
-    const r = await request(value === null ? '/exam/clear' : '/exam/set', {path: el.dataset.path, scope, value, rev, sub});
-    if (r.status === 409) {
-      const cur = r.body.current || {};
-      el.dataset.rev = cur.rev ?? '';
-      flash(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}; set again to overwrite`);
-      return false;
-    }
-    if (!r.ok) { flash(r.body.error || "failed"); return false; }
-    el.dataset.rev = r.body.rev ?? '';
-    return true;
+  // Set this submission's own value of the exam data at `el.dataset.path` (null: drop it),
+  // then reload. A refusal takes the revision saved now: setting again overwrites knowingly.
+  function own(el, value) {
+    const path = el.dataset.path, scope = JSON.parse($('scan').dataset.scopes).own;
+    return Changes.send(`override:${scope}:${path}`, value === null ? '/exam/clear' : '/exam/set',
+      {path, scope, value, rev: revOf(el), sub},
+      {done: () => location.reload(), redraw: cur => { el.dataset.rev = cur.rev ?? ''; }});
   }
 
   // Save the values changed here (a person who sets a value verifies it); with `all`,
-  // verify this question's other values too (`list`: 'waitingOther' for those read from other questions). False when something could not be saved or verified
-  // (a conflict, a review marker), so V stays on this submission.
-  async function save(all, list = 'waiting') {
+  // verify this question's other values too (`list`: 'waitingOther' for those read from
+  // other questions). The answer, or null when something could not be saved or verified (a
+  // conflict, a review marker), so V stays on this submission.
+  function save(all, list = 'waiting') {
     flash('');
-    const values = {};
-    for (const el of changed()) values[el.dataset.key] = {text: el.value, rev: revOf(el)};
+    const values = {}, edited = changed();
+    for (const el of edited) values[el.dataset.key] = {text: el.value, rev: revOf(el)};
     const verify = all ? JSON.parse($('parts').dataset[list] || '[]')
       .filter(k => !(k in values))
       .map(k => ({key: k, rev: revOf(inputs().find(i => i.dataset.key === k))})) : [];
-    if (!Object.keys(values).length && !verify.length) return true;
-    const r = await request(`${base}/save`, {values, verify});
-    if (r.status === 409) { form().querySelector('.notice').hidden = false; flash("changed elsewhere"); return false; }
-    if (!r.ok) { flash(r.body.error || "failed"); return false; }
-    try { sessionStorage.removeItem(draftKey()); } catch (e) { /* private mode */ }
-    for (const el of changed()) {
-      el.dataset.orig = el.value;
-      if (r.body.revs && el.dataset.key in r.body.revs) el.dataset.rev = r.body.revs[el.dataset.key];
-    }
-    touched();
-    form().querySelector('.notice').hidden = true;
-    await settle(r.body);
-    return true;
+    if (!edited.length && !verify.length) return Promise.resolve({});
+    const sent = edited.map(el => [el, el.value]);
+    return Changes.send('values', `${base}/save`, {values, verify}, {
+      redraw: () => { form().querySelector('.notice').hidden = false; refresh(); },
+      done: async b => {
+        try { sessionStorage.removeItem(draftKey()); } catch (e) { /* private mode */ }
+        for (const [el, text] of sent) {
+          if (el.value === text) el.dataset.orig = text;
+          if (b.revs && el.dataset.key in b.revs) el.dataset.rev = b.revs[el.dataset.key];
+        }
+        touched();
+        form().querySelector('.notice').hidden = true;
+        await settle(b);
+      }});
   }
   const waiting = () => JSON.parse($('parts').dataset.waiting || '[]').length > 0 || dirty();
 
@@ -187,7 +177,7 @@
     // page but this page does not show is missing here, so the server refuses the decision.
     const seen = {};
     for (const i of inputs()) seen[i.dataset.key] = revOf(i);
-    return act('decide', {check: box.dataset.check, rev: revOf(box), seen, ...extra});
+    return act(`decision:${box.dataset.check}`, 'decide', {check: box.dataset.check, rev: revOf(box), seen, ...extra});
   };
   // Z / X / C / G grade the first open check (or the only one): its buttons carry those
   // actions, so they show the keys; the other checks' buttons keep the plain ones.
@@ -277,7 +267,7 @@
              run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx)) : save(true))},
     // V: verify everything here, then the next submission in the filter (as on Scans and Names: "yes, next").
     'verify-next': {available: () => canGo(1) || waiting(),
-                    run: async () => { if (await save(true) && canGo(1)) go(1); }},
+                    run: () => save(true).then(b => { if (b && canGo(1)) go(1); })},
     'grade-right': {available: () => !!targetButton('v-t'), run: ({el}) => decide(el || targetButton('v-t'), {value: true})},
     'grade-wrong': {available: () => !!targetButton('v-f'), run: ({el}) => decide(el || targetButton('v-f'), {value: false})},
     'grade-blank': {available: () => !!targetButton('v-b'), run: ({el}) => decide(el || targetButton('v-b'), {blank: true})},
@@ -287,9 +277,9 @@
     edit: {available: hasFields, run: () => inputs()[0].focus()},
     'verify-others': {run: () => save(true, 'waitingOther')},
     // Rare, so in each field's menu: verify or unverify that one value.
-    'verify-one': {run: ({el}) => act('save', {values: {}, verify: [{key: el.dataset.key, rev: revOf(el)}]})},
-    unverify: {run: ({el}) => act('unverify', {key: el.dataset.key, rev: revOf(el)})},
-    'to-default': {run: ({el}) => act('default', {key: el.dataset.key, rev: revOf(el)})},
+    'verify-one': {run: ({el}) => act('values', 'save', {values: {}, verify: [{key: el.dataset.key, rev: revOf(el)}]})},
+    unverify: {run: ({el}) => act('values', 'unverify', {key: el.dataset.key, rev: revOf(el)})},
+    'to-default': {run: ({el}) => act('values', 'default', {key: el.dataset.key, rev: revOf(el)})},
     'toggle-scan': {run: () => { setPref('hideScan', !pref('hideScan', false)); showScan(); }},
     discard: {run: () => {
       try { sessionStorage.removeItem(draftKey()); } catch (e) { /* private mode */ }
@@ -301,25 +291,25 @@
     'decide-blank': {run: ({el}) => decide(el, {blank: true})},
     clear: {run: ({el}) => {
       const box = el.closest('.decide');
-      return act('clear', {check: box.dataset.check, rev: revOf(box)});
+      return act(`decision:${box.dataset.check}`, 'clear', {check: box.dataset.check, rev: revOf(box)});
     }},
-    read: {available: ({el}) => !el || !el.disabled, run: () => {
-      const all = !!$('read-all')?.checked;
+    read: {available: ({el}) => !el || !el.disabled, run: ({el}) => {
+      const all = !!$('read-all')?.checked, button = el || document.querySelector('[data-action="read"]');
       if (all && !confirm("Read again, replacing values a person set or verified?")) return null;
-      return act('read', {include_protected: all});
+      return act('read', 'read', {include_protected: all, rev: revOf(button)});
     }},
-    check: {run: ({el}) => act('check', {check: el.dataset.check})},
+    check: {run: ({el}) => act(`check:${el.dataset.check}`, 'check', {check: el.dataset.check, rev: revOf(el)})},
     // This submission's own pages (none, or the question's: drop them); beyond the exam's: its extra sheets.
-    pages: {run: async () => {
+    pages: {run: () => {
       const list = $('pg-list');
       const parts = list.value.split(/[\s,]+/).filter(Boolean);
       const pages = parts.every(p => /^\d+$/.test(p)) ? parts.map(Number) : list.value;    // else the server explains
       const drop = !parts.length || String(pages) === list.dataset.default;
-      if (await own(list, drop ? null : pages)) location.reload();
+      return own(list, drop ? null : pages);
     }},
     restore: {run: ({el}) => {
       const field = inputs().find(i => i.dataset.key === el.dataset.key);
-      return act('restore', {key: el.dataset.key, rev: Number(el.dataset.rev), expect: field ? revOf(field) : null});
+      return act('values', 'restore', {key: el.dataset.key, restore: Number(el.dataset.restore), rev: field ? revOf(field) : null});
     }},
   };
   for (const [name, spec] of Object.entries(actions)) Actions.register(name, spec);

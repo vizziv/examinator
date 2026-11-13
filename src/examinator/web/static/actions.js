@@ -13,8 +13,12 @@
 // Combos: a lower-case character ("a", "/") or a key name ("ArrowLeft", "Escape",
 // "Enter"), optionally prefixed "Mod+" (Cmd on a Mac, Ctrl elsewhere), "Alt+" and/or
 // "Shift+" ("Shift+v"). Combos without Mod or Alt ("single keys", Shift ones included)
-// are ignored while typing in a field, on auto-repeat and during composition; Escape is
-// the exception (it leaves a field). Combos with Mod work while typing.
+// are ignored while typing in a field and during composition; Escape is the exception (it
+// leaves a field). Combos with Mod work while typing.
+//
+// One press acts once, decided here for every control: a key's auto-repeat never triggers
+// an action, a held Enter or Space never clicks a button (or takes a picker's choice) again,
+// and the second click of a double click never reaches a button, an action or a list choice.
 const Actions = (() => {
   const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -150,10 +154,27 @@ const Actions = (() => {
     return !!a && (!a.available || !!a.available({source: 'code', el: null, target: document.activeElement, ...ctx}));
   };
 
+  // Repeats and double fires, before any page handler sees them.
+  const acting = el => el?.closest?.('button, [data-action], [role="option"], [role="tab"], input:not([type="range"])');
+  addEventListener('keydown', e => {
+    if (e.repeat && (e.key === 'Enter' || e.key === ' ') && acting(e.target)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
+  for (const type of ['mousedown', 'click', 'dblclick']) {
+    addEventListener(type, e => {
+      if (e.detail > 1 && acting(e.target) && !typing(e.target)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    }, true);
+  }
+
   // A key: listened for on window, after the page's own handlers (a handler that
   // takes the key, like arrows while editing regions, calls preventDefault).
   addEventListener('keydown', e => {
-    if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.repeat) return;
     const combo = comboOf(e);
     if (!combo) return;
     const s = settings();
@@ -161,7 +182,7 @@ const Actions = (() => {
     const name = (keymap(s)[combo] || []).find(n => registry.has(n) && (!registry.get(n).available || registry.get(n).available(ctx)));
     if (!name) return;
     if (isSingle(combo) && combo !== 'Escape') {
-      if (!s.single || e.repeat || typing(e.target)) return;
+      if (!s.single || typing(e.target)) return;
     }
     const a = registry.get(name);
     e.preventDefault();

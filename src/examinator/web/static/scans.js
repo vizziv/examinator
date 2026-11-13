@@ -123,16 +123,16 @@
   // --- the roster: pasted or loaded, read by the server as it is typed (nothing saved) so a
   // wrong paste shows at once: how many people, the first few rows, the lines it could not read ---
   const text = $('roster-text');
-  let timer = 0, asked = 0;
+  let timer = 0, asked = 0, rosterOk = false;
   async function preview() {
     const mine = ++asked;
     const value = text.value;
     if (!value.trim()) { showRoster(null); return; }
-    const r = await request('/scans/roster', {text: value, dry: true});
+    const r = await Changes.query('/scans/roster/preview', {text: value});
     if (mine === asked) showRoster(r.ok ? r.body : {error: r.body.error || 'failed'});
   }
   function showRoster(b) {
-    const ok = !!b && !b.error && b.people > 0 && !b.problems.length;
+    const ok = rosterOk = !!b && !b.error && b.people > 0 && !b.problems.length;
     $('roster-save').disabled = !ok;
     const bad = b && !b.error ? b.problems.length + b.more : 0;
     $('roster-read').textContent = !b ? '' : b.error || `${b.people} people${bad ? `, ${bad} lines unclear` : ''}`;
@@ -153,11 +153,9 @@
     text.value = await file.text();
     preview();
   });
-  $('roster-save').addEventListener('click', async () => {
-    const r = await request('/scans/roster', {text: text.value});
-    if (!r.ok) { showRoster({error: r.body.error || 'failed'}); return; }
-    location.reload();
-  });
+  // Saving replaces the roster the page was drawn with (its revision on the button).
+  Actions.register('roster-save', {available: () => rosterOk, run: ({el}) => Changes.send('roster', '/scans/roster',
+    {text: text.value, rev: $('roster-save').dataset.rev || null}, {done: () => location.reload()})});
 
   addEventListener('hashchange', () => { if (/sub=/.test(location.hash)) tab('names'); });
   const pick = $('src');
@@ -175,17 +173,21 @@
     if (current === 'split') history.replaceState(null, '', '#src=' + id);
     render();
   }
-  async function send(path, data) {
-    const r = await request(`/scans/${encodeURIComponent(plan.id)}/${path}`, {rev: plan.rev, ...data});
-    if (!r.ok) {
-      if (r.status !== 409 || !r.body.current) { flash(r.body.error || 'failed'); if (r.status === 409) await load(plan.id, true); }
-      return r;
-    }
-    if (r.body.plan) { plan = r.body.plan; render(); }
-    return r;
+  // Every edit is about the plan drawn (its revision) and the pages and submission shown
+  // when the key was pressed; Changes sends them in order, each on the revision the last left.
+  function send(path, data, then, long) {
+    const id = plan.id, mine = b => b && b.id === id && plan.id === id;
+    return Changes.send(`plan:${id}`, `/scans/${encodeURIComponent(id)}/${path}`, {rev: plan.rev, ...data}, {
+      long,
+      redraw: cur => { if (mine(cur)) { plan = cur; render(); } },
+      done: async b => {
+        if (mine(b.plan)) { plan = b.plan; render(); }
+        if (then) await then(b);
+      }});
   }
-  const S = steps(() => !!plan && current === 'split', () => { if (plan) render(); });
-  const edit = (op, data) => send('edit', {op, ...data});
+  const live = () => !!plan && current === 'split' && !Changes.busy();
+  const register = (name, spec) => Actions.register(name, {...spec, available: ctx => live() && (!spec.available || spec.available(ctx))});
+  const edit = (op, data, then) => send('edit', {op, ...data}, then);
 
   // --- the step-through ---
   const at = () => !done() && peek === null;                     // on a submission's first page
@@ -198,71 +200,70 @@
     if (j >= 0) { k = j; peek = null; } else { peek = i; if (owner(i) >= 0) k = owner(i); }
     render();
   }
-  S.register('split-verify', {available: at, run: async () => {
-    const r = await edit('confirm', {k});
-    if (r && r.ok) { k = nextOpen(plan.entries, k, open); render(); }
+  // Verified: on to the next unverified first page, unless the person has moved on already.
+  register('split-verify', {available: at, run: () => {
+    const was = k;
+    return edit('confirm', {k}, () => { if (k === was && peek === null) { k = nextOpen(plan.entries, was, open); render(); } });
   }});
-  S.register('split-earlier', {available: () => !done() && (peek === null || near(peek, -1) >= 0),
+  register('split-earlier', {available: () => !done() && (peek === null || near(peek, -1) >= 0),
     run: () => (peek === null ? edit('move', {k, delta: -1}) : show(near(peek, -1)))});
-  S.register('split-later', {available: () => !done() && (peek === null || near(peek, 1) >= 0),
+  register('split-later', {available: () => !done() && (peek === null || near(peek, 1) >= 0),
     run: () => (peek === null ? edit('move', {k, delta: 1}) : show(near(peek, 1)))});
-  S.register('split-back', {available: () => (peek !== null ? owner(peek) >= 0 : k > 0), run: () => {
+  register('split-back', {available: () => (peek !== null ? owner(peek) >= 0 : k > 0), run: () => {
     if (peek !== null) peek = null; else k = Math.min(k, plan.entries.length) - 1;
     render();
   }});
-  S.register('split-next', {available: () => !done() && k + 1 < plan.entries.length,
+  register('split-next', {available: () => !done() && k + 1 < plan.entries.length,
     run: () => { peek = null; k += 1; render(); }});
-  S.register('split-cut', {available: () => peek !== null && !plan.dropped.includes(peek),
+  register('split-cut', {available: () => peek !== null && !plan.dropped.includes(peek),
     run: () => edit('cut', {sheet: peek})});
-  S.register('split-drop', {available: () => !done() && !plan.dropped.includes(focus()),
+  register('split-drop', {available: () => !done() && !plan.dropped.includes(focus()),
     run: () => edit('drop', {sheet: focus()})});
   // The page shown, in its submission: extra or counted, a missing page before it, its place in the pile.
   const inSub = () => !done() && owner(focus()) >= 0;
   const marked = i => plan.missing.includes(i);
   const place = d => plan.kept[plan.kept.indexOf(focus()) + d] !== undefined;   // a move steps over dropped pages
-  S.register('split-extra', {available: inSub, run: () => edit('extra', {sheet: focus()})});
-  S.register('split-missing', {available: inSub, run: () => edit('missing', {sheet: focus()})});
-  S.register('split-unmissing', {available: () => inSub() && marked(focus()), run: () => edit('unmissing', {sheet: focus()})});
-  const shift = d => ({available: () => inSub() && place(d), run: async () => {
-    const i = focus(), r = await edit('shift', {sheet: i, delta: d});
-    if (r && r.ok) show(i);
+  register('split-extra', {available: inSub, run: () => edit('extra', {sheet: focus()})});
+  register('split-missing', {available: inSub, run: () => edit('missing', {sheet: focus()})});
+  register('split-unmissing', {available: () => inSub() && marked(focus()), run: () => edit('unmissing', {sheet: focus()})});
+  const shift = d => ({available: () => inSub() && place(d), run: () => {
+    const i = focus();
+    return edit('shift', {sheet: i, delta: d}, () => show(i));
   }});
-  S.register('split-shift-earlier', shift(-1));
-  S.register('split-shift-later', shift(1));
+  register('split-shift-earlier', shift(-1));
+  register('split-shift-later', shift(1));
   // Turning, a quarter turn clockwise more for each page: the page shown, its submission's, or (a button only) the scan's.
-  const turned = r => { if (r && r.ok) say(LANDMARKS && MODEL ? 'turned: read pages again' : 'turned'); };
-  S.register('split-turn-page', {available: () => !done(), run: async () => turned(await edit('turn_page', {sheet: focus()}))});
-  S.register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: async () => turned(await edit('turn', {k}))});
-  S.register('split-turn-source', {run: async () => turned(await edit('turn_source'))});
-  S.register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {})});
-  S.register('split-guess', {run: async () => {
-    const r = await send('propose', {length: $('s-length').value});
-    if (r && r.ok) { k = plan.cursor ?? plan.entries.length; peek = null; render(); }
-  }});
-  S.register('split-read', {available: () => MODEL && LANDMARKS, long: true, run: async () => {
+  const turned = () => say(LANDMARKS && MODEL ? 'turned: read pages again' : 'turned');
+  register('split-turn-page', {available: () => !done(), run: () => edit('turn_page', {sheet: focus()}, turned)});
+  register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: () => edit('turn', {k}, turned)});
+  register('split-turn-source', {run: () => edit('turn_source', {}, turned)});
+  register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {})});
+  register('split-guess', {run: () => send('propose', {length: $('s-length').value}, () => {
+    k = plan.cursor ?? plan.entries.length;
+    peek = null;
+    render();
+  })});
+  register('split-read', {available: () => MODEL && LANDMARKS, run: () => {
     say('reading pages…');
-    const r = await send('propose', {check: true, length: $('s-length').value});
-    if (!r || !r.ok) { say(''); return; }
-    const job = await waitJob(r.body.job);
-    say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`);
-    await load(plan.id);
+    return send('propose', {check: true, length: $('s-length').value}, async b => {
+      const job = await waitJob(b.job);
+      say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`);
+      await load(plan.id);
+    }, true);
   }});
-  S.register('split-accept', {long: true, run: async () => {
+  // Accept, having said what it would disturb (submissions with grading work it changes or removes).
+  register('split-accept', {run: () => {
     const flagged = plan.entries.filter(e => e.doubts.length).length;
     const unverified = plan.entries.filter(open).length;
     if ((flagged || unverified) && !confirm(`${flagged} flagged, ${unverified} unverified. Write the submissions anyway?`)) return;
-    let r = await send('accept', {});
-    if (r && r.status === 409 && r.body.current && r.body.current.busy) {
-      const busy = r.body.current.busy, many = busy.length > 1;
-      if (!confirm(`${busy.join(', ')} already ${many ? 'have' : 'has'} grading work, and the split changes or removes ${many ? 'them' : 'it'}. Rewrite anyway? The work stays but may no longer match the pages.`)) return;
-      r = await send('accept', {force: true});
-    }
-    if (r && r.ok) {
-      const x = r.body.report;
+    const busy = plan.busy, many = busy.length > 1;
+    if (busy.length && !confirm(`${busy.join(', ')} already ${many ? 'have' : 'has'} grading work, and the split changes or removes ${many ? 'them' : 'it'}. Rewrite anyway? The work stays but may no longer match the pages.`)) return;
+    return send('accept', {force: busy.length > 0}, b => {
+      const x = b.report;
       made += x.new.length - x.removed.length;
       say(`written: ${x.new.length} new, ${x.rewritten.length} rewritten, ${x.removed.length} removed, ${x.unchanged} unchanged`);
       render();
-    }
+    }, true);
   }});
 
   // What sheet `i` is in its submission: 'p3' or 'extra', and the pages marked missing just before it.
@@ -329,10 +330,10 @@
   }
 
   // --- the overview ---
-  // A plan-changing button in a row: through the same queue as the keys.
+  // A plan-changing button in a row: an edit like the keys'.
   const button = (text, title, fn) => {
     const b = make('button', {type: 'button', className: 'quiet', textContent: text, title});
-    b.addEventListener('click', () => { if (!S.busy()) S.enqueue(fn); });
+    b.addEventListener('click', () => { if (live()) fn(); });
     return b;
   };
   function thumb(i, w, buttons, label) {
