@@ -959,7 +959,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                             'doubts': [split.DOUBTS[d] for d in doubts[k]], 'state': row['state'],
                             'name': identity.who(ws, sid)['name'] if sid else ''})
         return {'id': src.id, 'name': src.name, 'n': src.pages, 'rev': art.rev, 'length': body['length'],
-                'checked': bool(body.get('checked')) and bool(body.get('readings')), 'failed': body.get('failed', 0),
+                'checked': bool(body.get('readings')), 'failed': body.get('failed', 0),
                 'order': [r['i'] for r in L], 'kept': [r['i'] for r in L if not r.get('dropped')],
                 'turn': [turns[i] for i in range(src.pages)], 'owner': owner, 'slot': slot,
                 'entries': entries, 'dropped': split.dropped(body), 'missing': sorted(set(split.marks(body)[1])),
@@ -1072,11 +1072,19 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             intake.undo(ws, src.id, expect_rev=_rev(data))
         return planned(src)
 
+    def _allow(data: dict) -> list[str]:
+        """The written submissions the person agreed Accept may rewrite or remove."""
+        ids = data.get('allow') or []
+        if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+            raise Bad("allow: a list of submissions")
+        return ids
+
     def scans_accept(request, data):
         src = the_source(request)
         try:
             with lock:
-                report = intake.accept(ws, src.id, force=bool(data.get('force')), expect_rev=_rev(data))
+                report = intake.accept(ws, src.id, author=who(request), allow=_allow(data),
+                                       expect_rev=_rev(data))
         except Conflict as e:           # stale, or work it would disturb (`busy`): the plan as it is now
             e.current = plan_view(src)
             raise

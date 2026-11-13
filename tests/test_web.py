@@ -581,7 +581,8 @@ def test_one_submissions_own_values(site):
 def test_print_area_at_each_scope(site):
     from examinator.core.store import Source
     site.ws.store.add_source(Source('src1', 'x.pdf', 'stack.pdf', 'h', 2, 'now'))
-    site.ws.store.set_made(Made('s1', 'src1', (0,), {}, 'now'))
+    site.ws.store.set_made(Made('s1', 'src1', (0,), (0,), 'now', 's1.pdf'))
+    (site.ws.made / 's1.pdf').write_bytes((site.ws.pdfs / 's1.pdf').read_bytes())     # intake's file
     SCAN = 'source:src1'
     html = site.get('/s/s1/a').text                 # two editing modes; the region picker lists fields only
     assert 'data-action="regions"' in html and 'data-action="print-area"' in html

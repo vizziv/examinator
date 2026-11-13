@@ -1,4 +1,4 @@
-"""Intake: sources, plans, orientation, accepting into pdfs/. Synthetic material only."""
+"""Intake: sources, plans, orientation, accepting into made/. Synthetic material only."""
 import json
 from pathlib import Path
 
@@ -52,6 +52,15 @@ def states(ws, id):
     return [r['state'] for r in intake.outline(ws, id)[0]]
 
 
+def agree(ws):
+    """The store and the files agree: `made/` holds exactly the files `made` names, each
+    with the pages its row says."""
+    made = ws.store.made()
+    assert sorted(p.name for p in ws.made.iterdir()) == sorted(m.file for m in made.values())
+    for sid, m in made.items():
+        assert render.page_count(ws.pdf_path(sid)) == len(m.pages)
+
+
 def starts(art):
     """The sheet at each start mark."""
     return [art.body['sheets'][p]['i'] for p in split.starts(art.body)]
@@ -66,7 +75,7 @@ def test_adding_the_same_scan_twice_is_recognised(stacked):
     assert new and not again and a == b and len(ws.store.sources()) == 1
     assert (ws.root / 'sources' / a.file).read_bytes() == paths[0].read_bytes()
     assert starts(intake.plan(ws, a.id)) == [0, 4, 8, 12, 16, 20]        # every N, no model
-    assert not intake.plan(ws, a.id).body['checked']
+    assert not intake.plan(ws, a.id).body['readings']
 
 
 def test_not_a_pdf_is_refused(tmp_path, toy):
@@ -151,14 +160,14 @@ def test_a_turned_page_is_written_upright(stacked):
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
     sid = 's0002'
-    before = pdfium.PdfDocument(str(ws.pdfs / f'{sid}.pdf'))
+    before = pdfium.PdfDocument(str(ws.pdf_path(sid)))
     sizes = [tuple(round(v) for v in page.get_size()) for page in before]
     before.close()
     intake.edit(ws, one.id, 'turn_page', sheet=5, expect_rev=intake.plan(ws, one.id).rev, author='t')
     assert states(ws, one.id) == ['made', 'changed', 'made', 'made', 'made', 'made']
     assert intake.accept(ws, one.id)['rewritten'] == [sid]
     assert ws.store.made()[sid].orient[1] == 1
-    doc = pdfium.PdfDocument(str(ws.pdfs / f'{sid}.pdf'))
+    doc = pdfium.PdfDocument(str(ws.pdf_path(sid)))
     after = [tuple(round(v) for v in page.get_size()) for page in doc]
     doc.close()
     assert after[1] == sizes[1][::-1] and after[0] == sizes[0] and after[2:] == sizes[2:]
@@ -190,22 +199,23 @@ def test_landmark_crops_come_from_the_oriented_page(tmp_path):
 def test_accept_copies_pages_untouched_and_the_fast_path_applies(stacked, monkeypatch):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
-    report = intake.accept(ws, one.id)
+    report = intake.accept(ws, one.id, author='ann')
     assert report['new'] == ['s0001', 's0002', 's0003', 's0004', 's0005', 's0006']
+    assert intake.plan(ws, one.id).author == 'ann'                  # the person accepting said it all
     src_images = images(paths[0])
     for k, sid in enumerate(report['new']):
         made = ws.store.made()[sid]
         assert made.pages == tuple(range(4 * k, 4 * k + 4))
-        assert images(ws.pdfs / f'{sid}.pdf') == [src_images[i] for i in made.pages]
+        assert images(ws.pdf_path(sid)) == [src_images[i] for i in made.pages]
     taken = []
     real = render.scan_image
     monkeypatch.setattr(render, 'scan_image', lambda *a: taken.append(1) or real(*a))
-    Renderer(ws.root / 'cache' / 'check').page(ws.pdfs / 's0002.pdf', 3)
+    Renderer(ws.root / 'cache' / 'check').page(ws.pdf_path('s0002'), 3)
     assert taken
     # downstream: a submission like any other, no roster file needed
     assert [s.id for s in ws.store.submissions()] == report['new']
-    assert ws.sync() == 6
-    assert states(ws, one.id) == ['made'] * 6
+    assert ws.sync() == 0 and [s.id for s in ws.store.submissions()] == report['new']     # none handed in
+    assert states(ws, one.id) == ['made'] * 6 and not list(ws.pdfs.iterdir())
 
 
 def test_a_longer_plan_means_trailing_extra_sheets(stacked):
@@ -228,7 +238,7 @@ def test_the_written_pdf_is_the_printed_pages_then_the_extras(stacked):
     # student 1 lost page 3: a placeholder there, the rest in place
     assert ws.store.made()[short].pages == (4, 5, None, 6)
     assert ws.missing(short) == {3} and ws.extras(short) == 0
-    src_images, got = images(paths[0]), images(ws.pdfs / f'{short}.pdf')
+    src_images, got = images(paths[0]), images(ws.pdf_path(short))
     assert len(got) == 4 and got[:2] == [src_images[4], src_images[5]] and got[3] == src_images[6]
     page = ws.page_image(short, 3).convert('L')
     assert page.getextrema()[0] > 100 and page.getextrema()[1] == 255     # blank but for small grey text
@@ -268,7 +278,7 @@ def test_baked_pages_are_upright_plain_scans(tmp_path):
     src, _ = intake.add_source(ws, pdf)
     intake.edit(ws, src.id, 'turn_source', expect_rev=intake.plan(ws, src.id).rev, author='t')
     intake.accept(ws, src.id)
-    out = ws.pdfs / 's0001.pdf'
+    out = ws.pdf_path('s0001')
     doc = pdfium.PdfDocument(str(out))
     page = doc[0]
     assert tuple(round(v) for v in page.get_size()) == (720, 576)      # width and height swapped
@@ -300,37 +310,69 @@ def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     one, _ = intake.add_source(ws, paths[0])
     intake.reguess(ws, one.id, model=model)
     intake.accept(ws, one.id)
-    before = {s: (ws.pdfs / f'{s}.pdf').stat().st_mtime_ns for s in ws.store.made()}
-    # grading work on the third submission (the one with the stray sheet)
-    ws.store.write('s0003', 'parity/B', 'value', {'text': 'even'}, origin='manual', author='t')
+    files = lambda: {s: m.file for s, m in ws.store.made().items()}
+    before = files()
+    # grading work on the third submission (the one with the stray sheet): a person's value
+    ws.store.write('s0003', 'parity/B', 'value', {'text': 'even', 'verified': 'person', 'by': 't'},
+                   origin='manual', author='t')
     art = intake.plan(ws, one.id)
     art = intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=art.rev, author='t')
     with pytest.raises(intake.Busy) as e:
         intake.accept(ws, one.id)
-    assert e.value.submissions == ['s0003']
-    assert (ws.pdfs / 's0003.pdf').stat().st_mtime_ns == before['s0003']
-    # orientation change of a submission without work: rewritten; nothing else touched
+    assert e.value.submissions == ['s0003'] and files() == before
+    # orientation change of a submission without work: rewritten, as a new file; nothing else touched
     art = intake.edit(ws, one.id, 'restore', sheet=9, expect_rev=art.rev, author='t')
     intake.edit(ws, one.id, 'turn', sheet=first_of(ws, one.id, 4), expect_rev=art.rev, author='t')
     assert states(ws, one.id) == ['made', 'made', 'made', 'made', 'changed', 'made']
     report = intake.accept(ws, one.id)
     assert report['rewritten'] == ['s0005'] and report['unchanged'] == 5
-    after = {s: (ws.pdfs / f'{s}.pdf').stat().st_mtime_ns for s in ws.store.made()}
+    after = files()
     assert [s for s in after if after[s] != before[s]] == ['s0005']
-    # forced: the change goes through and the work stays where it was
+    agree(ws)
+    # allowed: the change goes through and the person's value stays where it was
     intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
-    report = intake.accept(ws, one.id, force=True)
+    report = intake.accept(ws, one.id, allow=['s0003'])
     assert report['rewritten'] == ['s0003'] and ws.store.made()['s0003'].pages == (7, 8, 10, 11)
     assert ws.store.get('s0003', 'parity/B', 'value') is not None
-    # joining away a submission with no work removes it
+    # joining away a submission with work removes it only when allowed
     intake.edit(ws, one.id, 'join', sheet=first_of(ws, one.id, 0), expect_rev=intake.plan(ws, one.id).rev, author='t')
     ws.store.write('s0002', 'parity/B', 'value', {'text': 'odd'}, origin='manual', author='t')
     with pytest.raises(intake.Busy):        # s0002 would go away with its work
+        intake.accept(ws, one.id, allow=['s0001'])
+    report = intake.accept(ws, one.id, allow=['s0002'])
+    assert report['removed'] == ['s0002'] and 's0002' not in {s.id for s in ws.store.submissions()}
+    agree(ws)
+
+
+def test_accept_asks_about_a_pick_and_own_boxes_and_says_what_goes(stacked):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    intake.accept(ws, one.id)
+    identity.pick(ws, 's0002', identity.typed("Someone Named"), author='t', expect_rev=None)
+    own = overrides.scope(overrides.SUBMISSION, 's0003')
+    overrides.set(ws, '@print_area', [100, 100, 900, 900], scope=own, author='t')
+    ws.store.write('s0003', 'parity/B', 'value', {'text': 'odd'}, origin='auto')        # read, nobody verified
+    ws.store.write('s0003', 'parity/A', 'value', {'text': '1', 'verified': 'person', 'by': 't'}, origin='manual')
+    edit_(ws, one.id, 'join', sheet=first_of(ws, one.id, 1))     # s0002 and s0003 are one: s0003 goes
+    edit_(ws, one.id, 'drop', sheet=0)                           # and s0001 changes (no work: not asked)
+    rows, gone = intake.outline(ws, one.id)
+    assert intake.disturbed(ws, rows, gone) == [{'id': 's0002', 'change': 'rewrite', 'said': ['pick']},
+                                                {'id': 's0003', 'change': 'remove', 'said': ['grading', 'boxes']}]
+    with pytest.raises(intake.Busy) as e:
         intake.accept(ws, one.id)
-    ws.store.delete('s0002', 'parity/B', 'value')
-    report = intake.accept(ws, one.id)
-    assert report['removed'] == ['s0002'] and not (ws.pdfs / 's0002.pdf').exists()
-    assert 's0002' not in {s.id for s in ws.store.submissions()}
+    assert e.value.submissions == ['s0002', 's0003']
+    intake.accept(ws, one.id, allow=['s0002', 's0003'])
+    assert identity.who(ws, 's0002')['name'] == "Someone Named"          # rewritten: the pick stays
+    assert not ws.store.overrides(own)                                    # removed: its boxes go
+    # a rewrite: its own boxes and what was read go, what a person verified stays
+    mine = overrides.scope(overrides.SUBMISSION, 's0002')
+    overrides.set(ws, '@print_area', [100, 100, 900, 900], scope=mine, author='t')
+    ws.store.write('s0002', 'parity/B', 'value', {'text': 'odd'}, origin='manual')       # typed, then unverified
+    ws.store.write('s0002', 'parity/A', 'value', {'text': '1', 'verified': 'person', 'by': 't'}, origin='auto')
+    edit_(ws, one.id, 'drop', sheet=5)
+    assert intake.accept(ws, one.id, allow=['s0002'])['rewritten'] == ['s0002']
+    assert not ws.store.overrides(mine)
+    assert set(ws.store.rows('s0002', 'value')) == {'parity/A'}
 
 
 def test_ids_are_never_reused(stacked):
@@ -352,7 +394,7 @@ def test_roster_and_names(stacked):
     p = identity.people(ws)[2]
     identity.pick(ws, 's0003', p, author='t', expect_rev=None)
     assert ws.store.submission('s0003').name == "Casey Stubbs"
-    assert ws.sync() == 6 and ws.store.submission('s0003').email == p['email']
+    assert ws.sync() == 0 and ws.store.submission('s0003').email == p['email']
     assert ws.store.submission('s0003').student == p['id']
     rev = identity.pick(ws, 's0004', identity.typed("Someone Unlisted"), author='t', expect_rev=None)['rev']
     assert ws.store.submission('s0004').name == "Someone Unlisted"
@@ -387,7 +429,7 @@ def test_failed_landmark_calls_are_counted_not_read_as_nothing(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     art = intake.reguess(ws, one.id, model=FakeModel(lambda call: None))     # every call fails
-    assert art.body['failed'] > 0 and not art.body['checked']
+    assert art.body['failed'] > 0
     assert art.body['readings'] == {}                       # failed sheets are unread, not read as None
     assert split.doubts(art.body, ws.exam.pages) == [[]] * 6
     assert intake.reguess(ws, one.id).body.get('failed') is None
@@ -407,16 +449,17 @@ def test_a_submission_whose_pages_are_all_dropped_is_removed(stacked):
     assert e.value.submissions == ['s0006']
     ws.store.delete('s0006', 'parity/B', 'value')
     report = intake.accept(ws, one.id)
-    assert report['removed'] == ['s0006'] and not (ws.pdfs / 's0006.pdf').exists()
+    assert report['removed'] == ['s0006']
+    agree(ws)
     assert 's0006' not in ws.store.made() and intake.outline(ws, one.id)[1] == []
     assert states(ws, one.id)[:5] == ['made'] * 5
 
 
-def test_a_plan_edit_during_accept_leaves_pdfs_alone(stacked, monkeypatch):
+def test_an_edit_landing_mid_accept_changes_nothing(stacked, monkeypatch):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    before = {p.name: p.read_bytes() for p in ws.pdfs.glob('*.pdf')}
+    made = ws.store.made()
     art = intake.edit(ws, one.id, 'turn', sheet=first_of(ws, one.id, 1), expect_rev=intake.plan(ws, one.id).rev, author='t')
     intake.edit(ws, one.id, 'cut', sheet=2, expect_rev=art.rev, author='t')    # a new submission too
     counter = ws.store.setting('intake_next')
@@ -428,20 +471,69 @@ def test_a_plan_edit_during_accept_leaves_pdfs_alone(stacked, monkeypatch):
     monkeypatch.setattr(intake.pdf_pages, 'write', write_then_edit)
     with pytest.raises(Conflict):
         intake.accept(ws, one.id)
-    assert {p.name: p.read_bytes() for p in ws.pdfs.glob('*.pdf')} == before
-    assert not [p for p in ws.pdfs.iterdir() if p.suffix == '.part']
-    assert ws.store.setting('intake_next') == counter
+    assert ws.store.made() == made and ws.store.setting('intake_next') == counter
+    agree(ws)
 
 
-def test_an_override_of_its_own_does_not_hold_a_submission(stacked):
+STEPS = ('write', 'before', 'inside', 'after')
+
+
+@pytest.mark.parametrize('step', STEPS)
+def test_a_failure_anywhere_leaves_the_store_and_its_files_agreeing(stacked, monkeypatch, step):
+    """A failure (or a crash: nothing runs after it) while writing, before the commit,
+    inside it, or after it: the store names only whole files, says what is written as
+    it is, and the next Accept finishes the work."""
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    overrides.set(ws, 'parity/fields/B/region', [3, 0, 0, 500, 500], scope=overrides.scope(overrides.SUBMISSION, 's0003'),
-                  author='t')
-    intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
-    assert intake.accept(ws, one.id)['rewritten'] == ['s0003']        # not Busy: settings are not work
+    edit_(ws, one.id, 'cut', sheet=2)                   # s0001 rewritten, a new one
+    edit_(ws, one.id, 'turn', sheet=first_of(ws, one.id, 3))      # s0003 rewritten (its index after the cut)
+    before = ws.store.made()
 
+    def fail(*a, **k):
+        raise OSError("crash")
+    calls = []
+
+    def second(real):
+        def run(*a, **k):
+            calls.append(1)
+            return fail() if len(calls) == 2 else real(*a, **k)
+        return run
+    if step == 'write':
+        monkeypatch.setattr(intake.pdf_pages, 'write', second(intake.pdf_pages.write))
+    elif step == 'before':
+        monkeypatch.setattr(ws.store, 'transaction', fail)
+    elif step == 'inside':
+        monkeypatch.setattr(ws.store, 'set_made', second(ws.store.set_made))
+    else:
+        monkeypatch.setattr(intake, 'sweep', second(intake.sweep))      # the sweep after the commit
+    with pytest.raises(OSError):
+        intake.accept(ws, one.id)
+    monkeypatch.undo()
+    if step == 'after':                                 # accepted: what is written is as planned
+        assert states(ws, one.id) == ['made'] * 7
+        ws.store.write('s0001', 'parity/B', 'value', {'text': 'odd'}, origin='auto')
+        assert intake.accept(ws, one.id)['unchanged'] == 7             # graded since: nothing to ask
+    else:                                               # nothing happened
+        assert ws.store.made() == before and states(ws, one.id)[:4] == ['changed', 'new', 'made', 'changed']
+        assert len(ws.store.submissions()) == 6
+        report = intake.accept(ws, one.id)
+        assert report['rewritten'] == ['s0001', 's0003'] and report['new'] == ['s0007']
+        assert states(ws, one.id) == ['made'] * 7 and intake.accept(ws, one.id)['unchanged'] == 7
+    agree(ws)
+    assert ws.sync() == 0 and len(ws.store.submissions()) == 7 and not list(ws.pdfs.iterdir())
+
+
+def test_a_page_after_rewriting_is_the_new_file(stacked):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    intake.accept(ws, one.id)
+    old = ws.pdf_path('s0002')
+    edit_(ws, one.id, 'turn', sheet=first_of(ws, one.id, 1))
+    intake.accept(ws, one.id)
+    new = ws.pdf_path('s0002')
+    assert new != old and not old.exists() and ws.renderer.key(new) != ''
+    agree(ws)
 
 
 def test_undo_steps_back_one_edit_at_a_time(stacked):
@@ -512,67 +604,14 @@ def test_a_written_submission_is_not_absorbed_by_later_edits(stacked):
     assert split.runs(intake.plan(ws, one.id).body)[1:3] == [[6, 7, 8], [9, 10, 11]]
 
 
-def test_an_interrupted_accept_is_repaired_by_the_next(stacked, monkeypatch):
-    ws, paths, _ = stacked
-    one, _ = intake.add_source(ws, paths[0])
-    intake.accept(ws, one.id)
-    edit_(ws, one.id, 'cut', sheet=2)                   # s0001 rewritten, a new one
-    edit_(ws, one.id, 'turn', sheet=first_of(ws, one.id, 3))                      # s0003 rewritten (its index after the cut)
-    real = intake.os.replace
-    calls = []
-
-    def replace(a, b):                                  # the second file fails to move into place
-        calls.append(b)
-        if len(calls) == 2:
-            raise OSError("disk full")
-        return real(a, b)
-    monkeypatch.setattr(intake.os, 'replace', replace)
-    with pytest.raises(OSError):
-        intake.accept(ws, one.id)
-    monkeypatch.undo()
-    # the store says nothing written that is not: one placed file is newer than its record
-    assert states(ws, one.id)[:4] == ['changed', 'new', 'made', 'changed']
-    assert ws.sync() == 6 and len(ws.store.submissions()) == 6          # no phantom submission
-    report = intake.accept(ws, one.id)
-    assert report['rewritten'] == ['s0001', 's0003'] and len(report['new']) == 1
-    assert states(ws, one.id) == ['made'] * 7 and intake.accept(ws, one.id)['unchanged'] == 7
-    assert not list(ws.pdfs.glob('.*.part')) and sorted(p.stem for p in ws.pdfs.glob('*.pdf')) == sorted(ws.store.made())
-
-
-def test_files_placed_but_never_recorded_are_not_submissions(stacked, monkeypatch):
-    ws, paths, _ = stacked
-    one, _ = intake.add_source(ws, paths[0])
-    intake.accept(ws, one.id)
-    edit_(ws, one.id, 'cut', sheet=2)
-    monkeypatch.setattr(ws.store, 'set_made', lambda m: (_ for _ in ()).throw(OSError("crash")))
-    with pytest.raises(OSError):
-        intake.accept(ws, one.id)
-    monkeypatch.undo()
-    assert (ws.pdfs / 's0007.pdf').exists() and 's0007' not in ws.store.made()      # placed, not recorded
-    assert ws.sync() == 6 and ws.store.submission('s0007') is None
-    assert states(ws, one.id)[:2] == ['changed', 'new']
-    report = intake.accept(ws, one.id)
-    assert report['new'] == ['s0008'] and not (ws.pdfs / 's0007.pdf').exists()     # never reused, swept
-    assert ws.sync() == 7
-
-
-def test_a_missing_file_is_not_written(stacked):
-    ws, paths, _ = stacked
-    one, _ = intake.add_source(ws, paths[0])
-    intake.accept(ws, one.id)
-    (ws.pdfs / 's0004.pdf').unlink()
-    assert states(ws, one.id)[3] == 'changed'
-    assert intake.accept(ws, one.id)['rewritten'] == ['s0004'] and (ws.pdfs / 's0004.pdf').exists()
-
-
 # --- the print area: submission, then its scan, then the exam, then the package ---
 
 def test_print_area_resolves_submission_scan_exam_package(tmp_path):
     exam = Exam('pa', pages=1, print_area=(10, 20, 990, 980))
     ws = Workspace(tmp_path / 'ws', exam, create=True)
     try:
-        ws.store.set_made(Made('s1', 'src1', (0,), {}, 'now'))
-        ws.store.set_made(Made('s2', 'src1', (1,), {}, 'now'))
+        ws.store.set_made(Made('s1', 'src1', (0,), (0,), 'now', 's1.pdf'))
+        ws.store.set_made(Made('s2', 'src1', (1,), (0,), 'now', 's2.pdf'))
         win = lambda sid: ws.layout(sid).print_area
         at = lambda level, id='': overrides.scope(level, id)
         put = lambda value, scope, **kw: overrides.set(ws, '@print_area', value, scope=scope, author=None, **kw)

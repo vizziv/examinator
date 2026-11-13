@@ -419,7 +419,8 @@ def scoped(env):
     """The mini exam's workspace, s1 split from scan 'src1', s2 handed in split."""
     from examinator.core.store import Made
     exam, ws, _ = env
-    ws.store.set_made(Made('s1', 'src1', (0,), {}, 'now'))
+    ws.store.set_made(Made('s1', 'src1', (0,), (0,), 'now', 's1.pdf'))
+    (ws.made / 's1.pdf').write_bytes((ws.pdfs / 's1.pdf').read_bytes())     # intake's file
     return exam, ws
 
 

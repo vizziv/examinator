@@ -7,8 +7,8 @@ only its docstring.
 
 **Student data boundary.** Write and test an exam package with the instructor's
 blank PDFs and synthetic fixtures only. Never open real scans, transcriptions,
-parsed answers, feedback, model logs or caches, or a real workspace (`pdfs/`,
-`exam.sqlite`, `cache/`, `exports/`). Tests use the scripted fake model.
+parsed answers, feedback, model logs or caches, or a real workspace (`sources/`,
+`made/`, `pdfs/`, `exam.sqlite`, `cache/`, `exports/`). Tests use the scripted fake model.
 
 ## 1. Where a thing belongs
 

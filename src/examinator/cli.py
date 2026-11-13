@@ -61,7 +61,7 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
         parts = split.runs(art.body)
         flagged = [(k, p, d) for k, (p, d) in enumerate(zip(parts, doubts)) if d]
         print(f"{src.id} {src.name}: {len(parts)} submissions of {art.body['length']} pages"
-              f"{', checked' if art.body['checked'] else ''}; {len(flagged)} to look at")
+              f"{', pages read' if art.body['readings'] else ''}; {len(flagged)} to look at")
         for k, p, d in flagged:
             span = f"{p[0] + 1}-{p[-1] + 1}"
             print(f"  #{k + 1} pages {span}: {', '.join(split.DOUBTS[x] for x in d)}")

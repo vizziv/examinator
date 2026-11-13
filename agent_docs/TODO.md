@@ -30,8 +30,11 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
     and which run is which written submission is derived (`split.link`). A
     mark is a guess or a person's, and guessing touches only guesses. A
     submission is its kept sheets. An edit names a submission by its first
-    sheet. (In progress: a verified submission is its sheets; a written file
-    is never changed and the store names it; Accept asks about picks too.)
+    sheet. A verified submission is its sheets (V says the whole run;
+    `verified` means a person looked at it, `said` that a person placed a
+    mark). A written file is never changed: Accept writes fresh files in
+    `made/` and one commit names them. Accept speaks for a person and asks
+    about everything a person said (grades, picks, own boxes).
   - *The interface:* a POST is a change to a row (names the revision drawn),
     a run in a slot (one at a time), or a query; a test built from the route
     table covers every one. `Changes.send` is the only way a page sends a
@@ -126,6 +129,17 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
   read" but counts to N plus one refresh per submission.
 
 ## Future
+
+- **Decided against, 2026-11-13 (the owner raised both and walked them
+  back):** building an exam's structure in the app, and versions as a concept
+  of their own. Structure lives in the Python package: the expected way to get
+  one is to hand an agent the exam PDFs and have it write the package with
+  this library, so large structural edits in the app are unlikely. A version
+  is just a field; an answer key that differs by version is a key that
+  differs by that field's value. The app edits values only (regions, the
+  print area, a reader's or check's own configuration), each valid on its
+  own. If a field's set of possible values ever comes back, it is a plain
+  list on the field (no translation, no per-question override).
 
 - **Non-rectangular regions:** click points for a polygon around the actual
   answer, so the model sees the answer and not the surrounding work. Pairs
