@@ -163,7 +163,7 @@ A check returns a `Result`: one grade and its evidence.
 
 ```python
 Result(grade, fields={'1.1': 'correct', '1.2': Judgement('incorrect', expected='3/2', note="sign")},
-       blocks=[Plot.cdf(samples, cdf, title="weibull(0.5, 2)"), Details("Samples", Table(rows))])
+       blocks=[plots.cdf(samples, cdf, title="weibull(0.5, 2)"), Details("Samples", Table(rows))])
 ```
 
 - The grade is anything the check's points accept: `Bool()` takes
@@ -173,10 +173,13 @@ Result(grade, fields={'1.1': 'correct', '1.2': Judgement('incorrect', expected='
   undecided grade is undecided. Points declare whether they count toward the
   total (`counts=`); `Bool(worth=)` sets what a true grade is worth.
 - Per-field judgements are shown beside the field: an outcome, optionally the
-  expected answer and a short note. Blocks are shown below, plots first.
-- Blocks come from a small vocabulary (`std.blocks`): note, table, plot (from
-  data), code excerpt, collapsed details, and raw SVG or HTML (shown in a
-  sandboxed frame: no scripts, nothing fetched).
+  expected answer and a short note. Blocks are shown below, images first.
+- Blocks come from a small vocabulary (`std.blocks`): note, table, code
+  excerpt, collapsed details, and image (a PNG, JPEG, GIF, WebP or SVG file's
+  bytes, stored base64 in the result and served from its own URL with its
+  type, `nosniff` and a sandboxing CSP; shown with `<img>`, so an SVG runs
+  nothing; inverted in dark mode as scans are). Plots are images an exam or
+  kit renders (the stochastic kit uses matplotlib).
 - **Nothing computes from evidence.** The grade is the check's own.
 
 ## 7. Whether a grade counts
@@ -344,7 +347,8 @@ leave it out and let the exam package write it.
 Sampler questions use an optional kit outside the standard library,
 `examinator_kits.stochastic`: random primitives for the pseudocode language,
 goodness-of-fit tests (support, KS, chi-square, projected KS) that return a
-verdict and a plot, and check scaffolding. It uses the core; the core never
+verdict and a plot, the plots (`plots`: matplotlib figures of samples against
+a target, as PNG images), and check scaffolding. It uses the core; the core never
 imports it.
 
 Out of the standard library: anything about a particular distribution, problem

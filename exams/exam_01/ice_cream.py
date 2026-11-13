@@ -7,8 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from examinator.std import pseudocode
-from examinator.std.blocks import Plot
-from examinator_kits.stochastic import checks
+from examinator_kits.stochastic import checks, plots
 from examinator_kits.stochastic import fit as sampling
 
 from .language import POINTS, SEED, Draws, draw, settle_direct
@@ -96,7 +95,7 @@ def check_program(program: pseudocode.Program, region: Region) -> checks.Part:
     except checks.Stop as stop:
         return part.stop("ice_cream()", stop)
     piece = region.piece(p)
-    scatter = Plot.scatter(p[:, 0], p[:, 1], title="ice_cream()", xlabel="x", ylabel="y")
+    scatter = plots.scatter(p[:, 0], p[:, 1], title="ice_cream()", xlabel="x", ylabel="y")
     if part.add("region", checks.inside(piece >= 0, p, scatter), raw).outcome != 'correct':
         return part.combine()
     share = region.areas / region.areas.sum()

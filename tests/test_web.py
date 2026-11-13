@@ -1,4 +1,5 @@
 """The web app, against the synthetic mini exam and the scripted model."""
+import base64
 import json
 import re
 import time
@@ -14,7 +15,8 @@ from examinator.core.store import Made, Submission
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
 from examinator.pdf.layout import Layout
-from examinator.web.app import create_app, find_raw, prepare_blocks
+from examinator.std.blocks import MAX_IMAGE, Image
+from examinator.web.app import create_app, find_image, prepare_blocks
 
 from conftest import SCRIPT, workspace
 from test_overrides import make_keyed_exam
@@ -22,6 +24,8 @@ from test_overrides import make_keyed_exam
 BASE = 'http://127.0.0.1:8580'
 TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
 EVIL = '<script>alert(1)</script>'
+PNG = b'\x89PNG\r\n\x1a\n' + b'not really'      # bytes as stored; the route does not parse them
+SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
 
 
 class Site:
@@ -213,7 +217,7 @@ def test_public_url_host_and_author(env):
 def test_unknown_targets_are_404(site, tmp_path):
     (tmp_path / 'secret.jpg').write_bytes(b'secret')
     for path in ('/s/nobody/a', '/s/s1/zzz', '/page/nobody/0.jpg', '/page/s1/2.jpg', '/page/s1/99.jpg',
-                 '/page/s1/-1.jpg', '/page/s1/x.jpg', '/jobs/nope', '/raw/s1/a/x/0',
+                 '/page/s1/-1.jpg', '/page/s1/x.jpg', '/jobs/nope', '/image/s1/a/x/0',
                  '/page/../secret.jpg', '/page/s1/..%2f..%2fsecret.jpg', '/page/..%2f..%2fsecret/0.jpg',
                  '/s/..%2f..%2fetc/passwd', '/s/%2e%2e/%2e%2e', '/static/..%2fapp.py',
                  '/static/../app.py', '/static/%2e%2e/app.py', '/page/s1%2f..%2fs2/0.jpg'):
@@ -584,9 +588,9 @@ def test_student_text_is_escaped(site):
         {'type': 'table', 'columns': [f"col {EVIL}"], 'rows': [[EVIL, None, 3]]},
         {'type': 'code', 'text': f"x = 1\n{EVIL}", 'highlight': [2]},
         {'type': 'details', 'summary': f"more {EVIL}",
-         'blocks': [{'type': 'raw', 'html': f"<svg></svg>{EVIL}"}]},
-        {'type': 'plot', 'title': f"plot {EVIL}", 'xlabel': "x", 'ylabel': "y",
-         'series': [{'name': EVIL, 'style': 'step', 'x': [0, 1, None], 'y': [0, None, 1]}]},
+         'blocks': [Image(SVG, 'image/svg+xml', alt=EVIL).to_json()]},
+        Image(PNG, title=f"plot {EVIL}").to_json(),
+        {'type': 'image', 'media_type': 'text/html', 'data': base64.b64encode(EVIL.encode()).decode()},
         "not a block",
     ]
     row = store.get('s1', 'a/x', 'result')
@@ -599,13 +603,19 @@ def test_student_text_is_escaped(site):
     assert r.status_code == 200
     assert '<script>alert' not in r.text and '<img src=x' not in r.text and '</textarea><' not in r.text
     assert '&lt;script&gt;alert(1)&lt;/script&gt;' in r.text
-    assert r.text.index('class="plot"') < r.text.index('class="note')       # plots first
-    assert '\\u003cscript' in r.text
-    assert re.search(r'<iframe class="raw" sandbox src="/raw/s1/a/x/3-0"', r.text)
-    raw = site.get('/raw/s1/a/x/3-0')
-    assert raw.status_code == 200 and EVIL in raw.text
-    assert raw.headers['content-security-policy'].startswith('sandbox;')
-    for path in ('/raw/s1/a/x/0', '/raw/s1/a/x/3', '/raw/s1/a/x/3-1', '/raw/s1/a/x/9', '/raw/s1/a/y/3-0'):
+    assert r.text.index('class="figure"') < r.text.index('class="note')       # images first
+    png = re.search(r'<img class="figure" src="(/image/s1/a/x/4\?v=[0-9a-f]{16})"', r.text).group(1)
+    svg = re.search(r'<img class="figure" src="(/image/s1/a/x/3-0\?v=[0-9a-f]{16})"', r.text).group(1)
+    assert r.text.count('class="figure"') == 2                                 # not the text/html one
+    for url, data, kind in ((png, PNG, 'image/png'), (svg, SVG, 'image/svg+xml')):
+        got = site.get(url)
+        assert got.status_code == 200 and got.content == data
+        assert got.headers['content-type'] == kind and got.headers['x-content-type-options'] == 'nosniff'
+        assert got.headers['content-security-policy'] == "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+        assert 'immutable' in got.headers['cache-control']
+    assert site.get('/image/s1/a/x/4?v=old').headers['cache-control'] == 'no-store'     # any other version
+    for path in ('/image/s1/a/x/0', '/image/s1/a/x/3', '/image/s1/a/x/3-1', '/image/s1/a/x/5',
+                 '/image/s1/a/x/9', '/image/s1/a/y/3-0'):
         assert site.get(path).status_code == 404, path
     assert '<script>alert' not in site.get('/').text
 
@@ -620,14 +630,26 @@ def test_names_are_escaped_in_the_grid(env):
 
 
 def test_block_helpers():
-    blocks = [{'type': 'details', 'summary': "d", 'blocks': [{'type': 'raw', 'html': "<b>hi</b>"}]},
+    image = Image(PNG, alt="a").to_json()
+    blocks = [{'type': 'details', 'summary': "d", 'blocks': [image]},
               {'type': 'code', 'text': "a\nb", 'highlight': [2]}, {'type': 'mystery'}]
     out = prepare_blocks(blocks)
     assert [b['type'] for b in out] == ['details', 'code']
-    assert out[0]['blocks'] == [{'type': 'raw', 'path': '0-0'}]
+    assert out[0]['blocks'] == [{'type': 'image', 'path': '0-0', 'v': out[0]['blocks'][0]['v'], 'alt': "a", 'title': ""}]
     assert out[1]['lines'] == [(1, 'a', False), (2, 'b', True)]
-    assert find_raw(blocks, '0-0') == "<b>hi</b>"
-    assert find_raw(blocks, '0') is None and find_raw(blocks, '') is None
+    assert find_image(blocks, '0-0') == image
+    assert find_image(blocks, '0') is None and find_image(blocks, '') is None
+
+
+def test_image_block():
+    b = Image(PNG, title="t").to_json()
+    assert b['type'] == 'image' and b['media_type'] == 'image/png' and base64.b64decode(b['data']) == PNG
+    assert json.loads(json.dumps(b)) == b
+    for kind in ('text/html', 'image/svg', 'application/octet-stream'):
+        with pytest.raises(ValueError):
+            Image(PNG, kind)
+    with pytest.raises(ValueError):
+        Image(b'x' * (MAX_IMAGE + 1))
 
 
 # --- exam data: overrides ------------------------------------------------------

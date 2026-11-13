@@ -84,8 +84,8 @@ from examinator import Exam, Field, Ask, Printed, Region, Landmark, Check, Bool,
 from examinator import Result, Judgement, Undecided, Facet
 from examinator.synth import Case
 from examinator.std import readers, math, fields, pseudocode, prompts
-from examinator.std.blocks import Plot, Series, Table, Note, Code, Details, Raw
-from examinator_kits.stochastic import primitives, fit, checks     # samplers (optional)
+from examinator.std.blocks import Image, Table, Note, Code, Details
+from examinator_kits.stochastic import primitives, fit, checks, plots   # samplers (optional)
 from examinator.core.runner import try_check                       # in your tests
 ```
 
@@ -226,11 +226,21 @@ def check(ctx):
   `None` for `Bool`; a number for `Number`; or `Grade(value, flags, reason)`.
   `fields` are judgements shown beside the field: an outcome
   (`'correct'`, `'incorrect'`, `'blank'`, `None`), optionally `expected=` and
-  `note=`. Blocks are shown below.
-- `Raw(html)` is the escape hatch for a display the other blocks cannot make
-  (an SVG figure, say). It is shown in a sandboxed frame: no scripts run and
-  nothing is fetched. Whoever builds the markup must still escape any
-  student-written text in it (`html.escape`).
+  `note=`. Blocks are shown below: `Note`, `Table`, `Code`, `Details`
+  (collapsed) and `Image`.
+- `Image(data, media_type='image/png', alt=, title=)` shows an image file's
+  bytes (PNG, JPEG, GIF, WebP or SVG, at most 2 MB) with an `<img>`; images
+  go first, in a row. Draw on a light background: in dark mode images are
+  inverted with the scans. A figure from matplotlib (render with the Agg
+  canvas, no pyplot; no metadata, so a recompute gives the same bytes):
+
+  ```python
+  fig = matplotlib.figure.Figure(figsize=(4.5, 3), dpi=110)
+  fig.add_subplot().plot(xs, ys)
+  out = io.BytesIO()
+  fig.savefig(out, format='png', metadata={'Software': None}, bbox_inches='tight')
+  return Result(grade, blocks=[Image(out.getvalue(), title="f(x)")])
+  ```
 - Raise `Undecided("a few words")` when nothing can be decided. Anything else
   a check raises, and a timeout, is undecided, never incorrect (the error is
   shown to graders): decide outcomes instead of crashing.
@@ -337,7 +347,8 @@ In fixtures, a pseudocode answer is the source as one string; `None` is blank.
 
 **`examinator_kits.stochastic`** (optional) is for questions that ask for a
 sampler: random builtins (`primitives`), goodness-of-fit tests with plots
-(`fit`), and `checks.check_source(source, language, label, judge)`, which
+(`fit`), the figures themselves (`plots.cdf`, `plots.hist`, `plots.scatter`,
+`plots.cdfs`: samples against a target, as PNG `Image` blocks), and `checks.check_source(source, language, label, judge)`, which
 applies the run-time policy and returns a `Result` from one `checks.Part`.
 Examples: `exams/exam_02/normal.py` (short), `exams/exam_03/weibullish.py`.
 

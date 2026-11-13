@@ -140,5 +140,6 @@ def test_kit_knows_no_exam_and_the_core_never_imports_it():
     hits = [f"{f.name}:{n}" for f in kit.rglob('*.py')
             for n, line in enumerate(f.read_text().splitlines(), 1) if pattern.search(line)]
     assert not hits, hits
-    assert not [f for f in (ROOT / 'src' / 'examinator').rglob('*.py') if 'examinator_kits' in f.read_text()]
+    assert not [f for f in (ROOT / 'src' / 'examinator').rglob('*.py')
+                if 'examinator_kits' in f.read_text() or 'matplotlib' in f.read_text()]
     assert not hasattr(pseudocode, 'UNIF')

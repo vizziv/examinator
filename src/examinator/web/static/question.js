@@ -91,7 +91,6 @@
       if (old.tagName === 'DETAILS') node.open = old.open;
       old.replaceWith(node);
       drawCrops(node);
-      window.drawPlots(node);
       Actions.hints(node);
     }
     const fresh = doc.getElementById('ed-fields'), old = form();

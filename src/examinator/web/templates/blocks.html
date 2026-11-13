@@ -10,10 +10,8 @@
 {% endfor %}</pre>
 {% elif b.type == 'details' %}
 <details{% if b.summary == 'Key' %} class="ev-key"{% endif %}><summary>{{ b.summary }}</summary>{{ render(b.blocks, base) }}</details>
-{% elif b.type == 'raw' %}
-<iframe class="raw" sandbox src="{{ base }}/{{ b.path }}" loading="lazy" title="figure"></iframe>
-{% elif b.type == 'plot' %}
-<figure class="plot" data-plot='{{ b.plot|tojson }}'></figure>
+{% elif b.type == 'image' %}
+<img class="figure" src="{{ base }}/{{ b.path }}?v={{ b.v }}" alt="{{ b.alt }}"{% if b.title %} title="{{ b.title }}"{% endif %} loading="lazy">
 {% endif %}
 {% endfor %}
 {% endmacro %}

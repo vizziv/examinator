@@ -139,7 +139,7 @@ class Runner:
     # --- what is stored -------------------------------------------------------
 
     def sheet(self, submission: str) -> Sheet:
-        return Sheet.of(self.store.all(submission=submission, kinds=('value', 'result', 'decision')))
+        return Sheet.of(self.store.all(submission=submission, kinds=('value', 'result', 'decision'), drop='$.blocks'))
 
     def values(self, submission: str) -> dict[str, Value]:
         return {k: Value.of(r) for k, r in self.store.rows(submission, 'value').items()}

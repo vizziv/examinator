@@ -30,7 +30,6 @@
 {% endmacro %}
 {% block title %}{{ sub.id }} · {{ q.id }}{% endblock %}
 {% block head %}
-<script src="{{ root }}/static/plot.js" defer></script>
 <script src="{{ root }}/static/question.js" defer></script>
 <script src="{{ root }}/static/entries.js" defer></script>
 <script src="{{ root }}/static/rects.js" defer></script>
@@ -150,12 +149,13 @@
 </form>
 
 {% for c in checks %}
-{% if c.plots or c.rest %}
+{% if c.figures or c.rest %}
+{% set base = root ~ '/image/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) ~ '/' ~ (c.name|urlencode) %}
 <div id="evidence-{{ loop.index }}" data-live class="panel evidence{% if not c.current %} stale{% endif %}">
 {% if checks|length > 1 %}<span class="plabel">{{ c.name }}</span>{% endif %}
 {% if not c.current %}<span class="tag">outdated</span>{% endif %}
-{% if c.plots %}<div class="plots">{{ blocks.render(c.plots, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) ~ '/' ~ (c.name|urlencode)) }}</div>{% endif %}
-{{ blocks.render(c.rest, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) ~ '/' ~ (c.name|urlencode)) }}
+{% if c.figures %}<div class="figures">{{ blocks.render(c.figures, base) }}</div>{% endif %}
+{{ blocks.render(c.rest, base) }}
 </div>
 {% endif %}
 {% endfor %}

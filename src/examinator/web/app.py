@@ -6,7 +6,7 @@
     GET  /s/{sub}/{q}               question page
     POST /s/{sub}/{q}/{action}      save unverify decide clear read check default restore
     GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
-    GET  /raw/{sub}/{q}/{check}/{path}   one evidence 'raw' block, sandboxed
+    GET  /image/{sub}/{q}/{check}/{path}?v=   one evidence image (path '2' or '1-0-3')
     GET  /jobs/{id}                 background job state
     GET  /runs                      batch reads;  POST /runs/plan|start|stop,  GET /runs/status
     GET  /settings                  this browser's keys and appearance
@@ -28,6 +28,7 @@ hangs off `app.state`.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -59,6 +60,7 @@ from ..core.runner import Runner
 from ..core.store import Conflict
 from ..core.workspace import PRINT_AREA, COVER_PAGES, Workspace
 from ..pdf.layout import Layout
+from ..std.blocks import MEDIA_TYPES
 from ..pdf import orient
 from .jobs import Batch, Jobs
 
@@ -72,8 +74,8 @@ MAX_ROSTER = 2_000_000      # characters of roster text
 ROSTER_PROBLEMS = 20        # problems a roster preview lists
 ROSTER_SAMPLE = 5           # people a roster preview shows
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-       "connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
-RAW_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'"
+       "connect-src 'self'; frame-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
+IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 # What a person sees of a status: one word per idea (DESIGN.md, Words on screen).
 STATE_LABELS = {
     'decided': "decided", 'decided_outdated': "decided, outdated", 'to_decide': "to decide",
@@ -203,9 +205,14 @@ def value_key(st) -> str:
     return {None: '', '✓': 't', '✗': 'f'}.get(text, text)
 
 
+def image_version(b: dict) -> str:
+    """A short digest of an image block's data: its URL changes when it does."""
+    return hashlib.sha256(str(b.get('data', '')).encode()).hexdigest()[:16]
+
+
 def prepare_blocks(blocks: Any, prefix: str = '') -> list[dict]:
-    """Evidence blocks ready for the template: unknown shapes dropped, raw blocks
-    given the path that addresses them, plots given their series as JSON."""
+    """Evidence blocks ready for the template: unknown shapes dropped, images
+    given the path that addresses them and a version of their data."""
     out = []
     for i, b in enumerate(blocks if isinstance(blocks, list) else []):
         if not isinstance(b, dict):
@@ -215,10 +222,10 @@ def prepare_blocks(blocks: Any, prefix: str = '') -> list[dict]:
         if kind == 'details':
             out.append({'type': 'details', 'summary': str(b.get('summary', "")),
                         'blocks': prepare_blocks(b.get('blocks'), path + '-')})
-        elif kind == 'raw':
-            out.append({'type': 'raw', 'path': path})
-        elif kind == 'plot':
-            out.append({'type': 'plot', 'plot': {k: b.get(k) for k in ('title', 'xlabel', 'ylabel', 'series')}})
+        elif kind == 'image':
+            if b.get('media_type') in MEDIA_TYPES and isinstance(b.get('data'), str):
+                out.append({'type': 'image', 'path': path, 'v': image_version(b),
+                            'alt': str(b.get('alt') or ""), 'title': str(b.get('title') or "")})
         elif kind == 'table':
             out.append({'type': 'table', 'columns': list(b.get('columns') or []),
                         'rows': [list(r) for r in b.get('rows') or [] if isinstance(r, (list, tuple))]})
@@ -233,8 +240,8 @@ def prepare_blocks(blocks: Any, prefix: str = '') -> list[dict]:
     return out
 
 
-def find_raw(blocks: Any, path: str) -> str | None:
-    """The html of the raw block at `path` ('2' or '1-0-3'), or None."""
+def find_image(blocks: Any, path: str) -> dict | None:
+    """The image block at `path` ('2' or '1-0-3'), or None."""
     node: Any = None
     for part in path.split('-'):
         if not part.isdigit() or len(part) > 4 or not isinstance(blocks, list):
@@ -244,9 +251,10 @@ def find_raw(blocks: Any, path: str) -> str | None:
             return None
         node = blocks[i]
         blocks = node.get('blocks')
-    if node is None or node.get('type') != 'raw' or not isinstance(node.get('html'), str):
+    if node is None or node.get('type') != 'image' or node.get('media_type') not in MEDIA_TYPES \
+            or not isinstance(node.get('data'), str):
         return None
-    return node['html']
+    return node
 
 
 # --- exam data (overrides) ---------------------------------------------------------
@@ -512,8 +520,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                            'stored': stored,
                            'current': stored is not None and status.current(
                                stored, sheet.values, defn=exam.check_hash(q, c), code=exam.code_hash),
-                           'plots': [b for b in blocks if b['type'] == 'plot'],
-                           'rest': [b for b in blocks if b['type'] != 'plot']})
+                           'figures': [b for b in blocks if b['type'] == 'image'],
+                           'rest': [b for b in blocks if b['type'] != 'image']})
 
         # the fields on the page: its own, then those its checks read elsewhere
         own = [key(q.id, label) for label in q.labels]
@@ -704,7 +712,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return {overrides.join(qid, 'fields', f.label, 'region'): box(layout, f.region)
                 for qid, q in exam.questions.items() for f in ws.fields(sid, q) if f.region is not None}
 
-    # --- pages, raw blocks, jobs ---
+    # --- pages, evidence images, jobs ---
 
     def page_image(request: Request) -> Response:
         sub, _ = target(request, need_question=False)
@@ -720,16 +728,22 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise HTTPException(404)
         return FileResponse(path, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=600'})
 
-    def raw_block(request: Request) -> Response:
+    def evidence_image(request: Request) -> Response:
         sub, q = target(request)
         row = store.get(sub.id, key(q.id, request.path_params['check']), 'result')
-        html = find_raw((row.body or {}).get('blocks'), request.path_params['path']) \
+        b = find_image((row.body or {}).get('blocks'), request.path_params['path']) \
             if row and isinstance(row.body, dict) else None
-        if html is None:
+        if b is None:
             raise HTTPException(404)
-        # Exam-supplied markup: an opaque origin, no scripts, nothing fetched.
-        return HTMLResponse('<!doctype html><meta charset="utf-8">' + html,
-                            headers={'Content-Security-Policy': RAW_CSP})
+        try:
+            data = base64.b64decode(b['data'], validate=True)
+        except ValueError:
+            raise HTTPException(404) from None
+        # The URL names the data's version: cache it for good; any other version, not at all.
+        fresh = request.query_params.get('v') == image_version(b)
+        return Response(data, media_type=b['media_type'], headers={
+            'Content-Security-Policy': IMAGE_CSP, 'X-Content-Type-Options': 'nosniff',
+            'Cache-Control': 'private, max-age=31536000, immutable' if fresh else 'no-store'})
 
     def job(request: Request) -> Response:
         info = jobs.get(request.path_params['id'])
@@ -1149,7 +1163,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         post('/s/{sub}/{q}/default', to_default),
         post('/s/{sub}/{q}/restore', restore),
         Route('/page/{sub}/{index:int}.jpg', page_image),
-        Route('/raw/{sub}/{q}/{check}/{path}', raw_block),
+        Route('/image/{sub}/{q}/{check}/{path}', evidence_image),
         Route('/jobs/{id}', job),
         Route('/runs', runs_page),
         post('/runs/plan', runs_plan),

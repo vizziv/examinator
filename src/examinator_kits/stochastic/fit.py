@@ -2,7 +2,7 @@
 
 Draw samples from the function under test, check the support, then run a
 goodness-of-fit test against the target. Each helper returns a `Fit`: an
-outcome in the standard vocabulary plus plot data for the grader.
+outcome in the standard vocabulary plus a plot for the grader.
 
 Statistical checks are evidence, not proof. A failed precondition (too few
 samples, values the test cannot use) is undecided (`None`); only a
@@ -17,7 +17,9 @@ from typing import Callable
 import numpy as np
 from scipy import stats
 
-from examinator.std.blocks import MAX_POINTS, Note, Plot, Series
+from examinator.std.blocks import Image, Note
+
+from . import plots
 
 ALPHA = 1e-4          # default per-test cutoff, no multiple-testing correction
 
@@ -31,7 +33,7 @@ class Fit:
     p: float | None            # p-value, if a test ran
     statistic: float | None
     note: str                  # a few words for the grader
-    plot: Plot | None = field(compare=False)   # evidence at a glance; holds arrays, so not compared
+    plot: Image | None = field(compare=False)  # evidence at a glance; not compared
 
     def blocks(self) -> list:
         note = Note(self.note, _TONES.get(self.outcome, 'warn'))
@@ -120,12 +122,11 @@ def _p(p: float) -> str:
     return f"{mantissa}e{int(exponent)}"
 
 
-def _plot(make: Callable, *args, **kwargs) -> Plot | None:
+def _plot(make: Callable, *args, **kwargs) -> Image | None:
     """A plot if one can be drawn; plotting never breaks a check."""
     try:
         with np.errstate(all='ignore'):
-            plot = make(*args, **kwargs)
-        return plot if any(len(s.x) for s in plot.series) else None
+            return make(*args, **kwargs)
     except Exception:
         return None
 
@@ -140,7 +141,7 @@ def support(samples, *, lo=None, hi=None, integer=False, title="") -> Fit:
     """Every sample finite, inside [lo, hi] and (with `integer`) integral."""
     x, bad, example = _values(samples)
     n = len(x) + bad
-    plot = _plot(Plot.hist, x, title=title) if len(x) else None
+    plot = _plot(plots.hist, x, title=title) if len(x) else None
     if n == 0:
         return Fit(None, None, None, "no samples", None)
     off = ~np.isfinite(x)
@@ -164,7 +165,7 @@ def support(samples, *, lo=None, hi=None, integer=False, title="") -> Fit:
 def ks(samples, cdf, *, alpha=ALPHA, title="", min_samples=20) -> Fit:
     """One-sample Kolmogorov-Smirnov against a vectorized CDF."""
     x, problem = _usable(samples, min_samples)
-    plot = _plot(Plot.cdf, x, cdf, title=title)
+    plot = _plot(plots.cdf, x, cdf, title=title)
     if problem:
         return Fit(None, None, None, problem, plot)
     with np.errstate(all='ignore'):
@@ -215,9 +216,9 @@ def chi_square(samples, pmf, *, alpha=ALPHA, title="", min_expected=5.0, min_sam
         problem = f"{int((x < 0).sum())} negative samples"
     if not problem and (x != np.floor(x)).any():
         problem = f"{int((x != np.floor(x)).sum())} non-integer samples"
-    plot = None if problem else _plot(Plot.hist, x, pmf=pmf, title=title)
+    plot = None if problem else _plot(plots.hist, x, pmf=pmf, title=title)
     if problem:
-        return Fit(None, None, None, problem, _plot(Plot.hist, x, title=title) if len(x) else None)
+        return Fit(None, None, None, problem, _plot(plots.hist, x, title=title) if len(x) else None)
     _, observed, expected = _cells(x, pmf, min_expected)
     if len(expected) < 2:
         return Fit(None, None, None, "too few cells for chi-square", plot)
@@ -246,15 +247,6 @@ def _matrix(a) -> np.ndarray | None:
     if arr.ndim != 2 or arr.shape[1] == 0:
         return None
     return arr.astype(float)
-
-
-def _ecdf(name: str, x: np.ndarray) -> Series:
-    x = np.sort(x)
-    y = np.arange(1, len(x) + 1) / len(x)
-    if len(x) > MAX_POINTS:
-        idx = np.unique(np.linspace(0, len(x) - 1, MAX_POINTS).round().astype(int))
-        x, y = x[idx], y[idx]
-    return Series(name, x, y, 'step')
 
 
 def projected_ks(samples, reference, *, projections=16, seed=0, alpha=ALPHA, title="",
@@ -294,7 +286,7 @@ def projected_ks(samples, reference, *, projections=16, seed=0, alpha=ALPHA, tit
     p, stat = float(pvalues[worst]), float(results[worst].statistic)
     axis = worst - len(random)
     where = f"axis {axis}" if axis >= 0 else "random direction"
-    plot = Plot(title, [_ecdf("samples", pa[:, worst]), _ecdf("reference", pb[:, worst])],
-                xlabel=f"projection on {where}", ylabel="CDF")
+    plot = _plot(plots.cdfs, {"samples": pa[:, worst], "reference": pb[:, worst]}, title=title,
+                 xlabel=f"projection on {where}")
     return Fit(_decide(p, alpha / len(directions)), p, stat,
                f"projected KS min p = {_p(p)} ({where}, {len(directions)} directions)", plot)

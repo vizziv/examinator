@@ -1,7 +1,7 @@
 """What a check returns: one proposed grade, and evidence for people.
 
     Result(grade, fields={'1.1': 'correct', '1.2': Judgement('incorrect', expected='3/2')},
-           blocks=[Plot.cdf(...), Details("Samples", Table(...))])
+           blocks=[Image(png), Details("Samples", Table(...))])
 
 `grade` is anything the check's points accept: True/False, a number,
 'correct'/'incorrect'/'blank', None (undecided), or a `Grade` with flags and a

@@ -10,8 +10,7 @@ import numpy as np
 from scipy import stats
 
 from examinator.std import pseudocode
-from examinator.std.blocks import Plot
-from examinator_kits.stochastic import checks
+from examinator_kits.stochastic import checks, plots
 from examinator_kits.stochastic import fit as sampling
 
 from .language import COLLECTIONS as LANGUAGE, draw
@@ -87,8 +86,8 @@ def independence(a: np.ndarray, b: np.ndarray, title: str) -> sampling.Fit:
     if not math.isfinite(p):
         return sampling.Fit(None, None, None, "chi-square did not run", None)
     failed = p < sampling.ALPHA
-    plot = Plot.scatter(a, b, title=title, xlabel="count in first interval",
-                        ylabel="count in second interval") if failed else None
+    plot = plots.scatter(a, b, title=title, xlabel="count in first interval",
+                         ylabel="count in second interval") if failed else None
     return sampling.Fit('incorrect' if failed else 'correct', p, stat, f"independence p = {p:.2g}", plot)
 
 
@@ -120,13 +119,13 @@ def check_process(program: pseudocode.Program) -> checks.Part:
     total = stats.poisson(TOTAL)
 
     # Plots first: CDF overlays for count and location, then histograms of both.
-    part.plots.append(Plot.cdf(counts, total.cdf, title="number of events", xlabel="events"))
+    part.plots.append(plots.cdf(counts, total.cdf, title="number of events", xlabel="events"))
     in_range = part.add("events in [-5, 5]", sampling.support(pooled, lo=LO, hi=HI), plot=False)
     part.add("location", sampling.ks(pooled, location_cdf, title="event locations"))
     part.add("number of events", sampling.chi_square(counts, total.pmf, title="number of events"))
     if len(pooled):
-        part.plots.append(Plot.hist(pooled, bins=40, density=location_density, title="event locations",
-                                    xlabel="t"))
+        part.plots.append(plots.hist(pooled, bins=40, density=location_density, title="event locations",
+                                     xlabel="t"))
     if in_range.outcome != 'correct':
         return part.combine()
 

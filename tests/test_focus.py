@@ -100,12 +100,12 @@ def test_facet_names_are_checked():
         Facet('x', "x", lambda v: [], kind='list')
 
 
-def test_the_table_is_one_query_and_never_loads_plot_blocks(tmp_path):
+def test_the_table_is_one_query_and_never_loads_blocks(tmp_path):
     exam = _facets_exam()
     store = Store(tmp_path / 's.sqlite')
     store.put_submissions([Submission(s, s, '', '') for s in ('s1', 's2', 's3')])
     for s in ('s1', 's2', 's3'):
-        store.write(s, 'q/check', 'result', {'grade': {'value': True}, 'blocks': [{'type': 'plot'}]}, origin='auto')
+        store.write(s, 'q/check', 'result', {'grade': {'value': True}, 'blocks': [{'type': 'image'}]}, origin='auto')
     seen = []
     store._db.set_trace_callback(seen.append)
     focus.values_table(exam, store)

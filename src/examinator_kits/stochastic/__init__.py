@@ -4,6 +4,8 @@
   (`unif`, `coin(p)`, `die(n)` from a chosen start).
 - `fit`: distribution-closeness tests (support, KS, chi-square, projected KS),
   each returning a `Fit` with a plot for graders.
+- `plots`: CDF, histogram and scatter figures of samples against a target,
+  rendered with matplotlib to PNG `Image` blocks.
 - `checks`: drawing samples from a parsed program, deciding which run-time
   failures are undecided, collecting per-part verdicts and turning them into
   a `Result` (plots first, a compact verdict table, details collapsed).

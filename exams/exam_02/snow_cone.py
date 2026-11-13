@@ -10,8 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from examinator.std.blocks import Plot
-from examinator_kits.stochastic import checks
+from examinator_kits.stochastic import checks, plots
 from examinator_kits.stochastic import fit as sampling
 
 from . import samplers
@@ -73,7 +72,7 @@ def judge(program, region: Region) -> checks.Part:
     xy = points(samples)
     if xy is None:
         return part.settle('incorrect', "a sample is not a point [x, y]")
-    scatter = Plot.scatter(xy[:, 0], xy[:, 1], title="snow_cone()", xlabel="x", ylabel="y")
+    scatter = plots.scatter(xy[:, 0], xy[:, 1], title="snow_cone()", xlabel="x", ylabel="y")
     on = np.isfinite(xy).all(axis=1) & region.inside(xy[:, 0], xy[:, 1])
     support = part.add("support", checks.inside(on, xy, scatter))
     if support.outcome != 'correct':

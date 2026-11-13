@@ -307,7 +307,7 @@ def test_q2_recorded_results(exam, pkg):
     tests = rows_of(results['shiny'])
     assert [(name, result) for name, result, _ in tests] == [('huge_constant = 10', 'correct')]   # the default
     for result in results.values():
-        assert result['blocks'][0]['type'] == 'plot'                  # plots first
+        assert result['blocks'][0]['type'] == 'image'                 # plots first
         assert all(b['type'] != 'code' for b in result['blocks'])     # dumps and source only inside details
     # Each check reads its own field only, and 2.2 the constant (at its default).
     assert set(results['check']['reads']) == {'q2/2.1'}
@@ -387,8 +387,8 @@ def test_q7_recorded_results(exam, pkg):
     got, results = both(exam, 'q7', f.Q7)
     assert got == {'7.1': 'correct', '7.2': 'correct'}
     kinds = [b['type'] for b in results['check']['blocks']]
-    assert kinds[0] == 'plot' and 'plot' not in kinds[kinds.index('details'):]      # plots first
-    titles = [b['title'] for b in results['check']['blocks'] if b['type'] == 'plot']
+    assert kinds[0] == 'image' and 'image' not in kinds[kinds.index('details'):]    # plots first
+    titles = [b['title'] for b in results['check']['blocks'] if b['type'] == 'image']
     assert titles[:4] == ["number of events", "event locations", "number of events", "event locations"]
     assert set(results['check']['reads']) == {'q7/7.1'} and set(results['shiny']['reads']) == {'q7/7.2'}
     assert both(exam, 'q7', f.Q7_OFF_BY_ONE)[0] == {'7.1': 'correct', '7.2': 'incorrect'}

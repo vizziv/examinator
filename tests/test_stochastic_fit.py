@@ -1,4 +1,5 @@
 """examinator_kits.stochastic.fit (formerly std.sampling): seeded synthetic samples only."""
+import base64
 import json
 
 import numpy as np
@@ -25,9 +26,8 @@ def check_blocks(fit, tone):
     blocks = [b.to_json() for b in fit.blocks()]
     json.loads(json.dumps(blocks, allow_nan=False))
     assert blocks[-1] == {'type': 'note', 'text': fit.note, 'tone': tone}
-    for block in blocks:
-        for series in block.get('series', []):
-            assert len(series['x']) <= 400 and len(series['y']) <= 400
+    for block in blocks[:-1]:
+        assert block['type'] == 'image' and base64.b64decode(block['data']).startswith(b'\x89PNG')
     return blocks
 
 
@@ -38,8 +38,7 @@ def test_ks_accepts_matching_cdf():
     assert fit.outcome == 'correct' and fit.p > ALPHA
     assert fit.note.startswith("KS p = ")
     blocks = check_blocks(fit, 'good')
-    assert blocks[0]['type'] == 'plot' and blocks[0]['title'] == "T"
-    assert [s['style'] for s in blocks[0]['series']] == ['step', 'line']
+    assert blocks[0]['type'] == 'image' and blocks[0]['title'] == "T"
 
 
 def test_ks_rejects_wrong_cdf():
@@ -79,8 +78,7 @@ def test_ks_huge_values_do_not_raise():
 def test_chi_square_accepts_matching_pmf():
     fit = chi_square(rng().poisson(3.0, 3000), poisson_pmf(3.0))
     assert fit.outcome == 'correct' and fit.p > ALPHA
-    blocks = check_blocks(fit, 'good')
-    assert [s['style'] for s in blocks[0]['series']] == ['bars', 'points']
+    assert len(check_blocks(fit, 'good')) == 2
 
 
 def test_chi_square_rejects_shifted_mean():
@@ -195,8 +193,7 @@ def normals(seed, n=4000, rho=0.0):
 def test_projected_ks_accepts_same_law():
     fit = projected_ks(normals(1), normals(2), title="T")
     assert fit.outcome == 'correct' and fit.p > ALPHA / 18
-    blocks = check_blocks(fit, 'good')
-    assert [s['style'] for s in blocks[0]['series']] == ['step', 'step']
+    assert len(check_blocks(fit, 'good')) == 2
     assert "18 directions" in fit.note
 
 

@@ -92,8 +92,8 @@ Evidence has two parts, both optional:
   'incorrect', 'blank', or none) and optionally the expected answer and a short
   note. Interfaces show this beside the field. "4 of 5 right" is the grade;
   which four is this.
-- **Blocks:** an ordered list of things to show (text, table, code, plot,
-  collapsed details, sandboxed raw HTML).
+- **Blocks:** an ordered list of things to show (text, table, code,
+  collapsed details, images such as plots).
 
 Nothing computes from evidence. It is for people.
 
