@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .defs import Exam, Question, key
-from .status import FIELD_STATES, STATES, Sheet, Status
+from .status import COUNTING, FIELD_STATES, STATES, Sheet, Status
 
 KINDS = ('choice', 'text')
 BLANK = '(blank)'        # the value of a blank answer, for facets that show one
@@ -100,6 +100,15 @@ def grade_value(st: Status) -> str:
     return 'undecided' if text is None else text
 
 
+def state_facet(question: Question, check: str | None = None) -> tuple[str, tuple[str, ...]]:
+    """The state facet of one grid column (a check, or a question with no checks)
+    and its values that do not count yet: what "still to do here" selects."""
+    if not question.checks:
+        return 'state', tuple(s for s in FIELD_STATES if s != 'verified')
+    suffix = f':{check}' if len(question.checks) > 1 else ''
+    return 'state' + suffix, tuple(s for s in STATES if s not in COUNTING)
+
+
 def builtin_facets(question: Question) -> list[Facet]:
     out = []
     several = len(question.checks) > 1
@@ -107,10 +116,11 @@ def builtin_facets(question: Question) -> list[Facet]:
         suffix, named = (f':{c.name}', f' {c.name}') if several else ('', '')
         out.append(Facet('grade' + suffix, 'grade' + named, lambda v, n=c.name: [grade_value(v.status(n))],
                          group='grade', order=GRADES))
-        out.append(Facet('state' + suffix, 'state' + named, lambda v, n=c.name: [v.status(n).state],
-                         group='grade', order=STATES))
+        out.append(Facet(state_facet(question, c.name)[0], 'state' + named,
+                         lambda v, n=c.name: [v.status(n).state], group='grade', order=STATES))
     if not question.checks:
-        out.append(Facet('state', 'state', lambda v: [v.fields_state()], group='grade', order=FIELD_STATES))
+        out.append(Facet(state_facet(question)[0], 'state', lambda v: [v.fields_state()],
+                         group='grade', order=FIELD_STATES))
     for f in question.fields:       # what was read of the printing, say: few values, filterable
         if f.read is not None:
             out.append(Facet(f'field/{f.label}', f.label, lambda v, label=f.label: [shown(v.value(label))],
@@ -257,4 +267,4 @@ def counts(table, selection: Selection, fid: str, submissions: Iterable[str]) ->
 
 __all__ = ['BLANK', 'Facet', 'View', 'active', 'builtin_facets', 'counts', 'describe_facets',
            'facet_id', 'facets', 'focused', 'grade_text', 'grade_value', 'matches', 'shown',
-           'values_table']
+           'state_facet', 'values_table']

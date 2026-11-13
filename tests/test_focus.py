@@ -45,6 +45,20 @@ def test_builtin_facets_agree_with_the_status_rules(env):
     assert not any('/field/' in f for f in ids['a'] + ids['b'])
 
 
+def test_state_facet_names_each_column_and_what_is_still_to_do(env):
+    exam = env[0]
+    ids = {f['id'] for q in focus.describe_facets(exam) for f in q['facets']}
+    for qid, q in exam.questions.items():
+        for check in [c.name for c in q.checks] or [None]:
+            name, todo = focus.state_facet(q, check)
+            assert f'{qid}/{name}' in ids
+            assert 'decided' not in todo and 'graded' not in todo and 'verified' not in todo
+    assert focus.state_facet(exam.questions['a'], 'x') == (
+        'state:x', ('decided_outdated', 'to_decide', 'not_run', 'outdated', 'unverified'))
+    assert focus.state_facet(exam.questions['b'], 'check')[0] == 'state'
+    assert focus.state_facet(exam.questions['p']) == ('state', ('not_read', 'unverified'))
+
+
 def test_table_shape_and_one_submission(env):
     exam, ws, runner = env
     table = focus.values_table(exam, ws.store)

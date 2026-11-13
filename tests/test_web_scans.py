@@ -81,7 +81,8 @@ def check_and_accept(client, token, src):
     plan = client.get(f'/scans/{src}/plan').json()
     wait(client, post(client, token, f'/scans/{src}/propose', {'check': True, 'rev': plan['rev']}).json()['job'])
     plan = client.get(f'/scans/{src}/plan').json()
-    plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'k': 4, 'rev': plan['rev']}).json()['plan']
+    for _ in range(2):          # two quarter turns
+        plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'k': 4, 'rev': plan['rev']}).json()['plan']
     return plan, post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
 
 
@@ -224,46 +225,68 @@ def test_roster_on_the_page_and_who_is_matched(site):
 
 
 def test_drawing_the_name_boxes_for_every_submission(site):
+    """Boxes drawn in the app are exam data: overrides at '@identity/...', on the Exam data page."""
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
     check_and_accept(client, token, src)
     view = client.get('/scans/names').json()
-    assert view['boxes'] == {'boxes': [identity.box_json(f) for f in ws.exam.identity], 'own': False,
-                             'rev': None, 'declared': 2}
+    assert view['boxes']['boxes'] == [identity.box_json(f) for f in ws.exam.identity]
+    assert view['boxes']['root'] == '@identity' and view['boxes']['declared'] == ['name', 'id']
+    assert view['boxes']['revs'] == {}
     wait(client, post(client, token, '/scans/names/read', {}).json()['job'])
     assert identity.unread(ws) == []
     before = {r['sub']: r['crops'] for r in view['rows']}
-    # move the name box: the workspace's own boxes, for every submission; readings under the old box no longer apply
-    moved = [{'name': 'name', 'region': [1, 100, 190, 820, 290], 'roster': 'name'},
-             {'name': 'id', 'region': [1, 100, 330, 600, 410], 'roster': 'id'}]
-    assert client.post('/scans/boxes', json={'boxes': moved, 'rev': None}).status_code == 403
-    r = post(client, token, '/scans/boxes', {'boxes': moved, 'rev': None})
-    assert r.status_code == 200 and r.json()['own'] and r.json()['rev'] == 1
-    assert [b['ask'] for b in r.json()['boxes']] == [f.ask for f in ws.exam.identity]     # kept from the exam's
-    assert post(client, token, '/scans/boxes', {'boxes': moved, 'rev': None}).status_code == 409   # stale
+    # move the name box, for every submission; readings under the old box no longer apply
+    path = '@identity/name/region'
+    assert client.post('/exam/set', json={'path': path, 'value': [1, 100, 190, 820, 290], 'rev': None}).status_code == 403
+    r = post(client, token, '/exam/set', {'path': path, 'value': [1, 100, 190, 820, 290], 'rev': None})
+    assert r.status_code == 200 and r.json()['overridden']
+    rev = r.json()['rev']
+    assert post(client, token, '/exam/set', {'path': path, 'value': [1, 100, 190, 820, 300], 'rev': None}).status_code == 409
     view = client.get('/scans/names').json()
+    assert view['boxes']['revs'] == {path: rev}
+    assert [b['ask'] for b in view['boxes']['boxes']] == [f.ask for f in ws.exam.base_lists['identity']]   # kept
     assert all(r['crops'][0]['box'] != before[r['sub']][0]['box'] for r in view['rows'])
     assert all(r['crops'][1]['box'] == before[r['sub']][1]['box'] for r in view['rows'])
     assert sorted(identity.unread(ws)) == sorted(before)                 # read again ...
     r = post(client, token, '/scans/names/read', {})
     assert r.json()['n'] == 6 and wait(client, r.json()['job'])['state'] == 'done'   # ... with the new box
-    # checked: regions, names, the roster field, how many
-    for bad in ([{'name': 'name', 'region': [1, 500, 100, 400, 200], 'roster': 'name'}],
-                [{'name': 'name', 'region': [9, 1, 1, 2, 2], 'roster': 'name'}],
-                [{'name': 'x', 'region': [1, 1, 1, 2, 2], 'roster': 'phone'}],
-                [{'name': 'x', 'region': [1, 1, 1, 2, 2], 'roster': None}],          # nothing to ask
-                [moved[0], moved[0]], 'name'):
-        assert post(client, token, '/scans/boxes', {'boxes': bad, 'rev': 1}).status_code == 400
-    # a box the exam does not declare asks by its roster field
-    r = post(client, token, '/scans/boxes', {'boxes': [{'name': 'netid', 'region': [1, 10, 10, 300, 60], 'roster': 'email'}],
-                                             'rev': 1}).json()
-    assert r['boxes'][0]['ask'] == identity.ASKS['email'] and [f.name for f in identity.boxes(ws)] == ['netid']
+    # on the Exam data page, with the package's value, and as a line for the package
+    page = client.get('/exam').text
+    assert 'data-path="@identity/name/region"' in page and 'name and ID boxes' in page
+    assert "@identity/name/region: Region(1, " in page
+    # checked: regions; an added box: whole, with a known roster field and something to ask
+    for bad in ({'path': path, 'value': [1, 500, 100, 400, 200]}, {'path': path, 'value': [9, 1, 1, 2, 2]},
+                {'path': '@identity/name/name', 'value': 'x'},
+                {'path': '@identity/x', 'value': {'region': [1, 1, 1, 2, 2], 'ask': "?", 'roster': 'phone'}},
+                {'path': '@identity/x', 'value': {'region': [1, 1, 1, 2, 2], 'roster': 'id'}},
+                {'path': '@identity/name/roster', 'value': 'phone'}, {'path': '@nothing/x', 'value': 1}):
+        assert post(client, token, '/exam/set', {**bad, 'rev': None}).status_code == 400, bad
+    r = post(client, token, '/exam/set', {'path': '@identity/netid', 'rev': None,
+                                          'value': {'region': [1, 10, 10, 300, 60], 'ask': identity.ASKS['email'],
+                                                    'roster': 'email'}})
+    assert r.status_code == 200
+    assert [f.name for f in identity.boxes(ws)] == ['name', 'id', 'netid']
+    # the declared ID box taken away (no region: not used), then everything back to the exam's
+    post(client, token, '/exam/set', {'path': '@identity/id/region', 'value': None, 'rev': None})
+    assert [f.name for f in identity.boxes(ws)] == ['name', 'netid']
+    revs = client.get('/scans/names').json()['boxes']['revs']
+    assert sorted(revs) == ['@identity/id/region', '@identity/name/region', '@identity/netid']
+    for p, rev in revs.items():
+        assert post(client, token, '/exam/clear', {'path': p, 'rev': rev}).status_code == 200
+    assert identity.boxes(ws) == ws.exam.base_lists['identity'] and ws.exam.overrides == {}
     assert 'data-action="names-read"' in client.get('/scans').text
-    # none at all, then back to the exam's
-    assert post(client, token, '/scans/boxes', {'boxes': [], 'rev': 2}).json()['boxes'] == []
+    assert not hasattr(identity, 'set_boxes')
+
+
+def test_no_boxes_left_means_nothing_to_read(site):
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    check_and_accept(client, token, src)
+    for name in ('name', 'id'):
+        post(client, token, '/exam/set', {'path': f'@identity/{name}/region', 'value': None, 'rev': None})
+    assert identity.boxes(ws) == ()
     assert post(client, token, '/scans/names/read', {}).status_code == 400
-    r = post(client, token, '/scans/boxes', {'boxes': None, 'rev': 3}).json()
-    assert not r['own'] and r['rev'] is None and identity.boxes(ws) == ws.exam.identity
 
 
 def test_reading_names_needs_a_model(make_site):

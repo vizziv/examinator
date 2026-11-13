@@ -56,13 +56,14 @@ large, between its neighbours.
 | `W` / `S` | previous / next submission |
 | `Shift+V` | a new submission starts at the page shown (when it is not a first page) |
 | `X` | drop this page (blank or stray) |
-| `R` | turn this submission 180° |
-| `Shift+R` | turn the whole scan 90° (also: mirror, as a button) |
+| `R` | turn the page shown 90° clockwise (twice: 180°) |
+| `Shift+R` | turn its whole submission 90° clockwise |
 | `⌘Z` / `Ctrl+Z` | undo |
 
 Clicking any small page shows it large in the same view. On a page that is
 not a first page, `A` / `D` look at its neighbours and `Shift+V` starts a
-submission there. The scan image itself opens from "full size" under the large page.
+submission there. The whole scan turns (or mirrors) with a button only; each
+turn adds to what the levels above it give (scan, then submission, then page). The scan image itself opens from "full size" under the large page.
 
 A verified first page is your decision: it outranks the every-N guess and any
 landmark reading, and later guesses follow from it. Turn a stack fed in

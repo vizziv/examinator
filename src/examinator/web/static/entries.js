@@ -18,6 +18,7 @@
     if (kind === 'int') return /^\s*-?\d+\s*$/.test(text) ? Number(text) : text;
     if (kind === 'number') return text.trim() !== '' && !isNaN(Number(text)) ? Number(text) : text;
     if (kind === 'choice') return text.split('\n').map(s => s.trim()).filter(Boolean);
+    if (kind === 'item') { try { return JSON.parse(text); } catch (e) { return text; } }   // else the server explains
     if (kind === 'map') {
       const out = {};
       for (const line of text.split('\n')) {

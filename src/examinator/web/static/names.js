@@ -6,7 +6,8 @@
 // email); Enter takes the highlighted person and moves on. Nothing is named until a person
 // says so. Unverified and doubtful submissions come first. "boxes" draws the name and ID
 // boxes on the page, for every submission (rects.js, as regions are drawn on the question
-// page). Also the Roster step's table: everyone on it and the submission they are named for.
+// page), saved as exam data (/exam/set, /exam/clear: listed on the Exam data page, revertible
+// there). Also the Roster step's table: everyone on it and the submission they are named for.
 // The step is shown by scans.js (the 'tab' event).
 (() => {
   const main = $('scans');
@@ -28,8 +29,9 @@
     words: fold(p.name).split(/[^\p{L}\p{N}]+/u).filter(Boolean), ids: [fold(p.id), fold(p.email)].filter(Boolean),
     hay: fold(`${p.name} ${p.id} ${p.email}`)}));
   // People matching every word typed, best first: a word starting a name part, the ID or the
-  // email counts more than one found inside them.
-  function search(text, limit) {
+  // email counts more than one found inside them. Among equal matches, those `later(p)` says
+  // (already named for another submission) come after the rest.
+  function search(text, limit, later = () => false) {
     const q = fold(text).split(/[\s,;<>]+/).filter(Boolean);
     if (!q.length) return limit ? [] : ROSTER;
     const hits = [];
@@ -43,12 +45,13 @@
       if (score > 0) hits.push([score, p]);
     }
     if (!limit) return hits.map(h => h[1]);
-    hits.sort((a, b) => b[0] - a[0] || a[1].name.localeCompare(b[1].name));
+    hits.sort((a, b) => b[0] - a[0] || later(a[1]) - later(b[1]) || a[1].name.localeCompare(b[1].name));
     return hits.slice(0, limit).map(h => h[1]);
   }
   const elsewhere = (key, sub) => (taken[key] || []).filter(s => s !== sub);
 
-  async function load() {
+  // `keep`: keep the box drafts (only the saved boxes are taken); `retake`: take the saved boxes as drafts too.
+  async function load(keep, retake) {
     const r = await request('/scans/names');
     if (!r.ok) { flash('could not load names'); return; }
     view = r.body;
@@ -62,7 +65,8 @@
     const typed = x => (x.candidates.length ? 0 : 1);
     order = order.filter(s => view.byId[s]).concat(fresh.sort((a, b) => typed(a) - typed(b)).map(x => x.sub));
     if (k >= order.length || !known.size) k = first();
-    if (!bx.edit || !bxDirty()) setBoxes(view.boxes);
+    if (keep) setBoxes(view.boxes, true);
+    else if (retake || !bx.edit || !bxDirty()) setBoxes(view.boxes);
     if (want) jump();
     render();
     if (!$('roster-box').hidden) renderRoster();
@@ -128,8 +132,8 @@
     const r = row(), text = pick.value.trim();
     if (!r) return [];
     if (!text) return r.candidates.map(c => ({key: c.key, name: c.name, id: c.id, why: c.why, taken: c.taken}));
-    const found = search(text, SHOWN).map(p => ({key: p.key, name: p.name, id: p.id, email: p.email,
-                                                 taken: elsewhere(p.key, r.sub)[0] || null}));
+    const found = search(text, SHOWN, p => elsewhere(p.key, r.sub).length > 0).map(p => ({key: p.key, name: p.name,
+      id: p.id, email: p.email, taken: elsewhere(p.key, r.sub)[0] || null}));
     return found.length ? found : [{free: text}];       // someone not on the roster: kept as typed
   }
   function renderList() {
@@ -144,7 +148,8 @@
         ...(x.free ? [make('span', {className: 'dim', textContent: 'not on the roster: '}), make('b', {textContent: x.free})]
           : [make('b', {textContent: x.name}), make('span', {className: 'mono', textContent: x.id}),
              x.why ? make('span', {className: 'dim', textContent: x.why}) : '',
-             x.taken ? make('span', {className: 'dim', textContent: `→ ${x.taken}`, title: 'already named for that submission'}) : '']));
+             // still pickable: picking flags both submissions "name twice"
+             x.taken ? tag('bad', `already ${x.taken}`, 'already named for that submission') : '']));
       li.setAttribute('aria-selected', String(j === hi));
       li.addEventListener('mousedown', e => { e.preventDefault(); choose(j); });     // the box keeps the focus
       return li;
@@ -191,7 +196,9 @@
   if (want) want = decodeURIComponent(want);
 
   // --- the name and ID boxes, drawn on the page shown (for every submission) ---
-  const bx = {edit: false, saved: [], drafts: [], rev: null, own: false, declared: 0, sel: 0};
+  // The boxes are exam data: a declared box's region is the override '<root>/<name>/region' (none:
+  // not used), any other box is one override '<root>/<name>' holding all of it.
+  const bx = {edit: false, saved: [], drafts: [], revs: {}, declared: [], base: {}, root: '', asks: {}, sel: 0};
   const clone = b => b.map(x => ({...x, region: [...x.region]}));
   const bxDirty = () => !Rects.same(bx.drafts, bx.saved);
   const boxDirty = x => !Rects.same(x, bx.saved.find(s => s.name === x.name));
@@ -199,8 +206,9 @@
   const cur = () => (bx.edit && curBox() ? curBox().region : null);
   const put = d => { curBox().region = d; };
   const say = (text, bad) => { $('wb-msg').textContent = text || ''; $('wb-msg').classList.toggle('notice', !!bad); };
-  function setBoxes(b) {
-    Object.assign(bx, {saved: clone(b.boxes), drafts: clone(b.boxes), rev: b.rev, own: b.own, declared: b.declared});
+  function setBoxes(b, keep) {
+    Object.assign(bx, {saved: clone(b.boxes), revs: b.revs, declared: b.declared, base: b.base, root: b.root, asks: b.asks});
+    if (!keep) bx.drafts = clone(b.boxes);
     bx.sel = Math.min(bx.sel, Math.max(0, bx.drafts.length - 1));
   }
   const page = (sub, index) => `${ROOT}/page/${encodeURIComponent(sub)}/${index}.jpg`;
@@ -254,25 +262,46 @@
     select(Math.max(0, bx.sel - 1));
   }});
   S.register('names-box-undo', {available: () => bx.edit && bxDirty(), run: () => { bx.drafts = clone(bx.saved); select(Math.min(bx.sel, bx.drafts.length - 1)); }});
-  async function saveBoxes(boxes) {
-    say('…');
-    const res = await request('/scans/boxes', {boxes, rev: bx.rev});
-    if (res.status === 409) {        // keep the drafts; saving again overwrites knowingly
-      bx.rev = (res.body.current || {}).rev ?? null;
-      say('changed elsewhere; save again to overwrite', true);
-      return;
+  // What saving the drafts changes: one override set or cleared per box that differs from the saved.
+  const esc = n => n.replace(/%/g, '%25').replace(/\//g, '%2F');
+  function changes() {
+    const saved = Object.fromEntries(bx.saved.map(x => [x.name, x])), out = [];
+    const drafts = Object.fromEntries(bx.drafts.map(x => [x.name, x]));
+    for (const name of new Set([...Object.keys(saved), ...Object.keys(drafts)])) {
+      const a = saved[name], b = drafts[name];
+      if (a && b && Rects.same(a, b)) continue;
+      if (bx.declared.includes(name)) {         // its region; the package's again: no override
+        const path = `${bx.root}/${esc(name)}/region`, value = b ? b.region : null;
+        out.push(Rects.same(value, bx.base[name]) ? {path, clear: true} : {path, value});
+      } else {
+        const path = `${bx.root}/${esc(name)}`;
+        out.push(b ? {path, value: {region: b.region, ask: b.ask || bx.asks[b.roster], roster: b.roster}} : {path, clear: true});
+      }
     }
-    if (!res.ok) { say(res.body.error || 'failed', true); return; }
-    setBoxes(res.body);
-    order = [];         // the readings no longer apply: read again, doubtful ones first again
-    await load();
-    say(`${boxes ? 'saved' : 'reverted'} · all submissions${res.body.boxes.length && main.dataset.model ? ' · read names to use them' : ''}`);
+    return out.filter(c => !c.clear || c.path in bx.revs);
   }
-  S.register('names-box-save', {available: () => bx.edit && bxDirty(),
-    run: () => saveBoxes(bx.drafts.map(({name, roster, region, ask}) => ({name, roster, region, ...(ask ? {ask} : {})})))});
-  S.register('names-box-revert', {available: () => bx.edit && bx.own, run: () => {
-    if (!confirm(bx.declared ? "Back to the boxes the exam declares, for all submissions?" : "Remove the boxes, for all submissions?")) return;
-    return saveBoxes(null);
+  async function saveBoxes(list, what) {
+    say('…');
+    for (const c of list) {
+      const rev = bx.revs[c.path] ?? null;
+      const res = await request(c.clear ? '/exam/clear' : '/exam/set', c.clear ? {path: c.path, rev} : {path: c.path, value: c.value, rev});
+      if (res.status === 409) {        // keep the drafts, take what is saved now: saving again overwrites knowingly
+        const cur = res.body.current || {};
+        await load(true);
+        say(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}; save again to overwrite`, true);
+        return;
+      }
+      if (!res.ok) { say(res.body.error || 'failed', true); await load(true); return; }
+      if (res.body.rev == null) delete bx.revs[c.path]; else bx.revs[c.path] = res.body.rev;
+    }
+    order = [];         // the readings no longer apply: read again, doubtful ones first again
+    await load(false, true);
+    say(`${what} · all submissions${view.boxes.boxes.length && main.dataset.model ? ' · read names to use them' : ''}`);
+  }
+  S.register('names-box-save', {available: () => bx.edit && bxDirty(), run: () => saveBoxes(changes(), 'saved')});
+  S.register('names-box-revert', {available: () => bx.edit && Object.keys(bx.revs).length > 0, run: () => {
+    if (!confirm(bx.declared.length ? "Back to the boxes the exam declares, for all submissions?" : "Remove the boxes, for all submissions?")) return;
+    return saveBoxes(Object.keys(bx.revs).map(path => ({path, clear: true})), 'reverted');
   }});
   Rects.arrows(() => live() && cur(), put, () => { fill(cur()); drawBoxes(); });
   // dragging: inside a box moves it, a corner resizes it; a click on another box selects it

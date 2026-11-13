@@ -39,6 +39,8 @@ field's region may be unset in code; one grade per check, any number of checks.
   new page (actions within a page already swap parts in place). Getting there
   means the question page's scripts start from a function that can run again
   on swapped-in HTML; no library needed.
+- **Numeric grades in the filter:** the Filter page lists distinct values; a
+  numeric check wants a range instead.
 - **"Work is present" field:** a field a reader fills with whether there is
   work on the page, so a check can give credit for an answer with work. For
   now that credit is a check with no function, decided by a person (Exam 2).
@@ -58,8 +60,6 @@ field's region may be unset in code; one grade per check, any number of checks.
 - Exam 3 declares no landmarks or identity boxes (boxes can now be drawn on
   the Names tab; the scripted fake model has no answers for drawn boxes, so
   "read names" fails there with `--fake`).
-- Drawn name boxes are not on the Exam page's list of changes
-  (`describe_changes`), and have no undo beyond "revert".
 - Picking a person already named for another submission names both (flagged
   "name twice"); it does not offer to move them.
 - No live-model run yet (`compare` untested live).

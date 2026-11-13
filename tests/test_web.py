@@ -98,6 +98,9 @@ def test_grid_lists_every_submission(site):
     assert 'data-q="p" data-col="p" data-s="verified"' in r.text and 'href="/s/s1/p" title="verified"' in r.text
     assert 'data-q="p" data-col="p" data-s="not_read"' in r.text       # s2: not read yet
     assert 'data-s="unverified"' in r.text and 'data-s="not_run"' in r.text
+    # each column's "to do" toggle names its state facet and the states that do not count yet
+    assert 'data-facet="a/state:y" data-todo="decided_outdated to_decide not_run outdated unverified"' in r.text
+    assert 'data-facet="b/state"' in r.text and 'data-facet="p/state" data-todo="not_read unverified"' in r.text
 
 
 def test_question_page_before_and_after_reading(site):

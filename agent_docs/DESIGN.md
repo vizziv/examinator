@@ -467,10 +467,14 @@ submission into `pdfs/`; everything downstream is unchanged.
   stored readings). A length mismatch after confirmation is a flag, not a block.
 - **Orientation**: one of the 8 square symmetries (`pdf/orient.py`: mirror,
   then quarter turns clockwise; `then` composes, `apply` transposes exactly).
-  The plan holds one for the source and optionally one per submission (the
-  submission's wins); per-page orientation would be one more optional field.
-  The page shows sheets turned in the web layer (`/sheet/...?o=`), landmark
-  crops are cut from the turned sheet, and accepting writes pages upright.
+  The plan holds three levels, each added to the one above: the source's
+  (`orient`), a submission's own (entries' `orient`) and a sheet's own
+  (`sheet_orient`); `intake.sheet_orient` is the one place that composes them.
+  Every turn is a quarter turn clockwise per press (four return to the start):
+  R the sheet shown, Shift+R its submission, the whole scan by button only
+  (mirroring too). The page shows sheets turned in the web layer
+  (`/sheet/...?o=`), landmark crops are cut from the turned sheet, and
+  accepting writes pages upright (so name-box crops and question pages are).
 - **Accepting** writes changed submissions (pages or orientation) with
   `pdf/pages.py`: an upright sheet is copied untouched by PDFium; a turned one
   is baked as a new page holding one full-page JPEG (quality 95) shaped like
@@ -497,13 +501,16 @@ submission into `pdfs/`; everything downstream is unchanged.
     and last name). The library names no field beyond those three.
   - **Drawn boxes**: the Names tab's "boxes" (B) draws them on a submission's
     page, inside its print area, with the question page's rectangle editor
-    (`static/rects.js`, shared with `regions.js`). Saved for every submission as
-    the workspace setting `'identity'` (`identity.set_boxes`, with a revision),
-    which replaces the exam's boxes until reverted; `identity.boxes(ws)` is what
-    reading, proposals and the pages use. A drawn box keeps the declared box's
-    `ask` of the same name, else asks by its roster field (`identity.ASKS`).
-    A setting, not a definition override: overrides address question values,
-    and the boxes are the exam's.
+    (`static/rects.js`, shared with `regions.js`). They are exam data, saved
+    for every submission through `/exam/set` and `/exam/clear` like a field's
+    region (`core/overrides.py`, the exam-level list `@identity`, see
+    `Exam.LISTS`): a declared box's region is `@identity/<name>/region` (none:
+    the box is not used; also its `ask` and `roster`), a box the package does
+    not declare is one override `@identity/<name>` holding all of it (clearing
+    it takes it away). They show on the Exam data page and its change list,
+    with revisions, conflicts and revert. A box added in the app asks by its
+    roster field (`identity.ASKS`). `identity.boxes(ws)` (the live boxes with a
+    region) is what reading, proposals and the pages use.
   - **Reading**: per written submission and box, through the model, memoised
     per box (region and question), scan window and cover pages. Stored as the
     row `(submission, 'identity', '')`, `{'fields', 'basis'}` (history like
@@ -520,7 +527,7 @@ submission into `pdfs/`; everything downstream is unchanged.
     order-insensitive token similarity, accents, case and punctuation folded)
     with a reason, and gives a doubt: `agree`, `id`, `name`, `disagree`,
     `nobody`, `unread`. A person already picked elsewhere is flagged, not
-    dropped. Computed on read, cached by reading revision and roster.
+    dropped, and comes after the others among equal scores. Computed on read, cached by reading revision and roster.
   - **Picking**: every submission is named by its pick `(submission, 'who', '')`
     (`{'name', 'id', 'email', 'key'}`), written by a person against the
     revision they saw. One programmatic way in, for PDFs handed in already
@@ -535,9 +542,9 @@ submission into `pdfs/`; everything downstream is unchanged.
     crops, or without boxes the first page's top (or whole). The picker
     filters the roster as you type (a word starting a name part, ID or email
     first, then anywhere); Enter picks the highlighted person and moves on;
-    while empty it lists the proposals. A person picked elsewhere is shown
-    dimmed with that submission and may still be picked (both are then
-    flagged "name twice"). It also lists roster entries with no exam.
+    while empty it lists the proposals. A person picked elsewhere is tagged
+    "already s0003" (a problem pill), listed after the others among equal
+    matches, and may still be picked (both are then flagged "name twice"). It also lists roster entries with no exam.
 - A pre-split PDF that came in sideways could be fixed by adding it as a
   source of one submission (`length` = its pages), at the cost of a new id.
 

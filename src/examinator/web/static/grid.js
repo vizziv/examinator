@@ -29,8 +29,9 @@
     if (!n) { sum.textContent = 'filter'; sum.title = 'the filter: open the filter page'; return; }
     const labels = {};
     for (const q of (data ? data.questions : [])) for (const f of q.facets) labels[f.id] = `${q.id} ${f.label}`;
+    const todo = new Set(toggles.filter(isOn).map(b => b.dataset.facet));
     const parts = Object.entries(sel).map(([fid, want]) =>
-      `${labels[fid] || fid}: ${Array.isArray(want) ? want.join(' | ') : `“${want}”`}`);
+      `${labels[fid] || fid}: ${todo.has(fid) ? 'to do' : Array.isArray(want) ? want.join(' | ') : `“${want}”`}`);
     sum.textContent = `filter (${n}): ${parts.join(' · ')}`;
     sum.title = parts.join('\n');
   }
@@ -40,6 +41,22 @@
     const wrap = document.getElementById('grid-wrap'), first = document.querySelector('#grid thead th');
     document.body.style.setProperty('--page-max', wrap.offsetWidth + 'px');
     if (first) document.getElementById('grid').style.setProperty('--name-left', first.offsetWidth + 'px');
+  }
+
+  // A column's "to do" toggle is the filter on its state facet: exactly the states that do
+  // not count yet. It shows on whenever the filter says that, however it was set.
+  const toggles = [...document.querySelectorAll('#grid thead button.todo')];
+  const todoOf = b => b.dataset.todo.split(' ');
+  function isOn(b) {
+    const want = sel[b.dataset.facet], todo = todoOf(b);
+    return Array.isArray(want) && want.length === todo.length && todo.every(v => want.includes(v));
+  }
+  function marks() {
+    for (const b of toggles) {
+      const on = isOn(b);
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on);
+    }
   }
 
   function apply() {
@@ -68,6 +85,7 @@
     }
     document.getElementById('shown').textContent = `${visible.length} / ${rows.length}`;
     summary();
+    marks();
     measure();
     try {
       sessionStorage.setItem('order', JSON.stringify(visible.map(r => r.dataset.id)));
@@ -85,6 +103,13 @@
   Actions.register('clear-filter', {available: () => Focus.size(sel) > 0, run: () => { sel = {}; Focus.save(sel); apply(); }});
   Actions.register('search', {run: () => { text.focus(); text.select(); }});
   document.querySelector('#grid thead').addEventListener('click', e => {
+    const b = e.target.closest('button.todo');
+    if (b) {
+      if (isOn(b)) delete sel[b.dataset.facet]; else sel[b.dataset.facet] = todoOf(b);
+      Focus.save(sel);
+      load().then(apply);
+      return;
+    }
     const th = e.target.closest('th');
     if (!th) return;
     const index = th.cellIndex;
@@ -93,13 +118,16 @@
     apply();
   });
   // Follow the filter set elsewhere (another tab, or the filter page and back).
-  async function refresh() {
-    sel = Focus.load();
+  async function load() {
     if (Focus.size(sel) && !data) {
       // Until the values arrive, the server's rendering (if a link carried the filter) stands.
       const r = await request('/focus/values');
       if (r.ok) data = r.body; else flash('filter: ' + (r.body.error || 'failed to load'));
     }
+  }
+  async function refresh() {
+    sel = Focus.load();
+    await load();
     apply();
   }
   // --- a keyboard cursor: the arrows or W A S D move it, Enter or V opens the cell; coming

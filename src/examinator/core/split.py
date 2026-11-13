@@ -7,7 +7,11 @@ sheets before the first start belong to no submission.
 
     {'length': L, 'anchor': a, 'checked': bool,
      'entries': [{'start': i, 'confirmed': bool, 'id': str | None, 'orient': {...}?}],
-     'dropped': [i, ...], 'readings': {'i': position | None}, 'orient': {...}}
+     'dropped': [i, ...], 'readings': {'i': position | None}, 'orient': {...},
+     'sheet_orient': {'i': {...}}?}
+
+Orientation (`core.intake.sheet_orient`) is the source's `orient`, plus an
+entry's own, plus a sheet's own; here it is only carried along.
 
 A submission is expected to be `length` sheets. A *reading* says which position
 (0-based, within its submission) a sheet is, from the exam's landmarks; it is

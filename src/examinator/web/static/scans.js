@@ -215,11 +215,11 @@
     run: () => edit('cut', {sheet: peek})});
   S.register('split-drop', {available: () => !done() && !plan.dropped.includes(focus()),
     run: () => edit('drop', {sheet: focus()})});
-  S.register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: () => edit('turn', {k})});
-  S.register('split-turn-source', {run: async () => {
-    const r = await edit('turn_source');
-    if (r && r.ok) say(LANDMARKS && MODEL ? 'turned: read pages again' : 'turned');
-  }});
+  // Turning, a quarter turn clockwise each time: the page shown, its submission, or (a button only) the whole scan.
+  const turned = r => { if (r && r.ok) say(LANDMARKS && MODEL ? 'turned: read pages again' : 'turned'); };
+  S.register('split-turn-page', {available: () => !done(), run: async () => turned(await edit('turn_page', {sheet: focus()}))});
+  S.register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: async () => turned(await edit('turn', {k}))});
+  S.register('split-turn-source', {run: async () => turned(await edit('turn_source'))});
   S.register('split-mirror', {run: () => edit('flip_source')});
   S.register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {})});
   S.register('split-guess', {run: async () => {
@@ -277,7 +277,8 @@
   function badges(e) {
     const [cls, text, title] = STATE[e.state];
     return [e.verified ? tag('', 'verified', 'its first page is verified') : tag('unv', 'unverified', 'its first page is a guess'),
-            tag(cls, text, title), ...e.doubts.map(d => tag('bad', d)), e.own ? tag('', 'turned') : ''];
+            tag(cls, text, title), ...e.doubts.map(d => tag('bad', d)),
+            e.own || e.pages.some(i => plan.turned.includes(i)) ? tag('', 'turned', 'turned apart from the whole scan') : ''];
   }
   // The neighbours in the step view: a click looks at that page.
   for (const [id, d] of [['st-a', -1], ['st-c', 1]]) {

@@ -194,7 +194,8 @@ def written(tmp_path):
     model = synth.fake_model(root)
     one, _ = intake.add_source(ws, paths[0])
     art = intake.reguess(ws, one.id, model=model)
-    art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')
+    for _ in range(2):                  # one exam upside down: two quarter turns
+        art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')
     intake.accept(ws, one.id)
     two, _ = intake.add_source(ws, paths[1])
     art = intake.plan(ws, two.id)
@@ -260,7 +261,11 @@ def test_picks_confirm_flag_twice_and_name_submissions(written):
     with pytest.raises(Conflict):                   # someone else picked meanwhile
         identity.set_who(ws, 's0007', gray['key'], author='t', expect_rev=None)
     rows = {r['sub']: r for r in identity.overview(ws)['rows']}
-    assert rows['s0004']['candidates'][0]['taken'] == 's0007'               # flagged, still first
+    # Gray (by the ID) and Devon (by the name) match equally well: Gray is already picked for
+    # s0007, so is offered after Devon, flagged
+    cands = rows['s0004']['candidates']
+    assert cands[0]['score'] == cands[1]['score'] and cands[0]['name'] == "Devon Fakely" and cands[0]['taken'] is None
+    assert cands[1]['key'] == gray['key'] and cands[1]['taken'] == 's0007'
     identity.set_who(ws, 's0004', identity.label(gray), author='t')
     rows = {r['sub']: r for r in identity.overview(ws)['rows']}
     assert rows['s0004']['who']['twice'] and rows['s0007']['who']['twice']

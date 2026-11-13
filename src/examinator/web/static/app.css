@@ -212,6 +212,12 @@ details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var
 #grid th:hover { color: var(--link); }
 #grid thead th:first-child { border-top-left-radius: 6px; }
 #grid thead th:last-child { border-top-right-radius: 6px; }
+/* a column's "to do" toggle: the filter on its state; quiet until hovered or on */
+#grid th button.todo { border: 0; background: none; color: var(--muted); font: inherit; font-size: 10px; line-height: 1;
+  padding: 1px 2px; margin: 0 -3px 0 1px; border-radius: 3px; opacity: .25; cursor: pointer; vertical-align: 1px; }
+#grid th:hover button.todo { opacity: .7; }
+#grid th button.todo:hover { opacity: 1; color: var(--unv-ink); background: var(--unv-bg); }
+#grid th button.todo.on { opacity: 1; color: var(--unv-ink); background: var(--unv-bg); }
 #grid th[data-dir=asc]::after { content: ' ▲'; font-size: 9px; color: var(--link); }
 #grid th[data-dir=desc]::after { content: ' ▼'; font-size: 9px; color: var(--link); }
 #grid td { padding: 0; border-bottom: 1px solid var(--line); height: 21px; line-height: 20px; white-space: nowrap;
@@ -576,7 +582,7 @@ figure.sh .acts button { background: var(--panel); border: 1px solid var(--line-
 #w-list li { display: flex; gap: 8px; align-items: baseline; padding: 1px 8px; cursor: pointer; white-space: nowrap; overflow: hidden; }
 #w-list li .mono { font-size: 12.5px; }
 #w-list li.on { background: var(--accent2-soft); }
-#w-list li.taken { opacity: .55; }
+#w-list li .tag { margin-left: auto; }
 #w-list li:hover { background: var(--accent-soft); }
 .wrows { border-collapse: collapse; width: 100%; font-size: 13px; }
 .wrows td { padding: 1px 6px; border-top: 1px solid var(--line); }

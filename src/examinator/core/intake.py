@@ -5,8 +5,10 @@
 
 A source's split plan (`core.split`) is the row `(source id, '', 'split')`,
 so edits keep history and carry revisions like everything else a grader edits.
-The plan also says how the sheets are turned: an orientation for the whole
-source, and optionally one per submission (`core.split` entries' `orient`).
+The plan also says how the sheets are turned, at three levels, each a turn (and
+mirror) added to the one above it: the whole source (`orient`), a submission
+(`core.split` entries' `orient`) and one sheet (`sheet_orient`, by sheet). A sheet
+is shown as `sheet_orient(body, i)` composes them; nothing else resolves it.
 Pages are written upright; after intake nothing knows orientation existed.
 
 Accepting a plan writes the PDFs whose sheets (or orientation) changed and
@@ -35,7 +37,7 @@ from PIL import Image
 
 from ..pdf import pages as pdf_pages, render
 from ..pdf.layout import Layout
-from ..pdf.orient import HALF, MIRROR, QUARTER, Orient
+from ..pdf.orient import IDENTITY, MIRROR, QUARTER, Orient
 from . import identity, reading, split
 from .defs import Landmark, digest
 from .reading import normalize
@@ -148,15 +150,21 @@ def plan(ws, id: str) -> Row | None:
     return ws.store.get(id, '', PLAN)
 
 
+SHEET_ORIENT = 'sheet_orient'      # in a plan: {'sheet': orientation} added to a sheet's submission's
+
+
 def sheet_orient(body: Mapping, sheet: int) -> Orient:
-    """The orientation of one sheet: its submission's own, else the source's."""
+    """The orientation of one sheet: the source's, then its submission's own, then
+    the sheet's own, each added to the one before (a level without its own adds nothing)."""
     entry = None
     for e in body.get('entries') or ():
         if e['start'] <= sheet:
             entry = e
+    o = Orient.from_json(body.get('orient'))
     if entry is not None and entry.get('orient') is not None:
-        return Orient.from_json(entry['orient'])
-    return Orient.from_json(body.get('orient'))
+        o = o.then(Orient.from_json(entry['orient']))
+    own = (body.get(SHEET_ORIENT) or {}).get(str(sheet))
+    return o.then(Orient.from_json(own)) if own is not None else o
 
 
 def page(ws, src: Source, sheet: int, body: Mapping | None = None) -> Image.Image:
@@ -243,8 +251,10 @@ def reguess(ws, id: str, *, model=None, length: int | None = None, fresh: bool =
     cur = plan(ws, id)
     if cur is None or fresh or not cur.body:
         body = split.new_plan(src.pages, length or expected_length(ws), anchor=anchor(ws))
-        if cur is not None:
+        if cur is not None:         # a fresh guess keeps how the sheets are turned
             body['orient'] = (cur.body or {}).get('orient', body['orient'])
+            if (cur.body or {}).get(SHEET_ORIENT):
+                body[SHEET_ORIENT] = cur.body[SHEET_ORIENT]
     else:
         body = dict(cur.body)
     resized = bool(length) and int(length) != body['length']
@@ -279,8 +289,9 @@ _SPLIT_EDITS: dict[str, Callable[..., dict]] = {
     'restore': lambda body, n, k, sheet, delta: split.restore(body, sheet, n),
 }
 _SOURCE_TURNS = {'turn_source': QUARTER, 'flip_source': MIRROR}
-_ENTRY_TURNS = {'turn': HALF, 'flip': MIRROR, 'upright': None}
-EDITS = (*_SPLIT_EDITS, *_SOURCE_TURNS, *_ENTRY_TURNS)
+_ENTRY_TURNS = {'turn': QUARTER, 'flip': MIRROR, 'upright': None}
+_SHEET_TURNS = {'turn_page': QUARTER}
+EDITS = (*_SPLIT_EDITS, *_SOURCE_TURNS, *_ENTRY_TURNS, *_SHEET_TURNS)
 
 
 def _step(delta: Any) -> int:
@@ -306,10 +317,8 @@ def _turn_entry(body: Mapping, n: int, k: Any, by: Orient | None) -> dict:
     """Submission `k` turned `by` more, or back to the source's orientation (None)."""
     body = copy.deepcopy(dict(body))
     e = body['entries'][split.entry_index(body, k)]
-    base = Orient.from_json(body.get('orient'))
-    mine = Orient.from_json(e['orient']) if e.get('orient') is not None else base
-    new = base if by is None else mine.then(by)
-    if new == base:
+    new = IDENTITY if by is None else Orient.from_json(e.get('orient')).then(by)
+    if new.identity:
         e.pop('orient', None)
     else:
         e['orient'] = new.to_json()
@@ -317,11 +326,29 @@ def _turn_entry(body: Mapping, n: int, k: Any, by: Orient | None) -> dict:
     return body
 
 
+def _turn_sheet(body: Mapping, n: int, sheet: Any, by: Orient) -> dict:
+    """One sheet turned `by` more than its submission."""
+    if isinstance(sheet, bool) or not isinstance(sheet, int) or not 0 <= sheet < n:
+        raise ValueError("no such page")
+    body = copy.deepcopy(dict(body))
+    own = body.setdefault(SHEET_ORIENT, {})
+    new = Orient.from_json(own.get(str(sheet))).then(by)
+    if new.identity:
+        own.pop(str(sheet), None)
+    else:
+        own[str(sheet)] = new.to_json()
+    if not own:
+        body.pop(SHEET_ORIENT)
+    _clear_readings(body, [sheet])
+    return body
+
+
 def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | None = None,
          sheet: int | None = None, delta: int | None = None) -> Row:
     """One person's edit of a plan (see `core.split`), against the revision they saw.
-    Orientation: `turn_source` (a quarter turn), `flip_source` (mirror), and for
-    submission `k`: `turn` (a half turn), `flip`, `upright` (back to the source's)."""
+    Orientation, each a quarter turn clockwise more: `turn_source` (the whole
+    source; `flip_source` mirrors it), `turn` (submission `k`; `flip` mirrors it,
+    `upright` drops its own), `turn_page` (one `sheet`)."""
     src = source(ws, id)
     cur = plan(ws, id)
     if cur is None:
@@ -335,6 +362,8 @@ def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | 
         body = _turn_source(cur.body, n, _SOURCE_TURNS[op])
     elif op in _ENTRY_TURNS:
         body = _turn_entry(cur.body, n, k, _ENTRY_TURNS[op])
+    elif op in _SHEET_TURNS:
+        body = _turn_sheet(cur.body, n, sheet, _SHEET_TURNS[op])
     else:
         raise ValueError("unknown edit")
     body.pop(UNDONE, None)

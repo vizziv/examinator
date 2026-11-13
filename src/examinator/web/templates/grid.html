@@ -26,7 +26,7 @@
 <table id="grid"{% if not rows %} hidden{% endif %}>
 <thead><tr>
 <th data-sort="text">id</th><th data-sort="text">name</th>
-{% for c in columns %}<th data-sort="cell" data-col="{{ c.name }}" title="{{ c.q.title }}">{{ c.name }}</th>
+{% for c in columns %}<th data-sort="cell" data-col="{{ c.name }}" title="{{ c.q.title }}">{{ c.name }}<button type="button" class="todo" data-facet="{{ c.facet }}" data-todo="{{ c.todo }}" title="only submissions still to do here" aria-pressed="false">•</button></th>
 {% endfor %}
 <th data-sort="num">total</th>
 </tr></thead>

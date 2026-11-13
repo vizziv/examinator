@@ -99,14 +99,67 @@ def test_orientation_source_and_submission(stacked):
     one, _ = intake.add_source(ws, paths[0])
     art = intake.reguess(ws, one.id, model=model)
     art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')   # one exam upside down
+    assert intake.sheet_orient(art.body, 17) == QUARTER
+    art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')   # a quarter turn a press
     assert intake.sheet_orient(art.body, 17) == HALF and intake.sheet_orient(art.body, 21) == Orient()
     art = intake.reguess(ws, one.id, model=model)
     assert split.doubts(art.body, one.pages)[4] == []
-    # the submission's own orientation wins over the source's
+    # the submission's own turn adds to the source's
     art = intake.edit(ws, one.id, 'turn_source', expect_rev=art.rev, author='t')
-    assert intake.sheet_orient(art.body, 17) == HALF and intake.sheet_orient(art.body, 21) == QUARTER
+    assert intake.sheet_orient(art.body, 17) == Orient(3) and intake.sheet_orient(art.body, 21) == QUARTER
     art = intake.edit(ws, one.id, 'upright', k=4, expect_rev=art.rev, author='t')
     assert intake.sheet_orient(art.body, 17) == QUARTER
+
+
+def test_orientation_resolves_source_then_submission_then_sheet(stacked):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    step = lambda op, **kw: intake.edit(ws, one.id, op, expect_rev=intake.plan(ws, one.id).rev, author='t', **kw)
+    at = lambda i: intake.sheet_orient(intake.plan(ws, one.id).body, i)
+    step('turn_page', sheet=9)                      # one sheet: only it
+    assert at(9) == QUARTER and at(8) == at(10) == Orient()
+    step('turn', k=2)                               # its submission (sheets 8..11): adds to the sheet's
+    assert at(9) == HALF and at(8) == at(11) == QUARTER and at(12) == Orient()
+    step('turn_source')                             # the whole scan: adds to everything
+    assert at(9) == Orient(3) and at(8) == HALF and at(0) == at(12) == QUARTER
+    for _ in range(3):                              # four presses on a sheet come back to the start
+        step('turn_page', sheet=9)
+    assert at(9) == HALF and 'sheet_orient' not in intake.plan(ws, one.id).body
+    step('flip_source')
+    assert at(0) == Orient(1).then(Orient(0, True)) and at(8) == Orient(1).then(Orient(0, True)).then(QUARTER)
+    # a turned sheet's reading is stale; others are kept
+    art = intake.plan(ws, one.id)
+    ws.store.write(one.id, '', intake.PLAN, {**art.body, 'readings': {'3': 2, '5': 1}}, origin='auto',
+                   expect_rev=art.rev)
+    step('turn_page', sheet=3)
+    assert intake.plan(ws, one.id).body['readings'] == {'5': 1}
+    with pytest.raises(ValueError):
+        step('turn_page', sheet=one.pages)
+    # undo takes back one turn at a time
+    intake.undo(ws, one.id, expect_rev=intake.plan(ws, one.id).rev)
+    assert at(3) == at(0)
+    # a fresh guess keeps the sheets' own turns
+    step('turn_page', sheet=5)
+    intake.reguess(ws, one.id, fresh=True)
+    assert at(5) == at(0).then(QUARTER)
+
+
+def test_a_turned_page_is_written_upright(stacked):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    intake.accept(ws, one.id)
+    sid = 's0002'
+    before = pdfium.PdfDocument(str(ws.pdfs / f'{sid}.pdf'))
+    sizes = [tuple(round(v) for v in page.get_size()) for page in before]
+    before.close()
+    intake.edit(ws, one.id, 'turn_page', sheet=5, expect_rev=intake.plan(ws, one.id).rev, author='t')
+    assert intake.state(ws, one.id) == ['made', 'changed', 'made', 'made', 'made', 'made']
+    assert intake.accept(ws, one.id)['rewritten'] == [sid]
+    assert ws.store.made()[sid].orient['sheets'][1] == QUARTER.to_json()
+    doc = pdfium.PdfDocument(str(ws.pdfs / f'{sid}.pdf'))
+    after = [tuple(round(v) for v in page.get_size()) for page in doc]
+    doc.close()
+    assert after[1] == sizes[1][::-1] and after[0] == sizes[0] and after[2:] == sizes[2:]
 
 
 def test_landmark_crops_come_from_the_oriented_page(tmp_path):

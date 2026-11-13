@@ -9,6 +9,14 @@ An override replaces one plain-data value of a question, addressed by a path:
     <question>/checks/<name>/<field>[/<key>...]    a check's configuration: a field of its
                                                function's dataclass, then mapping keys (a key)
 
+and the exam's own lists of named items (`Exam.LISTS`, e.g. the identity boxes),
+under '@' and the list's name:
+
+    @<list>/<name>/<field>                     a declared item's field (a region set to
+                                               none, where the item allows it: not used)
+    @<list>/<name>                             an item the package does not declare, whole:
+                                               {field: value}; clearing it takes it away
+
 Segments are separated by '/'; inside a segment '%' is written '%25' and '/'
 is written '%2F'. Labels with dots ('4.1.a') need no escaping.
 
@@ -38,7 +46,8 @@ from typing import Any, Mapping
 from .defs import Check, Exam, Field, Question, Region, digest
 from .store import ANY, Store
 
-KINDS = ('region', 'text', 'int', 'number', 'bool', 'pages', 'map', 'choice')
+KINDS = ('region', 'text', 'int', 'number', 'bool', 'pages', 'map', 'choice', 'item')
+LIST = '@'          # the first segment of a path into one of the exam's lists: '@identity'
 
 _SCALARS = {'str': 'text', 'int': 'int', 'float': 'number', 'bool': 'bool', 'Region': 'region'}
 
@@ -134,6 +143,19 @@ def _config_leaves(obj: Any):
             yield (f.name,), kind, nullable
 
 
+def _item_fields(cls: type) -> dict[str, tuple[str, bool, bool]]:
+    """{field: (kind, nullable, required)} for the plain data of a list item's class."""
+    out = {}
+    for f in dataclasses.fields(cls):
+        if not f.init or f.name.startswith('_') or f.metadata.get('override') is False:
+            continue
+        kind, nullable = _annotation(f.type)
+        if kind is not None:
+            missing = f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+            out[f.name] = (kind, nullable, missing)
+    return out
+
+
 def _map_leaves(prefix: tuple[str, ...], m: Mapping):
     for k, v in m.items():
         if not isinstance(k, str):
@@ -165,13 +187,17 @@ def _leaves(q: Question) -> dict[tuple[str, ...], tuple[str, bool]]:
 
 # --- getting and replacing along a path ----------------------------------------------
 
+def _named(x: Any) -> bool:
+    return dataclasses.is_dataclass(x) and not isinstance(x, type) and isinstance(getattr(x, 'name', None), str)
+
+
 def _child(node: Any, seg: str):
     """(child, rebuild): the value under one segment, and a function returning a
     copy of `node` with that value replaced."""
     if isinstance(node, Check):
         child, rebuild = _child(node.fn, seg)
         return child, lambda v: dataclasses.replace(node, fn=rebuild(v))
-    if isinstance(node, tuple) and node and all(isinstance(x, (Field, Check)) for x in node):
+    if isinstance(node, tuple) and node and all(isinstance(x, (Field, Check)) or _named(x) for x in node):
         for i, x in enumerate(node):
             if (x.label if isinstance(x, Field) else x.name) == seg:
                 return x, lambda v, i=i: node[:i] + (v,) + node[i + 1:]
@@ -284,21 +310,82 @@ def _check(exam: Exam, q: Question, segs: tuple[str, ...], kind: str, nullable: 
     raise ValueError(f"unknown kind {kind!r}")
 
 
-def _locate(exam: Exam, path: str) -> tuple[Question, tuple[str, ...], str, bool]:
+@dataclass(frozen=True)
+class _Loc:
+    """Where a path points: `root` (a question id, or '@<list>'), its object as the
+    package built it (`base`: a question, or the list's tuple), the segments under it,
+    and what kind of value is there. `cls`: a list's item class."""
+    root: str
+    base: Any
+    segs: tuple[str, ...]
+    kind: str
+    nullable: bool
+    cls: type | None = None
+
+
+def _locate(exam: Exam, path: str) -> _Loc:
     segs = split(path)
+    if segs[0].startswith(LIST):
+        name = segs[0][len(LIST):]
+        cls = exam.LISTS.get(name)
+        if cls is None:
+            raise ValueError(f"no exam list {name!r}")
+        base = exam.base_lists.get(name, ())
+        if len(segs) < 2 or not segs[1]:
+            raise ValueError(f"{path} is not an editable value")
+        declared = any(x.name == segs[1] for x in base)
+        if not declared and len(segs) == 2:
+            return _Loc(segs[0], base, segs[1:], 'item', False, cls)
+        info = _item_fields(cls).get(segs[2]) if declared and len(segs) == 3 else None
+        if info is None:
+            raise ValueError(f"{path} is not an editable value")
+        return _Loc(segs[0], base, segs[1:], info[0], info[1], cls)
     q = exam.base.get(segs[0])
     if q is None:
         raise ValueError(f"no question {segs[0]!r}")
     info = _leaves(q).get(segs[1:])
     if info is None:
         raise ValueError(f"{path} is not an editable value")
-    return q, segs[1:], *info
+    return _Loc(segs[0], q, segs[1:], *info)
+
+
+def _check_item(exam: Exam, loc: _Loc, value: Any) -> dict:
+    """A whole item the package does not declare, in normal JSON form, or `ValueError`."""
+    fields = _item_fields(loc.cls)
+    if not isinstance(value, Mapping) or any(k not in fields for k in value):
+        raise ValueError(f"an item is an object with {', '.join(fields)}")
+    out = {}
+    for k, (kind, nullable, required) in fields.items():
+        if k not in value:
+            if required:
+                raise ValueError(f"{k} is required")
+            continue
+        out[k] = _check(exam, None, (k,), kind, nullable, value[k])
+    _make(loc, out)            # what the class itself checks
+    return out
+
+
+def _make(loc: _Loc, value: Mapping) -> Any:
+    fields = _item_fields(loc.cls)
+    return loc.cls(name=loc.segs[0], **{k: _from_json(fields[k][0], v, None) for k, v in value.items()})
+
+
+def _value(exam: Exam, loc: _Loc, value: Any) -> Any:
+    """`value` checked for where `loc` points, in normal JSON form; `ValueError` if it does not fit."""
+    if loc.kind == 'item':
+        return _check_item(exam, loc, value)
+    value = _check(exam, loc.base, loc.segs, loc.kind, loc.nullable, value)
+    if loc.cls is not None:                 # a declared item's field: what the class itself checks
+        try:
+            _set(loc.base, loc.segs, _from_json(loc.kind, value, _get(loc.base, loc.segs)))
+        except TypeError as e:
+            raise ValueError(str(e)) from None
+    return value
 
 
 def validate(exam: Exam, path: str, value: Any) -> Any:
     """The value in normal JSON form if `path` is editable and `value` fits it; else `ValueError`."""
-    q, segs, kind, nullable = _locate(exam, path)
-    return _check(exam, q, segs, kind, nullable, value)
+    return _value(exam, _locate(exam, path), value)
 
 
 # --- listing and applying ------------------------------------------------------------
@@ -309,8 +396,14 @@ def _base_of(exam: Exam) -> dict[str, Question]:
     return exam.base
 
 
+def _item_json(cls: type, x: Any) -> dict:
+    return {k: _to_json(kind, getattr(x, k)) for k, (kind, _, _) in _item_fields(cls).items()}
+
+
 def editable(exam: Exam, question: str | None = None) -> list[Entry]:
-    """Every editable value (of one question, or of all), with base and current values."""
+    """Every editable value (of one question or exam list ('@<list>'), or of all),
+    with base and current values. An item the package does not declare is listed
+    while an override adds it (its base is None)."""
     out = []
     for qid, base in _base_of(exam).items():
         if question is not None and qid != question:
@@ -324,6 +417,21 @@ def editable(exam: Exam, question: str | None = None) -> list[Entry]:
                 current = _get(base, segs)
             out.append(Entry(path, kind, _to_json(kind, _get(base, segs)), _to_json(kind, current),
                              path in exam.overrides, nullable))
+    for name, cls in exam.LISTS.items():
+        root = LIST + name
+        if question is not None and root != question:
+            continue
+        live = {x.name: x for x in getattr(exam, name)}
+        for x in exam.base_lists.get(name, ()):
+            now = live.get(x.name, x)
+            for k, (kind, nullable, _) in _item_fields(cls).items():
+                path = join(root, x.name, k)
+                out.append(Entry(path, kind, _to_json(kind, getattr(x, k)), _to_json(kind, getattr(now, k)),
+                                 path in exam.overrides, nullable))
+        for path, value in exam.overrides.items():
+            segs = split(path)
+            if segs[0] == root and len(segs) == 2:
+                out.append(Entry(path, 'item', None, value, True))
     return out
 
 
@@ -334,18 +442,24 @@ def apply(exam: Exam, mapping: Mapping[str, Any]) -> list[Skipped]:
     path no longer exists or whose value no longer fits is skipped and reported."""
     base = _base_of(exam)
     skipped, applied = [], {}
-    live = dict(base)
+    live: dict[str, Any] = dict(base)
+    live.update({LIST + name: tuple(exam.base_lists.get(name, ())) for name in exam.LISTS})
     for path in sorted(mapping):
         try:
-            orig, segs, kind, nullable = _locate(exam, path)
-            value = _check(exam, orig, segs, kind, nullable, mapping[path])
-            live[orig.id] = _set(live[orig.id], segs, _from_json(kind, value, _get(orig, segs)))
+            loc = _locate(exam, path)
+            value = _value(exam, loc, mapping[path])
+            if loc.kind == 'item':          # added after the declared ones, by name
+                live[loc.root] = live[loc.root] + (_make(loc, value),)
+            else:
+                live[loc.root] = _set(live[loc.root], loc.segs, _from_json(loc.kind, value, _get(loc.base, loc.segs)))
             applied[path] = value
         except (ValueError, KeyError, TypeError) as e:
             skipped.append(Skipped(path, str(e)))
     exam.overrides = applied     # first: a worker never runs older data than a stage's recorded hash
     for qid, q in live.items():
-        if exam.questions.get(qid) is not q:
+        if qid.startswith(LIST):
+            setattr(exam, qid[len(LIST):], q)
+        elif exam.questions.get(qid) is not q:
             exam.questions[qid] = q
     return skipped
 
@@ -399,9 +513,13 @@ def clear(exam: Exam, store: Store, path: str, *, expect_rev: Any = ANY) -> Chan
 
 # --- showing changes as Python ----------------------------------------------------------
 
-def _python(kind: str, value: Any) -> str:
+def _python(kind: str, value: Any, cls: type | None = None, name: str = '') -> str:
     if value is None:
         return 'None'
+    if kind == 'item':
+        fields = _item_fields(cls)
+        args = [repr(name)] + [f'{k}={_python(fields[k][0], v)}' for k, v in value.items()]
+        return f"{cls.__name__}({', '.join(args)})"
     if kind == 'region':
         return f"Region({', '.join(str(v) for v in value)})"
     if kind == 'pages':
@@ -416,10 +534,13 @@ def describe_changes(exam: Exam, store: Store) -> list[str]:
     maintains the exam package."""
     lines = []
     for path, o in store.overrides().items():
+        loc = None
         try:
-            q, segs, kind, _ = _locate(exam, path)
-            old = _python(kind, _to_json(kind, _get(q, segs)))
+            loc = _locate(exam, path)
+            kind = loc.kind
+            old = "(added)" if kind == 'item' else _python(kind, _to_json(kind, _get(loc.base, loc.segs)))
         except (ValueError, KeyError):
             kind, old = '', "(no longer in the package)"
-        lines.append(f"{path}: {old} -> {_python(kind, o.value)}  ({o.author or '?'}, {o.updated_at[:10]})")
+        new = _python(kind, o.value, loc.cls, loc.segs[0]) if loc is not None else repr(o.value)
+        lines.append(f"{path}: {old} -> {new}  ({o.author or '?'}, {o.updated_at[:10]})")
     return lines

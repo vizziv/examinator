@@ -111,11 +111,16 @@ class Identity:
     handwriting. `roster` names the roster field the reading is compared with
     ('name', 'id' or 'email'); None shows the reading without comparing it.
     Several boxes may share a roster field (first and last name): their
-    readings are joined."""
-    name: str
-    region: Region
+    readings are joined. A box whose `region` is None is not used (one taken
+    away in the app: `core.overrides`)."""
+    name: str = field(metadata={'override': False})     # its address
+    region: Region | None
     ask: str
     roster: str | None = None
+
+    def __post_init__(self):
+        if self.roster not in (None, *ROSTER_FIELDS):
+            raise ValueError(f"identity {self.name!r}: roster must be one of {ROSTER_FIELDS} or None")
 
 
 # --- grades -------------------------------------------------------------------
@@ -301,7 +306,13 @@ def split_key(k: str) -> tuple[str, str]:
 
 
 class Exam:
-    """One printed exam: its pages and its questions."""
+    """One printed exam: its pages and its questions.
+
+    `LISTS` are the exam-level lists of named items (frozen dataclasses with a
+    `name`) that overrides may edit, add to and take from (`core.overrides`,
+    paths '@<list>/...'); `base_lists` keeps them as the package built them."""
+
+    LISTS: Mapping[str, type] = {'identity': Identity}
 
     def __init__(self, id: str, *, title: str = "", pages: int,
                  scan_window: Sequence[int] = (0, 0, 1000, 1000), cover_pages: int = 0,
@@ -319,15 +330,14 @@ class Exam:
             names = [x.name for x in items]
             if len(set(names)) != len(names):
                 raise ValueError(f"duplicate {what} names {names}")
-        for f in self.identity:
-            if f.roster not in (None, *ROSTER_FIELDS):
-                raise ValueError(f"identity {f.name!r}: roster must be one of {ROSTER_FIELDS} or None")
         for what, items in (('landmark', self.landmarks), ('identity', self.identity)):
             for x in items:
-                check_region(x.region, pages, f"{what} {x.name!r}")
+                if x.region is not None or what != 'identity':
+                    check_region(x.region, pages, f"{what} {x.name!r}")
         self.questions: dict[str, Question] = {}   # live: base definitions plus overrides
         self.base: dict[str, Question] = {}        # as built by the package
         self.overrides: dict[str, Any] = {}        # applied overrides {path: JSON value}; see `overrides`
+        self.base_lists: dict[str, tuple] = {name: getattr(self, name) for name in self.LISTS}
         self.path: Path | None = None           # set by `load_exam`
         self.code_hash: str = ''
         self._hashes: dict = {}
@@ -343,8 +353,8 @@ class Exam:
         holds fields (the exam's printing, say, which other questions read)."""
         if id in self.questions:
             raise ValueError(f"duplicate question {id!r}")
-        if not id or '/' in id:
-            raise ValueError(f"question id {id!r}: no '/' and not empty")
+        if not id or '/' in id or id.startswith('@'):
+            raise ValueError(f"question id {id!r}: no '/', not starting with '@', and not empty")
         if check is not None and checks is not None:
             raise ValueError(f"{id}: give `check` or `checks`, not both")
         named = {'check': check} if check is not None else dict(checks or {})

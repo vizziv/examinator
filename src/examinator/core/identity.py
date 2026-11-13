@@ -2,13 +2,12 @@
 students write who they are, ranked proposals, and the person a grader picks.
 
     setting 'people'                  the roster: [{'name', 'id', 'email', 'key'}]
-    setting 'identity'                the workspace's own boxes, drawn in the app (else the exam's):
-                                      {'boxes': [{'name', 'region', 'ask', 'roster'}], 'rev'}
     row (sub, '', 'identity')    what the model read: {'fields': {box: text | None}, 'basis': {box: digest}}
     row (sub, '', 'who')         the pick: a person's, or from an ID in the file name: {'name', 'id', 'email', 'key'?}
 
-The boxes are the exam's `Identity` declarations, or the workspace's own
-(`boxes`, `set_boxes`): drawn by a grader for every submission. Reading is memoised per
+The boxes are the exam's `Identity` declarations as the overrides leave them
+(`core.overrides`, paths '@identity/...'): a box drawn or moved in the app, for
+every submission, is exam data like a field's region. Reading is memoised per
 submission, box and scan layout, so reading again is free. Proposals are
 computed, never stored: `propose(readings, roster)` is a pure function from
 what was read (by roster field) to ranked candidates with a reason and a
@@ -27,9 +26,10 @@ import unicodedata
 from typing import Any, Iterable, Mapping, Sequence
 
 from ..pdf.orient import Orient
-from .defs import ROSTER_FIELDS, Identity, Region, digest
+from .defs import Identity, digest
 from .reading import ask, basis, memo_key
-from .store import ANY, Conflict, Row, Submission
+from . import overrides
+from .store import ANY, Row, Submission
 
 WHO = 'who'
 READ = 'identity'
@@ -208,82 +208,34 @@ def by_file(ws) -> int:
 
 # --- the boxes ------------------------------------------------------------------------
 
-BOXES = 'identity'      # the setting holding the workspace's own boxes
-MAX_BOXES = 8
-# What to ask about a box drawn in the app, by the roster field it is compared with.
+LIST = 'identity'       # the exam's list of boxes (`Exam.LISTS`), overridden at '@identity/...'
+# What to ask about a box added in the app, by the roster field it is compared with.
 ASKS = {'name': "the student's full name", 'id': "the student ID number",
         'email': "the student's email address"}
 
 
 def boxes(ws) -> tuple[Identity, ...]:
-    """The identity boxes in use: the workspace's own, else the exam's."""
-    own = ws.store.setting(BOXES)
-    if own is None:
-        return tuple(ws.exam.identity)
-    return tuple(Identity(b['name'], Region(*b['region']), b['ask'], b.get('roster')) for b in own['boxes'])
+    """The identity boxes in use: the exam's, as overridden; a box whose region
+    was taken away is not used."""
+    return tuple(f for f in ws.exam.identity if f.region is not None)
 
 
 def box_json(f: Identity) -> dict:
     r = f.region
-    return {'name': f.name, 'region': [r.page, r.left, r.top, r.right, r.bottom], 'ask': f.ask, 'roster': f.roster}
+    return {'name': f.name, 'region': None if r is None else [r.page, r.left, r.top, r.right, r.bottom],
+            'ask': f.ask, 'roster': f.roster}
 
 
 def boxes_state(ws) -> dict:
-    """The boxes in use as JSON, whether they are the workspace's own, and its revision
-    (None: the exam's are in use)."""
-    own = ws.store.setting(BOXES)
-    return {'boxes': [box_json(f) for f in boxes(ws)], 'own': own is not None,
-            'rev': own['rev'] if own is not None else None, 'declared': len(ws.exam.identity)}
-
-
-def _box(ws, item: Any) -> dict:
-    """One box from the page, checked: {'name', 'region', 'roster', 'ask'?}. A box
-    without `ask` keeps the exam's box of that name's, else asks by its roster field."""
-    if not isinstance(item, Mapping):
-        raise ValueError("a box is {name, region, roster}")
-    name = item.get('name')
-    if not isinstance(name, str) or not name.strip() or len(name) > 40:
-        raise ValueError("a box needs a short name")
-    roster = item.get('roster')
-    if roster is not None and roster not in ROSTER_FIELDS:
-        raise ValueError(f"roster must be one of {ROSTER_FIELDS} or null")
-    region = item.get('region')
-    ok = isinstance(region, (list, tuple)) and len(region) == 5 and all(
-        isinstance(v, int) and not isinstance(v, bool) for v in region)
-    if not ok:
-        raise ValueError("a region is [page, left, top, right, bottom]")
-    page, left, top, right, bottom = region
-    if not 1 <= page <= ws.exam.pages:
-        raise ValueError(f"page {page} is not in 1..{ws.exam.pages}")
-    if not (0 <= left < right <= 1000 and 0 <= top < bottom <= 1000):
-        raise ValueError("a region needs 0 <= left < right <= 1000 and 0 <= top < bottom <= 1000")
-    ask = item.get('ask')
-    if ask is None:
-        declared = next((f for f in ws.exam.identity if f.name == name.strip()), None)
-        ask = declared.ask if declared else ASKS.get(roster)
-    if not isinstance(ask, str) or not ask.strip() or len(ask) > 300:
-        raise ValueError("a box needs what to ask about it")
-    return {'name': name.strip(), 'region': list(region), 'ask': ask, 'roster': roster}
-
-
-def set_boxes(ws, items: Sequence | None, *, expect_rev: Any = ANY) -> dict:
-    """The workspace's own identity boxes, for every submission (None: back to the
-    exam's). Readings under the old boxes no longer apply (`readings`), so the
-    boxes are read again. `expect_rev`: the revision the page saw (None: the
-    exam's boxes were in use). Raises `ValueError` or `Conflict`."""
-    own = ws.store.setting(BOXES)
-    if expect_rev is not ANY and expect_rev != (own['rev'] if own is not None else None):
-        raise Conflict("the name boxes were changed elsewhere")
-    if items is None:
-        ws.store.delete_setting(BOXES)
-        return boxes_state(ws)
-    if not isinstance(items, (list, tuple)) or len(items) > MAX_BOXES:
-        raise ValueError(f"expected a list of at most {MAX_BOXES} boxes")
-    out = [_box(ws, x) for x in items]
-    if len({b['name'] for b in out}) != len(out):
-        raise ValueError("two boxes have the same name")
-    ws.store.set_setting(BOXES, {'boxes': out, 'rev': (own['rev'] + 1) if own is not None else 1})
-    return boxes_state(ws)
+    """The boxes for the page's editor: those in use, the names the exam declares (a
+    declared box is edited at '@identity/<name>/region', any other is one override
+    '@identity/<name>') with their regions as declared, the revision of each override
+    on them, and what to ask about a box added, by its roster field."""
+    root = overrides.LIST + LIST
+    revs = {p: o.rev for p, o in ws.store.overrides().items() if overrides.split(p)[0] == root}
+    declared = ws.exam.base_lists[LIST]
+    return {'boxes': [box_json(f) for f in boxes(ws)], 'root': root, 'declared': [f.name for f in declared],
+            'base': {f.name: box_json(f)['region'] for f in declared}, 'revs': revs, 'asks': ASKS}
 
 
 # --- reading the boxes ----------------------------------------------------------------
@@ -600,8 +552,10 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
                 blank = r is not None and len(got) == len(fields) and not (r.body or {}).get('failed')
                 prop = {'doubt': 'nobody' if any(got.values()) else 'empty' if blank else 'unread', 'candidates': []}
             cache[ck] = prop
-        prop = {'doubt': prop['doubt'],
-                'candidates': [{**c, 'taken': other(c['key'], sid)} for c in prop['candidates']]}
+        cands = [{**c, 'taken': other(c['key'], sid)} for c in prop['candidates']]
+        # among equal scores, people already picked for another submission come last (still offered)
+        cands.sort(key=lambda c: (-c['score'], c['taken'] is not None))
+        prop = {'doubt': prop['doubt'], 'candidates': cands}
         pick = picks.get(sid)
         body = pick.body if pick is not None and isinstance(pick.body, dict) else None
         twice = bool(body and body.get('key') and len(taken.get(body['key'], ())) > 1)

@@ -294,6 +294,8 @@ def show_value(kind: str, value: Any) -> str:
         return ' '.join(str(v) for v in value)
     if kind == 'number':
         return f'{value:g}'
+    if kind == 'item':
+        return json.dumps(value)
     return str(value)
 
 
@@ -304,7 +306,7 @@ def entry_view(e: overrides.Entry, revs: dict, label: str | None = None) -> dict
             'text': text, 'base_text': show_value(e.kind, e.base), 'overridden': e.overridden,
             'stored': e.path in revs, 'nullable': e.nullable, 'rev': revs.get(e.path, ''),
             'long': e.kind == 'text' and (len(text) > LONG_TEXT or text.count('\n') > 2),
-            'area': e.kind in ('map', 'choice') or (e.kind == 'text' and (len(text) > 50 or '\n' in text)),
+            'area': e.kind in ('map', 'choice', 'item') or (e.kind == 'text' and (len(text) > 50 or '\n' in text)),
             'rows': min(max(text.count('\n') + 2, 2), 24)}
 
 
@@ -421,11 +423,15 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def grid_page(request: Request) -> Response:
         columns = []
+
+        def todo(q, check=None) -> dict:      # the column's state facet, and its values still to do
+            name, values = focus.state_facet(q, check)
+            return {'facet': f'{q.id}/{name}', 'todo': ' '.join(values)}
         for q in exam.questions.values():
             for c in q.checks:
-                columns.append({'q': q, 'name': q.column(c.name), 'counts': c.points.counts})
+                columns.append({'q': q, 'name': q.column(c.name), 'counts': c.points.counts, **todo(q, c.name)})
             if not q.checks:        # no checks: the column shows how its fields stand
-                columns.append({'q': q, 'name': q.id, 'counts': False})
+                columns.append({'q': q, 'name': q.id, 'counts': False, **todo(q)})
         sel = selection(request.query_params.get('focus'))
         table = values() if sel else {}
         rows, started = [], False
@@ -895,7 +901,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         by_q: dict[str, list] = {}
         for e in overrides.editable(exam):
             by_q.setdefault(overrides.split(e.path)[0], []).append(entry_view(e, revs))
-        questions = [{'id': qid, 'title': getattr(exam.questions.get(qid), 'title', ''), 'entries': items}
+        lists = {overrides.LIST + identity.LIST: "name and ID boxes"}
+        questions = [{'id': qid, 'title': lists.get(qid) or getattr(exam.questions.get(qid), 'title', ''), 'entries': items}
                      for qid, items in by_q.items()]
         skipped = []
         for path, o in stored.items():
@@ -986,6 +993,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return {'id': src.id, 'name': src.name, 'n': n, 'rev': art.rev, 'length': body['length'],
                 'checked': bool(body.get('checked')) and bool(body.get('readings')), 'failed': body.get('failed', 0), 'o': so.code, 'orient': so.label(),
                 'sheet_o': [intake.sheet_orient(body, i).code for i in range(n)],
+                'turned': sorted(int(i) for i in body.get(intake.SHEET_ORIENT) or {}),
                 'cover': cover, 'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
                 'readings': {i: (None if r is None else 'cover' if r < cover else f'p.{r - cover + 1}')
                              for i, r in split.readings(body).items()},
@@ -1138,17 +1146,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         view['roster'] = len(identity.people(ws))
         return JSONResponse(view)
 
-    def scans_boxes(request, data):
-        """The name and ID boxes for every submission: `boxes` [{name, region, roster}],
-        or null to go back to the exam's."""
-        rev = _rev(data)
-        try:
-            with lock:
-                return identity.set_boxes(ws, data.get('boxes'), expect_rev=rev)
-        except Conflict as e:
-            e.current = identity.boxes_state(ws)
-            raise
-
     def scans_names_read(request, data):
         if not have_model():
             raise Bad("model unavailable")
@@ -1229,7 +1226,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         post('/scans/who', scans_who),
         Route('/scans/names', scans_names),
         post('/scans/names/read', scans_names_read),
-        post('/scans/boxes', scans_boxes),
         Route('/scans/{src}/plan', scans_plan),
         post('/scans/{src}/edit', scans_edit),
         post('/scans/{src}/propose', scans_propose),
