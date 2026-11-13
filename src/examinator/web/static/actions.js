@@ -164,7 +164,7 @@ const Actions = (() => {
   }, true);
   for (const type of ['mousedown', 'click', 'dblclick']) {
     addEventListener(type, e => {
-      if (e.detail > 1 && acting(e.target) && !typing(e.target)) {
+      if (e.detail > 1 && acting(e.target) && !e.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {     // a double click in text selects a word
         e.preventDefault();
         e.stopImmediatePropagation();
       }

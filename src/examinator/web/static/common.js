@@ -41,7 +41,7 @@ const Changes = (() => {
   }
   function busy(d) {
     long += d;
-    if (window.Actions) Actions.enable(document);
+    if (typeof Actions !== 'undefined') Actions.enable(document);     // a top-level const, not on window
   }
   function send(subject, path, body, {done, redraw, long: isLong} = {}) {
     body = JSON.parse(JSON.stringify(body));
