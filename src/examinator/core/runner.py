@@ -6,7 +6,9 @@ or more of these.
     decision      decide, clear (a person)
 
 A read writes only values no person verified (unless told to), and a read that
-yields the same text changes nothing: same revision, still verified. A compute
+yields the same text changes nothing: same revision, still verified. A value a
+reader wrote records what it was read from (`sources`); when that differs from
+what the reader would read now, the value needs reading again (`Value.stale`). A compute
 runs outside any transaction and is published only if every field it read is
 still at the revision it read. A check that times out, crashes or cannot decide
 is stored as an undecided result: never "incorrect". Writes by people carry
@@ -18,7 +20,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Mapping, Protocol, Sequence
 
 from .context import BadOutput, CheckContext, ReadContext, Unavailable
-from .defs import DEFAULT, Exam, Field, Grade, Question, has_marker, key, one_line
+from .defs import DEFAULT, Exam, Field, Grade, Question, digest, has_marker, key, one_line
 from .isolate import CheckTimeout, Pool, PoolClosed
 from .result import Undecided, settle, undecided
 from .status import Decision, Sheet, Stored, Value, current
@@ -108,6 +110,42 @@ def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields:
     return out
 
 
+def sources(ws: Workspace, submission: str, q: Question, fields: Sequence[Field], *,
+            layout: Any = None) -> dict[str, str]:
+    """What reading each of `fields` (a question's, with this submission's regions)
+    looks at, as a key: the reader's memo key when it has one (`Ask.memo_key`: its
+    definition, the region, the print area), else the reader, the region and the
+    question's pages; and which scanned sheets those pages are, turned how. A read
+    records it with the value it writes."""
+    layout = layout if layout is not None else ws.layout(submission)
+    made = ws.store.made_of(submission)
+    pages = None
+    out = {}
+    for f in fields:
+        reader = q.reader_of(f.label)
+        if reader is None:
+            continue
+        if f.region is not None:
+            on: tuple[int, ...] = (f.region.page,)
+        else:
+            on = pages = pages if pages is not None else ws.selected_pages(submission, q)
+        memo_key = getattr(reader, 'memo_key', None)
+        what = memo_key(q.id, f, layout) if callable(memo_key) else {
+            'read': reader, 'region': f.region, 'pages': on, 'layout': list(layout.print_area)}
+        out[f.label] = digest({'what': what, 'sheets': [sheet(made, p) for p in on]})
+    return out
+
+
+def sheet(made: Any, page: int) -> list | None:
+    """The scanned sheet a page of a submission intake made is, and its turn (None:
+    a PDF handed in split)."""
+    if made is None:
+        return None
+    i, turns = page - 1, (made.orient or {}).get('sheets') or ()
+    return [made.source, made.pages[i] if 0 <= i < len(made.pages) else None,
+            turns[i] if 0 <= i < len(turns) else None]
+
+
 def try_check(exam: Exam, qid: str, check: str, values: Mapping[str, str]) -> dict:
     """Run one check in-process on given values (`{'question/label': text}`; a
     field left out is not read, or at its default) and return its result as it would be stored:
@@ -190,6 +228,7 @@ class Runner:
                 out('blocked', "model unavailable")
                 continue
             try:
+                src = sources(self.ws, submission, q, targets)
                 got = read_group(self.ws, submission, resolved, reader, targets, self._services, fresh=fresh)
             except Exception as e:
                 out('failed', structural(e))
@@ -201,12 +240,12 @@ class Runner:
                     continue
                 text = got[f.label] if q.multiline(f.label) else one_line(got[f.label])
                 vouched = bool(callable(vouches) and vouches(f, text))
-                if not self._put_read(submission, qid, f.label, text, vouched, include_protected):
+                if not self._put_read(submission, qid, f.label, text, vouched, src.get(f.label), include_protected):
                     lost.append(f.label)
             out('discarded', f"changed meanwhile: {', '.join(lost)}") if lost else out('done')
         return outs
 
-    def _put_read(self, submission, qid, label, text, vouched, include_protected) -> bool:
+    def _put_read(self, submission, qid, label, text, vouched, source, include_protected) -> bool:
         k = key(qid, label)
         row = self.store.get(submission, k, 'value')
         cur = Value.of(row) if row is not None else None
@@ -214,14 +253,14 @@ class Runner:
             return True
         verified = 'reader' if vouched and not has_marker(text) else None
         try:
-            if cur is not None and cur.text == text:       # the same value: nothing moves
-                if cur.verified == 'person' or cur.verified == verified:
+            if cur is not None and cur.text == text:       # the same value: same revision (where it was read from may be new)
+                if cur.verified == 'person':
                     return True
-                self.store.write(submission, k, 'value', replace(cur, verified=verified, by=None).body(),
+                self.store.write(submission, k, 'value', replace(cur, verified=verified, by=None, source=source).body(),
                                  origin='auto', expect_rev=cur.rev, keep_rev=True)
             else:
-                self.store.write(submission, k, 'value', Value(text, 0, verified).body(), origin='auto',
-                                 expect_rev=cur.rev if cur else None)
+                self.store.write(submission, k, 'value', Value(text, 0, verified, source=source).body(),
+                                 origin='auto', expect_rev=cur.rev if cur else None)
         except Conflict:
             return False
         return True
