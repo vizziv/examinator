@@ -5,7 +5,8 @@
     GET  /focus/values              facet values for all submissions (?sub=: one), JSON
     GET  /s/{sub}/{q}               question page
     POST /s/{sub}/{q}/{action}      save unverify decide clear read check pages region restore
-    POST /s/{sub}/layout            per-submission layout override
+    POST /s/{sub}/layout            per-submission layout override (cover pages)
+    POST /s/{sub}/print-area        the print area: this submission's, its scan's, or the workspace's
     GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
     GET  /raw/{sub}/{q}/{check}/{path}   one evidence 'raw' block, sandboxed
     GET  /jobs/{id}                 background job state
@@ -572,6 +573,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         qids = list(exam.questions)
         i = qids.index(q.id)
         over = store.get(sub.id, '', 'layout')
+        print_area = print_levels(sub.id)
         revs = {p: o.rev for p, o in store.overrides().items()}
         entries = overrides.editable(exam, q.id)
         regions = []
@@ -597,7 +599,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             scans=scans, history=history[:60], count=count, keyed=keyed,
             can_read=bool(readers_), off=bool(readers_) and not have_model(),
             pages=pages, note=note, pages_default=q.pages, layout=layout,
-            layout_over=over.body if over else None, regions=regions,
+            layout_over=over.body if over else None, regions=regions, print_area=print_area,
             first_page=(q.pages or (1,))[0], ids=[s.id for s in store.submissions()],
             prev_q=qids[i - 1] if i else None, next_q=qids[i + 1] if i + 1 < len(qids) else None)
 
@@ -727,11 +729,63 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return {'job': refresh(sub.id, q.id)}
 
     def set_layout(request, data):
+        """This submission's cover pages (empty: the default); its print area too, if sent."""
         sub, _ = target(request, need_question=False)
         cover = data.get('cover_pages')
         cover = None if cover in (None, '') else _int(cover, "cover pages", 0, 99)
-        ws.set_layout(sub.id, cover_pages=cover, scan_window=_window(data.get('print_area')),
-                      author=who(request))
+        if 'print_area' in data:
+            window = _window(data.get('print_area'))
+        else:
+            kept = store.get(sub.id, '', 'layout')
+            window = (kept.body or {}).get('scan_window') if kept else None
+        ws.set_layout(sub.id, cover_pages=cover, scan_window=window, author=who(request))
+
+    def print_levels(sid: str) -> dict:
+        """The print area at each level, for the region editor: this submission's own,
+        its source scan's, the workspace's (else the package's)."""
+        own = store.get(sid, '', 'layout')
+        source = ws.source_of(sid)
+        row = store.get(source, '', 'print_area') if source else None
+        return {'own': ((own.body or {}).get('scan_window') if own else None) or None,
+                'own_rev': own.rev if own else None,
+                'source': source, 'scan': list(ws.source_window(source) or ()) or None,
+                'scan_rev': row.rev if row else None,
+                'all': list(ws.scan_window), 'package': list(exam.scan_window),
+                'window': list(ws.layout(sid).window)}
+
+    def set_print_area(request, data):
+        """The print area at one level: 'own' (this submission), 'scan' (every submission
+        from its source scan) or 'all' (the workspace). A null value drops that level.
+        Changes no value; the crops beside the fields come back redrawn."""
+        sub, _ = target(request, need_question=False)
+        level = data.get('level')
+        window = _window(data.get('value'))
+        if level == 'own':
+            cur = store.get(sub.id, '', 'layout')
+            cover = (cur.body or {}).get('cover_pages') if cur else None
+            ws.set_layout(sub.id, cover_pages=cover, scan_window=window, author=who(request),
+                          expect_rev=_rev(data))
+        elif level == 'scan':
+            source = ws.source_of(sub.id)
+            if source is None:
+                raise Bad("this submission was not split from a scan")
+            ws.set_source_window(source, window, author=who(request), expect_rev=_rev(data))
+        elif level == 'all':
+            if window is None:
+                ws.clear_scan_window()
+            else:
+                ws.set_defaults(scan_window=window)
+        else:
+            raise Bad("level: expected own, scan or all")
+        layout = ws.layout(sub.id)
+        boxes = {}
+        for qid, q in exam.questions.items():
+            for f in q.fields:
+                r = ws.region(sub.id, q, f.label)
+                if r is not None:
+                    boxes[overrides.join(qid, 'fields', f.label, 'region')] = ','.join(
+                        f'{v:.4f}' for v in layout.box(r, exam.crop_pad))
+        return {'print_area': print_levels(sub.id), 'boxes': boxes}
 
     # --- pages, raw blocks, jobs ---
 
@@ -936,15 +990,18 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'readings': {i: (None if r is None else 'cover' if r < cover else f'p.{r - cover + 1}')
                              for i, r in split.readings(body).items()},
                 'removed': intake.removed(ws, src.id), 'cursor': split.cursor(body),
-                'undo': intake.can_undo(ws, src.id)}
+                'undo': intake.can_undo(ws, src.id), 'idboxes': idboxes(src.id)}
 
     def box(layout: Layout, region) -> str:
         return ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad))
 
+    def idboxes(source: str | None) -> list[dict]:
+        """Where the identity boxes are on a sheet of a source (the plan adds cover sheets)."""
+        layout = Layout(0, ws.window_for_source(source))
+        return [{'name': f.name, 'offset': f.region.page - 1, 'box': box(layout, f.region)} for f in exam.identity]
+
     def scans_page(request: Request) -> Response:
-        # where the identity boxes are on a sheet of a source (the plan adds cover sheets)
-        boxes = [{'name': f.name, 'offset': f.region.page - 1, 'box': box(Layout(0, ws.scan_window), f.region)}
-                 for f in exam.identity]
+        boxes = idboxes(None)
         made = store.made()
         sources = store.sources()
         # per scan, what the workflow strip counts: first pages to verify, submissions to write
@@ -1126,6 +1183,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         Route('/focus/values', focus_values),
         Route('/s/{sub}/{q}', question_page),
         post('/s/{sub}/layout', set_layout),
+        post('/s/{sub}/print-area', set_print_area),
         post('/s/{sub}/{q}/save', save),
         post('/s/{sub}/{q}/unverify', unverify),
         post('/s/{sub}/{q}/decide', decide),

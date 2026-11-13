@@ -447,6 +447,25 @@ form.entry.k-region input[type=text], form.entry.k-pages input[type=text] { flex
 .rh { position: absolute; width: 9px; height: 9px; background: var(--panel); border: 2px solid var(--rc); }
 .rh.nw { left: 0; top: 0; cursor: nwse-resize; } .rh.se { right: 0; bottom: 0; cursor: nwse-resize; }
 .rh.ne { right: 0; top: 0; cursor: nesw-resize; } .rh.sw { left: 0; bottom: 0; cursor: nesw-resize; }
+/* the print area: where the printed page sits on the sheet, the boundary regions live in (primary accent);
+   its edges (.pe) straddle the outline, to drag */
+#rg-pa-btns, #rg-region-btns { display: contents; }
+#scan.editing { overflow-x: hidden; }
+#rg #rg-w, #rg #rg-h { width: 4.6em; }
+.parea { position: absolute; z-index: 2; pointer-events: none; box-sizing: border-box;
+  outline: 2px solid var(--accent); outline-offset: -1px; }
+.parea.dirty { outline-style: dashed; }
+.parea.sel { outline-width: 3px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.plabel { position: absolute; left: 3px; bottom: 3px; font: 10.5px/1.3 var(--mono); padding: 0 3px; white-space: nowrap;
+  background: var(--accent); color: var(--on-accent); opacity: .75; }
+.pe { position: absolute; pointer-events: auto; touch-action: none; }
+.pe.n, .pe.s { left: 6px; right: 6px; height: 8px; cursor: ns-resize; }
+.pe.e, .pe.w { top: 6px; bottom: 6px; width: 8px; cursor: ew-resize; }
+.pe.n { top: -4px; } .pe.s { bottom: -4px; } .pe.e { right: -4px; } .pe.w { left: -4px; }
+.pe.nw, .pe.ne, .pe.sw, .pe.se { width: 12px; height: 12px; }
+.pe.nw { left: -5px; top: -5px; cursor: nwse-resize; } .pe.se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.pe.ne { right: -5px; top: -5px; cursor: nesw-resize; } .pe.sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.parea.sel .pe.nw, .parea.sel .pe.ne, .parea.sel .pe.sw, .parea.sel .pe.se { background: var(--panel); border: 2px solid var(--accent); box-sizing: border-box; }
 
 /* --- filter page --- */
 #fx-count { font-weight: 700; font-size: var(--fs-title); }

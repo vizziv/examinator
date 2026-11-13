@@ -206,8 +206,8 @@ a change in the app, when the app starts, and before a batch run from the CLI.
 
 ```sql
 create table row (
-  submission text not null,      -- or a source id, for its split plan
-  kind       text not null,      -- 'value' 'result' 'decision' 'pages' 'region' 'layout' 'identity' 'who' 'split'
+  submission text not null,      -- or a source id, for its split plan and print area
+  kind       text not null,      -- 'value' 'result' 'decision' 'pages' 'region' 'layout' 'identity' 'who' 'split' 'print_area'
   name       text not null,      -- 'question/label', 'question/check', a question id, or ''
   body       text,               -- JSON
   origin     text not null,      -- 'auto' | 'manual'
@@ -288,11 +288,15 @@ the PDF's identity, the page and the resolution.
   defaults for cover pages and the scan window; the workspace's saved settings
   take precedence once they exist.
 - A question names the `pages` that hold its answer (what its reader sees).
-- The printed page is usually reduced and inset within the scanned page. A
-  **scan window** (left, top, right, bottom, per-mille of the scanned page) maps
-  printed-page coordinates onto the scan. There is a workspace default and a
-  per-submission override. All regions in an exam definition are in
-  printed-page coordinates; the library applies the window and adds padding.
+- The printed page may be reduced and inset within the scanned page. The
+  **print area** (`scan_window` in code: left, top, right, bottom, per-mille of
+  the scanned page) maps printed-page coordinates onto the scan. Most specific
+  wins: the submission's own, its source scan's (every submission intake split
+  from that file; none for PDFs handed in split), the workspace's, the
+  package's (default: the whole sheet). All regions in an exam definition are in
+  printed-page coordinates; the library applies the print area and adds padding.
+  The question page's regions mode draws it on every sheet, to drag and save at
+  any of the first three levels.
 - Each question's selected pages can be overridden per submission, with a note,
   for answers that continue onto extra-space pages. The note is passed to the
   model.
@@ -386,7 +390,7 @@ docs). Internal names (`needs_review`, `core/focus.py`) may differ.
 - **decided**: a grade a person gave (never "by hand", "manual"); one plain look everywhere ("decided · who"). **to decide**: a person must give the grade.
 - **undecided**: no grade yet, the glyph `?` (never "not determined", "needs review", "unresolved", "open").
 - **filter**: the narrowed set of submissions (never "focus", "like this").
-- **print area**: where the printed page sits on the scanned page (Settings, a question's pages panel).
+- **print area**: where the printed page sits on the scanned page (Settings, a question page's regions mode).
 - **read pages** / **read names**: what the model does on Scans; **pages read** after; **N failed** when a call fails.
 - **not read yet** (nothing asked), **empty** (asked, the box had nothing), **N lines unclear** (a roster).
 - **put back** (a dropped page), **unverify**, **guess again**, **join with next**, **type name**.

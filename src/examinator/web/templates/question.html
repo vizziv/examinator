@@ -52,23 +52,35 @@
 {% block body %}
 <main id="question" data-sub="{{ sub.id }}" data-q="{{ q.id }}" data-name="{{ sub.name }}" data-count="{{ count }}"
  data-ids='{{ ids|tojson }}'>
-<section id="scan" data-regions='{{ regions|tojson }}' data-window='{{ layout.window|list|tojson }}'
+<section id="scan" data-regions='{{ regions|tojson }}' data-print='{{ print_area|tojson }}'
  data-cover="{{ layout.cover_pages }}" data-pad="{{ exam.crop_pad }}" data-first="{{ first_page }}" data-pages="{{ exam.pages }}">
-{% if regions %}
+{% if regions or count %}
 <div id="rg" class="bar">
-<button type="button" id="rg-on" data-action="regions" aria-pressed="false" title="edit field regions on the scan">regions</button>
+<button type="button" id="rg-on" data-action="regions" aria-pressed="false" title="edit field regions and the print area on the scan">regions</button>
 <span id="rg-panel" class="bar" hidden>
-<select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.printed %} (printed){% endif %}</option>{% endfor %}</select>
-<label>p <input type="number" class="rg-n" min="1" max="{{ exam.pages }}" aria-label="page"></label>
+<select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.printed %} (printed){% endif %}</option>{% endfor %}<option value="#print-area" title="where the printed page sits on the scanned sheet">print area</option></select>
+<label id="rg-p">p <input type="number" class="rg-n" min="1" max="{{ exam.pages }}" aria-label="page"></label>
 <input type="number" class="rg-n" min="0" max="1000" aria-label="left" title="left">
 <input type="number" class="rg-n" min="0" max="1000" aria-label="top" title="top">
 <input type="number" class="rg-n" min="0" max="1000" aria-label="right" title="right">
 <input type="number" class="rg-n" min="0" max="1000" aria-label="bottom" title="bottom">
+<label title="width: right − left (moves the right edge)">w <input type="number" id="rg-w" min="5" max="1000" aria-label="width"></label>
+<label title="height: bottom − top (moves the bottom edge)">h <input type="number" id="rg-h" min="5" max="1000" aria-label="height"></label>
+<span id="rg-region-btns">
 <button type="button" id="rg-save" data-action="region-save-own" class="primary" title="this submission's own region">save for this submission</button>
 <button type="button" id="rg-save-all" data-action="region-save-all" title="every submission's region">save for all</button>
 <button type="button" id="rg-undo" data-action="region-undo" title="back to the saved region">undo</button>
 <button type="button" id="rg-clear-own" data-action="region-clear-own" class="danger" title="drop this submission's own region: back to every submission's" hidden>drop own</button>
 <button type="button" id="rg-clear-all" data-action="region-clear-all" class="danger" title="every submission's region back to the package's" hidden>revert all</button>
+</span>
+<span id="rg-pa-btns" hidden>
+<button type="button" id="pa-save" data-action="print-save-own" class="primary" title="this submission's own print area">save for this submission</button>
+<button type="button" id="pa-save-scan" data-action="print-save-scan" title="the print area of every submission split from the same scan file"{% if not print_area.source %} hidden{% endif %}>save for this scan</button>
+<button type="button" id="pa-save-all" data-action="print-save-all" title="the workspace's print area: every submission without its own or its scan's">save for all</button>
+<button type="button" id="pa-undo" data-action="print-undo" title="back to the saved print area">undo</button>
+<button type="button" id="pa-clear-own" data-action="print-clear-own" class="danger" title="drop this submission's own print area: back to its scan's or the workspace's" hidden>drop own</button>
+<button type="button" id="pa-clear-scan" data-action="print-clear-scan" class="danger" title="drop this scan's print area: its submissions go back to the workspace's" hidden>drop scan's</button>
+</span>
 <span id="rg-msg" role="status"></span>
 </span>
 </div>
@@ -178,8 +190,8 @@
 </div>
 <div class="bar">
 <label>cover pages <input type="number" id="lo-cover" min="0" max="99" size="3" value="{{ layout_over.cover_pages if layout_over and layout_over.cover_pages is not none else '' }}" placeholder="{{ layout.cover_pages }}"></label>
-<label>print area <input type="text" id="lo-window" size="18" value="{{ layout_over.scan_window|join(' ') if layout_over and layout_over.scan_window else '' }}" placeholder="{{ layout.window|join(' ') }}"></label>
 <button type="button" data-action="layout">set for this submission</button>
+<span class="dim">print area: in regions mode</span>
 </div>
 </details>
 

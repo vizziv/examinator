@@ -10,8 +10,7 @@ from examinator.std import fields, math, readers
 
 from . import huge_constants, language, notes, point_process, rectangles, weibullish
 
-exam = Exam('exam_03', title="Exam 3", pages=22,
-            scan_window=[60, 55, 920, 825], cover_pages=1)
+exam = Exam('exam_03', title="Exam 3", pages=22, cover_pages=1)
 
 
 # --- helpers local to this exam -------------------------------------------

@@ -52,6 +52,12 @@ class Workspace:
         return len(pdfs)
 
     # --- settings: exam defaults until the workspace saves its own ---
+    #
+    # The print area (`scan_window`: where the printed page sits on a scanned sheet,
+    # [l, t, r, b] per-mille of the sheet) resolves, most specific first: the
+    # submission's own, its source scan's (every submission intake made from that
+    # file), the workspace's, the exam package's. Cover pages: the submission's own,
+    # else the workspace's, else the package's.
 
     @property
     def cover_pages(self) -> int:
@@ -59,6 +65,7 @@ class Workspace:
 
     @property
     def scan_window(self) -> tuple[int, int, int, int]:
+        """The workspace's print area (else the package's)."""
         return tuple(self.store.setting('scan_window', list(self.exam.scan_window)))
 
     def set_defaults(self, *, cover_pages: int | None = None, scan_window=None) -> None:
@@ -67,8 +74,36 @@ class Workspace:
         if scan_window is not None:
             self.store.set_setting('scan_window', [int(v) for v in scan_window])
 
+    def clear_scan_window(self) -> None:
+        """The workspace's print area back to the package's."""
+        self.store.delete_setting('scan_window')
+
+    def source_of(self, submission: str) -> str | None:
+        """The source scan intake made this submission from; None if it was handed in split."""
+        m = self.store.made_of(submission)
+        return m.source if m else None
+
+    def source_window(self, source: str | None) -> tuple[int, int, int, int] | None:
+        """A source scan's own print area, for every submission from it.
+        The row (source id, '', 'print_area'): `{'scan_window': [l, t, r, b]}`."""
+        o = self.store.get(source, '', 'print_area') if source else None
+        w = (o.body or {}).get('scan_window') if o else None
+        return tuple(w) if w else None
+
+    def set_source_window(self, source: str, scan_window, *, author: str | None, expect_rev=ANY) -> None:
+        """Set (or, with None, clear) a source scan's print area."""
+        if not scan_window:
+            self.store.delete(source, '', 'print_area', expect_rev=expect_rev)
+        else:
+            self.store.write(source, '', 'print_area', {'scan_window': [int(v) for v in scan_window]},
+                             origin='manual', author=author, expect_rev=expect_rev)
+
+    def window_for_source(self, source: str | None) -> tuple[int, int, int, int]:
+        """The print area of a source's sheets: the source's own, else the workspace's."""
+        return self.source_window(source) or self.scan_window
+
     def layout(self, submission: str) -> Layout:
-        """The workspace default, with this submission's override on top.
+        """The defaults, with this submission's override on top.
         The override is the artifact (submission, '', 'layout'):
         `{'cover_pages': int | None, 'scan_window': [l, t, r, b] | None}`."""
         o = self.store.get(submission, '', 'layout')
@@ -76,15 +111,16 @@ class Workspace:
         cover = body.get('cover_pages')
         window = body.get('scan_window')
         return Layout(self.cover_pages if cover is None else cover,
-                      tuple(window) if window else self.scan_window)
+                      tuple(window) if window else self.window_for_source(self.source_of(submission)))
 
-    def set_layout(self, submission: str, *, cover_pages: int | None, scan_window, author: str | None) -> None:
+    def set_layout(self, submission: str, *, cover_pages: int | None, scan_window, author: str | None,
+                   expect_rev=ANY) -> None:
         if cover_pages is None and not scan_window:
-            self.store.delete(submission, '', 'layout')
+            self.store.delete(submission, '', 'layout', expect_rev=expect_rev)
         else:
             self.store.write(submission, '', 'layout',
                              {'cover_pages': cover_pages, 'scan_window': list(scan_window) if scan_window else None},
-                             origin='manual', author=author)
+                             origin='manual', author=author, expect_rev=expect_rev)
 
     def selected_pages(self, submission: str, question: Question) -> tuple[tuple[int, ...], str]:
         """The question's printed pages for this submission, and the grader's note.

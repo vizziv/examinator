@@ -79,7 +79,7 @@ def test_selftest(exam, tmp_path):
 def test_definition(exam, pkg):
     versions = pkg('versions')
     assert list(exam.questions) == ['info'] + [f'q{i}' for i in range(1, 7)]
-    assert exam.pages == 16 and exam.cover_pages == 1 and exam.scan_window == (60, 55, 920, 825)
+    assert exam.pages == 16 and exam.cover_pages == 1 and exam.scan_window == (0, 0, 1000, 1000)
     info = exam.questions['info']
     assert info.checks == () and list(info.fields) == versions.FIELDS
     assert all(isinstance(f.read, Printed) and set(f.read.reads.values()) == {'original', 'alternate'}

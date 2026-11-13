@@ -180,12 +180,12 @@ def page_of(lm: Landmark, text: str | None) -> int | None:
 class LandmarkReader:
     """Reads one sheet's position from the exam's landmarks (first that answers
     wins), through the model, memoised per source, sheet, landmark, orientation
-    and scan window. A failed call is no reading and is not remembered: the
+    and print area (the source's, else the workspace's). A failed call is no reading and is not remembered: the
     sheets it left unread are `failed`; `calls` counts the calls made."""
 
     def __init__(self, ws, src: Source, body: Mapping, model):
         self.ws, self.src, self.body, self.model = ws, src, body, model
-        self.layout = Layout(0, ws.scan_window)
+        self.layout = Layout(0, ws.window_for_source(src.id))
         self.lead = cover(ws, body)
         self.calls = 0                  # model calls made (memoised answers aside)
         self.failures = 0               # calls that failed
@@ -197,7 +197,7 @@ class LandmarkReader:
         image = None
         failed = False
         for lm in exam.landmarks:
-            key = reading.memo_key('landmark', lm.name, digest(lm), list(ws.scan_window), o.code, i)
+            key = reading.memo_key('landmark', lm.name, digest(lm), list(self.layout.window), o.code, i)
             hit = ws.store.memo(self.src.id, key)
             if hit is None:
                 if image is None:

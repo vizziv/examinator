@@ -12,8 +12,7 @@ from examinator.std import math, readers
 from . import blanks, cone, exponential, ice_cream, language, notes, spire
 from .versions import FIELDS, PRINTING
 
-exam = Exam('exam_01', title="Exam 1", pages=16,
-            scan_window=[60, 55, 920, 825], cover_pages=1)
+exam = Exam('exam_01', title="Exam 1", pages=16, cover_pages=1)
 
 SHINY = Bool(counts=False)      # the course's "shiny" questions do not count toward the total
 

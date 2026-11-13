@@ -328,10 +328,11 @@
     b.addEventListener('click', () => { show(i); $('step').scrollIntoView({block: 'nearest'}); });
     return b;
   }
-  // The submission's name and ID boxes, cut from the sheets as planned (cover sheets come first).
+  // The submission's name and ID boxes, cut from the sheets as planned (cover sheets come first),
+  // inside the scan's print area.
   const idboxes = JSON.parse(main.dataset.idboxes || '[]');
   function nameCrops(e) {
-    return idboxes.map(b => {
+    return (plan.idboxes || idboxes).map(b => {
       const off = b.offset + (plan.cover || 0);
       if (e.pages.length <= off) return '';
       const c = make('span', {className: 'crop', title: b.name});

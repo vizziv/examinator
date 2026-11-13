@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 
 from examinator import load_exam
 from examinator.core.runner import Runner
-from examinator.core.store import Submission
+from examinator.core.store import Made, Submission
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
 from examinator.pdf.layout import Layout
@@ -416,6 +416,33 @@ def test_pages_and_layout_overrides(site):
     layout = site.ws.layout('s1')
     assert layout.cover_pages == 1 and layout.window == (100, 100, 900, 900)
     assert site.post('/s/s1/layout', {'print_area': [900, 0, 100, 1000]}).status_code == 400
+    # cover pages alone keep the print area
+    assert site.post('/s/s1/layout', {'cover_pages': 2}).status_code == 200
+    assert site.ws.layout('s1') == Layout(2, (100, 100, 900, 900))
+
+
+def test_print_area_levels(site):
+    site.ws.store.set_made(Made('s1', 'src1', (0,), {}, 'now'))
+    pa = lambda level, value, **kw: site.post('/s/s1/print-area', {'level': level, 'value': value, **kw})
+    r = pa('own', [100, 100, 900, 900], rev=None)
+    assert r.status_code == 200 and r.json()['print_area']['own'] == [100, 100, 900, 900]
+    assert all(len(b.split(',')) == 4 for b in r.json()['boxes'].values()) and r.json()['boxes']
+    rev = r.json()['print_area']['own_rev']
+    assert pa('own', [0, 0, 1000, 1000], rev=rev + 99).status_code == 409
+    r = pa('scan', [20, 20, 980, 980], rev=None)
+    assert r.json()['print_area']['scan'] == [20, 20, 980, 980]
+    assert r.json()['print_area']['window'] == [100, 100, 900, 900]          # its own wins
+    r = pa('own', None, rev=rev)
+    assert r.json()['print_area']['window'] == [20, 20, 980, 980]            # then the scan's
+    assert pa('scan', None, rev=r.json()['print_area']['scan_rev']).status_code == 200
+    assert pa('all', [5, 5, 995, 995]).json()['print_area']['window'] == [5, 5, 995, 995]
+    assert site.ws.scan_window == (5, 5, 995, 995)
+    assert pa('all', None).json()['print_area']['window'] == list(site.exam.scan_window)
+    assert pa('own', [900, 0, 100, 1000], rev=None).status_code == 400
+    assert pa('scan', [0, 0, 1000, 1000]).status_code == 400                 # rev is required
+    assert pa('bogus', [0, 0, 1000, 1000]).status_code == 400
+    assert site.post('/s/s2/print-area', {'level': 'scan', 'value': [0, 0, 1000, 1000],
+                                          'rev': None}).status_code == 400   # handed in split
 
 
 def test_settings(site):

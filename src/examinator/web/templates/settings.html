@@ -42,7 +42,8 @@
 <button type="button" data-action="save-defaults" class="primary">Save</button> <span id="msg" role="status"></span>
 <p class="help">Cover pages are scanned pages before printed page 1. The print area is where the printed page
 sits on the scanned page, in per-mille of the scan. Changing either moves every crop; it does not rerun anything.
-A submission that differs gets its own override on a question page, under “pages”.</p>
+A scan file or a submission that differs gets its own print area on a question page, in regions mode
+(cover pages: under “pages”).</p>
 <div class="bar row">
 <label>preview <select id="pv-sub" aria-label="submission">{% for s in subs %}<option>{{ s.id }}</option>{% endfor %}</select></label>
 <label>printed page <input type="number" id="pv-page" min="1" max="{{ pages }}" value="1"></label>

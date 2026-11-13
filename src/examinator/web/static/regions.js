@@ -8,6 +8,9 @@
 // of the scan), after its cover pages; so, as in pdf/layout.py `Layout.box`:
 //   scan fraction x = (wl + (wr - wl) * v / 1000) / 1000, and back
 //   v = (1000 * x - wl) * 1000 / (wr - wl).
+// The print area is drawn on every sheet and edited like a region (its edges and corners);
+// the region boxes follow its draft. It is saved for this submission, for every
+// submission from the same scan file, or for all (/s/{sub}/print-area).
 (() => {
   const scan = document.getElementById('scan');
   const on = document.getElementById('rg-on');
@@ -15,19 +18,26 @@
   const $ = id => document.getElementById(id);
   const sub = document.getElementById('question').dataset.sub;
   const regions = JSON.parse(scan.dataset.regions);
-  const [wl, wt, wr, wb] = JSON.parse(scan.dataset.window);
+  const PA = '#print-area';
+  const pa = JSON.parse(scan.dataset.print);   // own, scan, all (each saved level), window: the one in use
+  pa.draft = [...pa.window];
   const cover = Number(scan.dataset.cover), pad = Number(scan.dataset.pad);
   const first = Number(scan.dataset.first);
   const nums = [...document.querySelectorAll('.rg-n')];
   const pick = $('rg-pick'), msg = $('rg-msg');
   for (const r of regions) r.draft = r.region && [...r.region];
-  let sel = null, drag = null;
+  let sel = null, paSel = false, drag = null;
 
-  const fx = v => (wl + (wr - wl) * v / 1000) / 1000;
-  const fy = v => (wt + (wb - wt) * v / 1000) / 1000;
+  // per-mille of the printed page -> fraction of the scan, through a print area (the draft's by default)
+  const fx = (v, w = pa.draft) => (w[0] + (w[2] - w[0]) * v / 1000) / 1000;
+  const fy = (v, w = pa.draft) => (w[1] + (w[3] - w[1]) * v / 1000) / 1000;
   const clamp = v => Math.min(1000, Math.max(0, Math.round(v)));
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const dirty = r => !same(r.draft, r.region);
+  const paDirty = () => !same(pa.draft, pa.window);
+  // what the number boxes edit, as [page, left, top, right, bottom] (the print area has no page)
+  const cur = () => paSel ? [0, ...pa.draft] : sel && sel.draft;
+  const put = d => { if (paSel) pa.draft = d.slice(1); else sel.draft = d; };
   const say = (text, bad) => { msg.textContent = text; msg.classList.toggle('notice', !!bad); };
 
   const sheet = page => scan.querySelector(`.sheet[data-index="${cover + page - 1}"]`);
@@ -44,9 +54,24 @@
     box.firstElementChild.style.inset = `${py} ${px}`;
   }
 
+  // The print area on a sheet: an outline with edges and corners to drag.
+  function printArea() {
+    const [l, t, r, b] = pa.draft;
+    const el = make('div', {className: `parea${paSel ? ' sel' : ''}${paDirty() ? ' dirty' : ''}`},
+                    make('span', {className: 'plabel', textContent: 'print area'}));
+    Object.assign(el.style, {left: l / 10 + '%', top: t / 10 + '%', width: (r - l) / 10 + '%', height: (b - t) / 10 + '%'});
+    for (const h of ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se']) {
+      const edge = make('i', {className: 'pe ' + h, title: 'print area'});
+      edge.dataset.pe = h;
+      el.append(edge);
+    }
+    return el;
+  }
+
   function draw() {
-    for (const el of scan.querySelectorAll('.rbox')) el.remove();
+    for (const el of scan.querySelectorAll('.rbox, .parea')) el.remove();
     if (!scan.classList.contains('editing')) return;
+    for (const s of scan.querySelectorAll('.sheet')) s.append(printArea());
     for (const r of regions) {
       if (!r.draft) continue;
       const s = sheet(r.draft[0]);
@@ -62,20 +87,43 @@
       place(box, r.draft);
       s.append(box);
     }
-    pick.options[pick.selectedIndex]?.classList.toggle('dirty', !!sel && dirty(sel));
+    pick.options[pick.selectedIndex]?.classList.toggle('dirty', paSel ? paDirty() : !!sel && dirty(sel));
     $('rg-save').classList.toggle('dirty', !!sel && dirty(sel));
+    $('pa-save').classList.toggle('dirty', paSel && paDirty());
     Actions.enable($('rg'));
   }
 
-  function inputs() {
-    nums.forEach((n, i) => { n.value = sel && sel.draft ? sel.draft[i] : ''; });
+  // The number boxes from the selection (except the one being typed in), and which buttons show.
+  function inputs(typing) {
+    const d = cur();
+    nums.forEach((n, i) => { if (n !== typing) n.value = d ? d[i] : ''; });
+    if ($('rg-w') !== typing) $('rg-w').value = d ? d[3] - d[1] : '';
+    if ($('rg-h') !== typing) $('rg-h').value = d ? d[4] - d[2] : '';
+    $('rg-p').hidden = paSel;
+    $('rg-region-btns').hidden = paSel;
+    $('rg-pa-btns').hidden = !paSel;
     $('rg-clear-own').hidden = !sel || !sel.own;
     $('rg-clear-all').hidden = !sel || !sel.stored;
+    $('pa-save-scan').hidden = !pa.source;
+    $('pa-clear-own').hidden = !pa.own;
+    $('pa-clear-scan').hidden = !pa.scan;
   }
 
+  const paFrom = () => pa.own ? "this submission's" : pa.scan ? "this scan's" : "all submissions'";
+
   function select(path, reveal) {
+    if (path === PA) {
+      sel = null;
+      paSel = true;
+      pick.value = PA;
+      say(`print area · ${paFrom()}`);
+      inputs();
+      draw();
+      return;
+    }
     sel = regions.find(r => r.path === path) || null;
     if (!sel) return;
+    paSel = false;
     pick.value = sel.path;
     if (!sel.draft) {
       sel.draft = [first, 100, 100, 900, 200];   // a field without a region: start somewhere visible
@@ -91,8 +139,8 @@
   function recrop(r) {
     for (const crop of document.querySelectorAll('.crop[data-region]')) {
       if (crop.dataset.region !== r.path || !r.region) continue;
-      const [page, l, t, rt, b] = r.region;
-      const box = [fx(l - pad), fy(t - pad), fx(rt + pad), fy(b + pad)].map(v => Math.min(1, Math.max(0, v)));
+      const [page, l, t, rt, b] = r.region, w = pa.window;      // the saved print area, as the server crops
+      const box = [fx(l - pad, w), fy(t - pad, w), fx(rt + pad, w), fy(b + pad, w)].map(v => Math.min(1, Math.max(0, v)));
       const src = `${ROOT}/page/${encodeURIComponent(sub)}/${cover + page - 1}.jpg`;
       if (crop.dataset.src !== src) { crop.dataset.src = src; crop.replaceChildren(); }
       crop.dataset.box = box.map(v => v.toFixed(4)).join(',');
@@ -139,19 +187,72 @@
     document.dispatchEvent(new CustomEvent('entry-saved', {detail: res.body}));
   }
 
+  // The print area at one level: 'own', 'scan' (every submission from this scan file) or
+  // 'all' (the workspace). `clear`: drop that level. The crops beside the fields are redrawn.
+  async function savePrint(level, clear) {
+    const where = {own: "this submission", scan: "this scan", all: "all submissions"}[level];
+    if (clear && !confirm(level === 'own' ? "Drop this submission's own print area?"
+                                          : "Drop this scan's print area, for every submission from it?")) return;
+    // a level below the one saved still wins for this submission
+    const shadowed = !clear && ((level === 'scan' && pa.own) || (level === 'all' && (pa.own || pa.scan)));
+    say('…');
+    const body = {level, value: clear ? null : pa.draft};
+    if (level !== 'all') body.rev = (level === 'own' ? pa.own_rev : pa.scan_rev) ?? null;
+    const res = await request(`/s/${encodeURIComponent(sub)}/print-area`, body);
+    if (res.status === 409) { say("changed elsewhere; reload", true); return; }
+    if (!res.ok) { say(res.body.error || "failed", true); return; }
+    const before = pa.window;
+    Object.assign(pa, res.body.print_area);
+    pa.draft = [...pa.window];
+    for (const crop of document.querySelectorAll('.crop[data-region]')) {
+      const box = res.body.boxes[crop.dataset.region];
+      if (box && crop.dataset.box !== box) { crop.dataset.box = box; drawCrop(crop); }
+    }
+    const moved = !same(before, pa.window);
+    say(`print area ${clear ? 'dropped' : 'saved'} · ${where}`
+        + (shadowed ? ` · this submission keeps ${pa.own ? 'its own' : "its scan's"}` : '')
+        + (moved ? " · read again to use it" : ''));
+    inputs();
+    draw();
+    if (moved) document.dispatchEvent(new CustomEvent('entry-saved', {detail: {reread: ['print area']}}));
+  }
+
   Actions.register('regions', {run: () => {
     const editing = scan.classList.toggle('editing');
     on.setAttribute('aria-pressed', editing);
     $('rg-panel').hidden = !editing;
-    if (editing && !sel) select(pick.value); else draw();
+    if (editing && !sel && !paSel) select(pick.value); else draw();
     Actions.enable($('rg'));
   }});
   pick.addEventListener('change', () => select(pick.value, true));
   nums.forEach((n, i) => n.addEventListener('input', () => {
-    if (!sel || n.value === '' || !sel.draft) return;
-    sel.draft[i] = i === 0 ? Math.max(1, Math.round(Number(n.value))) : clamp(Number(n.value));
+    const d = cur();
+    if (!d || n.value === '') return;
+    put(d.map((v, j) => j !== i ? v : i === 0 ? Math.max(1, Math.round(Number(n.value))) : clamp(Number(n.value))));
+    inputs(n);
     draw();
   }));
+  // width and height move the right and bottom edges
+  for (const [id, lo, hi] of [['rg-w', 1, 3], ['rg-h', 2, 4]]) $(id).addEventListener('input', e => {
+    const d = cur();
+    if (!d || e.target.value === '') return;
+    const n = [...d];
+    n[hi] = Math.min(1000, Math.max(n[lo] + 5, n[lo] + Math.round(Number(e.target.value))));
+    put(n);
+    inputs(e.target);
+    draw();
+  });
+  Actions.register('print-save-own', {available: () => paSel, run: () => savePrint('own', false)});
+  Actions.register('print-save-scan', {available: () => paSel && !!pa.source, run: () => savePrint('scan', false)});
+  Actions.register('print-save-all', {available: () => paSel, run: () => savePrint('all', false)});
+  Actions.register('print-clear-own', {available: () => paSel && !!pa.own, run: () => savePrint('own', true)});
+  Actions.register('print-clear-scan', {available: () => paSel && !!pa.scan, run: () => savePrint('scan', true)});
+  Actions.register('print-undo', {available: () => paSel, run: () => {
+    pa.draft = [...pa.window];
+    say('');
+    inputs();
+    draw();
+  }});
   Actions.register('region-save-own', {available: () => !!sel && !!sel.draft, run: () => save(true, false)});
   Actions.register('region-save-all', {available: () => !!sel && !!sel.draft, run: () => save(false, false)});
   Actions.register('region-clear-own', {available: () => !!sel && !!sel.own, run: () => save(true, true)});
@@ -166,11 +267,22 @@
   // --- dragging: the body moves the region (onto another page too), a corner handle resizes it ---
   const back = (x, lo, hi) => (1000 * x - lo) * 1000 / (hi - lo);       // scan fraction -> per-mille of the printed page
   scan.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    const edge = e.target.closest('.pe');
+    if (edge) {       // the print area: taking hold of an edge or corner selects it, and drags at once
+      const rect = edge.closest('.sheet').getBoundingClientRect();
+      if (!paSel) select(PA);
+      drag = {pa: true, h: edge.dataset.pe, x: e.clientX, y: e.clientY, d: [...pa.draft],
+              kx: 1000 / rect.width, ky: 1000 / rect.height};   // pixels -> per-mille of the scan
+      scan.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      return;
+    }
     const box = e.target.closest('.rbox');
-    if (!box || e.button !== 0) return;
+    if (!box) return;
     if (box.dataset.path !== sel?.path) { select(box.dataset.path); return; }
     const rect = box.parentElement.getBoundingClientRect();
-    const [, l, t] = sel.draft;
+    const [, l, t] = sel.draft, [wl, wt, wr, wb] = pa.draft;
     drag = {h: e.target.dataset.h || '', x: e.clientX, y: e.clientY, d: [...sel.draft],
             // where in the region it was taken hold of, in per-mille of the printed page
             ox: back((e.clientX - rect.left) / rect.width, wl, wr) - l, oy: back((e.clientY - rect.top) / rect.height, wt, wb) - t,
@@ -182,7 +294,17 @@
   scan.addEventListener('pointermove', e => {
     if (!drag) return;
     const dx = (e.clientX - drag.x) * drag.kx, dy = (e.clientY - drag.y) * drag.ky;
-    const [p, l, t, r, b] = drag.d;
+    if (drag.pa) {
+      const [l, t, r, b] = drag.d, h = drag.h, min = 50;
+      pa.draft = [h.includes('w') ? Math.min(clamp(l + dx), r - min) : l,
+                  h.includes('n') ? Math.min(clamp(t + dy), b - min) : t,
+                  h.includes('e') ? Math.max(clamp(r + dx), l + min) : r,
+                  h.includes('s') ? Math.max(clamp(b + dy), t + min) : b];
+      inputs();
+      draw();
+      return;
+    }
+    const [p, l, t, r, b] = drag.d, [wl, wt, wr, wb] = pa.draft;
     let d;
     if (!drag.h) {
       // the page under the pointer (the one it is on, when between pages)
@@ -229,5 +351,5 @@
     inputs();
     draw();
   });
-  addEventListener('beforeunload', e => { if (regions.some(dirty)) e.preventDefault(); });
+  addEventListener('beforeunload', e => { if (regions.some(dirty) || paDirty()) e.preventDefault(); });
 })();

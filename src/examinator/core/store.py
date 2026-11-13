@@ -12,6 +12,7 @@ JSON body and a revision:
     'layout'    ''                  this submission's cover pages and print area
     'identity', 'who'   ''          intake: who wrote it (`core.identity`)
     'split'     ''                  intake: a source's split plan (`submission` is the source id)
+    'print_area' ''                 a source's print area, for every submission from it (`submission`: the source id)
 
 Every normal read is a keyed lookup. Every write may carry the `rev` the
 writer last saw; a mismatch raises `Conflict` and nothing changes. Revisions
@@ -404,6 +405,12 @@ class Store:
         return {r[0]: Made(r[0], r[1], tuple(json.loads(r[2])), json.loads(r[3]) if r[3] else {}, r[4])
                 for r in rows}
 
+    def made_of(self, submission: str) -> Made | None:
+        with self._lock:
+            r = self._db.execute('select submission, source, pages, orient, made_at from made where submission=?',
+                                 (submission,)).fetchone()
+        return Made(r[0], r[1], tuple(json.loads(r[2])), json.loads(r[3]) if r[3] else {}, r[4]) if r else None
+
     def set_made(self, m: Made) -> None:
         with self._lock:
             self._db.execute('insert or replace into made values (?,?,?,?,?)',
@@ -422,6 +429,11 @@ class Store:
         with self._lock:
             r = self._db.execute('select value from setting where key=?', (key,)).fetchone()
         return json.loads(r[0]) if r else default
+
+    def delete_setting(self, key: str) -> None:
+        assert key not in ('rev', 'changes')
+        with self._lock:
+            self._db.execute('delete from setting where key=?', (key,))
 
     def set_setting(self, key: str, value: Any) -> None:
         assert key not in ('rev', 'changes')

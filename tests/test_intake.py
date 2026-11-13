@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 
 from examinator import Exam, Landmark, Region, load_exam, synth
 from examinator.core import identity, intake, split
-from examinator.core.store import Conflict
+from examinator.core.store import Conflict, Made
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
 from examinator.pdf import pages as pdf_pages, render
@@ -382,3 +382,36 @@ def test_undo_steps_back_one_edit_at_a_time(stacked):
         undo()
     with pytest.raises(ValueError):
         undo()
+
+
+# --- the print area: submission, then its scan, then the workspace, then the package ---
+
+def test_print_area_resolves_submission_scan_workspace_package(tmp_path):
+    exam = Exam('pa', pages=1, scan_window=(10, 20, 990, 980))
+    ws = Workspace(tmp_path / 'ws', exam, create=True)
+    try:
+        ws.store.set_made(Made('s1', 'src1', (0,), {}, 'now'))
+        ws.store.set_made(Made('s2', 'src1', (1,), {}, 'now'))
+        win = lambda sid: ws.layout(sid).window
+        assert ws.source_of('s1') == 'src1' and ws.source_of('handed') is None
+        assert win('s1') == win('handed') == (10, 20, 990, 980)              # the package's
+        ws.set_defaults(scan_window=(0, 0, 1000, 1000))
+        assert win('s1') == win('handed') == (0, 0, 1000, 1000)              # the workspace's
+        ws.set_source_window('src1', (30, 30, 900, 900), author=None, expect_rev=None)
+        assert win('s1') == win('s2') == (30, 30, 900, 900)                  # the scan's, for all from it
+        assert win('handed') == (0, 0, 1000, 1000)                           # no scan: no such level
+        ws.set_layout('s1', cover_pages=1, scan_window=(40, 40, 800, 800), author=None)
+        assert win('s1') == (40, 40, 800, 800) and win('s2') == (30, 30, 900, 900)
+        assert ws.layout('s1').cover_pages == 1
+        # clearing each level falls back to the next
+        ws.set_layout('s1', cover_pages=1, scan_window=None, author=None)
+        assert win('s1') == (30, 30, 900, 900) and ws.layout('s1').cover_pages == 1
+        rev = ws.store.get('src1', '', 'print_area').rev
+        with pytest.raises(Conflict):
+            ws.set_source_window('src1', None, author=None, expect_rev=rev + 99)
+        ws.set_source_window('src1', None, author=None, expect_rev=rev)
+        assert ws.source_window('src1') is None and win('s1') == (0, 0, 1000, 1000)
+        ws.clear_scan_window()
+        assert win('s1') == (10, 20, 990, 980)
+    finally:
+        ws.close()

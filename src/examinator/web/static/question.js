@@ -302,7 +302,7 @@
     pages: {run: async () => { if (await act('pages', {pages: $('pg-list').value, note: $('pg-note').value})) location.reload(); }},
     layout: {run: async () => {
       const r = await request(`/s/${encodeURIComponent(sub)}/layout`,
-                              {cover_pages: $('lo-cover').value, print_area: $('lo-window').value});
+                              {cover_pages: $('lo-cover').value});
       if (r.ok) location.reload(); else flash(r.body.error || "failed");
     }},
     restore: {run: ({el}) => {
