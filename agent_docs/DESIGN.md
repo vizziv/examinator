@@ -662,10 +662,12 @@ gives a submission's file, written or handed in).
      first sheet starts one, none of its other sheets does (its dropped ones
      dropped), and the next kept sheet starts one; its first sheet gets
      `verified`. Every edit keeps each verified submission whole, so no guess
-     moves it, and verifying what the guess already says changes nothing. The
-     mark moves with its submission when a person moves its first sheet (A/D,
-     Shift+A/D, dropping it), and goes when that sheet stops starting one; a
-     boundary a person moves is theirs but verifies no neighbour. "Unverified"
+     moves it, and verifying what the guess already says changes nothing.
+     `verified` means a person looked at the submission as it is (`split.looks`:
+     its sheets in order, its extra and missing marks; not turns), so an edit
+     that changes that (A/D, Shift+A/D, drop, put back, a cut or join inside it,
+     an extra or missing mark) takes it away: the person verifies it again.
+     Edits that do not touch it leave it alone. "Unverified"
      in the step view and V's "next" mean nobody verified it.
   4. **Guessing works in stretches**, each from the first kept sheet or a start
      a person said up to the next one; a stretch's starts are what `propose`
