@@ -20,12 +20,13 @@ from typing import Any, Mapping, Protocol, Sequence
 from .context import BadOutput, CheckContext, ReadContext, Unavailable
 from .defs import DEFAULT, Exam, Field, Grade, Question, has_marker, key, one_line
 from .isolate import CheckTimeout, Pool, PoolClosed
-from .result import Undecided, settle, undecided
+from .result import BadResult, Undecided, settle, undecided
 from .status import Decision, Sheet, Stored, Value, current
 from .store import ANY, Conflict
 from .workspace import Workspace
 
 DEFAULT_TIMEOUT = 60.0
+MAX_DETAIL = 20_000      # characters of a traceback shown
 
 
 class Model(Protocol):
@@ -111,17 +112,18 @@ def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields:
 def try_check(exam: Exam, qid: str, check: str, values: Mapping[str, str]) -> dict:
     """Run one check in-process on given values (`{'question/label': text}`; a
     field left out is not read, or at its default) and return its result as it would be stored:
-    `{'grade', 'fields', 'blocks', 'reads'}`. For an exam's own tests. A check
-    that raises `Undecided` is an undecided result; anything else raises."""
+    `{'grade', 'fields', 'blocks', 'reads', 'images'}` (`images`: {digest: bytes}).
+    For an exam's own tests. A check that raises `Undecided` is an undecided
+    result; anything else raises (`BadResult` for evidence that does not fit)."""
     q = exam.questions[qid]
     c = q.check(check)
     ctx = CheckContext(submission='test', question=q, check=check,
                        values={k: (i + 1, v) for i, (k, v) in enumerate(values.items())}, fields=exam.fields())
     try:
-        body = settle(c.points, c.fn(ctx))
+        out = settle(c.points, c.fn(ctx))
     except Undecided as e:
-        body = settle(c.points, undecided(str(e)))
-    return {**body, 'reads': dict(ctx.reads)}
+        out = settle(c.points, undecided(str(e)))
+    return {**out.body, 'reads': dict(ctx.reads), 'images': {d: b for d, (_, b) in out.images.items()}}
 
 
 class Runner:
@@ -245,27 +247,27 @@ class Runner:
         timeout = c.timeout or DEFAULT_TIMEOUT
         try:
             if c.isolate and self.pool is not None:
-                body = self.pool.call(qid, check, {
+                got = self.pool.call(qid, check, {
                     'submission': submission, 'values': {k: list(v) for k, v in values.items()},
                     'overrides': self.exam.overrides}, timeout, reads)
             else:
                 ctx = CheckContext(submission=submission, question=q, check=check, values=values,
                                    fields=self.exam.fields(), reads=reads)
-                body = settle(c.points, c.fn(ctx))
-        except Undecided as e:
-            body = settle(c.points, undecided(str(e)))
+                got = settle(c.points, c.fn(ctx))
+        except (Undecided, BadResult) as e:
+            got = settle(c.points, undecided(str(e)))
         except PoolClosed:
             return out('failed', "shutting down")
         except CheckTimeout:
-            body = settle(c.points, undecided(f"timed out after {timeout:g} s"))
+            got = settle(c.points, undecided(f"timed out after {timeout:g} s"))
         except Exception as e:
             detail = getattr(e, 'detail', "") or f"{type(e).__name__}: {e}"
-            body = settle(c.points, undecided("the check failed to run", [
+            got = settle(c.points, undecided("the check failed to run", [
                 {'type': 'details', 'summary': "Error",
-                 'blocks': [{'type': 'code', 'text': detail}]}]))
-        body.update(reads=dict(reads), defn=self.exam.check_hash(q, c), code=self.exam.code_hash)
+                 'blocks': [{'type': 'code', 'text': detail[-MAX_DETAIL:]}]}]))
+        body = {**got.body, 'reads': dict(reads), 'defn': self.exam.check_hash(q, c), 'code': self.exam.code_hash}
         try:
-            self.store.write(submission, key(qid, check), 'result', body, origin='auto',
+            self.store.write(submission, key(qid, check), 'result', body, origin='auto', images=got.images,
                              guard={(k, 'value'): None if rev == DEFAULT else rev for k, rev in reads.items()})
         except Conflict as e:
             return out('discarded', str(e))

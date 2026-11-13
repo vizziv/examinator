@@ -6,7 +6,7 @@
     GET  /s/{sub}/{q}               question page
     POST /s/{sub}/{q}/{action}      save unverify decide clear read check default restore
     GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
-    GET  /image/{sub}/{q}/{check}/{path}?v=   one evidence image (path '2' or '1-0-3')
+    GET  /image/{sub}/{q}/{check}/{digest}    one evidence image of that check's result
     GET  /jobs/{id}                 background job state
     GET  /read                      batch reads;  POST /read/plan|start|stop,  GET /read/status
     GET  /settings                  this browser's keys and appearance
@@ -28,11 +28,11 @@ hangs off `app.state`.
 """
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import threading
 from pathlib import Path
@@ -205,56 +205,7 @@ def value_key(st) -> str:
     return {None: '', '✓': 't', '✗': 'f'}.get(text, text)
 
 
-def image_version(b: dict) -> str:
-    """A short digest of an image block's data: its URL changes when it does."""
-    return hashlib.sha256(str(b.get('data', '')).encode()).hexdigest()[:16]
-
-
-def prepare_blocks(blocks: Any, prefix: str = '') -> list[dict]:
-    """Evidence blocks ready for the template: unknown shapes dropped, images
-    given the path that addresses them and a version of their data."""
-    out = []
-    for i, b in enumerate(blocks if isinstance(blocks, list) else []):
-        if not isinstance(b, dict):
-            continue
-        path = f'{prefix}{i}'
-        kind = b.get('type')
-        if kind == 'details':
-            out.append({'type': 'details', 'summary': str(b.get('summary', "")),
-                        'blocks': prepare_blocks(b.get('blocks'), path + '-')})
-        elif kind == 'image':
-            if b.get('media_type') in MEDIA_TYPES and isinstance(b.get('data'), str):
-                out.append({'type': 'image', 'path': path, 'v': image_version(b),
-                            'alt': str(b.get('alt') or ""), 'title': str(b.get('title') or "")})
-        elif kind == 'table':
-            out.append({'type': 'table', 'columns': list(b.get('columns') or []),
-                        'rows': [list(r) for r in b.get('rows') or [] if isinstance(r, (list, tuple))]})
-        elif kind == 'code':
-            hl = set(b.get('highlight') or [])
-            out.append({'type': 'code', 'lines': [(n, line, n in hl) for n, line in
-                                                  enumerate(str(b.get('text', "")).split('\n'), 1)]})
-        elif kind == 'note':
-            tone = b.get('tone')
-            out.append({'type': 'note', 'text': str(b.get('text', "")),
-                        'tone': tone if tone in ('info', 'good', 'bad', 'warn') else 'info'})
-    return out
-
-
-def find_image(blocks: Any, path: str) -> dict | None:
-    """The image block at `path` ('2' or '1-0-3'), or None."""
-    node: Any = None
-    for part in path.split('-'):
-        if not part.isdigit() or len(part) > 4 or not isinstance(blocks, list):
-            return None
-        i = int(part)
-        if i >= len(blocks) or not isinstance(blocks[i], dict):
-            return None
-        node = blocks[i]
-        blocks = node.get('blocks')
-    if node is None or node.get('type') != 'image' or node.get('media_type') not in MEDIA_TYPES \
-            or not isinstance(node.get('data'), str):
-        return None
-    return node
+DIGEST = re.compile(r'[0-9a-f]{64}')
 
 
 # --- exam data (overrides) ---------------------------------------------------------
@@ -508,7 +459,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             st = sheet.status(exam, q, c)
             stored, decision = sheet.results.get(k), sheet.decisions.get(k)
             row = store.get(sub.id, k, 'result')
-            blocks = prepare_blocks((row.body or {}).get('blocks')) if row else []
+            blocks = row.body['blocks'] if row else []
+            figures = next((i for i, b in enumerate(blocks) if b['type'] != 'image'), len(blocks))
             for label, j in (stored.fields if stored else {}).items():
                 judged.setdefault(label, []).append({'check': c.name, **j})
             spec = c.points
@@ -521,8 +473,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                            'stored': stored,
                            'current': stored is not None and status.current(
                                stored, sheet.values, defn=exam.check_hash(q, c), code=exam.code_hash),
-                           'figures': [b for b in blocks if b['type'] == 'image'],
-                           'rest': [b for b in blocks if b['type'] != 'image']})
+                           'figures': blocks[:figures], 'rest': blocks[figures:]})
 
         # the fields on the page: its own, then those its checks read elsewhere
         own = [key(q.id, label) for label in q.labels]
@@ -729,21 +680,17 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return FileResponse(path, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=600'})
 
     def evidence_image(request: Request) -> Response:
+        """The image with this digest, if this check's stored result shows it. The
+        digest names the content, so the URL is immutable."""
         sub, q = target(request)
-        row = store.get(sub.id, key(q.id, request.path_params['check']), 'result')
-        b = find_image((row.body or {}).get('blocks'), request.path_params['path']) \
-            if row and isinstance(row.body, dict) else None
-        if b is None:
+        digest = request.path_params['digest']
+        got = store.image(sub.id, key(q.id, request.path_params['check']), digest) \
+            if DIGEST.fullmatch(digest) else None
+        if got is None or got[0] not in MEDIA_TYPES:
             raise HTTPException(404)
-        try:
-            data = base64.b64decode(b['data'], validate=True)
-        except ValueError:
-            raise HTTPException(404) from None
-        # The URL names the data's version: cache it for good; any other version, not at all.
-        fresh = request.query_params.get('v') == image_version(b)
-        return Response(data, media_type=b['media_type'], headers={
+        return Response(got[1], media_type=got[0], headers={
             'Content-Security-Policy': IMAGE_CSP, 'X-Content-Type-Options': 'nosniff',
-            'Cache-Control': 'private, max-age=31536000, immutable' if fresh else 'no-store'})
+            'Cache-Control': 'private, max-age=31536000, immutable'})
 
     def job(request: Request) -> Response:
         info = jobs.get(request.path_params['id'])
@@ -1165,7 +1112,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         post('/s/{sub}/{q}/default', to_default),
         post('/s/{sub}/{q}/restore', restore),
         Route('/page/{sub}/{index:int}.jpg', page_image),
-        Route('/image/{sub}/{q}/{check}/{path}', evidence_image),
+        Route('/image/{sub}/{q}/{check}/{digest}', evidence_image),
         Route('/jobs/{id}', job),
         Route('/read', read_page),
         post('/read/plan', read_plan),

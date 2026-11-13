@@ -10,6 +10,9 @@ addressed (as `get`, `write` and `delete` take it) by `(submission, name, kind)`
     ''                  'who'       who wrote it: the person picked (`core.identity`)
     ''                  'split'     intake: a source's split plan (`submission` is the source id)
 
+A result's images (`result.Record`) are their own table, keyed by the result
+and their digest: written with the result, gone with it, never in its body.
+
 Overrides of exam data (`core.overrides`) are their own table, keyed by
 `(scope, path)`: the scope is '' (the exam), 'source:<id>' or 'submission:<id>'.
 
@@ -66,6 +69,11 @@ create table if not exists source (
 );
 create table if not exists made (
   submission text primary key, source text not null, pages text not null, orient text, made_at text not null
+);
+create table if not exists image (
+  submission text not null, name text not null, digest text not null,
+  media_type text not null, data blob not null,
+  primary key (submission, name, digest)
 );
 create table if not exists memo (
   submission text not null, key text not null, value text not null,
@@ -263,7 +271,8 @@ class Store:
 
     def write(self, submission: str, name: str, kind: str, body: Any, *,
               origin: str, author: str | None = None, expect_rev: int | None | _Any = ANY,
-              guard: Mapping[tuple[str, str], int | None] | None = None, keep_rev: bool = False) -> Row:
+              guard: Mapping[tuple[str, str], int | None] | None = None, keep_rev: bool = False,
+              images: Mapping[str, tuple[str, bytes]] | None = None) -> Row:
         """Create or replace one row; the replaced row goes to history.
 
         `expect_rev` is the revision the writer last saw (`None`: must not
@@ -271,8 +280,11 @@ class Store:
         to the revisions a computation read; the write happens only if all
         are still current. `keep_rev` keeps the row's revision (its content
         did not change). Writing the body a row already has is a no-op.
+        A result's `images` ({digest: (media_type, data)}, as its body names
+        them) replace the ones it had.
         """
         assert origin in ('auto', 'manual')
+        assert images is None or kind == 'result'
         text = _text(body)
         with self._lock, self._tx():
             cur = self._check(submission, name, kind, expect_rev, guard)
@@ -280,6 +292,10 @@ class Store:
                 return cur
             if cur is not None:
                 self._archive(cur)
+            if kind == 'result':
+                self._db.execute('delete from image where submission=? and name=?', (submission, name))
+                self._db.executemany('insert into image values (?,?,?,?,?)',
+                                     [(submission, name, d, t, b) for d, (t, b) in (images or {}).items()])
             rev = cur.rev if keep_rev and cur is not None else self._next_rev()
             self._db.execute(
                 f'insert or replace into row ({COLUMNS}) values (?,?,?,?,?,?,?,?)',
@@ -294,7 +310,16 @@ class Store:
                 self._archive(cur)
                 self._db.execute('delete from row where submission=? and kind=? and name=?',
                                  (submission, kind, name))
+                if kind == 'result':
+                    self._db.execute('delete from image where submission=? and name=?', (submission, name))
                 self._changed()
+
+    def image(self, submission: str, name: str, digest: str) -> tuple[str, bytes] | None:
+        """`(media_type, data)` of an image that result `name` shows, or None."""
+        with self._lock:
+            r = self._db.execute('select media_type, data from image where submission=? and name=? and digest=?',
+                                 (submission, name, digest)).fetchone()
+        return (r[0], bytes(r[1])) if r else None
 
     def restore(self, submission: str, name: str, kind: str, rev: int, *,
                 expect_rev: int | None | _Any = ANY) -> Row:
@@ -391,8 +416,12 @@ class Store:
         return Submission(*r[:4], r[4] or '') if r else None
 
     def delete_submission(self, id: str) -> None:
-        with self._lock:
+        """Forget a submission, and its results (computed) with their images."""
+        with self._lock, self._tx():
             self._db.execute('delete from submission where id=?', (id,))
+            self._db.execute("delete from row where submission=? and kind='result'", (id,))
+            self._db.execute('delete from image where submission=?', (id,))
+            self._changed()
 
     def has_work(self, submission: str, *, besides: str = '') -> bool:
         """Whether a submission has grading work: a value, a result or a decision
