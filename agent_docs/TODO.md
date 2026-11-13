@@ -49,6 +49,13 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
     ties, conflicts and evidence that fits nobody are doubts. A pick records
     the person; its link to the roster is derived; a roster is valid when
     everyone on it finds themselves.
+  - *Values:* a value is what was read; whether a person should look is a
+    status (`Value.review`, a note), set by the model's reply (`unsure`) or
+    from the field's menu, cleared by verifying or editing. No text markers.
+    Silence stores nothing: a field the reply says nothing usable about stays
+    not read. A blank is an ordinary value and is never verified without a
+    person. Every reader's reply is JSON, `{"value", "unsure"}` per field. The
+    model transcribes code once and the program splits it by function.
   - *Reading:* what will be read and reading it are one computation
     (`runner.to_read`). A read asks the model; nothing remembers a field's
     reading but its value (only Split's page readings are remembered).
@@ -64,18 +71,32 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
     grade and blocks; images are stored by digest outside the result row. A
     kit figure is a pure function of its arguments, drawn only when shown.
 - **Verified how:** every change passed the whole suite and the four exams'
-  self-tests against the instructor blanks on `main` after merging. Most were
-  exercised in a browser on synthetic workspaces by the agent that made them;
-  the core fixes of the second round were not. Two independent reviews ran on
-  2026-11-13 (morning: overrides, identity, images, Split; evening: all of
-  the day's changes, core and web); the fixes for the evening review have not
-  themselves been reviewed. Nothing has been run against a live model, and
-  prerendering has not been exercised in a browser that does it. Subagent
-  work is merged on tests and spot checks, not a line-by-line read.
-- **Next, in the owner's rough order:** a first live-model run on synthetic
-  handwriting (also tunes name matching and shows how reliable page readings
-  are); a filter overlay on the question page; search facets; then a student
-  view.
+  self-tests against the instructor blanks on `main` after merging, and most
+  were exercised in a browser on synthetic workspaces by the agent that made
+  them. Independent reviews: 2026-11-13 morning (overrides, identity, images,
+  Split) and evening (all of the day's changes, core and web); an end-to-end
+  browser pass after the evening fixes. What came after that pass (the
+  end-to-end fixes, review as a status, the code split, synth's placement)
+  has not been independently reviewed. Prerendering has not been exercised in
+  a browser that does it. Subagent work is merged on tests and spot checks,
+  not a line-by-line read.
+- **Live model (2026-11-14, gemma 26b on the owner's laptop, synthetic pages
+  on the real blanks only):** the client, reads, Stop and resume work. Exam
+  3, 14 submissions: short answers 347/350 exact, none stored blank without
+  being stated; code 48/48; printed 70/83 (8 are spacing the checks ignore, 4
+  one question read from the wrong list item); all 235 replies followed the
+  JSON shape. About 24 s and 24 calls per submission; two calls at once is
+  only ~16% faster. Says nothing about real handwriting: synthetic answers
+  are a font. Not run live: Exams 1 and 2, the browser under a slow model,
+  name-matching doubts, a second model for comparison.
+- **Next, in the owner's rough order:** the same live run on a second local
+  model for speed and accuracy; a filter overlay on the question page; search
+  facets; then a student view.
+- **For the owner:** Exam 3's package labels question 1's fields 1.1-1.4
+  while the page prints the course's placeholder notation; the reader copes
+  by matching boxes in order. `fields.table` (std) maps each printed text to a
+  version name for exams whose version is told by fields with different
+  texts.
 
 ## The model (built 2026-11-12)
 
@@ -123,10 +144,7 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
   2026-11-13, uncommitted in a worktree): would make Names like the question
   page and remove the reload of every submission after each pick
   (`/scans/names` at scale). Only worth it if as fast and much simpler.
-- **Cosmetic, open:** the filter summary wraps the grid header at 1400 px;
-  the Filter page shows raw state names; Names shows the raw
-  "[REVIEW: not read]" marker in the value box; the Read page says "N will
-  read" but counts to N plus one refresh per submission.
+- **Cosmetic, open:** the filter summary wraps the grid header at 1400 px.
 
 ## Future
 
