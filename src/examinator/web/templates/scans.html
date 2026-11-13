@@ -8,7 +8,7 @@
 {% block body %}
 <main class="narrow" id="scans" data-idboxes="{{ idboxes }}" data-widths="{{ widths }}" data-counts="{{ counts }}"
  data-made="{{ made }}" data-people="{{ people|length }}" data-model="{{ 1 if model else '' }}"
- data-landmarks="{{ 1 if exam.landmarks else '' }}" data-fields="{{ 1 if fields else '' }}"
+ data-landmarks="{{ 1 if exam.landmarks else '' }}"
  data-roster='{{ people|tojson }}'>
 <nav class="flow" role="tablist" aria-label="steps">
 <button type="button" role="tab" data-tab="add" title="add the scanned PDFs">1 Scans <span class="n">({{ sources|length }})</span></button>

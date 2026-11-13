@@ -1,7 +1,7 @@
 'use strict';
 // Actions: named things a page can do. A button and a key are two ways to trigger one.
 //
-//   Actions.register(name, {run(ctx), available(ctx)?, label?})
+//   Actions.register(name, {run(ctx), available(ctx)?, repeat?})
 //   <button data-action="verify">     a click triggers the action (ctx.el is the button)
 //   the key map {combo: name}          a key triggers it (ctx.el is null)
 //
@@ -16,9 +16,12 @@
 // are ignored while typing in a field and during composition; Escape is the exception (it
 // leaves a field). Combos with Mod work while typing.
 //
-// One press acts once, decided here for every control: a key's auto-repeat never triggers
-// an action, a held Enter or Space never clicks a button (or takes a picker's choice) again,
-// and the second click of a double click never reaches a button, an action or a list choice.
+// A key held down acts once: its auto-repeat never triggers a change, and never reaches the
+// browser either (a held Cmd+S, or a held E that focused a field and would type into it).
+// Moves (a cursor, a page looked at) opt in to repeating: `repeat: true`, or a function of
+// ctx. A held Enter or Space never presses a control again. A click acts on what was under
+// the pointer when its double click began: the second click of a double click that lands on
+// something drawn since the first (a list redrawn by the first click's answer) is dropped.
 const Actions = (() => {
   const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -154,22 +157,21 @@ const Actions = (() => {
     return !!a && (!a.available || !!a.available({source: 'code', el: null, target: document.activeElement, ...ctx}));
   };
 
-  // Repeats and double fires, before any page handler sees them.
-  const acting = el => el?.closest?.('button, [data-action], [role="option"], [role="tab"], input:not([type="range"])');
+  // Held keys and stale clicks, before any page handler sees them.
+  const control = el => el?.closest?.('button, [data-action], [role="option"], [role="tab"], input[type="checkbox"], input[type="radio"]');
+  const drop = e => { e.preventDefault(); e.stopImmediatePropagation(); };
   addEventListener('keydown', e => {
-    if (e.repeat && (e.key === 'Enter' || e.key === ' ') && acting(e.target)) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-    }
+    // Enter in a one-line field takes it (a grade, a name): held, it does not again
+    if (e.repeat && ((e.key === 'Enter' && (control(e.target) || e.target.matches?.('input'))) || (e.key === ' ' && control(e.target)))) drop(e);
   }, true);
-  for (const type of ['mousedown', 'click', 'dblclick']) {
-    addEventListener(type, e => {
-      if (e.detail > 1 && acting(e.target) && !e.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {     // a double click in text selects a word
-        e.preventDefault();
-        e.stopImmediatePropagation();
-      }
-    }, true);
-  }
+  let first = null, stale = false;        // what the first click of this run of clicks pressed
+  addEventListener('mousedown', e => {
+    const el = control(e.target);
+    if (e.detail <= 1) first = el;
+    stale = e.detail > 1 && !!el && el !== first;
+    if (stale) drop(e);
+  }, true);
+  addEventListener('click', e => { if (stale && e.detail > 1) drop(e); }, true);
 
   // A key: listened for on window, after the page's own handlers (a handler that
   // takes the key, like arrows while editing regions, calls preventDefault). A key pressed
@@ -177,13 +179,25 @@ const Actions = (() => {
   // soon as it is shown, a frame before it is drawn, and a key acts on what is drawn.
   let drawn = false;
   whenShown(() => requestAnimationFrame(() => setTimeout(() => { drawn = true; })));
+  let held = null;          // {combo, name}: the key that triggered an action and is still down
+  addEventListener('keyup', () => { held = null; });
+  addEventListener('blur', () => { held = null; });
   addEventListener('keydown', e => {
     if (!drawn) return e.preventDefault();
-    if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.repeat) return;
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
     const combo = comboOf(e);
     if (!combo) return;
-    const s = settings();
     const ctx = {source: 'key', el: null, event: e, target: e.target};
+    if (e.repeat) {
+      if (!held || held.combo !== combo) return;      // held since before this page, or typing: the browser's
+      e.preventDefault();
+      const a = registry.get(held.name);
+      const again = typeof a.repeat === 'function' ? a.repeat(ctx) : a.repeat;
+      if (again && (!a.available || a.available(ctx))) a.run(ctx);
+      return;
+    }
+    held = null;
+    const s = settings();
     const name = (keymap(s)[combo] || []).find(n => registry.has(n) && (!registry.get(n).available || registry.get(n).available(ctx)));
     if (!name) return;
     if (isSingle(combo) && combo !== 'Escape') {
@@ -191,6 +205,7 @@ const Actions = (() => {
     }
     const a = registry.get(name);
     e.preventDefault();
+    held = {combo, name};
     a.run(ctx);
   });
 

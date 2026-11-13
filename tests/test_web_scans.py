@@ -57,8 +57,8 @@ def post(client, token, path, data):
 
 
 def read_names(client, token, **data):
-    """Read the name boxes, as a page showing the last run would ask."""
-    return post(client, token, '/scans/names/read', {'rev': client.get('/scans/names').json()['run'], **data})
+    """Read the name boxes: a run, as the page asks for it."""
+    return post(client, token, '/scans/names/read', data)
 
 
 def upload(client, token, path, name='stack.pdf', **headers):
@@ -87,8 +87,26 @@ def check_and_accept(client, token, src):
     wait(client, post(client, token, f'/scans/{src}/propose', {'check': True, 'rev': plan['rev']}).json()['job'])
     plan = client.get(f'/scans/{src}/plan').json()
     for _ in range(2):          # two quarter turns
-        plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'k': 4, 'rev': plan['rev']}).json()['plan']
+        plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'sheet': plan['entries'][4]['start'],
+                                                         'rev': plan['rev']}).json()['plan']
     return plan, post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
+
+
+def test_an_edit_names_a_submission_by_its_first_page(site):
+    """A submission is named by its first sheet, never by its place in the list: an edit
+    queued behind one that changed the list means the submission the person saw, or is
+    refused. Join with next, then V on the next one (pressed before the join was answered):
+    the page V was about is no longer a first page, so nothing else is verified."""
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    plan = client.get(f'/scans/{src}/plan').json()
+    edit = lambda op, **kw: post(client, token, f'/scans/{src}/edit', {'op': op, 'rev': plan['rev'], **kw})
+    shown = plan['entries'][1]['start']             # the submission on screen when V was pressed
+    plan = edit('join', sheet=plan['entries'][0]['start']).json()['plan']
+    r = edit('confirm', sheet=shown)
+    assert r.status_code == 400 and r.json()['error'] == "not a first page any more"
+    assert not any(e['verified'] for e in client.get(f'/scans/{src}/plan').json()['entries'])
+    assert edit('confirm', sheet=plan['entries'][1]['start']).json()['plan']['entries'][1]['verified']
 
 
 def test_step_through_edits_and_undo(site):
@@ -97,13 +115,13 @@ def test_step_through_edits_and_undo(site):
     plan = client.get(f'/scans/{src}/plan').json()
     assert [e['start'] for e in plan['entries']] == [0, 4, 8, 12, 16, 20] and plan['cursor'] == 0
     # stale revision: refused
-    assert post(client, token, f'/scans/{src}/edit', {'op': 'confirm', 'k': 0, 'rev': plan['rev'] - 1}).status_code == 409
-    r = post(client, token, f'/scans/{src}/edit', {'op': 'confirm', 'k': 0, 'rev': plan['rev']})
+    assert post(client, token, f'/scans/{src}/edit', {'op': 'confirm', 'sheet': 0, 'rev': plan['rev'] - 1}).status_code == 409
+    r = post(client, token, f'/scans/{src}/edit', {'op': 'confirm', 'sheet': 0, 'rev': plan['rev']})
     plan = r.json()['plan']
-    r = post(client, token, f'/scans/{src}/edit', {'op': 'move', 'k': 1, 'delta': -1, 'rev': plan['rev']})
+    r = post(client, token, f'/scans/{src}/edit', {'op': 'move', 'sheet': 4, 'delta': -1, 'rev': plan['rev']})
     plan = r.json()['plan']
     assert [e['start'] for e in plan['entries']][:3] == [0, 3, 7]
-    assert post(client, token, f'/scans/{src}/edit', {'op': 'move', 'k': 1, 'delta': 5, 'rev': plan['rev']}).status_code == 400
+    assert post(client, token, f'/scans/{src}/edit', {'op': 'move', 'sheet': 3, 'delta': 5, 'rev': plan['rev']}).status_code == 400
     assert post(client, token, f'/scans/{src}/edit', {'op': 'nope', 'rev': plan['rev']}).status_code == 400
     plan = post(client, token, f'/scans/{src}/undo', {'rev': plan['rev']}).json()['plan']
     assert [e['start'] for e in plan['entries']][:2] == [0, 4]
@@ -272,8 +290,7 @@ def test_read_names_reads_only_the_unnamed_and_says_what(site):
     view = client.get('/scans/names').json()
     assert view['unread'] == 0
     nothing = read_names(client, token)
-    assert nothing.json() == {'ok': True, 'job': None, 'rev': view['run'], 'n': 0}
-    assert post(client, token, '/scans/names/read', {'rev': 'stale'}).status_code == 409
+    assert nothing.json() == {'ok': True, 'job': None, 'n': 0}
     rows = {r['sub']: r for r in view['rows']}
     post(client, token, '/scans/who', {'sub': 's0001', 'key': rows['s0001']['candidates'][0]['key'], 'rev': None})
     r = read_names(client, token, again=True)
@@ -338,10 +355,10 @@ def test_a_box_for_one_submission_is_a_box(site):
     check_and_accept(client, token, src)
     for name in ('name', 'id'):
         post(client, token, '/exam/set', {'path': f'@identity/fields/{name}/region', 'value': None, 'rev': None})
-    assert not client.get('/scans/names').json()['boxed'] and 'data-fields=""' in client.get('/scans').text
+    assert not client.get('/scans/names').json()['boxed'] and 'id="w-noboxes" class="dim">' in client.get('/scans').text
     post(client, token, '/exam/set', {'path': '@identity/fields/name/region', 'value': [1, 100, 200, 800, 280],
                                       'rev': None, 'scope': 'submission:s0002'})
-    assert client.get('/scans/names').json()['boxed'] and 'data-fields="1"' in client.get('/scans').text
+    assert client.get('/scans/names').json()['boxed'] and 'id="w-noboxes" class="dim" hidden' in client.get('/scans').text
     r = read_names(client, token)
     assert r.json()['n'] == 1 and wait(client, r.json()['job'])['state'] == 'done'
     assert identity.values(ws, 's0002')['s0002']['name'].text == "Blake Mockford"

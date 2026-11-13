@@ -16,6 +16,7 @@ from examinator.model.fake import FakeModel
 from examinator.pdf import pages as pdf_pages, render
 from examinator.pdf.layout import Layout
 from examinator.pdf.render import Renderer
+from conftest import first_of
 
 TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
 
@@ -105,9 +106,9 @@ def test_turning_the_scan_and_a_submission(stacked):
 
     one, _ = intake.add_source(ws, paths[0])
     art = intake.reguess(ws, one.id, model=model)
-    art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')   # one exam upside down
+    art = intake.edit(ws, one.id, 'turn', sheet=first_of(ws, one.id, 4), expect_rev=art.rev, author='t')   # one exam upside down
     assert split.turns(art.body)[17] == 1
-    art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')   # a quarter turn a press
+    art = intake.edit(ws, one.id, 'turn', sheet=first_of(ws, one.id, 4), expect_rev=art.rev, author='t')   # a quarter turn a press
     assert split.turns(art.body)[17] == 2 and split.turns(art.body)[21] == 0
     art = intake.reguess(ws, one.id, model=model)
     assert split.doubts(art.body, ws.exam.pages)[4] == []
@@ -120,12 +121,12 @@ def test_turns_are_shortcuts_for_each_sheets_own(stacked):
     at = lambda i: split.turns(intake.plan(ws, one.id).body)[i]
     step('turn_page', sheet=9)                      # one sheet: only it
     assert at(9) == 1 and at(8) == at(10) == 0
-    step('turn', k=2)                               # its submission (sheets 8..11): each a quarter turn more
+    step('turn', sheet=first_of(ws, one.id, 2))                               # its submission (sheets 8..11): each a quarter turn more
     assert at(9) == 2 and at(8) == at(11) == 1 and at(12) == 0
     step('turn_source')                             # the whole scan: every sheet
     assert at(9) == 3 and at(8) == 2 and at(0) == at(12) == 1
     # a sheet moved into the turned submission keeps its own turn
-    step('move', k=3, delta=1)                      # sheet 12 joins submission 2
+    step('move', sheet=first_of(ws, one.id, 3), delta=1)                      # sheet 12 joins submission 2
     assert at(12) == 1 and at(11) == 2
     # a turn changes nothing but the turn: the readings stay as last read
     art = intake.plan(ws, one.id)
@@ -310,7 +311,7 @@ def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     assert (ws.pdfs / 's0003.pdf').stat().st_mtime_ns == before['s0003']
     # orientation change of a submission without work: rewritten; nothing else touched
     art = intake.edit(ws, one.id, 'restore', sheet=9, expect_rev=art.rev, author='t')
-    intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')
+    intake.edit(ws, one.id, 'turn', sheet=first_of(ws, one.id, 4), expect_rev=art.rev, author='t')
     assert states(ws, one.id) == ['made', 'made', 'made', 'made', 'changed', 'made']
     report = intake.accept(ws, one.id)
     assert report['rewritten'] == ['s0005'] and report['unchanged'] == 5
@@ -322,7 +323,7 @@ def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     assert report['rewritten'] == ['s0003'] and ws.store.made()['s0003'].pages == (7, 8, 10, 11)
     assert ws.store.get('s0003', 'parity/B', 'value') is not None
     # joining away a submission with no work removes it
-    intake.edit(ws, one.id, 'join', k=0, expect_rev=intake.plan(ws, one.id).rev, author='t')
+    intake.edit(ws, one.id, 'join', sheet=first_of(ws, one.id, 0), expect_rev=intake.plan(ws, one.id).rev, author='t')
     ws.store.write('s0002', 'parity/B', 'value', {'text': 'odd'}, origin='manual', author='t')
     with pytest.raises(intake.Busy):        # s0002 would go away with its work
         intake.accept(ws, one.id)
@@ -417,14 +418,14 @@ def test_a_plan_edit_during_accept_leaves_pdfs_alone(stacked, monkeypatch):
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
     before = {p.name: p.read_bytes() for p in ws.pdfs.glob('*.pdf')}
-    art = intake.edit(ws, one.id, 'turn', k=1, expect_rev=intake.plan(ws, one.id).rev, author='t')
+    art = intake.edit(ws, one.id, 'turn', sheet=first_of(ws, one.id, 1), expect_rev=intake.plan(ws, one.id).rev, author='t')
     intake.edit(ws, one.id, 'cut', sheet=2, expect_rev=art.rev, author='t')    # a new submission too
     counter = ws.store.setting('intake_next')
     real = intake.pdf_pages.write
 
     def write_then_edit(*a):
         real(*a)
-        intake.edit(ws, one.id, 'turn', k=0, expect_rev=intake.plan(ws, one.id).rev, author='u')
+        intake.edit(ws, one.id, 'turn', sheet=first_of(ws, one.id, 0), expect_rev=intake.plan(ws, one.id).rev, author='u')
     monkeypatch.setattr(intake.pdf_pages, 'write', write_then_edit)
     with pytest.raises(Conflict):
         intake.accept(ws, one.id)
@@ -451,15 +452,15 @@ def test_undo_steps_back_one_edit_at_a_time(stacked):
     step = lambda op, **kw: intake.edit(ws, src.id, op, expect_rev=intake.plan(ws, src.id).rev, author='t', **kw)
     undo = lambda: intake.undo(ws, src.id, expect_rev=intake.plan(ws, src.id).rev)
     first = starts()
-    step('move', k=1, delta=1)
+    step('move', sheet=first_of(ws, src.id, 1), delta=1)
     second = starts()
-    step('move', k=2, delta=1)
+    step('move', sheet=first_of(ws, src.id, 2), delta=1)
     assert starts() not in (first, second)
     undo()
     assert starts() == second
     undo()                                  # a second undo goes further back; it does not redo
     assert starts() == first
-    step('move', k=1, delta=-1)             # a new edit after undoing: undo returns to where it started
+    step('move', sheet=first_of(ws, src.id, 1), delta=-1)             # a new edit after undoing: undo returns to where it started
     undo()
     assert starts() == first
     while intake.can_undo(ws, src.id):
@@ -491,7 +492,7 @@ def test_undo_after_a_join_does_not_bring_back_the_removed_id(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    edit_(ws, one.id, 'join', k=0)
+    edit_(ws, one.id, 'join', sheet=first_of(ws, one.id, 0))
     assert intake.accept(ws, one.id)['removed'] == ['s0002']
     intake.undo(ws, one.id, expect_rev=intake.plan(ws, one.id).rev)    # the join undone
     intake.undo(ws, one.id, expect_rev=intake.plan(ws, one.id).rev)
@@ -504,7 +505,7 @@ def test_a_written_submission_is_not_absorbed_by_later_edits(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    edit_(ws, one.id, 'move', k=2, delta=1)             # D on a first page: sheet 8 goes to the one before
+    edit_(ws, one.id, 'move', sheet=first_of(ws, one.id, 2), delta=1)             # D on a first page: sheet 8 goes to the one before
     for sheet in (4, 5):                                # then sheets dropped in the submission before that
         edit_(ws, one.id, 'drop', sheet=sheet)
     rows, gone = intake.outline(ws, one.id)
@@ -517,7 +518,7 @@ def test_an_interrupted_accept_is_repaired_by_the_next(stacked, monkeypatch):
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
     edit_(ws, one.id, 'cut', sheet=2)                   # s0001 rewritten, a new one
-    edit_(ws, one.id, 'turn', k=3)                      # s0003 rewritten (its index after the cut)
+    edit_(ws, one.id, 'turn', sheet=first_of(ws, one.id, 3))                      # s0003 rewritten (its index after the cut)
     real = intake.os.replace
     calls = []
 

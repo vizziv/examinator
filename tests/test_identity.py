@@ -11,6 +11,7 @@ from examinator.core.runner import Runner
 from examinator.core.store import Conflict
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
+from conftest import first_of
 
 TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
 
@@ -214,7 +215,7 @@ def written(tmp_path):
     one, _ = intake.add_source(ws, paths[0])
     art = intake.reguess(ws, one.id, model=model)
     for _ in range(2):                  # one exam upside down: two quarter turns
-        art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')
+        art = intake.edit(ws, one.id, 'turn', sheet=first_of(ws, one.id, 4), expect_rev=art.rev, author='t')
     intake.accept(ws, one.id)
     two, _ = intake.add_source(ws, paths[1])
     art = intake.plan(ws, two.id)

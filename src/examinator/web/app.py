@@ -6,7 +6,7 @@
     GET  /s/{sub}/{q}               question page (a question graders work through: `exam.grading`)
     POST /s/{sub}/{q}/{action}      save unverify decide clear read check default restore
     POST /s/{sub}/@identity/save    the Names step's values (the identity fields)
-    GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
+    GET  /page/{sub}/{scan}/{index}.jpg    one scanned page (`scan`: names the PDF's content)
     GET  /image/{sub}/{q}/{check}/{digest}    one evidence image of that check's result
     GET  /jobs/{id}                 background job state
     GET  /read                      batch reads;  POST /read/plan|start|stop,  GET /read/status
@@ -21,12 +21,13 @@
     GET  /sheet/{src}/{index}.jpg   one sheet of a source (?o= quarter turns, ?w= width)
 
 Every POST needs the page token in an `X-Token` header and (but the upload)
-takes a JSON object of at most MAX_JSON bytes. A POST is a change or a query
-(DESIGN §13, Changes): a change names the revision the page drew (`rev`) and
-answers the new one. It answers JSON: 403 bad token, 415 not JSON, 413 too
-large, 404 unknown target, 409 stale revision or a run in progress (with
-`current`, what is there now), 400 input a grader should correct. Nothing here keeps module-level state; it all
-hangs off `app.state`.
+takes a JSON object of at most MAX_JSON bytes. A POST is a change to a row, a
+run in a slot, or a query (DESIGN §13, Changes): a change names the revision the
+page drew (`rev`) and answers the new one; a run is refused while its slot runs.
+Every answer is JSON, errors as `{error}`: 403 a token this run of the app did
+not give, 415 not JSON, 413 too large, 404 unknown target, 409 stale revision
+(with `current`, what is there now) or a slot running, 400 input a grader
+should correct. Nothing here keeps module-level state; it all hangs off `app.state`.
 """
 from __future__ import annotations
 
@@ -80,6 +81,8 @@ ROSTER_SAMPLE = 5           # people a roster preview shows
 CSP = ("default-src 'none'; script-src 'self' 'inline-speculation-rules'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; frame-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
 IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+IMMUTABLE = 'private, max-age=31536000, immutable'     # a URL that names its content
+RESTARTED = "the app restarted since this page was loaded: reload"
 # What a person sees of a status: one word per idea (DESIGN.md, Words on screen).
 STATE_LABELS = {
     'decided': "decided", 'decided_outdated': "decided, outdated", 'to_decide': "to decide",
@@ -159,8 +162,9 @@ def _int(value: Any, what: str, lo: int, hi: int) -> int:
 
 
 def _rev(data: dict) -> int | str | None:
-    """The revision the page was drawn with; `null` means "did not exist". A row's is a
-    number; a run's (a job id) or the roster's (a digest) is a short string."""
+    """The revision the page was drawn with, as the server drew it (the page sends it back
+    unchanged); `null` means "did not exist". A row's is a number, the roster's (a
+    digest) a short string."""
     if 'rev' not in data:
         raise Bad("rev is required")
     rev = data['rev']
@@ -350,7 +354,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         of at most MAX_JSON bytes, and the errors graders can fix."""
         async def endpoint(request: Request) -> Response:
             if not token_ok(request):
-                return JSONResponse({'error': "bad token"}, 403)
+                return JSONResponse({'error': RESTARTED}, 403)
             if request.headers.get('content-type', '').split(';')[0].strip().lower() != 'application/json':
                 return JSONResponse({'error': "expected JSON"}, 415)
             raw = bytearray()
@@ -374,12 +378,14 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             return JSONResponse({'ok': True, **(out or {})})
         return endpoint
 
-    read_slot = lambda sid, qid: f'read:{sid}/{qid}'
-    check_slot = lambda sid, qid, c: f'check:{sid}/{qid}/{c}'
-
     def refresh(sid: str, qid: str | None = None) -> str:
         """Recompute in the background what a change outdated (and this question's checks never run)."""
         return jobs.start(lambda: runner.refresh(sid, questions=[qid] if qid else []))
+
+    def recompute(subs: list[str]) -> str:
+        """Recompute what is outdated in these submissions, in order: one job at a time,
+        which a newer call takes over (it starts again from the newer list's first)."""
+        return jobs.start_each([(s,) for s in subs], runner.refresh, slot='recompute', latest=True)
 
     # --- grid ---
 
@@ -487,7 +493,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 judged.setdefault(label, []).append({'check': c.name, **j})
             spec = c.points
             checks.append({'name': c.name, 'column': q.column(c.name), 'st': st, 'glyph': glyph(st),
-                           'run': jobs.last(check_slot(sub.id, q.id, c.name)) or '',
                            'cls': value_class(st), 'fn': c.fn is not None,
                            'rev': decision.rev if decision else '', 'decided': decision is not None,
                            'bool': isinstance(spec, Bool), 'min': getattr(spec, 'min', None),
@@ -562,8 +567,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         readers_ = [r for r, _ in q.groups()]
         return page(
             'question.html', sub=sub, q=q, checks=checks, fields=fields, waiting=waiting, waiting_other=waiting_other,
-            scans=scans, history=history[:60], count=count, keyed=keyed,
-            can_read=bool(readers_), read_run=jobs.last(read_slot(sub.id, q.id)) or '', off=bool(readers_) and not have_model(),
+            scans=scans, history=history[:60], keyed=keyed,
+            can_read=bool(readers_), off=bool(readers_) and not have_model(), scan=scan_key(sub.id),
             pages=pages, pages_default=q.pages, own=own, extras=max(0, count - exam.pages),
             regions=regions, print_area=levels(lay, PRINT_AREA, overrides.entry(exam, PRINT_AREA).base, stored),
             scopes={'own': overrides.scope(SUBMISSION, sub.id), 'all': '',
@@ -669,7 +674,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def read(request, data):
         """Read this question's fields again (not what a person verified, unless asked).
-        A run: its revision is the last read of this question started (`read_run`)."""
+        A run in this question's slot."""
         sub, q = target(request)
         if not have_model():
             raise Bad("model unavailable")
@@ -678,16 +683,13 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         def work():
             outs = runner.read(sub.id, q.id, include_protected=protected, fresh=True)
             return outs + runner.refresh(sub.id, questions=[q.id])
-        job_ = jobs.start(work, slot=read_slot(sub.id, q.id), seen=_rev(data))
-        return {'job': job_, 'rev': job_}
+        return {'job': jobs.start(work, slot=f'read:{sub.id}/{q.id}')}
 
     def run_check(request, data):
         """A grader's explicit run of one check (one that timed out, say); a run, as above."""
         sub, q = target(request)
         c = check_of(q, data)
-        job_ = jobs.start(lambda: runner.compute(sub.id, q.id, c.name), slot=check_slot(sub.id, q.id, c.name),
-                          seen=_rev(data))
-        return {'job': job_, 'rev': job_}
+        return {'job': jobs.start(lambda: runner.compute(sub.id, q.id, c.name), slot=f'check:{sub.id}/{q.id}/{c.name}')}
 
     def to_default(request, data):
         """A field back to its default: its stored value dropped."""
@@ -721,20 +723,22 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             out[name], out[name + '_rev'] = (o.value, o.rev) if o else (None, None)
         return out
 
-    def crop_boxes(sid: str) -> dict:
-        """Where every field's crop is for one submission, by region path: the scanned
-        page (`index`) and the box on it; the page's script only places them."""
-        lay = ws.layers(sid)
-        layout = Layout(lay.root(PRINT_AREA))
-        return {overrides.join(qid, 'fields', f.label, 'region'): {'index': f.region.page - 1,
-                                                                    'box': box(layout, f.region)}
-                for qid in exam.questions for f in lay.root(qid).fields if f.region is not None}
-
     # --- pages, evidence images, jobs ---
 
+    def scan_key(sid: str) -> str:
+        """What names a submission's PDF as it is now (the render cache's key), for its
+        pages' URLs: a PDF rewritten or turned is another URL. '' when it cannot be read."""
+        try:
+            return ws.renderer.key(ws.pdf_path(sid))
+        except (KeyError, OSError):
+            return ''
+
     def page_image(request: Request) -> Response:
+        """One scanned page of the PDF the URL names: immutable, as its URL changes with it."""
         sub, _ = target(request, need_question=False)
         index = request.path_params['index']
+        if request.path_params['scan'] != scan_key(sub.id):
+            raise HTTPException(404)
         try:
             if not 0 <= index < ws.scan_page_count(sub.id):
                 raise HTTPException(404)
@@ -744,7 +748,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         cache = (ws.root / 'cache').resolve()
         if path.is_symlink() or cache not in path.resolve().parents:
             raise HTTPException(404)
-        return FileResponse(path, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=600'})
+        return FileResponse(path, media_type='image/jpeg', headers={'Cache-Control': IMMUTABLE})
 
     def evidence_image(request: Request) -> Response:
         """The image with this digest, if this check's stored result shows it. The
@@ -757,7 +761,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise HTTPException(404)
         return Response(got[1], media_type=got[0], headers={
             'Content-Security-Policy': IMAGE_CSP, 'X-Content-Type-Options': 'nosniff',
-            'Cache-Control': 'private, max-age=31536000, immutable'})
+            'Cache-Control': IMMUTABLE})
 
     def job(request: Request) -> Response:
         info = jobs.get(request.path_params['id'])
@@ -766,7 +770,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return JSONResponse(info)
 
     def read_page(request: Request) -> Response:
-        return page('read.html', questions=list(exam.grading.values()), run=batch_now()['id'],
+        return page('read.html', questions=list(exam.grading.values()),
                     total=len(store.submissions()))
 
     def batch_plan(data: dict) -> batch.Plan:
@@ -799,31 +803,27 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def read_start(request, data):
         """Read what the selection would read now (planned here, at the start). A run:
-        `rev` is the batch the page last showed (null: none), refused while one runs."""
-        with lock, now(batch_now):
+        refused while a batch runs."""
+        plan = batch_plan(data)
+        run = batch.BatchRun(runner, plan, parallel=_int(data.get('parallel', 2), "parallel", 1, 16))
+        with lock:
             current: Batch | None = request.app.state.batch
-            if (current.id if current else None) != _rev(data):
-                raise Conflict("another read started")
             if current is not None and current.active:
-                raise Conflict("a read is already in progress")
-            plan = batch_plan(data)
-            run = batch.BatchRun(runner, plan, parallel=_int(data.get('parallel', 2), "parallel", 1, 16))
+                raise Conflict("already running")
             request.app.state.batch = Batch(run)
             request.app.state.batch.start()
-        return {'total': plan.count('read'), 'rev': request.app.state.batch.id}
+        return {'total': plan.count('read'), 'id': request.app.state.batch.id}
 
     def read_status(request: Request) -> Response:
         return JSONResponse(batch_now())
 
     def read_stop(request, data):
-        """Stop the batch the page shows running (`rev`: its id)."""
-        rev = _rev(data)
-        with now(batch_now):
-            current: Batch | None = request.app.state.batch
-            if current is None or current.id != rev or not current.active:
-                raise Conflict("not running")
-            current.run.cancel()
-        return {'rev': current.id}
+        """Stop the batch that runs."""
+        current: Batch | None = request.app.state.batch
+        if current is None or not current.active:
+            raise Conflict("not running")
+        current.run.cancel()
+        return {'id': current.id}
 
     # --- settings ---
 
@@ -892,7 +892,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         if first in subs:
             subs.remove(first)
             subs.insert(0, first)
-        job = jobs.start_each([(s,) for s in subs], runner.refresh) if change.checks else None
+        job = recompute(subs) if change.checks else None
         level, id_ = overrides.parse_scope(scope)
         try:
             kind = overrides.kind(exam, path)
@@ -903,16 +903,15 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                'overridden': o is not None, 'checks': [f'{q}.{c}' for q, c in change.checks],
                'affected': len(change.checks) * len(subs), 'job': job,
                'skipped': [{'path': s.path, 'reason': s.reason} for s in change.skipped]}
-        if first in subs and kind in ('region', 'print_area'):     # where the page's crops now are
+        if first in subs and kind in ('region', 'print_area'):     # the page's scope editor, now
             out['levels'] = levels(ws.layers(first), path, overrides.entry(exam, path).base, store.overrides())
-            out['boxes'] = crop_boxes(first)
         return out
 
     def _conflict(e: Conflict, path: str, scope: str) -> Conflict:
         """What is saved now, so that saving again overwrites it knowingly."""
         o = store.overrides(scope).get(path)
-        e.current = {'rev': o.rev if o else None, 'value': o.value if o else None,
-                     'who': (o.author or '?') if o else None}
+        e = Conflict(f"changed elsewhere{f' ({o.author})' if o and o.author else ''}")
+        e.current = {'rev': o.rev if o else None, 'value': o.value if o else None}
         return e
 
     def exam_set(request, data):
@@ -1003,7 +1002,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     async def scans_upload(request: Request) -> Response:
         if not token_ok(request):
-            return JSONResponse({'error': "bad token"}, 403)
+            return JSONResponse({'error': RESTARTED}, 403)
         name = Path(request.query_params.get('name') or 'scan.pdf').name[:200] or 'scan.pdf'
         tmp = intake.sources_dir(ws) / f'.upload-{secrets.token_hex(8)}.part'
         h, size, head = hashlib.sha256(), 0, b''
@@ -1035,8 +1034,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         if op not in intake.EDITS:
             raise Bad("unknown edit")
         kw = {}
-        if 'k' in data:
-            kw['k'] = _int(data['k'], "submission", 0, src.pages)
         if 'sheet' in data:
             kw['sheet'] = _int(data['sheet'], "page", 0, src.pages - 1)
         if 'delta' in data:
@@ -1061,9 +1058,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
                 def work():
                     intake.reguess(ws, src.id, model=runner.model, **kw)
-                # one reading of a scan's pages at a time: a run in the scan's slot, from the last one
-                return {'job': jobs.start(work, slot=f'split-read:{src.id}', seen=jobs.last(f'split-read:{src.id}')),
-                        'rev': kw['expect_rev']}
+                # one reading of a scan's pages at a time: a run in the scan's slot
+                return {'job': jobs.start(work, slot=f'split-read:{src.id}'), 'rev': kw['expect_rev']}
             intake.reguess(ws, src.id, **kw)
         return planned(src)
 
@@ -1104,8 +1100,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def scans_roster(request, data):
         """Replace the roster, against the one the page showed (`rev`)."""
-        identity.set_roster(ws, roster_text(data), expect_rev=_rev(data))
-        return {'rev': identity.roster_rev(ws)}
+        with lock:
+            identity.set_roster(ws, roster_text(data), expect_rev=_rev(data))
+            return {'rev': identity.roster_rev(ws)}
 
     def scans_who(request, data):
         """Name one submission, as the person saw it: `{sub, rev}` and one of `key` (a
@@ -1159,6 +1156,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             mine = own.get(overrides.scope(SUBMISSION, sid), {})
             row['own'] = {c: {'value': mine[p].value, 'rev': mine[p].rev} for c, p in paths.items() if p in mine}
             row['print_area'] = list(a.layout.print_area)     # for the boxes drawn on the page
+            row['scan'] = scan_key(sid)                        # in its pages' URLs
         stored = store.overrides()
         view['nobody'] = [identity.label(p) for p in view['nobody']]
         view['boxed'] = any(a.fields for a in ats.values())
@@ -1171,24 +1169,20 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         view['pad'] = exam.crop_pad
         view['doubts'] = identity.DOUBTS
         view['roster'] = len(identity.people(ws))
-        view['run'] = jobs.last('names-read')
         return JSONResponse(view)
 
     def scans_names_read(request, data):
-        """Read the name boxes: a run, against the last one the page showed (`rev`)."""
-        seen = _rev(data)
+        """Read the name boxes: a run in its slot."""
         if not have_model():
             raise Bad("model unavailable")
         if not identity.boxed(ws):
             raise Bad("no name or ID boxes: draw them first")
         again = bool(data.get('again'))       # also read again what no person verified
         subs = identity.unread(ws, again=again)
-        if not subs:                          # nothing to read: no run, the slot unchanged
-            jobs.expect('names-read', seen)
-            return {'job': None, 'rev': seen, 'n': 0}
-        job_ = jobs.start_each([(s,) for s in subs], lambda sid: identity.read(runner, sid, again=again),
-                               slot='names-read', seen=seen)
-        return {'job': job_, 'rev': job_, 'n': len(subs)}
+        if not subs:                          # nothing to read: no run
+            return {'job': None, 'n': 0}
+        return {'job': jobs.start_each([(s,) for s in subs], lambda sid: identity.read(runner, sid, again=again),
+                                       slot='names-read'), 'n': len(subs)}
 
     def sheet_image(request: Request) -> Response:
         """A sheet turned as asked (the page asks for the plan's orientation) and
@@ -1214,17 +1208,18 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             os.replace(tmp, out)
         if out.is_symlink() or cache not in out.resolve().parents:
             raise HTTPException(404)
-        return FileResponse(out, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=3600'})
+        return FileResponse(out, media_type='image/jpeg', headers={'Cache-Control': IMMUTABLE})     # a source is kept by its digest
 
     def post(kind: str):
-        """A POST route of a kind: 'change' (names the revision drawn, refused when stale)
-        or 'query' (changes nothing: a POST only for its body). The route table says which."""
+        """A POST route of a kind: 'change' (to a row: names the revision drawn, refused
+        when stale), 'run' (in a slot: refused while the slot runs) or 'query' (changes
+        nothing: a POST only for its body). The route table says which."""
         def route(path, fn):
             endpoint = action(fn)
             endpoint.kind = kind
             return Route(path, endpoint, methods=['POST'])
         return route
-    change, query = post('change'), post('query')
+    change, run, query = post('change'), post('run'), post('query')
 
     routes = [
         Route('/', grid_page),
@@ -1236,17 +1231,17 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         change('/s/{sub}/{q}/unverify', unverify),
         change('/s/{sub}/{q}/decide', decide),
         change('/s/{sub}/{q}/clear', clear),
-        change('/s/{sub}/{q}/read', read),
-        change('/s/{sub}/{q}/check', run_check),
+        run('/s/{sub}/{q}/read', read),
+        run('/s/{sub}/{q}/check', run_check),
         change('/s/{sub}/{q}/default', to_default),
         change('/s/{sub}/{q}/restore', restore),
-        Route('/page/{sub}/{index:int}.jpg', page_image),
+        Route('/page/{sub}/{scan}/{index:int}.jpg', page_image),
         Route('/image/{sub}/{q}/{check}/{digest}', evidence_image),
         Route('/jobs/{id}', job),
         Route('/read', read_page),
         query('/read/plan', read_plan),
-        change('/read/start', read_start),
-        change('/read/stop', read_stop),
+        run('/read/start', read_start),
+        run('/read/stop', read_stop),
         Route('/read/status', read_status),
         Route('/settings', settings_page),
         Route('/exam', exam_page),
@@ -1258,7 +1253,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         query('/scans/roster/preview', scans_roster_preview),
         change('/scans/who', scans_who),
         Route('/scans/names', scans_names),
-        change('/scans/names/read', scans_names_read),
+        run('/scans/names/read', scans_names_read),
         Route('/scans/{src}/plan', scans_plan),
         change('/scans/{src}/edit', scans_edit),
         change('/scans/{src}/propose', scans_propose),
@@ -1267,9 +1262,14 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         Route('/sheet/{src}/{index:int}.jpg', sheet_image),
         Mount('/static', StaticFiles(directory=HERE / 'static'), name='static'),
     ]
-    app = Starlette(routes=routes)
+    async def error(request: Request, exc: Exception) -> Response:
+        """Every answer is JSON: a failed one says why, never how (no trace, no student text)."""
+        code = getattr(exc, 'status_code', 500)
+        return JSONResponse({'error': {404: "not found (gone?)", 405: "not allowed"}.get(code, "server error")}, code)
+
+    app = Starlette(routes=routes, exception_handlers={HTTPException: error, Exception: error})
     app.add_middleware(Guard, public_url=public_url)
     app.state.batch = None
     # Results outdated while the app was down (the exam's code or data changed) are recomputed now.
-    app.state.startup = jobs.start_each([(s.id,) for s in store.submissions()], runner.refresh)
+    app.state.startup = recompute([s.id for s in store.submissions()])
     return app

@@ -150,7 +150,7 @@
     const next = cellsOf(list[Math.max(0, Math.min(list.length - 1, list.indexOf(row) + dr))]);
     place(next[Math.max(0, Math.min(next.length - 1, c + dc))]);
   }
-  const step = (dr, dc) => ({available: () => shown().some(r => cellsOf(r).length), run: () => move(dr, dc)});
+  const step = (dr, dc) => ({available: () => shown().some(r => cellsOf(r).length), run: () => move(dr, dc), repeat: true});
   Actions.register('cell-left', step(0, -1));
   Actions.register('cell-right', step(0, 1));
   Actions.register('cell-up', step(-1, 0));

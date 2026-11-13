@@ -262,23 +262,32 @@ def reguess(ws, id: str, *, model=None, length: int | None = None,
                           expect_rev=expect_rev)
 
 
-# A person's edits: (plan, k, sheet, delta) -> new plan.
+# A person's edits: (plan, sheet, delta) -> new plan. An edit of a submission names it by
+# its first sheet, so that it means the submission the person saw whatever came before it.
 _EDITS: dict[str, Callable[..., dict]] = {
-    'confirm': lambda body, k, sheet, delta: split.confirm(body, k),
-    'move': lambda body, k, sheet, delta: split.move(body, k, _step(delta)),
-    'cut': lambda body, k, sheet, delta: split.cut(body, sheet),
-    'join': lambda body, k, sheet, delta: split.join(body, k),
-    'drop': lambda body, k, sheet, delta: split.drop(body, sheet),
-    'restore': lambda body, k, sheet, delta: split.restore(body, sheet),
-    'extra': lambda body, k, sheet, delta: split.toggle_extra(body, sheet),
-    'missing': lambda body, k, sheet, delta: split.add_missing(body, sheet),
-    'unmissing': lambda body, k, sheet, delta: split.remove_missing(body, sheet),
-    'shift': lambda body, k, sheet, delta: split.shift(body, sheet, _step(delta)),
-    'turn_page': lambda body, k, sheet, delta: split.turn(body, [sheet]),
-    'turn': lambda body, k, sheet, delta: split.turn(body, split.span(body, k)),
-    'turn_source': lambda body, k, sheet, delta: split.turn(body, split.turns(body)),
+    'confirm': lambda body, sheet, delta: split.confirm(body, _first(body, sheet)),
+    'move': lambda body, sheet, delta: split.move(body, _first(body, sheet), _step(delta)),
+    'cut': lambda body, sheet, delta: split.cut(body, sheet),
+    'join': lambda body, sheet, delta: split.join(body, _first(body, sheet)),
+    'drop': lambda body, sheet, delta: split.drop(body, sheet),
+    'restore': lambda body, sheet, delta: split.restore(body, sheet),
+    'extra': lambda body, sheet, delta: split.toggle_extra(body, sheet),
+    'missing': lambda body, sheet, delta: split.add_missing(body, sheet),
+    'unmissing': lambda body, sheet, delta: split.remove_missing(body, sheet),
+    'shift': lambda body, sheet, delta: split.shift(body, sheet, _step(delta)),
+    'turn_page': lambda body, sheet, delta: split.turn(body, [sheet]),
+    'turn': lambda body, sheet, delta: split.turn(body, split.span(body, _first(body, sheet))),
+    'turn_source': lambda body, sheet, delta: split.turn(body, split.turns(body)),
 }
 EDITS = tuple(_EDITS)
+
+
+def _first(body: dict, sheet: Any) -> int:
+    """The submission whose first sheet is `sheet`, else ValueError."""
+    at = [body['sheets'][p]['i'] for p in split.starts(body)]
+    if isinstance(sheet, bool) or sheet not in at:
+        raise ValueError("not a first page any more")
+    return at.index(sheet)
 
 
 def _step(delta: Any) -> int:
@@ -287,14 +296,14 @@ def _step(delta: Any) -> int:
     return delta
 
 
-def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | None = None,
+def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None,
          sheet: int | None = None, delta: int | None = None) -> Row:
-    """One person's edit of a plan (see `core.split`), against the revision they saw:
-    `confirm`, `move` (submission `k`'s first page, `delta`), `cut`, `join`, `drop`,
-    `restore`, and of one `sheet`: `extra` (toggle), `missing` (a missing page
-    before it), `unmissing`, `shift` (`delta` places among the kept sheets). Turning, a
-    quarter turn clockwise more for each sheet: `turn_page` (one `sheet`), `turn`
-    (every sheet of submission `k`), `turn_source` (every sheet)."""
+    """One person's edit of a plan (see `core.split`), against the revision they saw.
+    Of the submission whose first sheet is `sheet`: `confirm`, `move` (its first page,
+    `delta`), `join` (with the next), `turn`. Of one `sheet`: `cut`, `drop`, `restore`,
+    `extra` (toggle), `missing` (a missing page before it), `unmissing`, `shift` (`delta`
+    places among the kept sheets), `turn_page`. And `turn_source` (every sheet). A turn
+    is a quarter turn clockwise more."""
     source(ws, id)
     cur = plan(ws, id)
     if cur is None:
@@ -303,7 +312,7 @@ def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | 
         raise Conflict("the plan changed")
     if op not in _EDITS:
         raise ValueError("unknown edit")
-    body = _EDITS[op](cur.body, k, sheet, delta)
+    body = _EDITS[op](cur.body, sheet, delta)
     body.pop(UNDONE, None)
     return ws.store.write(id, '', PLAN, body, origin='manual', author=author, expect_rev=cur.rev)
 

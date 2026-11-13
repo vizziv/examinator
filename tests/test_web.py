@@ -54,6 +54,10 @@ class Site:
             time.sleep(0.02)
         raise AssertionError("job did not finish")
 
+    def page(self, sub, index):
+        """A scanned page's URL, as the page draws it (it names the PDF as it is now)."""
+        return f'/page/{sub}/{self.ws.renderer.key(self.ws.pdf_path(sub))}/{index}.jpg'
+
     def value(self, sub, k):
         return self.runner.values(sub).get(k)
 
@@ -116,7 +120,7 @@ def test_question_page_before_and_after_reading(site):
     assert r.status_code == 200
     assert 'data-key="a/x" data-rev="' in r.text and 'value="1"' in r.text
     assert 'pill st st-unverified' in r.text and '<span class="tag unv">unverified</span>' in r.text
-    assert '/page/s1/0.jpg' in r.text
+    assert site.page('s1', 0) in r.text
     # the fields its checks read elsewhere are on the page too, linked to their question
     assert 'data-key="p/c1"' in r.text and 'href="/s/s1/p"' in r.text
     printing = site.get('/s/s1/p').text                        # no checks: values to verify, no grade
@@ -161,7 +165,7 @@ def test_pages_rendered_ahead_are_safe(site):
         assert r.status_code == 200, path
         if r.headers['content-type'].startswith('text/html'):
             assert r.headers['cache-control'] == 'no-store', path
-    assert site.get('/page/s1/0.jpg').status_code == 200
+    assert site.get(site.page('s1', 0)).status_code == 200
     assert (site.ws.store.version(), {k: o.rev for k, o in site.ws.store.overrides().items()}) == before
 
 
@@ -203,8 +207,16 @@ def test_a_field_on_a_missing_page_says_so_and_is_not_planned(site):
 
 
 def test_page_image(site):
-    r = site.get('/page/s1/0.jpg')
+    """A page's URL names its PDF as it is now, so the image is served immutable; a PDF
+    written again (Accept rewrites or turns it) is another URL, the old one gone."""
+    url = site.page('s1', 0)
+    r = site.get(url)
     assert r.status_code == 200 and r.headers['content-type'] == 'image/jpeg' and r.content[:2] == b'\xff\xd8'
+    assert 'immutable' in r.headers['cache-control']
+    pdf = site.ws.pdf_path('s1')
+    pdf.write_bytes(pdf.read_bytes() + b'\n')                     # rewritten
+    assert site.page('s1', 0) != url and site.get(url).status_code == 404
+    assert site.get(site.page('s1', 0)).status_code == 200 and site.page('s1', 0) in site.get('/s/s1/a').text
 
 
 # --- request validation ---
@@ -272,10 +284,10 @@ def test_unknown_targets_are_404(site, tmp_path):
 
 
 def test_symlinked_pdf_is_not_served(site):
-    pdfs = site.ws.pdfs
+    url, pdfs = site.page('s1', 0), site.ws.pdfs
     (pdfs / 's1.pdf').rename(pdfs / 'real.pdf')
     (pdfs / 's1.pdf').symlink_to(pdfs / 'real.pdf')
-    assert site.get('/page/s1/0.jpg').status_code == 404
+    assert site.get(url).status_code == 404
     assert site.get('/s/s1/a').status_code == 200
 
 
@@ -397,23 +409,22 @@ def test_evidence_of_an_outdated_result_is_marked_stale(site):
 
 
 def test_read_and_check_from_the_page(site):
-    # a run names the last run of its kind the page showed (none yet: null)
-    r = site.post('/s/s1/a/read', {'rev': None})
+    # a run is a run in its slot: no revision; again once it has finished
+    r = site.post('/s/s1/a/read', {})
     assert r.status_code == 200 and site.wait(r.json()['job'])['state'] == 'done'
-    assert f'data-action="read" data-rev="{r.json()["rev"]}"' in site.get('/s/s1/a').text
-    assert site.post('/s/s1/a/read', {'rev': None}).status_code == 409      # pressed twice: once
+    assert 'data-action="read" title=' in site.get('/s/s1/a').text
     assert site.value('s1', 'a/x').text == '1'
     assert site.state('s1', 'a', 'x').state == 'unverified'        # its own checks ran after the read
     site.runner.set('s1', 'a', 'x', "8", author='ta')
-    r = site.post('/s/s1/a/read', {'rev': r.json()['rev']})         # a person's value stays
+    r = site.post('/s/s1/a/read', {})                               # a person's value stays
     site.wait(r.json()['job'])
     assert site.value('s1', 'a/x').text == '8'
-    r = site.post('/s/s1/a/read', {'include_protected': True, 'rev': r.json()['rev']})
+    r = site.post('/s/s1/a/read', {'include_protected': True})
     site.wait(r.json()['job'])
     assert site.value('s1', 'a/x').text == '1'
-    r = site.post('/s/s1/a/check', {'check': 'x', 'rev': None})
+    r = site.post('/s/s1/a/check', {'check': 'x'})
     assert site.wait(r.json()['job'])['state'] == 'done'
-    assert site.post('/s/s1/a/check', {'check': 'nope', 'rev': None}).status_code == 400
+    assert site.post('/s/s1/a/check', {'check': 'nope'}).status_code == 400
 
 
 def test_a_field_with_a_default_on_the_page(tmp_path):
@@ -442,8 +453,8 @@ def test_reading_is_refused_without_a_model(env):
     exam, ws, runner = env
     runner.model = None
     site = Site(exam, ws, runner)
-    assert site.post('/s/s1/a/read', {'rev': None}).status_code == 400
-    assert 'data-action="read" data-rev="" disabled' in site.get('/s/s1/a').text
+    assert site.post('/s/s1/a/read', {}).status_code == 400
+    assert 'data-action="read" disabled' in site.get('/s/s1/a').text
 
 
 OWN = 'submission:s1'
@@ -484,12 +495,13 @@ def test_a_region_conflict_says_what_is_saved_so_saving_again_overwrites(site):
     r = set_([1, 0, 0, 600, 100], first['rev'])
     assert r.status_code == 409
     cur = r.json()['current']
-    assert cur['who'] == 'other' and cur['value'] == [1, 0, 200, 1000, 400] and cur['rev'] != first['rev']
+    assert r.json()['error'] == "changed elsewhere (other)"
+    assert cur['value'] == [1, 0, 200, 1000, 400] and cur['rev'] != first['rev']
     r = set_([1, 0, 0, 600, 100], cur['rev'])                                    # knowingly
     assert r.status_code == 200 and r.json()['value'] == [1, 0, 0, 600, 100]
     overrides.clear(site.ws, path, scope=OWN)                        # dropped elsewhere
     r = set_([1, 0, 0, 700, 100], r.json()['rev'])
-    assert r.status_code == 409 and r.json()['current'] == {'rev': None, 'value': None, 'who': None}
+    assert r.status_code == 409 and r.json()['current'] == {'rev': None, 'value': None}
     assert set_([1, 0, 0, 700, 100], None).status_code == 200
 
 
@@ -510,11 +522,10 @@ def test_batch_plan_run_status(site):
     assert r.status_code == 200
     plan = r.json()
     assert plan['counts']['read'] == 6 and plan['counts']['blocked'] == 0      # 3 reads, twice
-    r = site.post('/read/start', {'parallel': 2, 'rev': None})
+    r = site.post('/read/start', {'parallel': 2})
     assert r.status_code == 200 and r.json()['total'] == 6
-    assert site.post('/read/start', {'rev': None}).status_code == 409     # another started since it was shown
     info = wait_batch(site)
-    assert info['id'] == r.json()['rev']
+    assert info['id'] == r.json()['id']
     # every read, then one refresh per submission: the checks ran without being asked for
     assert info['state'] == 'done' and info['done'] == info['total'] == 8 and info['failures'] == []
     assert site.state('s2', 'b').state == 'unverified'
@@ -523,10 +534,11 @@ def test_batch_plan_run_status(site):
     assert site.post('/read/plan', {}).json()['counts']['read'] == 6       # explicitly again: what nobody verified
     for bad in ({'questions': []}, {'submissions': ['ghost']}, {'questions': ['ghost']}):
         assert site.post('/read/plan', bad).status_code == 400
-        assert site.post('/read/start', {**bad, 'rev': info['id']}).status_code == 400
+        assert site.post('/read/start', bad).status_code == 400
     one = site.post('/read/plan', {'submissions': ['s2'], 'questions': ['b']}).json()
     assert one['counts']['read'] == 1 and one['groups'][0]['submissions'] == ['s2']
-    assert site.post('/read/stop', {'rev': info['id']}).status_code == 409    # not running: nothing to stop
+    r = site.post('/read/stop', {})
+    assert r.status_code == 409 and r.json()['error'] == "not running"       # nothing to stop
 
 
 def test_a_batch_never_replaces_what_a_person_set_unless_told(site):
@@ -534,10 +546,10 @@ def test_a_batch_never_replaces_what_a_person_set_unless_told(site):
     site.runner.set('s1', 'a', 'x', "9", author='ta')
     plan = site.post('/read/plan', {'submissions': ['s1'], 'questions': ['a']}).json()
     assert plan['counts']['read'] == 1                     # y is not verified: it is read
-    run = site.post('/read/start', {'submissions': ['s1'], 'questions': ['a'], 'rev': None}).json()['rev']
+    site.post('/read/start', {'submissions': ['s1'], 'questions': ['a']})
     wait_batch(site)
     assert site.value('s1', 'a/x').text == '9'
-    site.post('/read/start', {'submissions': ['s1'], 'questions': ['a'], 'include_protected': True, 'rev': run})
+    site.post('/read/start', {'submissions': ['s1'], 'questions': ['a'], 'include_protected': True})
     wait_batch(site)
     assert site.value('s1', 'a/x').text == '1'
 
@@ -550,7 +562,7 @@ def test_pages_of_one_submission(site):
     assert own('a/pages', [1, 2]).status_code == 200
     assert site.ws.selected_pages('s1', site.exam.questions['a']) == (1, 2)
     assert site.ws.selected_pages('s2', site.exam.questions['a']) == (1,)
-    assert '/page/s1/1.jpg' in site.get('/s/s1/a').text
+    assert site.page('s1', 1) in site.get('/s/s1/a').text
     assert own('a/pages', [7]).status_code == 400 and own('a/pages', []).status_code == 400
     assert own('a/note', "continues overleaf").status_code == 400          # no such thing
     rev = site.ws.store.overrides(OWN)['a/pages'].rev
@@ -573,10 +585,10 @@ def test_print_area_at_each_scope(site):
                                               'sub': 's1'})
     r = pa(OWN, [100, 100, 900, 900], None)
     assert r.status_code == 200 and r.json()['levels']['own'] == [100, 100, 900, 900]
-    assert all(len(b['box'].split(',')) == 4 and b['index'] == 0 for b in r.json()['boxes'].values()) and r.json()['boxes']
     rev = r.json()['levels']['own_rev']
     r = pa(OWN, [0, 0, 1000, 1000], rev + 99)
-    assert r.status_code == 409 and r.json()['current'] == {'rev': rev, 'value': [100, 100, 900, 900], 'who': 'tester'}
+    assert r.status_code == 409 and r.json()['current'] == {'rev': rev, 'value': [100, 100, 900, 900]}
+    assert r.json()['error'] == "changed elsewhere (tester)"
     r = pa(SCAN, [20, 20, 980, 980], None)
     assert r.json()['levels']['scan'] == [20, 20, 980, 980]
     assert r.json()['levels']['value'] == [100, 100, 900, 900]           # its own wins
@@ -762,7 +774,7 @@ def test_set_validation_conflict_and_token(site):
     assert ok.status_code == 200 and ok.json()['checks'] == [] and ok.json()['job'] is None
     stale = site.post('/exam/set', {'path': path, 'value': [1, 0, 0, 20, 20], 'rev': None})
     assert stale.status_code == 409
-    assert stale.json()['current'] == {'rev': ok.json()['rev'], 'value': [1, 0, 0, 10, 10], 'who': 'tester'}
+    assert stale.json()['current'] == {'rev': ok.json()['rev'], 'value': [1, 0, 0, 10, 10]}
 
 
 def test_region_override_moves_the_crop_and_changes_no_value(ksite):

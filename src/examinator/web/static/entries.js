@@ -4,7 +4,7 @@
 // grades starts one background recheck; this page shows its progress, and the
 // question page hears of it through the 'entry-saved' event.
 (() => {
-  const sub = document.getElementById('question')?.dataset.sub;
+  const sub = $('question')?.dataset.sub;
 
   function readEntry(form) {
     const kind = form.dataset.kind, el = form.querySelector('.ev'), text = el.value;
@@ -30,34 +30,28 @@
     }
     return text;
   }
-  const revOf = form => (form.dataset.rev === '' ? null : Number(form.dataset.rev));
-  // Each entry's own message line, where its changes say how they went.
-  const say = (form, text) => Line(form.querySelector('.emsg')).say(text);
+  // The entry for a path as drawn now (the question page draws its key panel again after a change).
+  const formOf = path => document.querySelector(`form.entry[data-path="${CSS.escape(path)}"]`);
+  const lineOf = path => Line(formOf(path).querySelector('.emsg'));
 
-  // A refusal keeps the draft and takes the revision saved now: saving again overwrites knowingly.
+  // What was typed is kept over the answer if it changed since the press.
+  const shown = el => (el.type === 'checkbox' ? el.checked : el.value);
   function send(form, clear) {
-    const path = form.dataset.path;
-    const data = clear ? {path, rev: revOf(form), sub} : {path, value: readEntry(form), rev: revOf(form), sub};
-    return Changes.send(`override::${path}`, clear ? '/exam/clear' : '/exam/set', data, {
-      line: Line(form.querySelector('.emsg')),
-      redraw: cur => {
-        form.dataset.rev = cur.rev ?? '';
-        const now = cur.rev == null ? "the package's" : brief(cur.value);
-        return !clear ? Changes.kept(now) : cur.rev == null ? "reverted elsewhere already" : `changed elsewhere to ${now}: revert again to drop it`;
-      },
-      done: b => saved(form, clear, b)});
+    const path = form.dataset.path, typed = shown(form.querySelector('.ev'));
+    return override({path, value: clear ? undefined : readEntry(form), clear, sub,
+                     rev: () => formOf(path).dataset.rev || null, take: cur => { formOf(path).dataset.rev = cur.rev ?? ''; }},
+                    {line: lineOf(path), done: b => saved(formOf(path), clear, b, typed)});
   }
-  function saved(form, clear, b) {
+  function saved(form, clear, b, typed) {
     form.dataset.rev = b.rev ?? '';
     form.classList.toggle('over', b.overridden);
-    form.classList.remove('dirty');
     form.querySelector('[data-action=entry-revert]').hidden = !b.overridden;
     form.querySelector('.ebase').hidden = !b.overridden;
-    if (clear) {
-      const el = form.querySelector('.ev');
-      if (form.dataset.kind === 'bool') el.checked = !!b.value; else el.value = b.text;
-    }
-    say(form, (clear ? "reverted" : "saved") + (b.job ? ` · ${b.checks.join(', ')} outdated` : ''));
+    const el = form.querySelector('.ev'), same = shown(el) === typed;
+    if (form.dataset.kind === 'bool') { el.defaultChecked = !!b.value; if (same) el.checked = !!b.value; }
+    else { el.defaultValue = b.text; if (same) el.value = b.text; }
+    form.classList.toggle('dirty', isDraft(el));
+    lineOf(form.dataset.path).say((clear ? "reverted" : "saved") + (b.job ? ` · ${b.checks.join(', ')} outdated` : ''));
     document.dispatchEvent(new CustomEvent('entry-saved', {detail: b}));
   }
 
@@ -72,61 +66,43 @@
   for (const name of ['save', 'verify']) {
     if (!Actions.has(name)) Actions.register(name, {available: ctx => !!inEntry(ctx), run: ctx => send(inEntry(ctx), false)});
   }
-  document.addEventListener('input', e => {
-    const form = e.target.closest('form.entry');
-    if (form) { form.classList.add('dirty'); say(form, ''); }
-  });
+  const mark = () => document.querySelectorAll('form.entry').forEach(f => f.classList.toggle('dirty', isDraft(f.querySelector('.ev'))));
+  document.addEventListener('input', mark);
+  document.addEventListener('redrawn', mark);
   document.addEventListener('submit', e => { if (e.target.matches('form.entry')) e.preventDefault(); });
-  addEventListener('beforeunload', e => { if (document.querySelector('form.entry.dirty')) e.preventDefault(); });
+  addEventListener('beforeunload', e => { if ([...document.querySelectorAll('form.entry .ev')].some(isDraft)) e.preventDefault(); });
 
   // --- the exam page: progress of the recheck, copying the change list ---
-  const panel = document.getElementById('changes');
+  const panel = $('changes');
   if (!panel) return;
-  const $ = id => document.getElementById(id);
-
-  async function follow(job, what) {
-    const bar = $('ch-bar');
-    bar.hidden = false;
-    for (;;) {
-      const r = await request('/jobs/' + encodeURIComponent(job));
-      if (!r.ok) break;
-      bar.max = r.body.total || 1;
-      bar.value = r.body.done || 0;
-      $('ch-text').textContent = `${what} ${r.body.done || 0}/${r.body.total || 0}`;
-      if (r.body.state !== 'running') {
-        const bad = r.body.outcomes || [];
-        $('ch-fail').textContent = r.body.state === 'failed' ? `failed: ${r.body.error || ''}`
-          : bad.length ? `${bad.length} not done: ` + bad.slice(0, 5).map(o => `${o.submission} ${o.step} ${o.status}`).join('; ') : '';
-        break;
-      }
-      await new Promise(done => setTimeout(done, 600));
-    }
-    bar.hidden = true;
-  }
 
   document.addEventListener('entry-saved', async e => {
-    const b = e.detail;
+    const b = e.detail, what = `${(b.checks || []).join(', ')} recomputed`;
     panel.hidden = false;
-    $('ch-fail').textContent = '';
-    for (const s of b.skipped || []) $('ch-fail').textContent += `not applied: ${s.path} (${s.reason}) `;
+    $('ch-fail').textContent = (b.skipped || []).map(s => `not applied: ${s.path} (${s.reason})`).join(' ');
     if (!b.job) { $('ch-text').textContent = "no grades affected"; return; }
     $('ch-text').textContent = `${b.checks.join(', ')} outdated; recomputing`;
-    await follow(b.job, `${b.checks.join(', ')} recomputed`);
+    const bar = $('ch-bar');
+    bar.hidden = false;
+    const job = await waitJob(b.job, j => {
+      bar.max = j.total || 1;
+      bar.value = j.done || 0;
+      $('ch-text').textContent = `${what} ${j.done || 0}/${j.total || 0}`;
+    });
+    const bad = job.outcomes || [];
+    $('ch-fail').textContent = job.state !== 'done' ? `${job.state}: ${job.error || ''}`
+      : bad.length ? `${bad.length} not done: ` + bad.slice(0, 5).map(o => `${o.submission} ${o.step} ${o.status}`).join('; ') : '';
+    bar.hidden = true;
   });
   // A scan's or a submission's own value: back to what applies to the others.
   Actions.register('scoped-revert', {run: ({el}) => {
     if (!confirm("Drop this own value?")) return;
     const {path, scope} = el.dataset;
-    return Changes.send(`override:${scope}:${path}`, '/exam/clear', {path, scope, rev: el.dataset.rev === '' ? null : Number(el.dataset.rev)}, {
-      line: Line(el.parentElement.querySelector('.emsg')),
-      redraw: cur => {
-        el.dataset.rev = cur.rev ?? '';
-        return cur.rev == null ? "dropped elsewhere already" : `changed elsewhere to ${brief(cur.value)}: revert again to drop it`;
-      },
-      done: b => {
-        el.closest('tr').remove();
-        document.dispatchEvent(new CustomEvent('entry-saved', {detail: b}));
-      }});
+    return override({path, scope, clear: true, rev: () => el.dataset.rev || null, take: cur => { el.dataset.rev = cur.rev ?? ''; }},
+                    {line: Line(el.parentElement.querySelector('.emsg')), done: b => {
+                      el.closest('tr').remove();
+                      document.dispatchEvent(new CustomEvent('entry-saved', {detail: b}));
+                    }});
   }});
   Actions.register('copy-lines', {available: () => !!$('lines'), run: async () => {
     try { await navigator.clipboard.writeText($('lines').textContent); flash("copied", 'ok'); }

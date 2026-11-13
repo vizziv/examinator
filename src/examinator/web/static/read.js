@@ -53,20 +53,19 @@
     later();
   }});
 
-  // The subject is the batch run: Start names the last one shown (start.dataset.rev), Stop the one shown running.
-  const shown = () => start.dataset.rev || null;
-  Changes.redraw = () => poll();
+  // A batch is a run: Start is refused while one runs; Stop stops the one that runs.
   Actions.register('read-start', {available: () => !start.disabled, run: () => {
     if (flag('include_protected') && !confirm("Read again, replacing values a person set or verified?")) return;
-    return Changes.send('batch', '/read/start', {...selection(), parallel: Number(form.parallel.value), rev: shown()},
-                        {line, done: () => poll()});
+    return Changes.send('batch', '/read/start', {...selection(), parallel: Number(form.parallel.value)}, {line, done: poll});
   }});
-  Actions.register('read-stop', {available: () => !stop.disabled, run: () => Changes.send('batch', '/read/stop', {rev: shown()}, {line})});
+  Actions.register('read-stop', {available: () => !stop.disabled, run: () => Changes.send('batch', '/read/stop', {}, {line, done: poll})});
 
+  // The batch's progress, polled while it runs (one poll at a time).
+  let next = 0;
   async function poll() {
+    clearTimeout(next);
     const r = await request('/read/status');
     const s = r.body;
-    if (r.ok) start.dataset.rev = s.id || '';
     if (!r.ok || s.state === 'idle') return;
     document.getElementById('progress').hidden = false;
     const bar = document.getElementById('bar');
@@ -85,7 +84,8 @@
     running = s.state === 'running';
     stop.disabled = !running;
     ready();
-    if (running) setTimeout(poll, 1000);
+    clearTimeout(next);
+    if (running) next = setTimeout(poll, 1000);
     else if (was) plan();                   // what is left to read now
   }
   plan();

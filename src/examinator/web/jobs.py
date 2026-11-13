@@ -24,45 +24,31 @@ class Jobs:
     """Single runs and rechecks: `start(fn)` returns an id to poll.
 
     A job is `{'state': 'running' | 'done' | 'failed', 'outcomes': [...]}`;
-    `fn` returns an `Outcome`, a list of them, or None.
+    `fn` returns an `Outcome`, a list of them, or None. A run may name a slot (a kind
+    of run on one subject), which runs one thing at a time.
     """
 
     def __init__(self, workers: int = 4):
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='examinator-job')
         self._lock = threading.Lock()
         self._jobs: OrderedDict[str, dict] = OrderedDict()
-        self._slots: dict[str, str] = {}
+        self._slots: dict[str, str] = {}     # slot -> its last job
+        self._next: dict[str, list] = {}     # slot -> the items a `latest` job goes on over
 
-    def last(self, slot: str) -> str | None:
-        """The last run started in `slot` (a kind of run on one subject): its revision."""
-        with self._lock:
-            return self._slots.get(slot)
-
-    def _claim(self, slot: str | None, seen: Any, id: str) -> None:
-        """A run is a change to its slot: refused unless the page saw the slot's last
-        run (`seen`) and that run has finished. Called with the lock held."""
+    def _claim(self, slot: str | None, id: str) -> None:
+        """A slot runs one thing at a time: a second while one runs is refused. Called
+        with the lock held."""
         if slot is None:
             return
-        self._expect(slot, seen)
+        last = self._slots.get(slot)
+        if last is not None and self._jobs.get(last, {}).get('state') == 'running':
+            raise Conflict("already running")
         self._slots[slot] = id
 
-    def _expect(self, slot: str, seen: Any) -> None:
-        last = self._slots.get(slot)
-        running = last is not None and self._jobs.get(last, {}).get('state') == 'running'
-        if last != seen or running:
-            e = Conflict("already running" if running else "another run started")
-            e.current = {'rev': last, 'running': running}
-            raise e
-
-    def expect(self, slot: str, seen: Any) -> None:
-        """Refuse as a run would be refused, without starting one (a run with nothing to do)."""
-        with self._lock:
-            self._expect(slot, seen)
-
-    def start(self, fn: Callable[[], Any], slot: str | None = None, seen: Any = None) -> str:
+    def start(self, fn: Callable[[], Any], slot: str | None = None) -> str:
         id = secrets.token_hex(8)
         with self._lock:
-            self._claim(slot, seen, id)
+            self._claim(slot, id)
             self._jobs[id] = {'state': 'running', 'outcomes': []}
             for old in [k for k, v in self._jobs.items() if v['state'] != 'running'][:-KEEP]:
                 del self._jobs[old]
@@ -78,20 +64,27 @@ class Jobs:
         self._pool.submit(work)
         return id
 
-    def start_each(self, items: list, fn: Callable[..., Any], slot: str | None = None, seen: Any = None) -> str:
+    def start_each(self, items: list, fn: Callable[..., Any], slot: str | None = None, latest: bool = False) -> str:
         """One job over many items: `fn(*item)` for each, in order, with progress.
 
         The job adds `done` and `total`; `outcomes` keeps only what did not finish
-        cleanly (with its submission), so a long loop stays small."""
+        cleanly (with its submission), so a long loop stays small. With `latest`, a
+        start while the slot's job runs is not refused: that job goes on over these
+        items instead, from the first (one recompute of everything, never a queue of them)."""
         id = secrets.token_hex(8)
         items = list(items)
         with self._lock:
-            self._claim(slot, seen, id)
+            last = self._slots.get(slot) if slot else None
+            if latest and last is not None and self._jobs.get(last, {}).get('state') == 'running':
+                self._next[slot] = items
+                return last
+            self._claim(slot, id)
             self._jobs[id] = {'state': 'running', 'outcomes': [], 'done': 0, 'total': len(items)}
 
         def work():
-            bad, failed = [], 0
-            for i, item in enumerate(items):
+            todo, bad, failed, i = items, [], 0, 0
+            while i < len(todo):
+                item = todo[i]
                 try:
                     out = _outcomes(fn(*item))
                     bad += [{**o, 'submission': item[0]} for o in out if o['status'] != 'done']
@@ -99,12 +92,15 @@ class Jobs:
                     failed += 1
                     bad.append({'step': '', 'status': 'failed', 'detail': type(e).__name__,
                                 'submission': item[0]})
+                i += 1
                 with self._lock:
-                    self._jobs[id] = {'state': 'running', 'outcomes': bad[:200], 'done': i + 1,
-                                      'total': len(items)}
+                    if slot in self._next:
+                        todo, i = self._next.pop(slot), 0
+                    self._jobs[id] = {'state': 'running' if i < len(todo) else 'done', 'outcomes': bad[:200],
+                                      'done': i, 'total': len(todo), **({} if i < len(todo) else {'failed': failed})}
             with self._lock:
-                self._jobs[id] = {'state': 'done', 'outcomes': bad[:200], 'done': len(items),
-                                  'total': len(items), 'failed': failed}
+                if not todo:
+                    self._jobs[id] = {'state': 'done', 'outcomes': [], 'done': 0, 'total': 0, 'failed': 0}
 
         self._pool.submit(work)
         return id
@@ -119,7 +115,7 @@ class Batch:
     """One batch run in its own thread."""
 
     def __init__(self, run: BatchRun):
-        self.id = secrets.token_hex(8)      # its revision: what Start and Stop name
+        self.id = secrets.token_hex(8)
         self.run = run
         self.error = ''
         self._thread = threading.Thread(target=self._work, name='examinator-batch', daemon=True)

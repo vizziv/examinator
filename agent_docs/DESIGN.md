@@ -421,57 +421,78 @@ normalization. Those are exam code.
 
 ### Changes
 
-**A page has one subject, drawn from one server response. Every change names
-the revision of what it changes as the page drew it, and the server refuses a
-stale one.** Moving to another subject is a navigation (the question page: one
-submission's question; next and previous are page loads), so a change can only
-be about what is on screen, and what was queued dies with the page. Pages that
-edit one subject in place (Split: one scan's plan; the region and print-area
-editors; Exam data; Read: the batch run; Names, while it shows one submission at
-a time in place) send every change the same way:
+**A page has one subject, drawn from one server response. A change names what
+it is about by identity and says what the person gave; the server refuses it
+if what it changes is not at the revision the page last drew.** Moving to
+another subject is a navigation (the question page: one submission's question;
+next and previous are page loads), so a change can only be about what is on
+screen, and what was queued dies with the page. Pages that edit one subject in
+place (Split: one scan's plan; the region and print-area editors; Exam data;
+Read: the batch run; Names, one submission at a time) send every change the
+same way:
 
-- **Server.** A POST route is a *change* or a *query* (the route table says
-  which; `change(...)`, `query(...)` in `web/app.py`). A change requires the
-  revision drawn (`rev`, or each item's in a multi-value save) and answers the
-  new one; a stale one is refused with 409 and `current`, what is there now. A
-  run (a read, a check, a batch, reading the name boxes) is a change to its
-  slot: its revision is the last run's id, and a second while one runs is
-  refused. The roster's revision is a digest of it. Only the scan upload (a
-  file, kept once by its digest) is neither.
-- **Browser.** `Changes.send(subject, path, body, {done, redraw, line, ends})` in
-  `common.js` is the only way to POST a change (`request` only reads; a test
-  scans the scripts). The body is finished when it is sent: built by the
-  press, from what is drawn, and copied. *Changes to one subject go one at a
-  time in press order, each expecting the revision the one before it left;
-  a refusal redraws from `current` and drops what was queued behind it.* So a
-  quick A A D on Split is three edits in order. A change that `ends` its
-  subject (naming, verify-and-next: the page moves on) drops the presses queued
-  behind it, which were about a state the person never saw answered: V V names
-  once.
+- **Server.** A POST route is a *change* to a row, a *run* in a slot, or a
+  *query* (the route table says which: `change(...)`, `run(...)`, `query(...)`
+  in `web/app.py`). A change requires the revision drawn (`rev`, or each
+  item's in a multi-value save) and answers the new one; a stale one is
+  refused with 409, the reason in `error` and `current`, what is there now. A
+  run (a read, a check, a batch, reading the name boxes, reading a scan's
+  pages) names no revision: a slot runs one thing at a time, and a second
+  while one runs is refused as "already running". Every answer is JSON, an
+  error as `{error}`; a token this run of the app did not give says to reload.
+  Only the scan upload (a file, kept once by its digest) is none of these.
+- **Browser.** `Changes.send(subject, path, body, {done, redraw, line, ends})`
+  in `common.js` is the only way to POST a change (`request` only reads; a test
+  scans the scripts). *What is fixed at the press is what the person said: the
+  things it names, by identity (a field's key, a check, a submission by its
+  first sheet, never a position), and the values they gave. The revisions are
+  read when the change is sent (`body` is a function), from what the page last
+  drew. Changes to one subject go one at a time in press order, each sent once
+  the one before it was answered and drawn.* So identity guarantees a press
+  lands on what was on screen, and the revision guards only against changes
+  made elsewhere: save, type, save is two saves; a quick A A D on Split is
+  three edits; V pressed behind "join with next" is refused ("not a first page
+  any more") rather than verifying a submission never shown. A revision goes
+  back exactly as the server drew it (`dataset.rev || null`). A change that
+  `ends` its subject (naming, verify-and-next: the page moves on) drops what
+  was pressed behind it: V V names once.
+- **What an input drew is one record**: the value it was drawn with
+  (`defaultValue`) and its row's revision (the nearest `data-rev`), always set
+  together from the server; a draft is an input that differs from it. Drawing
+  again (`keepDrafts` in `common.js`) replaces everything the server drew but
+  the inputs holding a draft or the focus, which take their new drawing (so a
+  draft is now over what is saved). The question page draws itself again from
+  the server after every change, one drawing at a time, the last never older
+  than the last change.
 - **When a change does not go through, the person gets one message, where they
-  were working, that is true:** why, what the page now shows, and whether what
-  they typed was kept. It goes to the caller's `line` (`Line` in `common.js`),
-  else the header; a line belongs to the last change sent there ('…' while slow,
-  then its outcome), so a message goes when the state it was about does. A
-  refusal never throws a draft away: the draft stays, takes the revision now
-  saved, and the line says "changed elsewhere to X · yours kept: save again to
-  overwrite" (`Changes.kept`).
-- **One press, one change.** In `actions.js`, for every control: a key's
-  auto-repeat never triggers an action, a held Enter or Space never clicks a
-  button or takes a picker's choice again, and the second click of a double
-  click never reaches a button, an action or a list choice.
+  were working:** the server's reason, then what the page did with the draft
+  ("yours kept over X: save again to overwrite", `Changes.kept`, after a 409
+  that `redraw` answered by taking what is saved now). It goes to the caller's
+  `line` (`Line` in `common.js`), else the header; a line belongs to the last
+  change sent there ('…' while slow, then its outcome), so a message goes when
+  the next change there starts. A refusal never throws a draft away.
+- **A held key acts once.** In `actions.js`: a key's auto-repeat never
+  triggers a change, and never reaches the browser when its first press
+  triggered an action (no Save dialog from a held Cmd+S, no "eee" in the field
+  E focused). Moves (cursors, looking around) opt in to repeating
+  (`repeat`). A held Enter or Space never presses a control again. A click
+  acts on what was under the pointer: the second click of a double click that
+  lands on something drawn since the first (a list the first one's answer
+  redrew) is dropped; deliberate quick clicks on the same control each act.
 - **Moving is a page load, rendered ahead.** The pages a key reaches (on a
   question page: next and previous submission in the grid's order, next and
   previous question; on the grid: the cursor's cell, and a hovered one) are
   listed for the browser to prerender (`ahead()` in `common.js`, speculation
   rules; the CSP admits `'inline-speculation-rules'`, JSON, and still no inline
   code). Where the browser does not prerender, the move is an ordinary load.
-  A prerendered page runs before it is shown and may never be: every GET
-  changes nothing (a test), what a page writes to state shared with other pages
-  waits for `whenShown()`, and a page shown later than drawn (prerendered, or
-  restored from the back/forward cache) redraws from the server at once, as
-  after any change. HTML is `no-store`, so Back without that cache loads what is
-  there now.
+  Only question pages are rendered ahead. A prerendered page runs before it is
+  shown and may never be: every GET changes nothing (a test over the route
+  table), what a page writes to state shared with other pages waits for
+  `whenShown()`, and a page shown later than it began to load (the navigation's
+  `activationStart`; or restored from the back/forward cache) draws itself
+  again from the server at once. HTML is `no-store`; an image URL names its
+  content (a scanned page's carries its PDF's render key, a sheet its source's
+  digest), so images are immutable and a rewritten PDF is a new URL.
 
 Screens for the first version:
 
@@ -690,7 +711,7 @@ submission into `pdfs/`; everything downstream is unchanged.
 - **Who** (`core/identity.py`). Three rules hold throughout:
   1. *A naming is a change like any other* (§13, Changes): `{sub, rev, key |
      text | restore}` (take a proposal, pick from the list, type a name, unname,
-     undo), about the submission drawn. The server refuses a stale `rev` (409,
+     undo), about the submission drawn, against the pick's revision last drawn. The server refuses a stale `rev` (409,
      with the pick as it is now) and an unknown key (400), and never
      reinterprets one as another.
   2. *Automatic matching acts only on unique evidence.* Each identifying
