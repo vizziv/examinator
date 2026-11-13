@@ -65,7 +65,7 @@ def sites(tmp_path):
     exam with a synthetic stack split, accepted and on a roster (the rest)."""
     exam = mini()
     ws = workspace(tmp_path / 'q', exam)
-    runner = Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
+    runner = Runner(ws, model=FakeModel(dict(SCRIPT)))
     runner.read('s1', 'a')
     runner.set('s1', 'a', 'y', "2", author='t')
     q = Client(create_app(exam, ws, runner, author='tester'))
@@ -75,7 +75,7 @@ def sites(tmp_path):
     root = tmp_path / 'toy'
     paths = synth.stacks(toy, root)
     tws = Workspace(root, toy, create=True)
-    trunner = Runner(toy, tws, model=synth.fake_model(root))
+    trunner = Runner(tws, model=synth.fake_model(root))
     s = Client(create_app(toy, tws, trunner, author='tester'))
     src = s.client.post('/scans/upload?name=a.pdf', content=paths[0].read_bytes(),
                         headers={'Content-Type': 'application/pdf', 'X-Token': s.token}).json()['id']
@@ -268,9 +268,9 @@ def test_every_get_changes_nothing(sites):
     q, s = sites
     for site in sites:
         sub = site.ws.store.submissions()[0].id
-        qid = next(iter(site.ws.exam.grading))
+        qid = next(iter(site.ws.exam.questions))
         values = {'sub': sub, 'q': qid, 'index': '0', 'scan': site.ws.renderer.key(site.ws.pdf_path(sub)),
-                  'check': site.ws.exam.grading[qid].checks[0].name if site.ws.exam.grading[qid].checks else 'x',
+                  'check': site.ws.exam.questions[qid].checks[0].name if site.ws.exam.questions[qid].checks else 'x',
                   'digest': '0' * 64, 'id': site.app.state.startup, 'src': getattr(site, 'src', 'none')}
         before = (site.ws.store.version(), {k: o.rev for k, o in site.ws.store.overrides().items()},
                   site.app.state.batch, copy.deepcopy(identity.people(site.ws)))

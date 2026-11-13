@@ -54,7 +54,7 @@ create table if not exists history (
   rev integer not null, replaced_at text not null
 );
 create index if not exists history_key on history (submission, kind, name, rev);
-create table if not exists submission (id text primary key, name text, email text, pdf text, student text);
+create table if not exists submission (id text primary key, pdf text);
 create table if not exists setting (key text primary key, value text not null);
 create table if not exists override (
   scope text not null, path text not null, value text, author text, updated_at text not null,
@@ -111,11 +111,13 @@ class Row:
 
 @dataclass(frozen=True)
 class Submission:
+    """A submission: its id and file. Who it is (`name`, `email`, `student`: their
+    ID) is read from its pick (`core.identity`), never stored here; '' when nobody."""
     id: str
     name: str
     email: str
     pdf: str
-    student: str = ''       # the student's ID, when a roster gives one
+    student: str = ''
 
 
 @dataclass(frozen=True)
@@ -338,10 +340,6 @@ class Store:
             return self.write(submission, name, kind, old.body, origin=old.origin, author=old.author,
                               expect_rev=expect_rev)
 
-    def purge_history(self) -> None:
-        with self._lock:
-            self._db.execute('delete from history')
-
     def _tx(self):
         return _Tx(self._db)
 
@@ -390,21 +388,24 @@ class Store:
     # --- submissions, settings, memo ---
 
     def put_submissions(self, subs: Iterable[Submission]) -> None:
+        """Record submissions (their ids and files; who they are is their pick)."""
         with self._lock, self._tx():
             for s in subs:
-                self._db.execute('insert or replace into submission values (?,?,?,?,?)',
-                                 (s.id, s.name, s.email, s.pdf, s.student))
+                self._db.execute('insert or replace into submission (id, pdf) values (?,?)', (s.id, s.pdf))
+
+    _SUBMISSIONS = ("select s.id, coalesce(json_extract(w.body, '$.name'), ''), "
+                    "coalesce(json_extract(w.body, '$.email'), ''), s.pdf, coalesce(json_extract(w.body, '$.id'), '') "
+                    "from submission s left join row w on w.submission = s.id and w.kind = 'who' and w.name = ''")
 
     def submissions(self) -> list[Submission]:
         with self._lock:
-            rows = self._db.execute('select id, name, email, pdf, student from submission order by id').fetchall()
-        return [Submission(*r[:4], r[4] or '') for r in rows]
+            rows = self._db.execute(self._SUBMISSIONS + ' order by s.id').fetchall()
+        return [Submission(*r) for r in rows]
 
     def submission(self, id: str) -> Submission | None:
         with self._lock:
-            r = self._db.execute('select id, name, email, pdf, student from submission where id=?',
-                                 (id,)).fetchone()
-        return Submission(*r[:4], r[4] or '') if r else None
+            r = self._db.execute(self._SUBMISSIONS + ' where s.id=?', (id,)).fetchone()
+        return Submission(*r) if r else None
 
     def delete_submission(self, id: str) -> None:
         """Forget a submission, and its results (computed) with their images."""
@@ -465,10 +466,6 @@ class Store:
         with self._lock:
             self._db.execute('delete from made where submission=?', (submission,))
 
-    def clear_memo(self, submission: str) -> None:
-        with self._lock:
-            self._db.execute('delete from memo where submission=?', (submission,))
-
     def setting(self, key: str, default: Any = None) -> Any:
         with self._lock:
             r = self._db.execute('select value from setting where key=?', (key,)).fetchone()
@@ -478,6 +475,8 @@ class Store:
         assert key not in ('rev', 'changes')
         with self._lock:
             self._db.execute('insert or replace into setting values (?, ?)', (key, json.dumps(value)))
+
+    # The memo: Split's landmark readings, by source (`intake.LandmarkReader`).
 
     def memo(self, submission: str, key: str) -> str | None:
         with self._lock:

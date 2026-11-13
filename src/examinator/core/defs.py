@@ -14,6 +14,7 @@ import hashlib
 import importlib.util
 import inspect
 import json
+import math
 import re
 import sys
 import types
@@ -199,7 +200,7 @@ class Number:
         return Grade(self._check(x))
 
     def _check(self, v: Any) -> int | float:
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
             raise ValueError(f"expected a number, got {v!r}")
         if self.type is int:
             if v != int(v):
@@ -249,9 +250,10 @@ class Question:
     """A group: some fields and any number of checks. It has no state.
 
     `apart`: kept apart from grading (the built-in group of identity fields,
-    `IDENTITY`): no grid column, total, facets, batch reading or place in the
-    question order (`Exam.grading` leaves it out); its fields are fields like
-    any other."""
+    `IDENTITY`): not one of `Exam.questions`, so no grid column, total, facets,
+    batch reading or place in the question order; it is reached by its own
+    name (`Exam.identity`, `Exam.group(IDENTITY)`), and its fields are fields
+    like any other."""
     id: str
     title: str
     pages: tuple[int, ...]                 # printed pages holding the answer
@@ -351,11 +353,14 @@ class Exam:
     `print_area` is where the printed page sits on a scanned sheet: left, top,
     right, bottom, per-mille of the sheet.
 
-    The definition is a set of **roots** (`roots`): each question by id, and the
-    print area under `PRINT_AREA`. `base` keeps them as the package built them;
-    `questions` and `print_area` are live (the package's, with the exam-wide
-    overrides a workspace applies: `core.overrides`). `validate` is the one
-    validation of a definition, for the package and for every override."""
+    The definition is a set of **roots** (`roots`): each question by id, the
+    identity group under `IDENTITY` and the print area under `PRINT_AREA`.
+    `base` keeps them as the package built them. An `Exam` is never changed
+    once built: a workspace's definition is its own (`Workspace.exam`, the
+    package's with the exam-wide overrides stored there: `core.overrides`).
+    `questions` are the questions graders work through, in order; the
+    identity group is reached by name (`identity`, `group`). `validate` is the
+    one validation of a definition, for the package and for every override."""
 
     def __init__(self, id: str, *, title: str = "", pages: int,
                  print_area: Sequence[int] = (0, 0, 1000, 1000),
@@ -373,28 +378,26 @@ class Exam:
             raise ValueError(f"duplicate landmark names {names}")
         for x in self.landmarks:
             check_region(x.region, pages, f"landmark {x.name!r}")
-        group = identity_group(identity)
-        self._question(group, self.pages)
-        self.questions: dict[str, Question] = {IDENTITY: group}
-        self.base: dict[str, Any] = {PRINT_AREA: self.print_area, IDENTITY: group}
+        self.identity = identity_group(identity)    # the built-in group of identity fields
+        self._question(self.identity, self.pages)
+        self.questions: dict[str, Question] = {}    # the questions graders work through, in order
+        self.base: dict[str, Any] = {PRINT_AREA: self.print_area, IDENTITY: self.identity}
         self.overrides: dict[str, Any] = {}        # applied overrides {path: JSON value}; see `overrides`
         self.path: Path | None = None           # set by `load_exam`
         self.code_hash: str = ''
         self._hashes: dict = {}
 
-    @property
-    def grading(self) -> dict[str, Question]:
-        """The questions graders work through, in order: all but those kept apart."""
-        return {qid: q for qid, q in self.questions.items() if not q.apart}
+    def group(self, id: str) -> Question | None:
+        """A question by id, or the identity group by its name (`IDENTITY`): asked for on purpose."""
+        return self.identity if id == IDENTITY else self.questions.get(id)
 
-    @property
-    def identity(self) -> Question:
-        """The built-in group of identity fields, live (regions drawn in the app included)."""
-        return self.questions[IDENTITY]
+    def groups(self) -> dict[str, Question]:
+        """Every group of fields: the identity group, then the questions."""
+        return {IDENTITY: self.identity, **self.questions}
 
     def fields(self) -> dict[str, str | None]:
         """Every field ('question/label') with its default (None: none): what a check may read."""
-        return {key(q.id, f.label): f.default for q in self.questions.values() for f in q.fields}
+        return {key(q.id, f.label): f.default for q in self.groups().values() for f in q.fields}
 
     def question(self, id: str, *, title: str = "", pages: Sequence[int],
                  fields: Sequence[Field] = (), read: Any = None,
@@ -405,7 +408,7 @@ class Exam:
         or several by name (`checks`). A check is a `Check` or a bare function
         (a `Check` worth one `Bool` point). Without checks the question only
         holds fields (the exam's printing, say, which other questions read)."""
-        if id in self.questions:
+        if id in self.base:
             raise ValueError(f"duplicate question {id!r}")
         if not id or '/' in id or id.startswith('@'):
             raise ValueError(f"question id {id!r}: no '/', not starting with '@', and not empty")
@@ -432,24 +435,22 @@ class Exam:
     # --- the definition as roots, and its one validation ---
 
     def roots(self) -> dict[str, Any]:
-        """The live definition: each question by id, and the print area under `PRINT_AREA`."""
-        return {PRINT_AREA: self.print_area, **self.questions}
+        """The definition: the print area under `PRINT_AREA`, the identity group under
+        `IDENTITY`, and each question by id."""
+        return {PRINT_AREA: self.print_area, **self.groups()}
 
-    def with_roots(self, roots: Mapping[str, Any]) -> 'Exam':
-        """A copy of this exam with these roots (for validating a changed definition);
-        this exam is untouched."""
+    def with_roots(self, roots: Mapping[str, Any], *, overrides: Mapping[str, Any] | None = None) -> 'Exam':
+        """A copy of this exam with these roots (and, given, the overrides that made
+        them); this exam is untouched."""
         other = object.__new__(Exam)
         other.__dict__.update(self.__dict__)
-        other.questions = {k: v for k, v in roots.items() if k != PRINT_AREA}
-        other.print_area = roots[PRINT_AREA]
+        other.print_area, other.identity = roots[PRINT_AREA], roots[IDENTITY]
+        other.questions = {k: v for k, v in roots.items() if k not in (PRINT_AREA, IDENTITY)}
+        if overrides is not None:
+            other.overrides = dict(overrides)
+        live = {id(c) for q in other.questions.values() for c in q.checks}
+        other._hashes = {k: v for k, v in self._hashes.items() if k in live}    # replaced checks are let go
         return other
-
-    def install(self, roots: Mapping[str, Any]) -> None:
-        """Make these roots live (in place: whoever holds `questions` sees them)."""
-        self.print_area = roots[PRINT_AREA]
-        for qid, q in roots.items():
-            if qid != PRINT_AREA and self.questions.get(qid) is not q:
-                self.questions[qid] = q
 
     def validate(self, *, pages: int | None = None) -> None:
         """The one validation of the definition as it stands, which the package's
@@ -457,7 +458,7 @@ class Exam:
         `pages`: the pages a question or a region may name (default: the printed
         pages; one submission's extra sheets add to them)."""
         check_print_area(self.print_area)
-        for q in self.questions.values():
+        for q in self.groups().values():
             self._question(q, pages or self.pages)
 
     def _question(self, q: Question, pages: int) -> None:

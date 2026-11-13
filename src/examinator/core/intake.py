@@ -20,8 +20,10 @@ submission's PDF is the exam's printed pages in order, page p at index p - 1,
 with a blank placeholder where a page is missing (None in `Made.pages`), then
 its extra sheets in order (`split.lay_out`), written upright.
 
-**A written file is never changed; the store names the file.** Each PDF Accept
-writes gets a fresh name in `made/` (`Made.file`); one commit records the plan,
+**A written file is never changed; the store names the file.** A handed-in
+PDF is named by its submission row (`pdfs/`), a written one by `made` alone
+(`made/`, `Made.file`; its submission row's `pdf` is ''). Each PDF Accept
+writes gets a fresh name; one commit records the plan,
 `made` (the file included) and the submissions, so the store and the files it
 names agree whatever fails, wherever. A file in `made/` that no `made` row
 names is garbage, deleted at the start and end of every Accept (`sweep`).
@@ -34,8 +36,8 @@ recorded under the person accepting. A written submission it would rewrite or
 remove that something was said or done about (a pick, grading work, boxes of
 its own: `disturbed`) is not touched unless the person said it may be
 (`allow`); `Busy` names the others. A rewritten submission has new pages
-(`repaged`): what was read from the old ones goes (the model's memo, every
-value no person verified), and so does where things are on them (its own
+(`repaged`): what was read from the old ones goes (every value no person
+verified), and so does where things are on them (its own
 regions and print area, drawn on the old pages; a region on a sheet it no
 longer has would not even validate); what a person said about the student
 stays (values a person verified, decisions, the pick). A removed submission
@@ -65,7 +67,7 @@ from . import identity, overrides, split
 from .ask import Printed
 from .defs import Landmark, digest
 from .reading import normalize, region_key
-from .store import ANY, Row, Conflict, Made, Source
+from .store import ANY, Row, Conflict, Made, Source, Submission
 
 PLAN = 'split'
 
@@ -409,11 +411,10 @@ def disturbed(ws, rows, gone) -> list[dict]:
 
 
 def repaged(ws, sid: str) -> None:
-    """A submission's pages changed: what was read from the old ones goes (the memo, and
-    every value no person verified), and so does where things are on them (its own
-    overrides: regions, print area). Values a person verified, decisions and
-    the pick stay: they are about the student."""
-    ws.store.clear_memo(sid)
+    """A submission's pages changed: what was read from the old ones goes (every value
+    no person verified), and so does where things are on them (its own overrides:
+    regions, print area). Values a person verified, decisions and the pick stay:
+    they are about the student."""
     for r in ws.store.all(kinds=['value'], submission=sid):
         if (r.body or {}).get('verified') != 'person':
             ws.store.delete(sid, r.name, 'value')
@@ -470,7 +471,7 @@ def accept(ws, id: str, *, author: str | None = None, allow: Collection[str] = (
             for r in writes:
                 sid = r['id']
                 ws.store.set_made(Made(sid, id, tuple(r['pages']), tuple(r['orient']), now, r['file']))
-                ws.store.put_submissions([identity.submission(ws, sid, '')])
+                ws.store.put_submissions([Submission(sid, '', '', '')])      # its file is `made`'s
                 if r['state'] == 'changed':
                     repaged(ws, sid)
             for sid in gone:

@@ -17,9 +17,8 @@ waits for a person; an empty reading without `reads` is a blank value.
 
 An `Ask` **vouches** for a value that was one of a closed set of expected
 readings (`reads` given, `verify` not set): such a value is verified by the
-reader, and nobody need verify it. A field with no region is not read. Each
-reading is remembered per submission under `memo_key` (the region, the
-question and the scan layout), so reading again is free unless asked `fresh`.
+reader, and nobody need verify it. A field with no region is not read. Every
+read asks the model; a read happens only when a person asks for one.
 
 A reader is any object with `read(ctx, fields) -> {label: text}`; it may also
 have `vouches(field, text) -> bool`, `needs_region` and, for synthetic
@@ -32,8 +31,8 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
-from .defs import digest, has_marker
-from .reading import json_value, normalize, region_key
+from .defs import has_marker
+from .reading import json_value, normalize
 
 if TYPE_CHECKING:
     from .context import ReadContext
@@ -108,21 +107,9 @@ class Ask:
         return bool(self.reads) and not self.verify and not has_marker(text) \
             and text in set(self.reads.values())
 
-    def memo_key(self, question: str, f: 'Field', layout: Any) -> str:
-        """Where the reading of field `f` (with the region it has for this submission)
-        under a scan layout is remembered: a new region, prompt or layout asks again."""
-        defn = digest({'region': f.region, 'ask': self.ask, 'reads': self.reads, 'prompt': self.prompt})
-        return region_key('ask', f'{question}/{f.label}', defn, layout)
-
     def read(self, ctx: 'ReadContext', fields: Sequence['Field']) -> dict[str, str]:
-        out = {}
-        for f in fields:
-            def once(f=f) -> str:
-                complete = functools.partial(ctx.model, step=f'read:{f.label}')
-                return json.dumps(self.call(complete, ctx.crop(f.region)))
-            got = ctx.remember(self.memo_key(ctx.question.id, f, ctx.layout()), once)
-            out[f.label] = self.value(json.loads(got))
-        return out
+        return {f.label: self.value(self.call(functools.partial(ctx.model, step=f'read:{f.label}'), ctx.crop(f.region)))
+                for f in fields}
 
     def reading(self, given: str | None) -> str | None:
         """What the model reads in the field, for a synthetic case that says what

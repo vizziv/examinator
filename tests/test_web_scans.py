@@ -27,7 +27,7 @@ def make_site(tmp_path):
         root = tmp_path / 'ws'
         paths = synth.stacks(exam, root)
         ws = Workspace(root, exam, create=True)
-        runner = Runner(exam, ws, model=synth.fake_model(root) if model else None)
+        runner = Runner(ws, model=synth.fake_model(root) if model else None)
         opened.append((runner, ws))
         client = TestClient(create_app(exam, ws, runner, author='tester'), base_url=BASE)
         token = re.search(r'<meta name="token" content="([^"]+)"', client.get('/scans').text).group(1)
@@ -167,7 +167,7 @@ def test_missing_pages_and_extra_sheets_downstream(site):
     # a field on the missing page is not read: blocked, like one with no region
     groups = post(client, token, '/read/plan', {'submissions': [short, stray], 'questions': ['parity']}).json()['groups']
     assert {(g['action'], g['reason']) for g in groups} == {('blocked', "page missing"), ('read', "1 field")}
-    runner = Runner(ws.exam, ws, model=synth.fake_model(ws.root))
+    runner = Runner(ws, model=synth.fake_model(ws.root))
     try:
         assert [(o.status, o.detail) for o in runner.read(short, 'parity')] == [('blocked', "page missing: B")]
         assert ws.store.get(short, 'parity/B', 'value') is None
@@ -178,7 +178,7 @@ def test_missing_pages_and_extra_sheets_downstream(site):
     own = lambda sid, value: post(client, token, '/exam/set', {'path': 'parity/pages', 'value': value, 'rev': None,
                                                                'scope': f'submission:{sid}'})
     assert own(stray, [3, 5]).status_code == 200
-    assert ws.selected_pages(stray, ws.exam.questions['parity']) == (3, 5)
+    assert ws.layers(stray).question('parity').pages == (3, 5)
     assert own(short, [3, 5]).status_code == 400
     html = client.get(f'/s/{stray}/parity').text
     assert 'class="sheet on" data-index="4"' in html
@@ -453,7 +453,7 @@ def test_the_group_is_not_graded_in_the_app(site):
     assert '@identity' not in client.get('/read').text
     assert all(q['id'] != '@identity' for q in client.get('/focus/values').json()['questions'])
     assert post(client, token, '/read/plan', {'questions': ['@identity']}).status_code == 400
-    first = next(iter(ws.exam.grading))
+    first = next(iter(ws.exam.questions))
     assert 'data-action="prev-question"' not in client.get(f'/s/s0001/{first}').text
 
 

@@ -5,8 +5,10 @@ or more of these.
     result        compute (automatic: `refresh` recomputes what is outdated)
     decision      decide, clear (a person)
 
-A read writes only values no person verified (unless told to), and a read that
-yields the same text changes nothing: same revision, still verified. Changing
+What a read reads is one computation (`to_read`), which the read executes,
+the batch plan counts and the question page shows. A read writes only values
+no person verified (unless told to), and a read that yields the same text
+changes nothing: same revision, still verified. Changing
 how a field is read changes no value; reading again is a person's choice. A compute
 runs outside any transaction and is published only if every field it read is
 still at the revision it read. A check that times out, crashes or cannot decide
@@ -16,7 +18,7 @@ the revision they saw; a mismatch raises `store.Conflict`.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Mapping, Protocol, Sequence
+from typing import AbstractSet, Any, Mapping, Protocol, Sequence
 
 from .context import BadOutput, CheckContext, ReadContext, Unavailable
 from .defs import DEFAULT, Exam, Field, Grade, Question, has_marker, key, one_line
@@ -52,37 +54,23 @@ class Outcome:
 
 
 class Services:
-    """What a reader's context reaches: pages and crops from the workspace, the
-    model, and the memo: the store's, or with `memo` (a dict) one kept in memory."""
+    """What a reader's context reaches: pages and crops from the workspace, and the model."""
 
-    def __init__(self, workspace: Workspace, model: Model | None, memo: dict | None = None):
-        self.ws, self._model, self._memo = workspace, model, memo
+    def __init__(self, workspace: Workspace, model: Model | None):
+        self.ws, self._model = workspace, model
 
     def pages(self, submission, question):
-        # all there: a reader of pages runs only when none is missing (`unreadable`)
-        return [self.ws.page_image(submission, p) for p in self.ws.selected_pages(submission, question)]
+        # `question` as it is for the submission; all there: a reader of pages runs only
+        # when none is missing (`to_read`)
+        return [self.ws.page_image(submission, p) for p in question.pages]
 
     def crop(self, submission, region):
         return self.ws.crop(submission, region)
-
-    def layout(self, submission):
-        return self.ws.layout(submission)
 
     def model(self, prompt, *, images, text, expect, tag):
         if self._model is None:
             raise Unavailable("model unavailable")
         return self._model.complete(prompt, images=images, text=text, expect=expect, tag=tag)
-
-    def memo(self, submission, key):
-        if self._memo is not None:
-            return self._memo.get((submission, key))
-        return self.ws.store.memo(submission, key)
-
-    def set_memo(self, submission, key, value):
-        if self._memo is not None:
-            self._memo[(submission, key)] = value
-        else:
-            self.ws.store.set_memo(submission, key, value)
 
 
 def structural(e: Exception) -> str:
@@ -102,31 +90,69 @@ def looks_at(reader: Any, f: Field, pages: Sequence[int]) -> tuple[int, ...]:
     return tuple(pages)
 
 
-def unreadable(ws: Workspace, submission: str, q: Question, gone: set[int] | None = None) -> dict[str, str]:
-    """Why each field of `q` that its reader cannot read now cannot be, by label:
-    'no region', 'no pages', or 'page missing' (a page it would look at is not in
-    this submission's PDF; `gone`: `Workspace.missing`). A field not listed can be
-    read. A read needs its pages: a reader of the question's pages reads only
-    when all of them are there, so no reader is ever called without images. The
-    one rule for the runner, the batch plan and the question page."""
-    selected = ws.selected_pages(submission, q)
-    gone = ws.missing(submission) if gone is None else gone
-    out = {}
-    for reader, fields in replace(q, fields=ws.fields(submission, q)).groups():
+# Why a field with a reader is not read: not asked for, kept by the options, or blocked.
+NOT_ASKED, PRESENT, PROTECTED = 'not asked', 'present', 'protected'
+NO_REGION, PAGE_MISSING, NO_MODEL = 'no region', 'page missing', 'model unavailable'
+BLOCKED = (NO_REGION, PAGE_MISSING, NO_MODEL)       # what stops a read that was asked for
+
+
+@dataclass(frozen=True)
+class Reads:
+    """What reading one question of one submission does (`to_read`): per reader,
+    the fields it reads; per other field with a reader, why it is not read."""
+    question: Question                                  # as it is for the submission
+    groups: tuple[tuple[Any, tuple[Field, ...]], ...]   # (reader, the fields it reads), none empty
+    why: Mapping[str, str]                              # label: NOT_ASKED, PRESENT, PROTECTED or one of BLOCKED
+
+    @property
+    def count(self) -> int:
+        """How many fields it reads."""
+        return sum(len(fields) for _, fields in self.groups)
+
+    @property
+    def blocked(self) -> dict[str, str]:
+        """The fields asked for that cannot be read now, and why."""
+        return {label: why for label, why in self.why.items() if why in BLOCKED}
+
+
+def to_read(q: Question, values: Mapping[str, Value], gone: AbstractSet[int], *,
+            labels: Sequence[str] | None = None, missing_only: bool = False,
+            include_protected: bool = False, model: bool = True) -> Reads:
+    """What a read of `q` (as it is for one submission: `Layers.question`) does,
+    given the submission's stored `values`, the pages its PDF lacks (`gone`:
+    `Workspace.missing`) and the read's options: `labels` (only these fields),
+    `missing_only` (only fields with no value), `include_protected` (also values
+    a person verified), `model` (whether there is one). Pure; the one rule for
+    the runner, the batch plan and the question page. A read needs its pages: a
+    reader of the question's pages reads only when all of them are there, so no
+    reader is ever called without images."""
+    groups, why = [], {}
+    for reader, fields in q.groups():
+        mine = []
         for f in fields:
-            pages = looks_at(reader, f, selected)
-            if not pages:
-                out[f.label] = 'no region' if getattr(reader, 'needs_region', False) else 'no pages'
-            elif gone.intersection(pages):
-                out[f.label] = 'page missing'
-    return out
+            v = values.get(key(q.id, f.label))
+            pages = looks_at(reader, f, q.pages)
+            reason = (NOT_ASKED if labels is not None and f.label not in labels
+                      else PRESENT if missing_only and v is not None
+                      else PROTECTED if v is not None and v.verified == 'person' and not include_protected
+                      else NO_REGION if not pages           # a question always has pages
+                      else PAGE_MISSING if gone.intersection(pages)
+                      else NO_MODEL if not model and getattr(reader, 'uses_model', True)
+                      else None)
+            if reason is None:
+                mine.append(f)
+            else:
+                why[f.label] = reason
+        if mine:
+            groups.append((reader, tuple(mine)))
+    return Reads(q, tuple(groups), why)
 
 
 def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields: Sequence[Field],
-               services: Services, *, fresh: bool = False) -> dict[str, str]:
+               services: Services) -> dict[str, str]:
     """One reader on some of a question's fields (with this submission's regions):
     `{label: text}`. Model errors and bad output raise."""
-    ctx = ReadContext(submission=submission, question=q, services=services, fresh=fresh)
+    ctx = ReadContext(submission=submission, question=q, services=services)
     got = reader.read(ctx, tuple(fields))
     out = {}
     for f in fields:
@@ -156,13 +182,14 @@ def try_check(exam: Exam, qid: str, check: str, values: Mapping[str, str]) -> di
 
 
 class Runner:
-    def __init__(self, exam: Exam, workspace: Workspace, *, model: Model | None = None,
-                 pool: Pool | None = None):
-        self.exam = exam
+    """The small changes on one workspace, whose definition (`ws.exam`) it reads."""
+
+    def __init__(self, workspace: Workspace, *, model: Model | None = None, pool: Pool | None = None):
         self.ws = workspace
         self.store = workspace.store
         self.model = model
-        self.pool = pool if pool is not None else (Pool(exam.path) if exam.path else None)
+        path = workspace.exam.path
+        self.pool = pool if pool is not None else (Pool(path) if path else None)
         self._services = Services(workspace, model)
 
     def close(self) -> None:
@@ -179,46 +206,34 @@ class Runner:
 
     # --- read -------------------------------------------------------------------
 
-    def read(self, submission: str, qid: str, *, missing_only: bool = False, include_protected: bool = False, fresh: bool = False,
+    def to_read(self, submission: str, qid: str, **options: Any) -> Reads:
+        """What `read` with these options would do now (`to_read`)."""
+        return to_read(self.ws.layers(submission).question(qid), self.values(submission),
+                       self.ws.missing(submission), model=self.model is not None, **options)
+
+    def read(self, submission: str, qid: str, *, missing_only: bool = False, include_protected: bool = False,
              labels: Sequence[str] | None = None) -> list[Outcome]:
-        """Read a question's fields (or those of `labels`) and write what was read.
-        Values a person verified are skipped unless `include_protected`; with
-        `missing_only`, only fields with no value are read. One outcome per reader run."""
-        resolved = self.ws.question(submission, qid)
-        have = self.values(submission)
-        why = unreadable(self.ws, submission, resolved)
+        """Read what `to_read` says (a question's fields, or those of `labels`; values
+        a person verified only with `include_protected`; with `missing_only`, only
+        fields with no value) and write what was read. One outcome per reason a
+        field asked for is blocked, then one per reader run. The identity group is
+        read by its name (`IDENTITY`)."""
+        plan = self.to_read(submission, qid, labels=labels, missing_only=missing_only,
+                            include_protected=include_protected)
         outs = []
 
         def out(status, detail=""):
             outs.append(Outcome(submission, qid, 'read', status, detail))
 
-        for reader, fields in resolved.groups():
-            targets = []
-            for f in fields:
-                v = have.get(key(qid, f.label))
-                if labels is not None and f.label not in labels:
-                    continue
-                if missing_only and v is not None:
-                    continue
-                if v is not None and v.verified == 'person' and not include_protected:
-                    continue
-                targets.append(f)
-            if not targets:
-                continue
-            blocked: dict[str, list[str]] = {}
-            for f in targets:
-                if f.label in why:
-                    blocked.setdefault(why[f.label], []).append(f.label)
-            for reason, which in blocked.items():
-                out('blocked', f"{reason}: {', '.join(which)}")
-            targets = [f for f in targets if f.label not in why]
-            if not targets:
-                continue
-            if getattr(reader, 'uses_model', True) and self.model is None:
-                out('blocked', "model unavailable")
-                continue
+        blocked: dict[str, list[str]] = {}
+        for label, why in plan.blocked.items():
+            blocked.setdefault(why, []).append(label)
+        for why, which in blocked.items():
+            out('blocked', f"{why}: {', '.join(which)}")
+        q = plan.question
+        for reader, targets in plan.groups:
             try:
-                got = read_group(self.ws, submission, resolved, reader, targets, self._services, fresh=fresh)
+                got = read_group(self.ws, submission, q, reader, targets, self._services)
             except Exception as e:
                 out('failed', structural(e))
                 continue
@@ -227,7 +242,7 @@ class Runner:
             for f in targets:
                 if f.label not in got:
                     continue
-                text = got[f.label] if resolved.multiline(f.label) else one_line(got[f.label])
+                text = got[f.label] if q.multiline(f.label) else one_line(got[f.label])
                 vouched = bool(callable(vouches) and vouches(f, text))
                 if not self._put_read(submission, qid, f.label, text, vouched, include_protected):
                     lost.append(f.label)
@@ -258,7 +273,8 @@ class Runner:
 
     def compute(self, submission: str, qid: str, check: str) -> Outcome:
         """Run one check on the current values and store its result."""
-        q = self.exam.questions[qid]
+        exam = self.ws.exam
+        q = exam.questions[qid]
         c = q.check(check)
 
         def out(status, detail=""):
@@ -275,10 +291,10 @@ class Runner:
             if c.isolate and self.pool is not None:
                 got = self.pool.call(qid, check, {
                     'submission': submission, 'values': {k: list(v) for k, v in values.items()},
-                    'overrides': self.exam.overrides}, timeout, reads)
+                    'overrides': exam.overrides}, timeout, reads)
             else:
                 ctx = CheckContext(submission=submission, question=q, check=check, values=values,
-                                   fields=self.exam.fields(), reads=reads)
+                                   fields=exam.fields(), reads=reads)
                 got = settle(c.points, c.fn(ctx))
         except (Undecided, BadResult) as e:
             got = settle(c.points, undecided(str(e)))
@@ -291,7 +307,7 @@ class Runner:
             got = settle(c.points, undecided("the check failed to run", [
                 {'type': 'details', 'summary': "Error",
                  'blocks': [{'type': 'code', 'text': detail[-MAX_DETAIL:]}]}]))
-        body = {**got.body, 'reads': dict(reads), 'defn': self.exam.check_hash(q, c), 'code': self.exam.code_hash}
+        body = {**got.body, 'reads': dict(reads), 'defn': exam.check_hash(q, c), 'code': exam.code_hash}
         try:
             self.store.write(submission, key(qid, check), 'result', body, origin='auto', images=got.images,
                              guard={(k, 'value'): None if rev == DEFAULT else rev for k, rev in reads.items()})
@@ -302,9 +318,9 @@ class Runner:
     def refresh(self, submission: str, *, questions: Sequence[str] = ()) -> list[Outcome]:
         """Recompute every outdated result of a submission, and run the checks of
         `questions` that never ran. Never touches a value or a decision."""
-        sheet = self.sheet(submission)
+        sheet, exam = self.sheet(submission), self.ws.exam
         outs = []
-        for q in self.exam.questions.values():
+        for q in exam.questions.values():
             for c in q.checks:
                 if c.fn is None:
                     continue
@@ -312,7 +328,7 @@ class Runner:
                 if stored is None:
                     if q.id not in questions:
                         continue
-                elif current(stored, sheet.values, defn=self.exam.check_hash(q, c), code=self.exam.code_hash):
+                elif current(stored, sheet.values, defn=exam.check_hash(q, c), code=exam.code_hash):
                     continue
                 outs.append(self.compute(submission, q.id, c.name))
         return outs
@@ -322,19 +338,22 @@ class Runner:
     # for input a person should correct. None computes: call `refresh` afterwards
     # (the app does so in the background).
 
-    def _field(self, qid: str, label: str) -> str:
-        q = self.exam.questions.get(qid)
-        if q is None or q.field(label) is None:
+    def _field(self, qid: str, label: str) -> Field:
+        """A field of a question, or of the identity group by its name."""
+        q = self.ws.exam.group(qid)
+        f = q.field(label) if q is not None else None
+        if f is None:
             raise ValueError(f"no field {label!r} in {qid}")
-        return key(qid, label)
+        return f
 
     def set(self, submission: str, qid: str, label: str, text: str, *, author: str | None,
             expect_rev: Any = ANY) -> Value:
         """A person's value. It is verified by them, unless it carries a review marker."""
-        k = self._field(qid, label)
+        self._field(qid, label)
+        k = key(qid, label)
         if not isinstance(text, str):
             raise ValueError("a value is text")
-        if not self.exam.questions[qid].multiline(label):
+        if not self.ws.exam.group(qid).multiline(label):
             text = one_line(text)
         verified = None if has_marker(text) else 'person'
         row = self.store.get(submission, k, 'value')
@@ -346,15 +365,15 @@ class Runner:
 
     def unset(self, submission: str, qid: str, label: str, *, expect_rev: Any = ANY) -> None:
         """Drop a field's stored value: back to its default (only a field with one)."""
-        k = self._field(qid, label)
-        if self.exam.questions[qid].field(label).default is None:
+        if self._field(qid, label).default is None:
             raise ValueError(f"{label} has no default")
-        self.store.delete(submission, k, 'value', expect_rev=expect_rev)
+        self.store.delete(submission, key(qid, label), 'value', expect_rev=expect_rev)
 
     def verify(self, submission: str, qid: str, label: str, *, author: str | None, expect_rev: int,
                verified: bool = True) -> Value:
         """Verify the value as it stands (or, `verified=False`, unverify it). Same revision."""
-        k = self._field(qid, label)
+        self._field(qid, label)
+        k = key(qid, label)
         row = self.store.get(submission, k, 'value')
         if row is None or row.rev != expect_rev:
             raise Conflict(f"{label} changed")
@@ -368,7 +387,7 @@ class Runner:
     def page(self, submission: str, qid: str, *, check: str | None = None) -> list[str]:
         """The fields on a question's page: its own, then those its checks (or one
         check) read from other questions, as stored. What a decision is recorded against."""
-        q = self.exam.questions[qid]
+        q = self.ws.exam.questions[qid]
         out = [key(qid, label) for label in q.labels]
         for c in q.checks:
             if check is not None and c.name != check:
@@ -385,7 +404,7 @@ class Runner:
         """A person's grade for one check, recorded against the fields on the page:
         `seen` maps each to the revision on their screen (refused if one changed;
         without `seen`, the current revisions)."""
-        q = self.exam.questions[qid]
+        q = self.ws.exam.questions[qid]
         c = q.check(check)
         if c is None:
             raise ValueError(f"no check {check!r} in {qid}")

@@ -102,13 +102,20 @@ step=)`; `step` tags the call). A reader may vouch for a value
 pages (`needs_region`), offer facets, and script its own replies for a
 synthetic workspace (`script`).
 
-**A read needs its pages.** Whether a field can be read is decided once, from
-the pages its reader would look at (`runner.unreadable`): a region reader, the
-page of the field's region ("no region" without one); any other reader, every
-one of the question's selected pages. If one of them is missing, the field is
-not read ("page missing"), and a whole-page reader with only some of its pages
-waits too: its transcript would be of part of the answer. The runner, the
-batch plan and the question page use that one rule, so no reader is called
+**What a read reads is one computation**, `runner.to_read`: a pure function
+of the question as it is for the submission, its stored values, the pages its
+PDF lacks and the read's options (only some fields, missing only, include
+protected, whether there is a model). It returns, per reader, the fields to
+read and, for every other field with a reader, why not: 'not asked',
+'present', 'protected', or blocked ('no region', 'page missing', 'model
+unavailable'). `Runner.read` executes exactly that, the batch plan counts
+exactly that, and the question page shows its blocked reasons.
+
+**A read needs its pages.** A region reader looks at the page of the field's
+region ("no region" without one); any other reader at every one of the
+question's selected pages. If one of them is missing, the field is not read
+("page missing"), and a whole-page reader with only some of its pages waits
+too: its transcript would be of part of the answer. So no reader is called
 without its images.
 
 - `std.readers.answers()`: transcribe the pages (or crops), then parse the
@@ -250,12 +257,12 @@ create table row (
   primary key (submission, kind, name)
 );
 create table history (...);       -- the same plus replaced_at; a replaced value, decision or plan (not a result)
-create table submission (id text primary key, name text, email text, pdf text, student text);
+create table submission (id text primary key, pdf text);         -- who it is: its pick
 create table setting (key text primary key, value text);        -- roster, counters
 create table override (scope, path, value, author, updated_at, rev,   -- live edits of exam data:
   primary key (scope, path));    -- scope '' (the exam), 'source:<id>', 'submission:<id>'; no history
 create table source (...);  create table made (...);             -- intake
-create table memo (submission, key, value);                      -- model readings (printed fields, landmarks, boxes)
+create table memo (submission, key, value);                      -- Split's landmark readings, by source
 ```
 
 In code and prose a row is written as the store's methods take it,
@@ -294,8 +301,12 @@ the PDF's identity, the page and the resolution.
   a person verified unless asked, and a read that finds a value changed
   meanwhile is discarded. Checks have no batch: they recompute by themselves,
   and the batch refreshes each submission once its reads finish.
-- **Missing only** reads only fields with no value, runs only checks that are
-  not current. **Include protected** reads again what a person verified.
+- **Missing only** reads only fields with no value: how a person resumes a
+  batch read that stopped halfway (the Read page leaves it unticked by
+  default). **Include protected** reads again what a person verified.
+- **Every read asks the model.** Reads happen only when a person asks, so
+  nothing remembers a field's reading but its value; only Split's landmark
+  readings are memoised (the plan re-reads every sheet without being asked).
 - **Cancellation** stops queued work and lets running tasks finish.
 - A timeout or crash yields an undecided result, never "incorrect".
 - A read that fails leaves the previous values intact.
@@ -340,17 +351,23 @@ the PDF's identity, the page and the resolution.
      and check's own `validate`, such as a key that must parse), which the
      package's questions and every override go through, on a copy with the
      change. A scope enters only as context: one submission's extra sheets are
-     pages it may name. A stored override that no longer validates is skipped
-     and reported (the Exam data page).
-  2. **An open workspace always has its overrides applied.** Opening one
-     applies the exam's (`Workspace.refresh`, repeated by every exam-wide
-     edit); what holds for one submission is `Layers` (`Workspace.layers`,
-     `question`, `layout`, `fields`, `selected_pages`), the one resolver the
-     CLI, the app and the runner use.
-  3. **A group that stands apart is reachable only through its own step.**
-     The grading routes, the grid and `run -q` resolve questions in
-     `exam.grading`, which leaves out '@identity'; the Names step saves its
-     values through its own route.
+     pages it may name. One scope's overrides of one root go in together when
+     the definition with all of them validates, else all but the one that
+     breaks them, else one by one in path order. A stored override that does
+     not validate is skipped and reported, at every scope alike
+     (`Workspace.skipped_overrides`; the Exam data page shows the exam's).
+  2. **A workspace's definition is its own.** `Workspace.exam` is the
+     package's definition with the exam's overrides (`overrides.apply`, at
+     opening and after every exam-wide edit); the package's `Exam` is never
+     changed, and the runner, the CLI and the app read the definition through
+     the workspace. What holds for one submission is `Layers`
+     (`Workspace.layers(sub)`: `question(id)`, `layout`), the one resolver,
+     each root resolved once.
+  3. **A group that stands apart is reached only by its name.**
+     `exam.questions` are the questions graders work through; the identity
+     group is `exam.identity` (or `exam.group('@identity')`), so the grading
+     routes, the grid, batch reads and `run -q` cannot reach it by accident;
+     the Names step saves its values through its own route.
 - Page numbers in an exam definition are **printed exam pages**, and a
   submission's PDF has printed page p at index p - 1, then its extra sheets
   (intake writes it so: §16; a blank placeholder stands for a page not
@@ -732,7 +749,7 @@ gives a submission's file, written or handed in).
     (`intake.disturbed`, on the page; `Busy`, 409) and touched only when the
     person agrees to that id (`allow`). The confirm says what follows.
   - *A rewritten submission has new pages* (`intake.repaged`): what was read
-    from the old ones goes (the model memo, every value no person verified),
+    from the old ones goes (every value no person verified),
     and so does where things are on them (its own regions and print area,
     drawn on the old pages; a region on a sheet it no longer has would not
     even validate); what a person said about the student stays (values a person
@@ -754,9 +771,12 @@ gives a submission's file, written or handed in).
   A roster is optional. It is stored as a
   setting, `[{'name', 'id', 'email', 'key'}]`, read from a CSV/TSV with a
   header (generic column names only) or from plain lines (name and ID, comma
-  or tab, either order; the ID is the part with no spaces and a digit). An
-  email or ID on two lines is a problem (so is a name, for people with
-  neither); `key` (email, else ID, else name) only addresses a person from
+  or tab, either order; the ID is the part with no spaces and a digit). A
+  roster is valid exactly when every person on it is found as themselves
+  (`Matcher.find`), so a pick of anyone on it links to them: a line whose
+  person cannot be told apart from an earlier one's (the same ID with no
+  email to tell them apart, or for people with neither, the same name) is a
+  problem; `key` (email, else ID, else name) only addresses a person from
   the page. A preview (count, first rows, problems) comes before saving. The Roster tab lists everyone on it
   (sent once with the page, filtered in the browser) with the submission each
   is picked for, a link to it on Names, or "unmatched".
@@ -765,13 +785,13 @@ gives a submission's file, written or handed in).
     built-in group `@identity` (`defs.identity_group`): one field per roster
     column (`name`, `id`, `email`), those not mapped with no region. A field
     without a reader of its own is read by `Ask(defs.ASKS[column])`, about
-    the handwriting. The group is a question in `exam.questions` with
-    `apart=True`; `exam.grading` (the grid, totals, filter facets, the Read
-    page, batch reads, prev/next question) leaves it out. Everything else is
+    the handwriting. The group is `exam.identity` (`apart=True`), not one of
+    `exam.questions` (the grid, totals, filter facets, the Read page, batch
+    reads, prev/next question). Everything else is
     a field's: values with revisions, history and `verified`; `Runner.read`,
     `set`, `verify`; re-read protection; regions at exam and submission scope
-    (`@identity/fields/<column>/region`, the Exam data page); the memo;
-    scripted fake-model replies.
+    (`@identity/fields/<column>/region`, the Exam data page); scripted
+    fake-model replies.
   - **Boxes** on the Names tab ("boxes", B) are those regions, drawn on a
     submission's page with the question page's rectangle editor
     (`static/rects.js`): "+ <column>" for a column with none, "save for this
@@ -783,9 +803,7 @@ gives a submission's file, written or handed in).
     lists what "read names" reads, and the page counts as "to read": the
     submissions nobody has named with such a field. A named submission is never
     read (its pick stands; the boxes only propose who). With nothing to read no
-    run starts, and the page says why. The model memo is
-    keyed by the region and print area, so reading a moved box asks the
-    model again. "Are there boxes" is one
+    run starts, and the page says why. "Are there boxes" is one
     predicate, `identity.boxed` (any submission's, its own included). No
     roster text ever reaches a prompt. Each value shows under its crop on
     the Names tab, where it can be corrected (Enter) or verified (✓), through
@@ -796,12 +814,16 @@ gives a submission's file, written or handed in).
     may mix letters and digits; then IDs within 2 edits for 8+ characters,
     1 for 4-7, none for shorter; names by
     order-insensitive token similarity, accents, case and punctuation folded)
-    with a reason, and gives a doubt (rule 2): each column read supports the
-    people it fits best (an ID or email the nearest within tolerance; a name
-    those within a margin of the best, if close enough); the people every
-    supporting column shares decide: one is `agree` (or `id`, `email`,
-    `name` when one column says anything), several `tie`, none `disagree`;
-    `nobody` when no column fits anyone. With nothing usable: `unread` (still
+    with a reason, and gives who the evidence singles out (`match`) and a
+    doubt (rule 2), all from one computation: each column read (that the
+    roster has) supports the people it fits best (an ID or email the nearest
+    within tolerance; a name those within a margin of the best, if close
+    enough), possibly nobody, which is evidence too; the people every column
+    read supports decide: one is the match, `agree` (or `id`, `email`,
+    `name` when one column was read), several `tie`, none `disagree`, or
+    `nobody` when no column fits anyone. Candidates come in that order: the
+    people every column supports first, then by how many columns support
+    them, then by how alike. With nothing usable: `unread` (still
     to read), `unreadable` (a review marker), `empty` (every box blank). A
     person already picked elsewhere is flagged,
     never dropped or ranked lower: taken-ness never breaks a tie (one
@@ -819,8 +841,9 @@ gives a submission's file, written or handed in).
     letters and digits (`identity.by_file`, on `sync` and when the roster is
     saved) becomes the pick (origin `'auto'`) of a submission that never had
     one; it shows on the Names tab as verified and is changed there like any
-    other. The
-    submission row carries the name, email and the student ID (`student`).
+    other. A
+    submission's name, email and student ID (`Submission.name`, `email`,
+    `student`) are read from its pick; the submission table holds only its id and file.
     The Names tab steps through unnamed exams, most doubtful first (V take,
     W/S other proposals, A/D back/skip, E the picker), showing the boxes'
     crops, or without boxes the first page's top (or whole). The picker

@@ -353,7 +353,6 @@ def test_accept_asks_about_a_pick_and_own_boxes_and_says_what_goes(stacked):
     overrides.set(ws, '@print_area', [100, 100, 900, 900], scope=own, author='t')
     ws.store.write('s0003', 'parity/B', 'value', {'text': 'odd'}, origin='auto')        # read, nobody verified
     ws.store.write('s0003', 'parity/A', 'value', {'text': '1', 'verified': 'person', 'by': 't'}, origin='manual')
-    ws.store.set_memo('s0003', 'k', '"x"')
     edit_(ws, one.id, 'join', sheet=first_of(ws, one.id, 1))     # s0002 and s0003 are one: s0003 goes
     edit_(ws, one.id, 'drop', sheet=0)                           # and s0001 changes (no work: not asked)
     rows, gone = intake.outline(ws, one.id)
@@ -370,10 +369,9 @@ def test_accept_asks_about_a_pick_and_own_boxes_and_says_what_goes(stacked):
     overrides.set(ws, '@print_area', [100, 100, 900, 900], scope=mine, author='t')
     ws.store.write('s0002', 'parity/B', 'value', {'text': 'odd'}, origin='manual')       # typed, then unverified
     ws.store.write('s0002', 'parity/A', 'value', {'text': '1', 'verified': 'person', 'by': 't'}, origin='auto')
-    ws.store.set_memo('s0002', 'k', '"x"')
     edit_(ws, one.id, 'drop', sheet=5)
     assert intake.accept(ws, one.id, allow=['s0002'])['rewritten'] == ['s0002']
-    assert not ws.store.overrides(mine) and ws.store.memo('s0002', 'k') is None
+    assert not ws.store.overrides(mine)
     assert set(ws.store.rows('s0002', 'value')) == {'parity/A'}
 
 

@@ -22,7 +22,7 @@ import hashlib
 import json
 import math
 import numbers
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
 from ..std.blocks import MAX_DEPTH, MAX_EVIDENCE, MAX_IMAGE, MEDIA_TYPES, TONES
@@ -44,8 +44,8 @@ class Judgement:
     note: str | None = None
 
     def __post_init__(self):
-        if self.outcome not in OUTCOMES:
-            raise ValueError(f"outcome must be one of {OUTCOMES}, got {self.outcome!r}")
+        if not (self.outcome is None or isinstance(self.outcome, str)) or self.outcome not in OUTCOMES:
+            raise ValueError(f"outcome must be one of {OUTCOMES}")
 
     def to_json(self) -> dict:
         return {k: v for k, v in (('outcome', self.outcome), ('expected', self.expected),
@@ -53,15 +53,21 @@ class Judgement:
 
 
 def judgement(x: Any) -> Judgement:
-    """A `Judgement`, an outcome, or `(outcome, note)`."""
-    if isinstance(x, Judgement):
-        return x
-    if isinstance(x, tuple):
-        outcome, note = x
-        return Judgement(outcome, note=note or None)
-    if isinstance(x, Mapping):
-        return Judgement(x.get('outcome'), x.get('expected'), x.get('note'))
-    return Judgement(x)
+    """A `Judgement`, an outcome, `(outcome, note)`, or a mapping of a
+    judgement's parts; `BadResult` for anything else."""
+    given = x
+    try:
+        if isinstance(x, tuple) and len(x) == 2:
+            x = Judgement(x[0], note=x[1] or None)
+        elif isinstance(x, Mapping) and set(x) <= {'outcome', 'expected', 'note'}:
+            x = Judgement(x.get('outcome'), x.get('expected'), x.get('note'))
+        elif x is None or isinstance(x, str):
+            x = Judgement(x)
+    except ValueError:
+        raise _bad("a judgement", given) from None
+    if not isinstance(x, Judgement) or not all(v is None or isinstance(v, str) for v in (x.expected, x.note)):
+        raise _bad("a judgement", given)
+    return x
 
 
 @dataclass
@@ -111,31 +117,50 @@ def image_digest(media_type: str, data: bytes) -> str:
 
 
 def settle(points: Any, out: Any) -> Record:
-    """What a check returned, as stored. The one boundary: the grade is coerced
-    by the check's points (`ValueError` if it does not fit), and every block,
-    a `std.blocks` object or a plain dict, is checked against the block
-    grammar and limits (`BadResult` if it does not fit). Top-level images go first."""
-    from .defs import Grade
+    """What a check returned, as stored. The one boundary for the whole result
+    (`BadResult` for anything that does not fit, with a structural message):
+    the grade is one its points accept (a bool, or a finite number in their
+    range; `points.coerce`), its flags are text and its reason text or None;
+    each judgement has its shape (`judgement`); every block, a `std.blocks`
+    object or a plain dict, fits the block grammar and limits. Top-level
+    images go first."""
     if not isinstance(out, Result):
         out = Result(out)
-    grade = points.coerce(out.grade)
+    grade = _grade(points, out.grade)
+    if out.reason is not None and not isinstance(out.reason, str):
+        raise _bad("a reason", out.reason)
     if grade.value is None and grade.reason is None:
-        grade = Grade(None, grade.flags, out.reason or "undecided")
+        grade = replace(grade, reason=out.reason or "undecided")
     if not isinstance(out.fields, Mapping):
-        raise BadResult(f"the check returned fields of type {type(out.fields).__name__}")
+        raise _bad("fields", out.fields)
+    if not all(isinstance(k, str) for k in out.fields):
+        raise BadResult("the check returned fields not named by text")
     images: dict[str, tuple[str, bytes]] = {}
     shown = _blocks(out.blocks, images, 0)
     shown.sort(key=lambda b: b['type'] != 'image')          # stable: figures first, in order
-    fields = {str(k): judgement(v).to_json() for k, v in out.fields.items()}
-    for j in fields.values():
-        for k in ('expected', 'note'):
-            if not isinstance(j.get(k, ""), str):
-                raise _bad(f"a judgement's {k}", j[k])
+    fields = {k: judgement(v).to_json() for k, v in out.fields.items()}
     body = {'grade': grade.to_json(), 'fields': fields, 'blocks': shown}
     size = len(json.dumps(body, ensure_ascii=False)) + sum(len(b) for _, b in images.values())
     if size > MAX_EVIDENCE:
         raise BadResult(f"the check returned {size} bytes of evidence; at most {MAX_EVIDENCE}")
     return Record(body, images)
+
+
+def _grade(points: Any, x: Any):
+    """`x` as a grade of `points`, its parts checked."""
+    from .defs import Grade
+    try:
+        grade = points.coerce(x)
+    except (ValueError, TypeError):
+        raise _bad("a grade its points do not accept,", x.value if isinstance(x, Grade) else x) from None
+    v = grade.value
+    if not (v is None or isinstance(v, bool) or isinstance(v, (int, float)) and math.isfinite(v)):
+        raise _bad("a grade", v)
+    if not isinstance(grade.flags, (tuple, list)) or not all(isinstance(f, str) for f in grade.flags):
+        raise BadResult("the check returned flags that are not text")
+    if grade.reason is not None and not isinstance(grade.reason, str):
+        raise _bad("a reason", grade.reason)
+    return replace(grade, flags=tuple(grade.flags))
 
 
 def _bad(what: str, x: Any) -> BadResult:

@@ -66,8 +66,8 @@ def grade(exam, qid, answers, printing=None):
 
 
 def status(runner, sub, qid):
-    q = runner.exam.questions[qid]
-    return runner.sheet(sub).status(runner.exam, q, q.check('check'))
+    q = runner.ws.exam.questions[qid]
+    return runner.sheet(sub).status(runner.ws.exam, q, q.check('check'))
 
 
 # --- the fixtures end to end ----------------------------------------------------------
@@ -78,7 +78,7 @@ def test_selftest(exam, tmp_path):
 
 def test_definition(exam, pkg):
     versions = pkg('versions')
-    assert list(exam.grading) == ['info'] + [f'q{i}' for i in range(1, 7)]
+    assert list(exam.questions) == ['info'] + [f'q{i}' for i in range(1, 7)]
     assert exam.pages == 16 and exam.print_area == (0, 0, 1000, 1000)
     info = exam.questions['info']
     assert info.checks == () and list(info.fields) == versions.FIELDS
@@ -86,7 +86,7 @@ def test_definition(exam, pkg):
                for f in info.fields)
     labels = {f.label: f for f in info.fields}
     assert set(versions.PRINTING) == set(VARIED)
-    for qid, q in exam.grading.items():
+    for qid, q in exam.questions.items():
         for f in q.fields:
             assert f.region.page in q.pages
         if qid == 'info':
@@ -98,7 +98,7 @@ def test_definition(exam, pkg):
             assert len(refs) == 2 and all(r.question == 'info' and r.label in labels for r in refs)
             assert any(labels[r.label].region.page in (q.pages[0] - 1, q.pages[0]) for r in refs), qid
     assert exam.questions['q2'].check('check').fn.by == versions.PRINTING['q2']
-    assert {q.id: q.pages for q in exam.grading.values()} == {
+    assert {q.id: q.pages for q in exam.questions.values()} == {
         'info': (2, 4, 8, 10, 12), 'q1': (3,), 'q2': (5,), 'q3': (7,), 'q4': (9,), 'q5': (11,), 'q6': (13,)}
 
 
@@ -145,7 +145,7 @@ def test_field_regions_hold_ink_on_the_blanks(exam, pkg, tmp_path):
     from examinator.pdf.render import Renderer
     renderer, versions = Renderer(tmp_path / 'cache', dpi=72), pkg('versions')
     for alt in versions.VERSIONS:
-        for q in exam.grading.values():
+        for q in exam.questions.values():
             for region in [f.region for f in q.fields]:
                 crop = Layout().crop(renderer.page(versions.blank(alt), region.page - 1), region)
                 assert np.asarray(crop.convert('L')).min() < 128, (alt, q.id, region)
@@ -158,10 +158,10 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
     ws = Workspace(root, exam)
     ws.sync()
     model = synth.fake_model(root)
-    runner = Runner(exam, ws, model=model)
+    runner = Runner(ws, model=model)
     try:
         for sub in ws.store.submissions():
-            for qid in exam.grading:
+            for qid in exam.questions:
                 assert all(o.ok for o in runner.read(sub.id, qid))
     finally:
         runner.close()
@@ -210,7 +210,7 @@ def test_disagreeing_printed_fields_wait_for_a_grader(exam, pkg, tmp_path):
     root = synth.generate(exam, tmp_path / 'ws', [case])
     ws = Workspace(root, exam)
     ws.sync()
-    runner = Runner(exam, ws, model=synth.fake_model(root))
+    runner = Runner(ws, model=synth.fake_model(root))
     try:
         for qid in ('info', 'q2', 'q4', 'q5'):
             assert all(o.ok for o in runner.read('split', qid))

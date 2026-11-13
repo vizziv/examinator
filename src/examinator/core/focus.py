@@ -186,7 +186,7 @@ def values_table(exam: Exam, store, *, submission: str | None = None,
     memo = {} if memo is None else memo
     out: dict[str, dict[str, list[str]]] = {}
     status = {sid: every.get(sid, empty).statuses(exam) for sid in subs}
-    for qid, q in exam.grading.items():
+    for qid, q in exam.questions.items():
         fs = facets(q)
         cols = {facet_id(qid, f): {} for f in fs}
         out.update(cols)
@@ -207,7 +207,7 @@ def describe_facets(exam: Exam) -> list[dict]:
     return [{'id': qid, 'title': q.title,
              'facets': [{'id': facet_id(qid, f), 'name': f.name, 'label': f.label, 'kind': f.kind,
                          'group': f.group, 'order': list(f.order)} for f in facets(q)]}
-            for qid, q in exam.grading.items()]
+            for qid, q in exam.questions.items()]
 
 
 # --- filter semantics (mirrored in web/static/focus.js) ------------------------------

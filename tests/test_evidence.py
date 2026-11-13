@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from examinator import Check, Exam, Field, Result, load_exam
+from examinator.core.defs import Grade, Number
+from examinator.core.result import Judgement
 from examinator.core.result import BadResult, Record, image_digest, settle
 from examinator.core.runner import Runner
 from examinator.core.workspace import Workspace
@@ -59,8 +61,50 @@ def test_a_block_that_breaks_the_grammar_is_a_check_error(block):
 
 
 def test_a_judgement_is_text():
-    with pytest.raises(BadResult, match="judgement's note"):
+    with pytest.raises(BadResult, match="^the check returned a judgement"):
         settle(POINTS, Result(None, {'x': {'outcome': None, 'note': np.float64(1.5)}}))
+
+
+NUMBER = Number(min=0, max=3)
+
+
+@pytest.mark.parametrize('points, out', [
+    (NUMBER, float('nan')), (NUMBER, float('inf')), (Number(), float('nan')), (NUMBER, 4),
+    (NUMBER, Grade(1, (float('inf'),))), (NUMBER, Grade(1, reason=5)), (POINTS, Grade(True, ('ok', 2))),
+    (POINTS, "maybe"), (POINTS, 1.0), (POINTS, Result(True, reason=3)),
+    (POINTS, Result(True, {'x': ['correct']})), (POINTS, Result(True, {'x': ('correct', "n", "extra")})),
+    (POINTS, Result(True, {'x': 'right'})), (POINTS, Result(True, {'x': {'outcome': 'correct', 'score': 1}})),
+    (POINTS, Result(True, {1: 'correct'})), (POINTS, Result(True, {'x': ('correct', 3)})),
+])
+def test_settle_is_the_boundary_for_the_whole_result(points, out):
+    """Value a bool or a finite number its points accept, flags text, reason text
+    or None, judgements of their shape: anything else is a structural `BadResult`."""
+    with pytest.raises(BadResult, match="^the check returned"):
+        settle(points, out)
+
+
+def test_what_fits_the_boundary_is_stored_in_normal_form():
+    got = settle(NUMBER, Result(Grade(2, ['blank']), {'x': ('incorrect', ""), 'y': None, 'z': Judgement('correct')}))
+    assert got.body['grade'] == {'value': 2.0, 'flags': ['blank'], 'reason': None}
+    assert got.body['fields'] == {'x': {'outcome': 'incorrect'}, 'y': {'outcome': None}, 'z': {'outcome': 'correct'}}
+    assert settle(POINTS, None).body['grade'] == {'value': None, 'flags': [], 'reason': "undecided"}
+
+
+def test_a_malformed_return_is_undecided_with_the_structural_reason(tmp_path):
+    exam = Exam('ev', pages=1)
+    exam.question('q', pages=[1], fields=[Field('x', default='1')], checks={
+        'nan': Check(lambda ctx: float('nan'), points=NUMBER, isolate=False),
+        'shape': Check(lambda ctx: Result(True, {'x': ['correct']}), isolate=False)})
+    ws = workspace(tmp_path, exam, subs=('s1',))
+    runner = Runner(ws)
+    try:
+        for name in ('nan', 'shape'):
+            assert runner.compute('s1', 'q', name).ok
+            grade = ws.store.get('s1', f'q/{name}', 'result').body['grade']
+            assert grade['value'] is None and grade['reason'].startswith("the check returned")
+    finally:
+        runner.close()
+        ws.close()
 
 
 def test_deep_details_and_total_evidence_are_bounded():
@@ -88,7 +132,7 @@ def test_a_bad_result_is_stored_as_undecided_with_the_reason(tmp_path):
     exam.question('q', pages=[1], fields=[Field('x', default='1')],
                   checks={'bad': Check(bad_image, isolate=False), 'good': Check(plots, isolate=False)})
     ws = workspace(tmp_path, exam, subs=('s1',))
-    runner = Runner(exam, ws)
+    runner = Runner(ws)
     try:
         assert runner.compute('s1', 'q', 'bad').ok
         body = ws.store.get('s1', 'q/bad', 'result').body
@@ -131,7 +175,7 @@ def test_an_isolated_check_passes_the_same_shape(tmp_path):
     exam = load_exam(pkg)
     (tmp_path / 'ws' / 'pdfs').mkdir(parents=True)
     ws = Workspace(tmp_path / 'ws', exam)
-    runner = Runner(exam, ws)
+    runner = Runner(ws)
     try:
         assert runner.compute('s', 'q', 'figure').ok and runner.compute('s', 'q', 'bad').ok
         body = ws.store.get('s', 'q/figure', 'result').body
