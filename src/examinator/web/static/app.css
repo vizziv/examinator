@@ -134,8 +134,8 @@ nav.top .nav:hover { color: var(--fg); background: var(--panel-2); text-decorati
 nav.top .nav[aria-current=page] { color: var(--link); background: var(--accent-soft); font-weight: 600; }
 nav.top .sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); }
 nav.top button { padding: 1px 7px; }
-#flash { color: var(--bad); }
-#flash.ok { color: var(--muted); }
+#flash { color: var(--muted); }
+#flash.bad { color: var(--bad); }
 #busy { color: var(--warn); font-weight: 600; }
 
 /* --- pills: plain = information and finished, .unv = waits on a person, .bad = a problem --- */

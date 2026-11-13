@@ -12,14 +12,29 @@
   const scan = document.getElementById('scan');
   const on = document.getElementById('rg-on');
   if (!scan || !on) return;
-  const $ = id => document.getElementById(id);
-  const sub = document.getElementById('question').dataset.sub;
+  const sub = $('question').dataset.sub;
   // Each region, and the print area: `own`, `scan`, `all` (what each scope has saved, null if
-  // nothing; `<scope>_rev` its revision), `base` (the package's), `value` (the one in force).
+  // nothing; `<scope>_rev` its revision), `base` (the package's), `value` (the one in force);
+  // `draft`, what is edited. Read again whenever the page is drawn again: a draft stays.
   const regions = JSON.parse(scan.dataset.regions);
   const pa = JSON.parse(scan.dataset.print);
-  const scopes = JSON.parse(scan.dataset.scopes);   // own, scan, all: each scope as the server names it
+  let scopes = JSON.parse(scan.dataset.scopes);     // own, scan, all: each scope as the server names it
   pa.draft = [...pa.value];
+  document.addEventListener('redrawn', () => {
+    const now = new Map(JSON.parse(scan.dataset.regions).map(r => [r.path, r]));
+    for (const r of regions) {
+      if (!now.has(r.path)) continue;
+      const kept = dirty(r) ? r.draft : null;
+      Object.assign(r, now.get(r.path));
+      r.draft = kept || (r.value && [...r.value]);
+    }
+    const kept = paDirty() ? pa.draft : null;
+    Object.assign(pa, JSON.parse(scan.dataset.print));
+    pa.draft = kept || [...pa.value];
+    scopes = JSON.parse(scan.dataset.scopes);
+    inputs();
+    draw();
+  });
   const pad = Number(scan.dataset.pad);
   const first = Number(scan.dataset.first);
   const pick = $('rg-pick'), msg = $('rg-msg');
@@ -105,37 +120,17 @@
     Actions.enable($('rg'));
   }
 
-  // The crops on this page where the server now crops them (`boxes`: by region path, the
-  // scanned page and the box on it).
-  function recrop(boxes) {
-    for (const crop of document.querySelectorAll('.crop[data-region]')) {
-      const b = boxes[crop.dataset.region];
-      if (!b) continue;
-      const src = `${ROOT}/page/${encodeURIComponent(sub)}/${b.index}.jpg`;
-      if (crop.dataset.src === src && crop.dataset.box === b.box) continue;
-      if (crop.dataset.src !== src) { crop.dataset.src = src; crop.replaceChildren(); }
-      crop.dataset.box = b.box;
-      drawCrop(crop);
-    }
-  }
-
   const WHERE = {own: "this submission", scan: "this scan", all: "all submissions"};
 
   // Save what is edited (`x`: a region, or the print area) at one scope ('own', 'scan', 'all'),
-  // or (`clear`) drop that scope's; then `done(answer)`, x having its new levels. A refusal
-  // keeps the draft and takes the revision saved now, so that saving again overwrites knowingly.
+  // or (`clear`) drop that scope's; then `done(answer)`, x having its new levels (the page is
+  // drawn again too: the crops beside the fields move). A refusal keeps the draft and takes
+  // what is saved now, so that saving again overwrites knowingly.
   function saveAt(x, level, clear, done) {
-    const scope = scopes[level];
-    return Changes.send(`override:${scope}:${x.path}`, clear ? '/exam/clear' : '/exam/set',
-      {path: x.path, scope, value: clear ? null : x.draft, rev: x[level + '_rev'] ?? null, sub}, {
-        line,
-        redraw: cur => {
-          x[level + '_rev'] = cur.rev ?? null;
-          x[level] = cur.value ?? null;
-          inputs();
-          return Changes.kept(`${brief(cur.value)} (${WHERE[level]})`);
-        },
-        done: b => { Object.assign(x, b.levels); done(b); }});
+    const key = level + '_rev';
+    return override({path: x.path, scope: scopes[level], value: clear ? undefined : [...x.draft], clear, sub, rev: () => x[key] ?? null,
+                     take: cur => { x[key] = cur.rev ?? null; x[level] = cur.value ?? null; inputs(); }},
+                    {line, done: b => { Object.assign(x, b.levels); done(b); }});
   }
 
   // The selected region at one scope ('own' or 'all'); `clear`: drop it there.
@@ -152,7 +147,6 @@
           + (shadowed ? " · this submission keeps its own" : ''));
       inputs();
       draw();
-      recrop(b.boxes || {});
       document.dispatchEvent(new CustomEvent('entry-saved', {detail: b}));
     });
   }
@@ -166,7 +160,6 @@
     const saved = pa.draft;
     return saveAt(pa, level, clear, b => {
       pa.draft = [...pa.value];
-      recrop(b.boxes || {});
       const shadowed = !clear && !same(pa.value, saved);
       say(`print area ${clear ? 'dropped' : 'saved'} · ${WHERE[level]}`
           + (shadowed ? ` · this submission keeps ${pa.own != null ? 'its own' : "its scan's"}` : ''));

@@ -153,9 +153,14 @@
     text.value = await file.text();
     preview();
   });
-  // Saving replaces the roster the page was drawn with (its revision on the button).
-  Actions.register('roster-save', {available: () => rosterOk, run: ({el}) => Changes.send('roster', '/scans/roster',
-    {text: text.value, rev: $('roster-save').dataset.rev || null}, {done: () => location.reload()})});
+  // Saving replaces the roster the page was drawn with (its revision on the button). Refused
+  // as stale, the text stays and the roster saved now is what saving again replaces.
+  Actions.register('roster-save', {available: () => rosterOk, run: () => {
+    const typed = text.value, save = $('roster-save');
+    return Changes.send('roster', '/scans/roster', () => ({text: typed, rev: save.dataset.rev || null}), {
+      line, done: () => location.reload(),
+      redraw: cur => { save.dataset.rev = cur.rev ?? ''; return `${cur.people === 1 ? "1 person" : `${cur.people || 0} people`} saved now · yours kept: save again to replace them`; }});
+  }});
 
   addEventListener('hashchange', () => { if (/sub=/.test(location.hash)) tab('names'); });
   const pick = $('src');
@@ -167,9 +172,11 @@
   // --- loading and editing the plan (the server says whose each page is and what it counts as) ---
   // The cursor: after a person's own edit it stays where they are working; after any other
   // redraw from the server's plan (load, undo, guess again, read pages, a 409) it is the plan's (`adopt`).
+  const revs = {};       // scan -> the revision of its plan last drawn
   function adopt(p) {
     if (!plan || plan.id !== p.id) say('');
     plan = p;
+    revs[p.id] = p.rev;
     k = p.cursor ?? p.entries.length;
     peek = null;
   }
@@ -180,14 +187,15 @@
     if (current === 'split') history.replaceState(null, '', '#src=' + id);
     render();
   }
-  // Every edit is about the plan drawn (its revision) and the pages and submission shown
-  // when the key was pressed; Changes sends them in order, each on the revision the last left.
+  // Every edit names the pages it is about (a submission by its first page), as shown when
+  // the key was pressed; Changes sends them in order, each against the plan last drawn.
   function send(path, data, then, long) {
     const id = plan.id, mine = b => b && b.id === id && plan.id === id;
-    return Changes.send(`plan:${id}`, `/scans/${encodeURIComponent(id)}/${path}`, {rev: plan.rev, ...data}, {
+    return Changes.send(`plan:${id}`, `/scans/${encodeURIComponent(id)}/${path}`, () => ({...data, rev: revs[id]}), {
       long, line,
-      redraw: cur => { if (mine(cur)) { adopt(cur); render(); } },
+      redraw: cur => { if (cur.id) revs[cur.id] = cur.rev; if (mine(cur)) { adopt(cur); render(); } },
       done: async b => {
+        if (b.plan) revs[id] = b.plan.rev;
         if (mine(b.plan)) { plan = b.plan; render(); }
         if (then) await then(b);
       }});
@@ -208,19 +216,24 @@
     render();
   }
   // Verified: on to the next unverified first page, unless the person has moved on already.
+  const first = () => plan.entries[k].start;                   // submission k, as edits name it
   register('split-verify', {available: at, run: () => {
-    const was = k;
-    return edit('confirm', {k}, () => { if (k === was && peek === null) { k = nextOpen(plan.entries, was, open); render(); } });
+    const was = first();
+    return edit('confirm', {sheet: was}, () => {
+      if (peek === null && plan.entries[k]?.start === was) { k = nextOpen(plan.entries, k, open); render(); }
+    });
   }});
-  register('split-earlier', {available: () => !done() && (peek === null || near(peek, -1) >= 0),
-    run: () => (peek === null ? edit('move', {k, delta: -1}) : show(near(peek, -1)))});
-  register('split-later', {available: () => !done() && (peek === null || near(peek, 1) >= 0),
-    run: () => (peek === null ? edit('move', {k, delta: 1}) : show(near(peek, 1)))});
-  register('split-back', {available: () => (peek !== null ? owner(peek) >= 0 : k > 0), run: () => {
+  // On a first page, A and D move it (edits); on another page they look around (moves: they repeat).
+  const looking = () => peek !== null;
+  register('split-earlier', {available: () => !done() && (peek === null || near(peek, -1) >= 0), repeat: looking,
+    run: () => (peek === null ? edit('move', {sheet: first(), delta: -1}) : show(near(peek, -1)))});
+  register('split-later', {available: () => !done() && (peek === null || near(peek, 1) >= 0), repeat: looking,
+    run: () => (peek === null ? edit('move', {sheet: first(), delta: 1}) : show(near(peek, 1)))});
+  register('split-back', {available: () => (peek !== null ? owner(peek) >= 0 : k > 0), repeat: true, run: () => {
     if (peek !== null) peek = null; else k = Math.min(k, plan.entries.length) - 1;
     render();
   }});
-  register('split-next', {available: () => !done() && k + 1 < plan.entries.length,
+  register('split-next', {available: () => !done() && k + 1 < plan.entries.length, repeat: true,
     run: () => { peek = null; k += 1; render(); }});
   register('split-cut', {available: () => peek !== null && !plan.dropped.includes(peek),
     run: () => edit('cut', {sheet: peek})});
@@ -243,7 +256,7 @@
   const whole = b => { adopt(b.plan); render(); };     // the answer replaces the plan as a whole, not an edit of the person's
   const turned = () => say(LANDMARKS && MODEL ? 'turned: read pages again' : 'turned');
   register('split-turn-page', {available: () => !done(), run: () => edit('turn_page', {sheet: focus()}, turned)});
-  register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: () => edit('turn', {k}, turned)});
+  register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: () => edit('turn', {sheet: first()}, turned)});
   register('split-turn-source', {run: () => edit('turn_source', {}, turned)});
   register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {}, whole)});
   register('split-guess', {run: () => send('propose', {length: $('s-length').value}, whole)});
@@ -252,7 +265,7 @@
       say("reading pages…");
       const job = await waitJob(b.job);
       await load(plan.id);
-      say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`, 'bad');
+      say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`, 'bad');      // failed, or lost
     }, true)});
   // Accept, having said what it would disturb (submissions with grading work it changes or removes).
   register('split-accept', {run: () => {
@@ -402,7 +415,7 @@
         e.name && twice[e.name] > 1 ? tag('bad', 'name twice') : '',
         make('span', {className: 'grow'}),
         nameLink(e),
-        j + 1 < E.length ? button('join with next', 'this submission and the next are one', () => edit('join', {k: j})) : '');
+        j + 1 < E.length ? button('join with next', 'this submission and the next are one', () => edit('join', {sheet: e.start})) : '');
       const sheets = make('div', {className: 'sheets'}, ...e.lay.map(([i, p], x) => {
         if (i === null) return gap(p, (e.lay.slice(x).find(([s]) => s !== null) || [])[0]);
         const n = e.pages.indexOf(i);

@@ -82,22 +82,24 @@
   function go(j) { k = Math.max(0, Math.min(j, order.length)); ci = 0; pick.value = ''; hi = 0; valueLine.say(''); render(); }
 
   // Naming is said about what is shown, when the key is pressed (or the item clicked): the
-  // submission, its pick's revision as seen, and one of {key} (a roster person), {text}
-  // (someone typed in), {restore} (undo) or nothing (unname). A naming that moves on to the
-  // next submission ends its subject: a second press made before it was answered (Enter
-  // twice, V twice) is dropped, never sent again on the new revision. An undo stays.
+  // submission and one of {key} (a roster person), {text} (someone typed in), {restore} (undo)
+  // or nothing (unname); it is sent against the pick's revision last drawn. A naming that
+  // moves on to the next submission ends its subject: a second press made before it was
+  // answered (Enter twice, V twice) is dropped. An undo stays.
   // How it went is said on the step's line (`w-said`), with an undo.
   const step = Line('w-said');
-  const about = what => { const r = row(); return r ? {sub: r.sub, rev: r.rev, ...what} : null; };
+  const about = what => { const r = row(); return r ? {sub: r.sub, ...what} : null; };
   function name(said, next = true) {
-    const r = view.byId[said.sub], before = r && r.who ? r.who.name : '', was = said.rev;
+    const r = view.byId[said.sub], before = r && r.who ? r.who.name : '';
     if (!r) return;
-    return Changes.send(`who:${said.sub}`, '/scans/who', said, {line: step, ends: next, redraw: () => load(), done: async b => {
-      const now = b.who, here = row() && row().sub === said.sub;
-      report(said.sub, now.name, before, was == null ? {sub: said.sub, rev: now.rev} : {sub: said.sub, rev: now.rev, restore: was});
-      await load();
-      if (next && here && row() && row().sub === said.sub) go(nextOpen(order, k, s => !verified(view.byId[s])));
-    }});
+    let was = null;           // the pick it replaces
+    return Changes.send(`who:${said.sub}`, '/scans/who', () => ({...said, rev: was = view.byId[said.sub]?.rev ?? null}), {
+      line: step, ends: next, redraw: () => load(), done: async b => {
+        const here = row() && row().sub === said.sub;
+        report(said.sub, b.who.name, before, was == null ? {sub: said.sub} : {sub: said.sub, restore: was});
+        await load();
+        if (next && here && row() && row().sub === said.sub) go(nextOpen(order, k, s => !verified(view.byId[s])));
+      }});
   }
   // One line says what was done, with an undo: itself a statement, made now.
   function report(sub, who, before, undoing) {
@@ -111,16 +113,16 @@
   const S = {register: (name, spec) => Actions.register(name, {...spec,
     available: ctx => live() && !Changes.busy() && (!spec.available || spec.available(ctx))})};
   S.register('names-verify', {available: () => !!cand(), run: () => name(about({key: cand().key}))});
-  S.register('names-down', {available: () => !!row() && row().candidates.length > 1, run: () => { ci += 1; render(); }});
-  S.register('names-up', {available: () => !!row() && row().candidates.length > 1,
+  S.register('names-down', {available: () => !!row() && row().candidates.length > 1, repeat: true, run: () => { ci += 1; render(); }});
+  S.register('names-up', {available: () => !!row() && row().candidates.length > 1, repeat: true,
     run: () => { ci += row().candidates.length - 1; render(); }});
-  S.register('names-skip', {available: () => k < order.length, run: () => go(k + 1)});
-  S.register('names-back', {available: () => k > 0, run: () => go(k - 1)});
+  S.register('names-skip', {available: () => k < order.length, repeat: true, run: () => go(k + 1)});
+  S.register('names-back', {available: () => k > 0, repeat: true, run: () => go(k - 1)});
   S.register('names-type', {available: () => !!row(), run: () => { pick.focus(); pick.select(); }});
   // Reading the boxes, said on the line under the strip: what it reads, then how it went.
   S.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, run: () => {
     const again = $('w-again').checked, line = Line('msg');
-    return Changes.send('names-read', '/scans/names/read', {rev: view.run, again}, {line, long: true, redraw: () => load(), done: async b => {
+    return Changes.send('names-read', '/scans/names/read', {again}, {line, long: true, done: async b => {
       if (!b.job) {
         line.say(!view.left ? "nothing to read: every submission is named"
           : again ? "nothing to read: the unnamed submissions' boxes are verified"
@@ -132,7 +134,7 @@
       const failed = (job.outcomes || []).length;
       order = [];         // new readings: doubtful ones first again
       await load();
-      line.say(job.state !== 'done' ? `read names ${job.state}` : failed ? `read ${b.n} unnamed · ${failed} failed` : `read ${b.n} unnamed`,
+      line.say(job.state !== 'done' ? `read names ${job.state}${job.error ? ': ' + job.error : ''}` : failed ? `read ${b.n} unnamed · ${failed} failed` : `read ${b.n} unnamed`,
                job.state !== 'done' || failed ? 'bad' : '');
     }});
   }});
@@ -226,13 +228,13 @@
     if (!bx.touched || !row()) bx.drafts = Object.fromEntries(Object.entries(savedAll(row())).map(([k, v]) => [k, v && [...v]]));
     if (!bx.drafts[bx.sel]) bx.sel = placed()[0] || '';
   }
-  const page = (sub, index) => `${ROOT}/page/${encodeURIComponent(sub)}/${index}.jpg`;
+  const page = (r, index) => `${ROOT}/page/${encodeURIComponent(r.sub)}/${r.scan}/${index}.jpg`;
   function drawBoxes() {
     const r = row(), sheet = $('wb-sheet');
     for (const el of sheet.querySelectorAll('.rbox, .parea')) el.remove();
     if (!r || !bx.edit) return;
     const p = cur() ? cur()[0] : 1;
-    const img = sheet.querySelector('img'), src = page(r.sub, p - 1);
+    const img = sheet.querySelector('img'), src = page(r, p - 1);
     if (img.getAttribute('src') !== src) img.src = src;
     sheet.append(Rects.area(r.print_area));          // context: where the printed page is on this scan
     for (const name of placed()) {
@@ -297,25 +299,25 @@
       if (level === 'own') {
         if (!d) continue;
         const own = r.own[c.name];
-        out.push(Rects.same(d, c.value) && own ? {path: c.path, scope, clear: true, rev: own.rev}
-          : {path: c.path, scope, value: d, rev: own ? own.rev : null});
+        out.push(Rects.same(d, c.value) && own ? {name: c.name, path: c.path, scope, clear: true}
+          : {name: c.name, path: c.path, scope, value: d});
       } else {
         if (Rects.same(d, c.value)) continue;
-        out.push(Rects.same(d, c.base) ? {path: c.path, scope, clear: true, rev: c.rev} : {path: c.path, scope, value: d, rev: c.rev});
+        if (Rects.same(d, c.base) && c.rev == null) continue;
+        out.push(Rects.same(d, c.base) ? {name: c.name, path: c.path, scope, clear: true} : {name: c.name, path: c.path, scope, value: d});
       }
     }
-    return out.filter(x => !x.clear || x.rev != null);
+    return out;
   }
   const WHERE = {own: 'this submission', all: 'all submissions'};
-  // One override per box; a refusal keeps the drafts and takes what is saved now (the view
-  // loaded again), so saving again overwrites knowingly. When every one is saved, the saved
-  // boxes are taken.
+  // One override per box, each against what the view last drew of it; a refusal keeps the
+  // drafts and takes what is saved now (the view loaded again), so saving again overwrites
+  // knowingly. When every one is saved, the saved boxes are taken.
+  const savedRev = (sub, c, scope) => (scope ? view.byId[sub]?.own[c.name]?.rev : view.columns.find(x => x.path === c.path)?.rev) ?? null;
   async function saveBoxes(list, what) {
     const sub = row().sub, drafts = bx.drafts;
-    const redraw = c => async cur => { await load(); return Changes.kept(`${brief(cur.value)} (${view.columns.find(x => x.path === c.path)?.name})`); };
-    const answers = await Promise.all(list.map(c => Changes.send(`override:${c.scope}:${c.path}`, c.clear ? '/exam/clear' : '/exam/set',
-      c.clear ? {path: c.path, scope: c.scope, rev: c.rev} : {path: c.path, scope: c.scope, value: c.value, rev: c.rev},
-      {line: boxLine, redraw: redraw(c)})));
+    const answers = await Promise.all(list.map(c => override({...c, rev: () => savedRev(sub, c, c.scope), take: () => load()},
+                                                             {line: boxLine})));
     if (answers.some(b => !b)) return null;
     await load(false, true);
     const shadowed = list.length && !list[0].scope && view.columns.some(c => view.byId[sub].own[c.name] && drafts[c.name]
@@ -329,11 +331,11 @@
     run: () => saveBoxes(changes('all'), `saved · ${WHERE.all}`)});
   S.register('names-box-drop-own', {available: () => bx.edit && !!row() && !!row().own[bx.sel], run: () => {
     if (!confirm(`Drop this submission's own box for ${bx.sel}?`)) return;
-    return saveBoxes([{path: col(bx.sel).path, scope: `submission:${row().sub}`, clear: true, rev: row().own[bx.sel].rev}], 'own box dropped');
+    return saveBoxes([{name: bx.sel, path: col(bx.sel).path, scope: `submission:${row().sub}`, clear: true}], 'own box dropped');
   }});
   S.register('names-box-revert', {available: () => bx.edit && view.columns.some(c => c.rev != null), run: () => {
     if (!confirm("Back to the boxes the exam declares, for all submissions?")) return;
-    return saveBoxes(view.columns.filter(c => c.rev != null).map(c => ({path: c.path, scope: '', clear: true, rev: c.rev})), 'reverted · all submissions');
+    return saveBoxes(view.columns.filter(c => c.rev != null).map(c => ({name: c.name, path: c.path, scope: '', clear: true})), 'reverted · all submissions');
   }});
   Rects.arrows(() => live() && cur(), put, () => { fill(cur()); drawBoxes(); });
   // dragging: inside a box moves it, a corner resizes it; a click on another box selects it
@@ -363,37 +365,41 @@
   addEventListener('beforeunload', e => { if (bx.edit && bxDirty()) e.preventDefault(); });
 
   // --- an identity field's value: corrected or verified like any field's ---
-  // Said on the line under the values (about the submission shown). A refusal keeps what was
-  // typed (`typed`), over the value saved since, so Enter again overwrites knowingly.
-  const typed = {};       // `${sub}/${name}` -> text kept over a value that changed
+  // Said on the line under the values (about the submission shown). The input is drawn with
+  // the value saved; what is typed over it is a draft, kept while this submission is shown
+  // (keepDrafts) and saved with Enter or ✓, against the revision last drawn.
   const valueLine = Line('w-vmsg');
-  function saveValue(r, name, body, text) {
+  let kept = [];          // the drafts the last drawing kept over a value that changed
+  function saveValue(sub, name, text) {
     if ($('w-crops').contains(document.activeElement)) document.activeElement.blur();
-    const k = `${r.sub}/${name}`;
-    return Changes.send(`values:${r.sub}`, `/s/${encodeURIComponent(r.sub)}/@identity/save`, body, {line: valueLine,
-      redraw: async () => {
-        if (text !== undefined) typed[k] = text;
-        await load();
-        const v = view.byId[r.sub]?.values[name];
-        return text === undefined ? null : Changes.kept(`${brief(v ? v.text : '')} (${name})`);
-      },
-      done: () => { delete typed[k]; return load(); }});
+    const k = `@identity/${name}`;
+    return Changes.send(`values:${sub}`, `/s/${encodeURIComponent(sub)}/@identity/save`, () => {
+      const rev = view.byId[sub]?.values[name]?.rev ?? null;
+      return text === undefined ? {verify: [{key: k, rev}]} : {values: {[k]: {text, rev}}};
+    }, {line: valueLine, done: () => load(), redraw: async () => {
+      await load();
+      return kept.length ? Changes.kept(kept.map(x => `${brief(x.now)} (${x.el.getAttribute('aria-label')})`).join(', ')) : "shown as it is now";
+    }});
   }
   function valueBox(r, name) {
-    const v = r.values[name], mine = typed[`${r.sub}/${name}`];
-    const input = make('input', {type: 'text', className: 'mono', value: mine ?? (v ? v.text : ''), spellcheck: false,
+    const v = r.values[name];
+    const input = make('input', {type: 'text', className: 'mono', defaultValue: v ? v.text : '', spellcheck: false,
       placeholder: !v && main.dataset.model ? 'not read yet' : '', title: 'Enter: save (verified by you)'});
+    Object.assign(input.dataset, {key: `@identity/${name}`, rev: v ? v.rev : ''});
     input.setAttribute('aria-label', name);
     input.addEventListener('keydown', e => {
       if (e.key !== 'Enter' || e.isComposing) return;
       e.preventDefault();
-      if ((v && input.value === v.text) || !live()) return;
-      saveValue(r, name, {values: {[`@identity/${name}`]: {text: input.value, rev: v ? v.rev : null}}}, input.value);
+      if (isDraft(input) && live()) saveValue(r.sub, name, input.value);
     });
     const out = [make('span', {className: 'dim', textContent: name + ' '}), input];
     if (v && !v.verified && !v.marker) {
+      // what is shown is what is verified: a draft is saved (a person who sets a value verifies it)
       const ok = make('button', {type: 'button', className: 'quiet', textContent: '✓', title: 'verify this value'});
-      ok.addEventListener('click', () => { if (live()) saveValue(r, name, {verify: [{key: `@identity/${name}`, rev: v.rev}]}); });
+      ok.addEventListener('click', () => {
+        const el = ok.parentElement.querySelector('input');
+        if (live()) saveValue(r.sub, name, isDraft(el) ? el.value : undefined);
+      });
       out.push(' ', tag('unv', 'unverified'), ok);
     }
     return out;
@@ -402,12 +408,12 @@
   // --- drawing the step ---
   let whole = !!pref('namesWhole', false);      // the whole first page, not only its top
   $('w-whole').addEventListener('click', () => { whole = !whole; setPref('namesWhole', whole); renderStep(); });
-  function crop(sub, c) {
+  function crop(row, c) {
     const el = make('span', {className: 'crop'});
     // no wider than the panel, no taller than about 170 px (a page is about 1.3 times as high as wide)
     const [l, t, r, b] = c.box.split(',').map(Number), room = $('w-step').clientWidth - 24;
     const width = Math.min(620, room > 0 ? room : 620, 170 * (r - l) / Math.max(0.01, (b - t) * 1.3));
-    Object.assign(el.dataset, {src: page(sub, c.index), box: c.box, width});
+    Object.assign(el.dataset, {src: page(row, c.index), box: c.box, width});
     drawCrop(el);
     return el;
   }
@@ -424,15 +430,14 @@
     $('w-pos').textContent = done ? '' : `${k + 1} of ${order.length}`;
     $('w-tags').replaceChildren(...(done ? [] : [doubtTag(r), ...whoTags(r)]));
     if (done) return;
-    // the crops and their values: keep a value being typed in when nothing about it changed
-    const typing = document.activeElement && $('w-crops').contains(document.activeElement);
-    if (!typing || $('w-crops').dataset.sub !== r.sub) {
-      $('w-crops').dataset.sub = r.sub;
-      $('w-crops').replaceChildren(...r.crops.map(c => make('figure', {}, crop(r.sub, c),
-        make('figcaption', {}, ...valueBox(r, c.name)))));
-    }
+    // the crops and their values, drawn again; on the same submission, a draft stays
+    const crops = $('w-crops'), fresh = make('div', {}, ...r.crops.map(c => make('figure', {}, crop(r, c),
+      make('figcaption', {}, ...valueBox(r, c.name)))));
+    kept = crops.dataset.sub === r.sub ? keepDrafts(crops, fresh, el => el.dataset.key) : [];
+    crops.dataset.sub = r.sub;
+    crops.replaceChildren(...fresh.childNodes);
     // The page: with no boxes, always (its top, or whole); with boxes, on request.
-    const boxes = r.crops.length > 0, img = $('w-page').querySelector('img'), src = page(r.sub, 0);
+    const boxes = r.crops.length > 0, img = $('w-page').querySelector('img'), src = page(r, 0);
     $('w-page').hidden = boxes && !whole;
     $('w-page').classList.toggle('whole', whole);
     if (!$('w-page').hidden && img.getAttribute('src') !== src) img.src = src;
@@ -453,7 +458,7 @@
       make('b', {textContent: `${named.name}${named.id ? ' · ' + named.id : ''}`})) : '');
     renderList();
     const next = view.byId[order[k + 1]];
-    if (next) for (const x of next.crops.length ? next.crops : [{index: 0}]) { const im = new Image(); im.src = page(next.sub, x.index); }
+    if (next) for (const x of next.crops.length ? next.crops : [{index: 0}]) { const im = new Image(); im.src = page(next, x.index); }
   }
 
   function renderRows() {
