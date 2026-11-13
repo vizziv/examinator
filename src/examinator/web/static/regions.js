@@ -1,7 +1,7 @@
 'use strict';
-// Region editing on the question page's scan: field regions as rectangles
-// to drag and resize, saved as exam-wide overrides (/exam/set) or, with "this
-// submission", as this submission's own region. Either changes no value: read again.
+// Region editing on the question page's scanned pages: field regions as rectangles to
+// drag (across pages too) and resize, saved as this submission's own region or as
+// every submission's (an exam-wide override, /exam/set). Either changes no value: read again.
 //
 // A region is [page, left, top, right, bottom] in per-mille of the printed page.
 // The scan shows the printed page inside the submission's print area (per-mille
@@ -17,7 +17,7 @@
   const regions = JSON.parse(scan.dataset.regions);
   const [wl, wt, wr, wb] = JSON.parse(scan.dataset.window);
   const cover = Number(scan.dataset.cover), pad = Number(scan.dataset.pad);
-  const first = Number(scan.dataset.first), count = Number(document.getElementById('question').dataset.count);
+  const first = Number(scan.dataset.first);
   const nums = [...document.querySelectorAll('.rg-n')];
   const pick = $('rg-pick'), msg = $('rg-msg');
   for (const r of regions) r.draft = r.region && [...r.region];
@@ -30,20 +30,7 @@
   const dirty = r => !same(r.draft, r.region);
   const say = (text, bad) => { msg.textContent = text; msg.classList.toggle('notice', !!bad); };
 
-  function sheet(page, add) {
-    const index = cover + page - 1;
-    let s = scan.querySelector(`.sheet[data-index="${index}"]`);
-    if (!s && add && index >= 0 && index < count) {     // a page this question does not show
-      const img = new Image();
-      img.className = 'scan';
-      img.alt = `page ${page}`;
-      img.src = `${ROOT}/page/${encodeURIComponent(sub)}/${index}.jpg`;
-      s = make('div', {className: 'sheet extra'}, img);
-      s.dataset.index = index;
-      scan.append(s);
-    }
-    return s;
-  }
+  const sheet = page => scan.querySelector(`.sheet[data-index="${cover + page - 1}"]`);
 
   function place(box, d) {
     box.style.left = fx(d[1]) * 100 + '%';
@@ -54,13 +41,10 @@
 
   function draw() {
     for (const el of scan.querySelectorAll('.rbox')) el.remove();
-    for (const el of scan.querySelectorAll('.sheet.extra')) {
-      if (!sel || !sel.draft || el.dataset.index !== String(cover + sel.draft[0] - 1)) el.remove();
-    }
     if (!scan.classList.contains('editing')) return;
     for (const r of regions) {
       if (!r.draft) continue;
-      const s = sheet(r.draft[0], r === sel);
+      const s = sheet(r.draft[0]);
       if (!s) continue;
       const box = make('div', {className: `rbox${r.printed ? ' printed' : ''}${r === sel ? ' sel' : ''}${dirty(r) ? ' dirty' : ''}`},
                        make('span', {className: 'rlabel', textContent: r.label}));
@@ -75,11 +59,13 @@
     }
     pick.options[pick.selectedIndex]?.classList.toggle('dirty', !!sel && dirty(sel));
     $('rg-save').classList.toggle('dirty', !!sel && dirty(sel));
+    Actions.enable($('rg'));
   }
 
   function inputs() {
     nums.forEach((n, i) => { n.value = sel && sel.draft ? sel.draft[i] : ''; });
-    $('rg-clear').hidden = !sel || !sel.stored;
+    $('rg-clear-own').hidden = !sel || !sel.own;
+    $('rg-clear-all').hidden = !sel || !sel.stored;
   }
 
   function select(path, reveal) {
@@ -109,11 +95,11 @@
     }
   }
 
-  async function save(clear) {
+  // `own`: this submission's region, else every submission's. `clear`: drop it.
+  async function save(own, clear) {
     const r = sel;
     if (!r) return;
-    const own = !!$('rg-own')?.checked;      // this submission's region, not every submission's
-    if (clear && !confirm(own ? `Back to every submission's region for ${r.label}?`
+    if (clear && !confirm(own ? `Drop this submission's own region for ${r.label}?`
                               : `Back to the package's region for ${r.label}, for all submissions?`)) return;
     say('…');
     const res = own
@@ -127,6 +113,7 @@
       return;
     }
     if (!res.ok) { say(res.body.error || "failed", true); return; }
+    const shadowed = !own && r.own;      // every submission's changed; this one keeps its own
     if (own) {
       r.own_rev = res.body.rev;
       r.own = res.body.own;
@@ -134,12 +121,15 @@
       r.rev = res.body.rev;
       r.stored = res.body.overridden;
     }
-    r.region = res.body.value;
-    if (clear || !dirty(r)) r.draft = r.region && [...r.region];
-    say((clear ? "reverted" : "saved") + (own ? " · this submission" : " · all submissions") + " · read again to use it");
+    if (!shadowed) {
+      r.region = res.body.value;
+      if (clear || !dirty(r)) r.draft = r.region && [...r.region];
+    }
+    say((clear ? (own ? "own region dropped" : "reverted · all submissions") : own ? "saved · this submission" : "saved · all submissions")
+        + (shadowed ? " · this submission keeps its own" : " · read again to use it"));
     inputs();
     draw();
-    recrop(r);
+    if (!shadowed) recrop(r);
     if (own) res.body.reread = [r.label];
     document.dispatchEvent(new CustomEvent('entry-saved', {detail: res.body}));
   }
@@ -149,6 +139,7 @@
     on.setAttribute('aria-pressed', editing);
     $('rg-panel').hidden = !editing;
     if (editing && !sel) select(pick.value); else draw();
+    Actions.enable($('rg'));
   }});
   pick.addEventListener('change', () => select(pick.value, true));
   nums.forEach((n, i) => n.addEventListener('input', () => {
@@ -156,8 +147,10 @@
     sel.draft[i] = i === 0 ? Math.max(1, Math.round(Number(n.value))) : clamp(Number(n.value));
     draw();
   }));
-  Actions.register('region-save', {available: () => !!sel, run: () => save(false)});
-  Actions.register('region-revert', {available: () => !!sel, run: () => save(true)});
+  Actions.register('region-save-own', {available: () => !!sel && !!sel.draft, run: () => save(true, false)});
+  Actions.register('region-save-all', {available: () => !!sel && !!sel.draft, run: () => save(false, false)});
+  Actions.register('region-clear-own', {available: () => !!sel && !!sel.own, run: () => save(true, true)});
+  Actions.register('region-clear-all', {available: () => !!sel && !!sel.stored, run: () => save(false, true)});
   Actions.register('region-undo', {available: () => !!sel, run: () => {
     sel.draft = sel.region && [...sel.region];
     say('');
@@ -165,16 +158,20 @@
     draw();
   }});
 
-  // --- dragging: the body moves the region, a corner handle resizes it ---
+  // --- dragging: the body moves the region (onto another page too), a corner handle resizes it ---
+  const back = (x, lo, hi) => (1000 * x - lo) * 1000 / (hi - lo);       // scan fraction -> per-mille of the printed page
   scan.addEventListener('pointerdown', e => {
     const box = e.target.closest('.rbox');
     if (!box || e.button !== 0) return;
     if (box.dataset.path !== sel?.path) { select(box.dataset.path); return; }
     const rect = box.parentElement.getBoundingClientRect();
+    const [, l, t] = sel.draft;
     drag = {h: e.target.dataset.h || '', x: e.clientX, y: e.clientY, d: [...sel.draft],
+            // where in the region it was taken hold of, in per-mille of the printed page
+            ox: back((e.clientX - rect.left) / rect.width, wl, wr) - l, oy: back((e.clientY - rect.top) / rect.height, wt, wb) - t,
             // pixels -> per-mille of the printed page
             kx: 1e6 / (rect.width * (wr - wl)), ky: 1e6 / (rect.height * (wb - wt))};
-    box.setPointerCapture(e.pointerId);
+    scan.setPointerCapture(e.pointerId);
     e.preventDefault();
   });
   scan.addEventListener('pointermove', e => {
@@ -183,8 +180,16 @@
     const [p, l, t, r, b] = drag.d;
     let d;
     if (!drag.h) {
-      const mx = Math.min(Math.max(dx, -l), 1000 - r), my = Math.min(Math.max(dy, -t), 1000 - b);
-      d = [p, l + mx, t + my, r + mx, b + my].map(Math.round);
+      // the page under the pointer (the one it is on, when between pages)
+      const over = [...scan.querySelectorAll('.sheet')].find(s => {
+        const q = s.getBoundingClientRect();
+        return e.clientY >= q.top && e.clientY < q.bottom;
+      }) || sheet(sel.draft[0]);
+      const page = Math.max(1, Number(over.dataset.index) - cover + 1), q = over.getBoundingClientRect();
+      const w = r - l, h = b - t;
+      const nl = Math.min(Math.max(back((e.clientX - q.left) / q.width, wl, wr) - drag.ox, 0), 1000 - w);
+      const nt = Math.min(Math.max(back((e.clientY - q.top) / q.height, wt, wb) - drag.oy, 0), 1000 - h);
+      d = [page, nl, nt, nl + w, nt + h].map(Math.round);
     } else {
       const h = drag.h, min = 5;
       d = [p, h.includes('w') ? Math.min(clamp(l + dx), r - min) : l,
@@ -192,9 +197,10 @@
               h.includes('e') ? Math.max(clamp(r + dx), l + min) : r,
               h.includes('s') ? Math.max(clamp(b + dy), t + min) : b];
     }
+    const turned = d[0] !== sel.draft[0];
     sel.draft = d;
     const box = scan.querySelector('.rbox.sel');
-    if (box) place(box, d);
+    if (turned) draw(); else if (box) place(box, d);
     inputs();
   });
   const drop = () => { if (drag) { drag = null; draw(); } };

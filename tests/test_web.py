@@ -116,7 +116,7 @@ def test_question_page_before_and_after_reading(site):
     assert 'title="printed: first cue"' in printing and 'data-region="p/fields/c1/region"' in printing
     assert 'no grade' in printing and 'data-action="decide"' not in printing
     assert site.get('/s/s1/b').status_code == 200
-    for path in ('/runs', '/settings', '/scan'):
+    for path in ('/runs', '/settings'):
         assert site.get(path).status_code == 200
 
 
@@ -145,7 +145,7 @@ def test_theme_and_actions_are_static_and_controls_declare_actions(site):
         assert '<script>' not in html and ' style="' not in html and not re.search(r'\son\w+="', html)
     site.run_all()
     html = site.get('/s/s1/a').text
-    for action in ('prev-student', 'next-student', 'scan', 'verify', 'verify-next', 'save', 'edit', 'decide',
+    for action in ('prev-student', 'next-student', 'toggle-scan', 'verify', 'verify-next', 'save', 'edit', 'decide',
                    'decide-blank', 'read', 'check', 'unverify'):
         assert f'data-action="{action}"' in html, action
     assert '<kbd>' not in html                                  # hints come from the key map
@@ -663,7 +663,7 @@ def test_focus_values_follow_decisions(site):
 
 
 def test_inverted_scans_filter_setting_and_csp(site):
-    for path in ('/', '/s/s1/a', '/settings', '/scan'):
+    for path in ('/', '/s/s1/a', '/settings'):
         r = site.get(path)
         assert '<filter id="image-gamma"' in r.text
         assert "default-src 'none'" in r.headers['content-security-policy']

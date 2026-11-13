@@ -502,8 +502,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                     'path': path}
 
         pages, note = ws.selected_pages(sub.id, q)
-        scans = [{'page': p, 'index': layout.scan_index(p)} for p in pages
-                 if 0 <= layout.scan_index(p) < count]
+        # every scanned page, to scroll through; `on` marks this question's
+        shown = {layout.scan_index(p) for p in pages}
+        scans = [{'index': i, 'page': i - layout.cover_pages + 1, 'on': i in shown} for i in range(count)]
 
         # the checks: status, proposal, evidence
         checks, judged = [], {}
@@ -547,7 +548,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'value': v.text if v else '', 'rev': v.rev if v else '', 'read': v is not None,
                 'settled': v.settled if v else None, 'by': v.by if v else None,
                 'marker': bool(v and v.marker),
-                'code': isinstance(getattr(reader, 'entries', None), (tuple, dict)) or bool(v and '\n' in v.text),
+                'code': other.multiline(label),
                 'printed': isinstance(reader, Printed), 'ask': getattr(reader, 'ask', ''),
                 'typed': reader is None,
                 'crop': crop(region, overrides.join(qid, 'fields', label, 'region')),
@@ -764,11 +765,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         if info is None:
             raise HTTPException(404)
         return JSONResponse(info)
-
-    def scan_page(request: Request) -> Response:
-        return page('scan.html')
-
-    # --- runs ---
 
     def runs_page(request: Request) -> Response:
         return page('runs.html', questions=list(exam.questions.values()),
@@ -1142,7 +1138,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         Route('/page/{sub}/{index:int}.jpg', page_image),
         Route('/raw/{sub}/{q}/{check}/{path}', raw_block),
         Route('/jobs/{id}', job),
-        Route('/scan', scan_page),
         Route('/runs', runs_page),
         post('/runs/preview', runs_preview),
         post('/runs/start', runs_start),

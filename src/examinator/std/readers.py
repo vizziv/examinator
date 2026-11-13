@@ -95,6 +95,7 @@ class Code:
     parse_prompt: str = prompts.PARSE_PSEUDOCODE
     notes: str = ""
     then: Callable[[str], str] | None = None    # deterministic rewrite of the parsed source
+    multiline = True                     # its fields' values span lines
 
     def wanted(self, label: str) -> tuple[str, ...]:
         if isinstance(self.entries, Mapping):

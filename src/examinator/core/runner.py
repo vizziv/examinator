@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Mapping, Protocol, Sequence
 
 from .context import BadOutput, CheckContext, ReadContext, Unavailable
-from .defs import Exam, Field, Grade, Question, has_marker, key
+from .defs import Exam, Field, Grade, Question, has_marker, key, one_line
 from .isolate import CheckTimeout, Pool, PoolClosed
 from .result import Undecided, settle, undecided
 from .status import Decision, Sheet, Stored, Value, current
@@ -199,7 +199,7 @@ class Runner:
             for f in targets:
                 if f.label not in got:
                     continue
-                text = got[f.label]
+                text = got[f.label] if q.multiline(f.label) else one_line(got[f.label])
                 vouched = bool(callable(vouches) and vouches(f, text))
                 if not self._put_read(submission, qid, f.label, text, vouched, include_protected):
                     lost.append(f.label)
@@ -311,6 +311,8 @@ class Runner:
         k = self._field(qid, label)
         if not isinstance(text, str):
             raise ValueError("a value is text")
+        if not self.exam.questions[qid].multiline(label):
+            text = one_line(text)
         settled = None if has_marker(text) else 'person'
         row = self.store.get(submission, k, 'value')
         cur = Value.of(row) if row is not None else None

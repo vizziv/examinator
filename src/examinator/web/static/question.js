@@ -1,6 +1,6 @@
 'use strict';
 // The question page: the values on it (a draft), actions (buttons and keys, see actions.js),
-// live refresh, and the scan window.
+// live refresh, and the scanned pages beside them.
 (() => {
   const main = $('question');
   const sub = main.dataset.sub, q = main.dataset.q;
@@ -199,14 +199,45 @@
     Actions.enable(document);
   }
 
-  // --- the page scan can be hidden (remembered); a field's menu closes on a click elsewhere ---
+  // --- the scanned pages: hideable and resizable (both remembered), opening at this question's first page ---
+  const scan = $('scan'), split = $('split');
+  function scanWidth(px) {
+    if (px) setPref('scanWidth', Math.round(Math.min(innerWidth * 0.75, Math.max(200, px))));
+    const w = pref('scanWidth', 0), at = scan.scrollTop / (scan.scrollHeight || 1);
+    if (w) main.style.setProperty('--scan-w', w + 'px');
+    if (px) scan.scrollTop = at * scan.scrollHeight;      // the same place on the pages at the new width
+    drawCrops();
+  }
   function showScan() {
     const hide = !!pref('hideScan', false);
     main.classList.toggle('no-scan', hide);
     $('scan-toggle').setAttribute('aria-pressed', String(!hide));
-    drawCrops();
+    scanWidth();
+    toFirst();
   }
+  let moved = false;
+  function toFirst() {            // until the grader scrolls it themselves
+    const first = scan.querySelector('.sheet.on');
+    if (first && !moved) scan.scrollTop = first.offsetTop - ($('rg')?.offsetHeight || 0);
+  }
+  for (const name of ['wheel', 'pointerdown', 'keydown']) scan.addEventListener(name, () => { moved = true; }, {passive: true});
+  addEventListener('load', toFirst);
   showScan();
+  split.addEventListener('pointerdown', e => {
+    split.setPointerCapture(e.pointerId);
+    split.classList.add('dragging');
+    e.preventDefault();
+  });
+  split.addEventListener('pointermove', e => {
+    if (split.classList.contains('dragging')) scanWidth(e.clientX - scan.getBoundingClientRect().left);
+  });
+  for (const name of ['pointerup', 'pointercancel']) split.addEventListener(name, () => split.classList.remove('dragging'));
+  // Ctrl+scroll over the pages grows or shrinks their panel (over the work area: the crop scale).
+  scan.addEventListener('wheel', e => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    scanWidth(scan.getBoundingClientRect().width * Math.exp(-e.deltaY * 0.001));
+  }, {passive: false});
   document.addEventListener('click', e => {
     for (const m of document.querySelectorAll('.fmenu[open]')) if (!m.contains(e.target)) m.open = false;
   });
@@ -229,7 +260,6 @@
     'next-student': {available: () => canGo(1), run: () => go(1)},
     'prev-question': follow('prev-question'),
     'next-question': follow('next-question'),
-    scan: follow('scan'),
     // Cmd+S and Cmd+Enter in an exam-data entry (the key panel) save that entry.
     save: {available: ctx => !!entryOf(ctx) || hasFields(),
            run: ctx => (entryOf(ctx) ? Entries.send(entryOf(ctx)) : save(false))},
@@ -312,11 +342,4 @@
     busy.hidden = true;
     await refresh();
   });
-
-  // --- the scan window follows this page ---
-  const channel = new BroadcastChannel('examinator-scan');
-  const announce = () => channel.postMessage({
-    sub, q, name: main.dataset.name, pages: JSON.parse(main.dataset.pages), count: Number(main.dataset.count)});
-  channel.addEventListener('message', e => { if (e.data && e.data.hello) announce(); });
-  announce();
 })();

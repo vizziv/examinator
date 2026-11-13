@@ -26,6 +26,13 @@ from typing import Any, Callable, Mapping, Sequence
 REVIEW = re.compile(r'\[REVIEW\b', re.I)   # also catches a marker cut off before its ']'
 
 
+def one_line(text: str) -> str:
+    """A value on one line: line breaks become single spaces."""
+    if '\n' not in text and '\r' not in text:
+        return text
+    return ' '.join(part.strip() for part in text.splitlines() if part.strip())
+
+
 def has_marker(body: Any) -> bool:
     """True if any string inside a JSON-like body carries a `[REVIEW: ...]` marker."""
     if isinstance(body, str):
@@ -65,11 +72,14 @@ class Field:
     `region` is where to look (it may be left unset and given in the app).
     `read` is a reader for this field alone (`Printed`, say); None, the
     default: the question's reader reads it with the question's other fields,
-    and without one a person types it. A value is always text.
+    and without one a person types it. A value is always text: one line,
+    unless the field is `multiline` (None, the default: as its reader says,
+    which is one line for all but code).
     """
     label: str
     region: Region | None = None
     read: Any = None
+    multiline: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -264,6 +274,13 @@ class Question:
     def reader_of(self, label: str) -> Any:
         f = self.field(label)
         return None if f is None else (f.read if f.read is not None else self.read)
+
+    def multiline(self, label: str) -> bool:
+        """Whether a field's value may span lines: the field's own setting, else its reader's."""
+        f = self.field(label)
+        if f is None or f.multiline is not None:
+            return bool(f and f.multiline)
+        return bool(getattr(self.reader_of(label), 'multiline', False))
 
     def column(self, check: str) -> str:
         """The grid column of one check: the question id when it is the only one."""

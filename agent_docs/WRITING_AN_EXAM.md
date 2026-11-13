@@ -117,6 +117,11 @@ printed field without a region is simply not read. Labels are the printed
 labels (the prompts use them). An off-page region or a repeated label is a
 `ValueError` naming the question.
 
+A value is one line (line breaks in a reading become spaces) unless the field
+is multi-line: the code reader's fields are, and `Field(label, region,
+multiline=True)` says so for any other. The app shows a one-line value under
+its handwriting and a multi-line one beside it.
+
 Finding coordinates: render a blank page and divide each box's pixels by the
 image size × 1000. Helpers keep rows of boxes short (`boxes()` in
 `exams/exam_03/exam.py`; `inset=` in `exams/exam_01/exam.py` for boxes closer

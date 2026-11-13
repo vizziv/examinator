@@ -121,6 +121,17 @@ def test_blank_is_a_value_and_differs_from_not_read(env):
     assert v.text == '' and v.is_settled and value(ws, 's1', 'a/y') is None
 
 
+def test_a_value_is_one_line_unless_its_field_is_multiline(env):
+    from examinator.std import readers
+    exam, ws, runner = env
+    assert runner.set('s1', 'a', 'x', "1 +\n  2\n", author='ta').text == '1 + 2'
+    q = exam.questions['a']
+    assert not q.multiline('x')
+    code = Exam('e', pages=1).question('c', pages=[1], fields=[Field('f'), Field('g', multiline=False)],
+                                       read=readers.code(['f']))
+    assert code.multiline('f') and not code.multiline('g')         # the reader's default; the field's own word
+
+
 def test_verify_and_unverify_keep_the_revision(env):
     exam, ws, runner = env
     read_all(runner, 's1')

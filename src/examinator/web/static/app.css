@@ -60,7 +60,7 @@ body.p-grid { --page-max: 100vw; }       /* grid.js sets it to the table's width
   --shadow: none;
 }
 /* Scans in dark mode: gamma, then inversion (filter defined inline in each page). Overlays are siblings, not inverted. */
-:root[data-theme=dark][data-invert-images=on] :is(img.scan, .crop img, #pv-img, .scanwin img) {
+:root[data-theme=dark][data-invert-images=on] :is(img.scan, .crop img, #pv-img) {
   filter: url('#image-gamma') invert(1) hue-rotate(180deg) brightness(.9) contrast(.85);
 }
 svg.defs { position: absolute; width: 0; height: 0; overflow: hidden; }
@@ -251,13 +251,22 @@ details.legend[open] > summary { margin: 0; background: var(--accent2-soft); }
 .legend-body .sw > a { display: block; padding: 0 4px; line-height: 20px; font-size: 13.5px; }
 
 /* --- question page --- */
-#question { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0; max-width: var(--page-max); margin: 0 auto; }
+html { scrollbar-gutter: stable; }
+#question { display: grid; grid-template-columns: auto 7px minmax(0, 1fr); gap: 0; max-width: var(--page-max); margin: 0 auto; }
 body.p-question { background: var(--bg); }
 @media (min-width: 1760px) { #question { border-left: 1px solid var(--line); border-right: 1px solid var(--line); } }
-#scan { position: sticky; top: var(--head); height: calc(100vh - var(--head)); overflow: auto; border-right: 1px solid var(--line);
-  resize: horizontal; width: min(38vw, calc(var(--page-max) * .38)); min-width: 200px; max-width: 75vw; background: var(--panel-2); }
-#scan img.scan, .scanwin img { display: block; width: 100%; height: auto; border-bottom: 1px solid var(--line); }
-#work { padding: 8px 12px 40vh; min-width: 0; }
+/* every scanned page, scrollable; it opens at this question's first page */
+#scan { position: sticky; top: var(--head); height: calc(100vh - var(--head)); overflow: auto;
+  width: var(--scan-w, min(38vw, calc(var(--page-max) * .38))); min-width: 200px; max-width: 75vw; background: var(--panel-2); }
+#scan img.scan { display: block; width: 100%; height: auto; aspect-ratio: auto 17 / 22; border-bottom: 1px solid var(--line); }
+.sheet:not(.on) img.scan { opacity: .6; }
+.pno { position: absolute; right: 4px; top: 4px; z-index: 1; font: 11px/1.4 var(--mono); padding: 0 5px; border-radius: 8px;
+  color: var(--muted); background: var(--panel); border: 1px solid var(--line); }
+.sheet.on .pno { color: var(--accent2-text); border-color: var(--accent2); }
+#split { position: sticky; top: var(--head); height: calc(100vh - var(--head)); cursor: col-resize; touch-action: none;
+  border-left: 1px solid var(--line); border-right: 1px solid var(--line); background: var(--panel-2); }
+#split:hover, #split.dragging { background: var(--accent2-soft); border-color: var(--accent2); }
+#work { padding: 8px 12px 24px; min-width: 0; }
 #work > * { margin-bottom: var(--panel-gap); }
 #who { font-weight: 650; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qnav { display: inline-flex; align-items: center; gap: 5px; }
@@ -303,7 +312,7 @@ details.others > .fields { margin-top: 4px; }
 .fmenu-items { position: absolute; right: 0; top: 100%; z-index: 5; display: flex; flex-direction: column; gap: 3px; padding: 5px;
   white-space: nowrap; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: var(--shadow); }
 #question.no-scan { grid-template-columns: minmax(0, 1fr); }
-#question.no-scan #scan { display: none; }
+#question.no-scan :is(#scan, #split) { display: none; }
 form.draft > .bar { margin-top: 5px; }
 form.draft.dirty .bar button[data-action=save] { border-color: var(--warn); color: var(--warn); }
 .notice { color: var(--bad); }
@@ -391,6 +400,7 @@ body.scanwin #pages { padding: 0; }
 @media (max-width: 800px) {
   #question { grid-template-columns: 1fr; }
   #scan { position: static; height: auto; max-height: 50vh; border-right: 0; width: auto; max-width: none; }
+  #split { display: none; }
 }
 
 /* --- exam data: entries (exam page, key panel) --- */
@@ -425,7 +435,6 @@ form.entry.k-region input[type=text], form.entry.k-pages input[type=text] { flex
 #rg-msg { color: var(--muted); }
 #rg-msg.notice { color: var(--bad); }
 .sheet { position: relative; line-height: 0; }
-.sheet.extra { outline: 2px dashed var(--warn); outline-offset: -2px; }
 .rbox { --rc: var(--accent2); position: absolute; border: 1.5px solid var(--rc); background: color-mix(in srgb, var(--rc) 7%, transparent); cursor: pointer; touch-action: none; }
 .rbox.printed { --rc: var(--accent); }
 .rbox.sel { border-width: 2px; cursor: move; background: color-mix(in srgb, var(--rc) 16%, transparent); }
