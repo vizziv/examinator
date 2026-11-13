@@ -60,23 +60,25 @@
 <button type="button" id="pa-on" data-action="print-area" aria-pressed="false" title="edit the print area: where the printed page sits on the scanned sheet">print area</button>
 <span id="rg-panel" class="bar" hidden>
 <select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.printed %} (printed){% endif %}</option>{% endfor %}</select>
-<label id="rg-p">p <input type="number" class="rg-n" min="1" max="{{ exam.pages }}" aria-label="page"></label>
-<input type="number" class="rg-n" min="0" max="1000" aria-label="left" title="left">
-<input type="number" class="rg-n" min="0" max="1000" aria-label="top" title="top">
-<input type="number" class="rg-n" min="0" max="1000" aria-label="right" title="right">
-<input type="number" class="rg-n" min="0" max="1000" aria-label="bottom" title="bottom">
-<label title="width: right − left (moves the right edge)">w <input type="number" id="rg-w" min="5" max="1000" aria-label="width"></label>
-<label title="height: bottom − top (moves the bottom edge)">h <input type="number" id="rg-h" min="5" max="1000" aria-label="height"></label>
-<span id="rg-region-btns">
+<span class="rg-group">
+<label class="nl" id="rg-p" title="page"><i>p</i><input type="number" class="rg-n" min="1" max="{{ exam.pages }}" aria-label="page"></label>
+<label class="nl" title="left"><i>l</i><input type="number" class="rg-n" min="0" max="1000" aria-label="left"></label>
+<label class="nl" title="top"><i>t</i><input type="number" class="rg-n" min="0" max="1000" aria-label="top"></label>
+<label class="nl" title="right"><i>r</i><input type="number" class="rg-n" min="0" max="1000" aria-label="right"></label>
+<label class="nl" title="bottom"><i>b</i><input type="number" class="rg-n" min="0" max="1000" aria-label="bottom"></label>
+<label class="nl" title="width: right − left (moves the right edge)"><i>w</i><input type="number" id="rg-w" min="5" max="1000" aria-label="width"></label>
+<label class="nl" title="height: bottom − top (moves the bottom edge)"><i>h</i><input type="number" id="rg-h" min="5" max="1000" aria-label="height"></label>
+</span>
+<span id="rg-region-btns" class="rg-group">
 <button type="button" id="rg-save" data-action="region-save-own" class="primary" title="this submission's own region">save for this submission</button>
 <button type="button" id="rg-save-all" data-action="region-save-all" title="every submission's region">save for all</button>
 <button type="button" id="rg-undo" data-action="region-undo" title="back to the saved region">undo</button>
 <button type="button" id="rg-clear-own" data-action="region-clear-own" class="danger" title="drop this submission's own region: back to every submission's" hidden>drop own</button>
 <button type="button" id="rg-clear-all" data-action="region-clear-all" class="danger" title="every submission's region back to the package's" hidden>revert all</button>
 </span>
-<span id="rg-pa-btns" hidden>
+<span id="rg-pa-btns" class="rg-group" hidden>
 <button type="button" id="pa-save" data-action="print-save-own" class="primary" title="this submission's own print area">save for this submission</button>
-<button type="button" id="pa-save-scan" data-action="print-save-scan" title="the print area of every submission split from the same scan file"{% if not print_area.source %} hidden{% endif %}>save for this scan</button>
+<button type="button" id="pa-save-scan" data-action="print-save-scan" title="the print area of every submission split from the same scan file"{% if not print_area.source %} hidden{% endif %}>save for scan</button>
 <button type="button" id="pa-save-all" data-action="print-save-all" title="the workspace's print area: every submission without its own or its scan's">save for all</button>
 <button type="button" id="pa-undo" data-action="print-undo" title="back to the saved print area">undo</button>
 <button type="button" id="pa-clear-own" data-action="print-clear-own" class="danger" title="drop this submission's own print area: back to its scan's or the workspace's" hidden>drop own</button>

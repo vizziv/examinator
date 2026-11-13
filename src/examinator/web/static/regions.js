@@ -125,7 +125,6 @@
     $('pa-clear-scan').hidden = !pa.scan;
   }
 
-  const paFrom = () => pa.own ? "this submission's" : pa.scan ? "this scan's" : "all submissions'";
 
   function select(path, reveal) {
     sel = regions.find(r => r.path === path) || null;
@@ -152,7 +151,7 @@
     $('rg-panel').hidden = !mode;
     if (mode === 'regions') select(sel ? sel.path : pick.value);
     else {
-      say(pm() ? `print area · ${paFrom()}` : '');
+      say('');
       inputs();
       draw();
     }
