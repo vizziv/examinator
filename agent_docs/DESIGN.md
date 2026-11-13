@@ -236,9 +236,15 @@ functions over stored rows, in `core/status.py`, with one test per row
 asked (`include_protected`); the replaced value goes to history. Nothing
 automatic touches a decision.
 
-**Automatic recomputation.** A result outdated by a changed value, a changed
-check (an override) or changed exam code is recomputed in the background: after
-a change in the app, when the app starts, and before a batch run from the CLI.
+**Automatic recomputation.** One background rule (`Runner.refresh`): a check
+whose result is not current is computed, if it has something to compute from:
+an outdated result always (a changed value, a changed check, changed exam
+code); a check that never ran once every field of its question has a value.
+So "not run" means a field of the question is not read. It is applied, in the
+background, to every submission when the app starts, to a submission after
+any change to its values (a save, a read, a reset to default, Accept
+rewriting it), to every submission after an override that changes a check,
+and by a batch to the submissions it read for once its reads stop.
 
 ## 8. Storage
 
@@ -299,15 +305,17 @@ the PDF's identity, the page and the resolution.
   skipped as protected or present, and what is blocked (no model, no region);
   one button reads it, planned again at the start. A read never replaces what
   a person verified unless asked, and a read that finds a value changed
-  meanwhile is discarded. Checks have no batch: they recompute by themselves,
-  and the batch refreshes each submission once its reads finish.
+  meanwhile is discarded. The batch is its reads: its progress counts reads,
+  as the plan does, and Stop stops reads. Checks recompute by themselves:
+  once the reads stop, finished or stopped, every submission something was
+  read for is refreshed, which is not counted and cannot be stopped.
 - **Missing only** reads only fields with no value: how a person resumes a
   batch read that stopped halfway (the Read page leaves it unticked by
   default). **Include protected** reads again what a person verified.
 - **Every read asks the model.** Reads happen only when a person asks, so
   nothing remembers a field's reading but its value; only Split's landmark
   readings are memoised (the plan re-reads every sheet without being asked).
-- **Cancellation** stops queued work and lets running tasks finish.
+- **Cancellation** stops queued reads and lets running ones finish.
 - A timeout or crash yields an undecided result, never "incorrect".
 - A read that fails leaves the previous values intact.
 

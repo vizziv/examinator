@@ -511,7 +511,7 @@ def test_workflow_rules(exam, pkg, env):
 
     for qid in ('info', 'q9', 'q2'):
         assert all(o.ok for o in runner.read(S, qid))
-    runner.refresh(S, questions=['q9', 'q2'])
+    runner.refresh(S)
     assert text_of(runner, S, 'info') == versions.printed(0)['info']
     assert text_of(runner, S, 'q2') == f.Q2
 
@@ -587,7 +587,7 @@ def test_disagreeing_printed_fields_are_undecided_until_a_grader_corrects_info(e
         for qid in ('info', 'q5'):
             assert all(o.ok for o in runner.read(S, qid))
             verify(runner, S, qid)
-        runner.refresh(S, questions=['q5'])
+        runner.refresh(S)
         got = text_of(runner, S, 'info')
         assert (got['q5_confidence'], got['q9_observations']) == ('95', '[14, 11, 15]')
         st = status(runner, S, 'q5')

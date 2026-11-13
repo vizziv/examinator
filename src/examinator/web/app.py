@@ -375,9 +375,9 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             return JSONResponse({'ok': True, **(out or {})})
         return endpoint
 
-    def refresh(sid: str, qid: str | None = None) -> str:
-        """Recompute in the background what a change outdated (and this question's checks never run)."""
-        return jobs.start(lambda: runner.refresh(sid, questions=[qid] if qid else []))
+    def refresh(sid: str) -> str:
+        """The background rule (`Runner.refresh`) for one submission, after a change to it."""
+        return jobs.start(lambda: runner.refresh(sid))
 
     def recompute(subs: list[str]) -> str:
         """Recompute what is outdated in these submissions, in order: one job at a time,
@@ -613,7 +613,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
     def save(request, data):
         sub, q = target(request)
         revs, wrote = save_values(request, sub, data)
-        return {'revs': revs, 'job': refresh(sub.id, q.id) if wrote else None}
+        return {'revs': revs, 'job': refresh(sub.id) if wrote else None}
 
     def names_save(request, data):
         """The Names step's own save: the identity fields' values, typed or verified."""
@@ -675,7 +675,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
 
         def work():
             outs = runner.read(sub.id, q.id, include_protected=protected)
-            return outs + runner.refresh(sub.id, questions=[q.id])
+            return outs + runner.refresh(sub.id)
         return {'job': jobs.start(work, slot=f'read:{sub.id}/{q.id}')}
 
     def run_check(request, data):
@@ -690,7 +690,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         qid, label = field_of(data.get('key'))
         with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
             runner.unset(sub.id, qid, label, expect_rev=_rev(data))
-        return {'rev': None, 'job': refresh(sub.id, q.id)}
+        return {'rev': None, 'job': refresh(sub.id)}
 
     def restore(request, data):
         """A field's earlier value (`restore`: its revision in the history) back, set by
@@ -704,7 +704,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
             v = runner.set(sub.id, qid, label, str((old.body or {}).get('text', '')), author=who(request),
                            expect_rev=_rev(data))
-        return {'rev': v.rev, 'job': refresh(sub.id, q.id)}
+        return {'rev': v.rev, 'job': refresh(sub.id)}
 
     def levels(lay, path: str, base, stored: dict) -> dict:
         """One value at each scope, for the scope editor: this submission's own ('own'),
@@ -1088,6 +1088,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         except Conflict as e:           # stale, or work it would disturb (`busy`): the plan as it is now
             e.current = plan_view(src)
             raise
+        recompute(report['rewritten'])          # their values read from the old pages are gone
         return {'report': report, **planned(src)}
 
     def roster_text(data: dict) -> str:

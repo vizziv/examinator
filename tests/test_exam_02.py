@@ -89,7 +89,7 @@ def read_and_verify(runner, sub, questions):
         assert all(o.ok for o in runner.read(sub, qid))
     for k, v in runner.values(sub).items():
         runner.verify(sub, *k.split('/'), author='ta', expect_rev=v.rev)
-    runner.refresh(sub, questions=list(questions))
+    runner.refresh(sub)
 
 
 # --- the fixtures end to end ------------------------------------------------------------

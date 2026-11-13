@@ -24,7 +24,7 @@ def test_builtin_facets_agree_with_the_status_rules(env):
     exam, ws, runner = env
     for qid in ('p', 'a'):
         runner.read('s1', qid)
-    runner.refresh('s1', questions=['a'])
+    runner.refresh('s1')
     table = focus.values_table(exam, ws.store)
     rows = {r.submission.id: r for r in grid.load(exam, ws.store)}
     for sid in ('s1', 's2'):

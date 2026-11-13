@@ -315,9 +315,13 @@ class Runner:
             return out('discarded', str(e))
         return out('done')
 
-    def refresh(self, submission: str, *, questions: Sequence[str] = ()) -> list[Outcome]:
-        """Recompute every outdated result of a submission, and run the checks of
-        `questions` that never ran. Never touches a value or a decision."""
+    def refresh(self, submission: str) -> list[Outcome]:
+        """The one background rule: compute every check of a submission whose result
+        is not current and which has something to compute from. A result that is
+        outdated is recomputed; a check that never ran runs once every field of its
+        question has a value (stored, or its default). So a check is 'not run' only
+        while its question has a field not read. Never touches a value or a decision.
+        Called after anything that may leave such a check (`refresh` in MODEL.md)."""
         sheet, exam = self.sheet(submission), self.ws.exam
         outs = []
         for q in exam.questions.values():
@@ -326,7 +330,7 @@ class Runner:
                     continue
                 stored = sheet.results.get(key(q.id, c.name))
                 if stored is None:
-                    if q.id not in questions:
+                    if not all(key(q.id, f.label) in sheet.values or f.default is not None for f in q.fields):
                         continue
                 elif current(stored, sheet.values, defn=exam.check_hash(q, c), code=exam.code_hash):
                     continue
