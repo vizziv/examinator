@@ -14,6 +14,7 @@ import hashlib
 import importlib.util
 import inspect
 import json
+import math
 import re
 import sys
 import types
@@ -199,7 +200,7 @@ class Number:
         return Grade(self._check(x))
 
     def _check(self, v: Any) -> int | float:
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
             raise ValueError(f"expected a number, got {v!r}")
         if self.type is int:
             if v != int(v):
