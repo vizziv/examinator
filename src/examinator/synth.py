@@ -329,7 +329,7 @@ def fake_model(root: str | Path):
             con.close()
         if row is None or row[0] not in script[STACKS]:
             return False, {}
-        pages, turns = json.loads(row[1]), json.loads(row[2] or '{}').get('sheets') or []
+        pages, turns = json.loads(row[1]), json.loads(row[2] or '[]')
         first = next((j for j, i in enumerate(pages) if i is not None), 0)     # page 1 may be missing
         k = script[STACKS][row[0]].get(f'{pages[first]}@{turns[first] if first < len(turns) else 0}')
         return True, script.get(f'{STUDENT}{k}', {}) if k is not None else {}

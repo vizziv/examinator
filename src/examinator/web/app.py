@@ -935,24 +935,38 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return src
 
     def plan_view(src) -> dict:
+        """The plan as the page shows it: per submission, and per sheet whose it is and
+        what printed page it counts as, so the page derives nothing."""
         art = intake.plan(ws, src.id)
-        body = {**art.body, 'pages': exam.pages}
-        runs, doubts, lays, states = split.runs(body), split.doubts(body), split.layouts(body), intake.state(ws, src.id)
-        made, turns, L = store.made(), split.turns(body), body['sheets']
-        entries = []
-        for k, (e, p) in enumerate(zip(split.entries(body), split.starts(body))):
-            sid = e.get('id')
-            entries.append({'start': L[p]['i'], 'verified': bool(e.get('confirmed')), 'id': sid,
-                            'pages': runs[k], 'lay': lays[k], 'proposed': e.get('proposed') or {},
-                            'doubts': [split.DOUBTS[d] for d in doubts[k]], 'state': states[k],
-                            'name': identity.who(ws, sid)['name'] if sid in made else ''})
+        body, L = art.body, art.body['sheets']
+        rows, gone = intake.outline(ws, src.id, body)
+        said, lays = split.verified(body), split.layouts(body, exam.pages)
+        doubts, turns = split.doubts(body, exam.pages), split.turns(body)
+        owner, slot, entries = [-1] * src.pages, [None] * src.pages, []
+        for k, (run, row, lay) in enumerate(zip(split.runs(body), rows, lays)):
+            before = []
+            for i, p in lay:
+                if i is None:
+                    before.append(p)
+                    continue
+                owner[i], slot[i], before = k, {'label': f'p{p}' if p else 'extra', 'before': before}, []
+            sid = row['id']
+            entries.append({'start': run[0], 'verified': said[k], 'id': sid, 'pages': run, 'lay': lay,
+                            'doubts': [split.DOUBTS[d] for d in doubts[k]], 'state': row['state'],
+                            'name': identity.who(ws, sid)['name'] if sid else ''})
         return {'id': src.id, 'name': src.name, 'n': src.pages, 'rev': art.rev, 'length': body['length'],
                 'checked': bool(body.get('checked')) and bool(body.get('readings')), 'failed': body.get('failed', 0),
-                'order': [r['i'] for r in L], 'turn': [turns[i] for i in range(src.pages)],
-                'entries': entries, 'dropped': split.dropped(body), 'missing': [r['i'] for r in L if r.get('missing')],
+                'order': [r['i'] for r in L], 'kept': [r['i'] for r in L if not r.get('dropped')],
+                'turn': [turns[i] for i in range(src.pages)], 'owner': owner, 'slot': slot,
+                'entries': entries, 'dropped': split.dropped(body), 'missing': sorted(set(split.marks(body)[1])),
                 'readings': {i: None if r is None else f'p.{r + 1}' for i, r in split.readings(body).items()},
-                'removed': intake.removed(ws, src.id), 'cursor': split.cursor(body),
+                'removed': gone, 'cursor': split.cursor(body), 'counts': split_counts(body, rows, gone),
                 'undo': intake.can_undo(ws, src.id), 'idboxes': idboxes(src.id)}
+
+    def split_counts(body, rows, gone) -> dict:
+        """What the workflow strip counts for a scan: first pages to verify, submissions to write or remove."""
+        return {'open': sum(not v for v in split.verified(body)),
+                'write': sum(r['state'] != 'made' for r in rows) + len(gone)}
 
     def idboxes(source: str | None) -> list[dict]:
         """Where the identity fields are on a sheet of a source, by printed page."""
@@ -968,12 +982,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         counts = {}
         for src in sources:
             body = intake.plan(ws, src.id).body
-            states = intake.state(ws, src.id)
-            counts[src.id] = {'open': sum(not e.get('confirmed') for e in split.entries(body)),
-                              'write': sum(st != 'made' for st in states) + len(intake.removed(ws, src.id))}
+            counts[src.id] = split_counts(body, *intake.outline(ws, src.id, body))
         roster = [{k: p[k] for k in ('name', 'id', 'email', 'key')} for p in identity.people(ws)]
         return page('scans.html', sources=sources, counts=json.dumps(counts), people=roster,
-                    expected=intake.expected_length(ws), idboxes=json.dumps(boxes), fields=identity.boxed(ws),
+                    expected=exam.pages, idboxes=json.dumps(boxes), fields=identity.boxed(ws),
                     widths=json.dumps(SHEET_WIDTHS), made=len(store.submissions()),
                     handed=sum(1 for s in store.submissions() if s.id not in made))
 

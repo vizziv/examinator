@@ -141,7 +141,7 @@ def sheet(made: Any, page: int) -> list | None:
     a PDF handed in split)."""
     if made is None:
         return None
-    i, turns = page - 1, (made.orient or {}).get('sheets') or ()
+    i, turns = page - 1, made.orient or ()
     return [made.source, made.pages[i] if 0 <= i < len(made.pages) else None,
             turns[i] if 0 <= i < len(turns) else None]
 

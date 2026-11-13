@@ -29,7 +29,6 @@
   const near = (i, d) => plan.order[plan.order.indexOf(i) + d] ?? -1;     // a neighbour in the pile, else -1
   const reading = i => plan.readings[i] || '';
   const done = () => peek === null && k >= plan.entries.length;
-  const firstOf = e => (e.pages.length ? e.pages[0] : e.start);
   const open = e => !e.verified;
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -167,9 +166,7 @@
     return;
   }
 
-  // --- loading and editing the plan ---
-  const countsOf = p => ({open: p.entries.filter(open).length,
-                          write: p.entries.filter(e => e.state !== 'made').length + p.removed.length});
+  // --- loading and editing the plan (the server says whose each page is and what it counts as) ---
   async function load(id, keep) {
     const r = await request(`/scans/${encodeURIComponent(id)}/plan`);
     if (!r.ok) { flash('could not load the scan'); return; }
@@ -192,12 +189,12 @@
 
   // --- the step-through ---
   const at = () => !done() && peek === null;                     // on a submission's first page
-  const owner = i => plan.entries.findIndex(e => e.pages.includes(i));
-  const focus = () => (peek !== null ? peek : firstOf(plan.entries[k])); // the page shown large
+  const owner = i => plan.owner[i] ?? -1;                       // its submission, or -1: dropped
+  const focus = () => (peek !== null ? peek : plan.entries[k].start); // the page shown large
   // Show page `i` large: as its submission's first page if it is one, else on its own.
   function show(i) {
     if (i < 0 || i >= plan.n) return;
-    const j = plan.entries.findIndex(e => firstOf(e) === i);
+    const j = plan.entries.findIndex(e => e.start === i);
     if (j >= 0) { k = j; peek = null; } else { peek = i; if (owner(i) >= 0) k = owner(i); }
     render();
   }
@@ -221,8 +218,8 @@
     run: () => edit('drop', {sheet: focus()})});
   // The page shown, in its submission: extra or counted, a missing page before it, its place in the pile.
   const inSub = () => !done() && owner(focus()) >= 0;
-  const marked = i => plan.missing.includes(i) || (plan.entries[owner(i)].proposed.missing || []).includes(i);
-  const place = d => near(focus(), d) >= 0;
+  const marked = i => plan.missing.includes(i);
+  const place = d => plan.kept[plan.kept.indexOf(focus()) + d] !== undefined;   // a move steps over dropped pages
   S.register('split-extra', {available: inSub, run: () => edit('extra', {sheet: focus()})});
   S.register('split-missing', {available: inSub, run: () => edit('missing', {sheet: focus()})});
   S.register('split-unmissing', {available: () => inSub() && marked(focus()), run: () => edit('unmissing', {sheet: focus()})});
@@ -269,15 +266,8 @@
   }});
 
   // What sheet `i` is in its submission: 'p3' or 'extra', and the pages marked missing just before it.
-  function slot(i) {
-    const j = owner(i);
-    if (j < 0) return null;
-    const lay = plan.entries[j].lay, at = lay.findIndex(([s]) => s === i), before = [];
-    for (let x = at - 1; x >= 0 && lay[x][0] === null; x--) before.unshift(lay[x][1]);
-    return {label: lay[at][1] ? `p${lay[at][1]}` : 'extra', before};
-  }
   const slotTags = i => {
-    const s = slot(i);
+    const s = plan.slot[i];
     return s ? [...s.before.map(p => tag('bad', `missing p${p}`, 'a printed page not scanned, before this one')),
                 tag(s.label === 'extra' ? 'unv' : '', s.label, s.label === 'extra' ? 'kept, not a printed page' : 'the printed page it counts as')] : [];
   };
@@ -293,7 +283,7 @@
   function preload(j) {
     const e = plan.entries[j];
     if (!e) return;
-    const s = firstOf(e);
+    const s = e.start;
     for (const [i, w] of [[s, LARGE], [near(s, -1), MID], [near(s, 1), MID]]) {
       if (i >= 0) { const im = new Image(); im.src = sheet(i, w); }
     }
@@ -430,13 +420,13 @@
     const E = plan.entries;
     // A page being looked at that has become a first page (or gone) is no longer just looked at.
     if (peek !== null) {
-      const j = E.findIndex(e => firstOf(e) === peek);
+      const j = E.findIndex(e => e.start === peek);
       if (j >= 0) { k = j; peek = null; } else if (peek >= plan.n) peek = null;
       else if (owner(peek) >= 0) k = owner(peek);
     }
     // Never "done" while a first page is unverified (an undo or a join can shorten the list).
     if (peek === null && k >= E.length && E.some(open)) k = plan.cursor ?? nextOpen(E, -1, open);
-    counts[plan.id] = countsOf(plan);
+    counts[plan.id] = plan.counts;
     const info = [`${plan.n} pages`, plural(E.length, 'submission')];
     if (plan.checked) info.push('pages read');
     $('s-info').replaceChildren(info.join(' · '), ' ',
