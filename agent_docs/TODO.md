@@ -15,48 +15,63 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
   format, no raw HTML); the Read page in one step; Split as one ordered list
   of sheets with marks (start, extra, dropped, turn, missing).
 - **Principles the owner confirmed:** few primitives that compose, and a new
-  need should be met by an existing primitive first; history is for what a
-  person edits (values, decisions, overrides), never for computed results;
-  changing how a field is read changes no value, and verified values are never
-  re-read unasked; being already matched must not raise a name match's
-  confidence; rare actions live in menus; the past exams are test cases, not
-  behaviour to preserve; the CLI is development tooling, not a user interface.
-- **Principles added by the second review (2026-11-13), each built as a
-  design change rather than a patch per bug:**
+  need should be met by an existing primitive first; when bugs are found,
+  find the missing general principle and build it, not a patch per bug (a
+  good sign is one change removing several bugs); history is for what a
+  person edits (values, decisions), never for computed results; changing how
+  a field is read changes no value; reads after the first big one are rare,
+  so nothing is built around them; being already matched must not change a
+  name proposal; rare actions live in menus; the past exams are test cases,
+  not behaviour to preserve; the CLI is development tooling; prefer real page
+  loads made fast over in-page switching, where a page has one subject.
+- **Principles built on 2026-11-13** (two rounds of independent review, each
+  finding turned into a design change):
   - *Split:* the plan is only the pile, sorted; what was written is `made`,
     and which run is which written submission is derived (`split.link`). A
-    mark is a guess or a person's, and guessing touches only guesses; Accept
-    makes every sheet a person's. A submission is its kept sheets. The store
-    says "written" only about files in place.
-  - *The interface:* every change names the revision the page drew, on
-    every route (a test built from the route table); `Changes.send` is the
-    only way a page sends one, finished at the press; changes to one subject
-    go in press order; one press acts once.
-  - *Naming:* automatic matching acts only on unique evidence; ties and
-    conflicts are doubts. A pick records the person; its link to the roster is
-    derived.
-  - *Reading:* changing how a field is read changes no value, and nothing
-    tracks "read again". A person types the value or reads again explicitly
-    ("again" on Names, the Read page). A rewritten submission's unverified
-    readings are dropped.
-  - *Definitions:* an override is valid exactly when the definition with it
-    applied is valid (`Exam.validate`, one validation). An open workspace
-    always has its overrides. The identity group is reachable only through
-    the Names step.
-  - *Evidence:* a result has one stored shape, enforced where a check's
-    return is settled; images are stored by digest outside the result row. A
-    read needs its pages (`runner.unreadable`). A kit figure is a pure
-    function of its arguments, drawn only when shown.
-- **Verified how:** every change passed the fast suite and the four exams'
-  self-tests against the instructor blanks, and was exercised in a browser on
-  synthetic workspaces by the subagent that made it. The four redesigns above
-  were built in parallel and merged; the whole suite and the self-tests pass
-  on the merge. No change has been run against a live model. Subagent work is
-  committed after tests and spot checks, not a line-by-line read, and the
-  redesigns themselves have not been independently reviewed.
+    mark is a guess or a person's, and guessing touches only guesses. A
+    submission is its kept sheets. An edit names a submission by its first
+    sheet. (In progress: a verified submission is its sheets; a written file
+    is never changed and the store names it; Accept asks about picks too.)
+  - *The interface:* a POST is a change to a row (names the revision drawn),
+    a run in a slot (one at a time), or a query; a test built from the route
+    table covers every one. `Changes.send` is the only way a page sends a
+    change: what the person said is fixed at the press, revisions are read
+    when it is sent, one queue per subject. A revision is opaque to the page.
+    A refusal shows the server's reason and what happened to the draft, in
+    one place. A key's auto-repeat never triggers a change; moves repeat.
+    The question page is one subject per load, rendered ahead where the
+    browser can; image URLs name their content.
+  - *Naming:* a proposal is one computation (who the evidence singles out,
+    and the order shown); automatic matching acts only on unique evidence;
+    ties, conflicts and evidence that fits nobody are doubts. A pick records
+    the person; its link to the roster is derived; a roster is valid when
+    everyone on it finds themselves.
+  - *Reading:* what will be read and reading it are one computation
+    (`runner.to_read`). A read asks the model; nothing remembers a field's
+    reading but its value (only Split's page readings are remembered).
+    Nothing tracks "read again": a person types the value or reads again
+    explicitly. A rewritten submission's unverified readings are dropped.
+  - *Definitions:* `Exam.validate` is the one validation; an override is
+    valid exactly when the definition with it applied is valid. A workspace
+    has its own definition (the package's plus its overrides); the package's
+    is never changed. `Exam.questions` are the graded questions; the identity
+    group is reached only by name. Skipped overrides are reported at every
+    scope.
+  - *Evidence:* `result.settle` is the boundary for the whole stored result,
+    grade and blocks; images are stored by digest outside the result row. A
+    kit figure is a pure function of its arguments, drawn only when shown.
+- **Verified how:** every change passed the whole suite and the four exams'
+  self-tests against the instructor blanks on `main` after merging. Most were
+  exercised in a browser on synthetic workspaces by the agent that made them;
+  the core fixes of the second round were not. Two independent reviews ran on
+  2026-11-13 (morning: overrides, identity, images, Split; evening: all of
+  the day's changes, core and web); the fixes for the evening review have not
+  themselves been reviewed. Nothing has been run against a live model, and
+  prerendering has not been exercised in a browser that does it. Subagent
+  work is merged on tests and spot checks, not a line-by-line read.
 - **Next, in the owner's rough order:** a first live-model run on synthetic
-  handwriting (also tunes name matching); a filter overlay on the question
-  page; no full page load between submissions; search facets; then a student
+  handwriting (also tunes name matching and shows how reliable page readings
+  are); a filter overlay on the question page; search facets; then a student
   view.
 
 ## The model (built 2026-11-12)
@@ -65,11 +80,11 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
 decisions; the status table. Built, with one test per row of its two tables.
 Resolved by it: reading is one phase (no stored transcript); a field's region
 for one submission; a decision is outdated when any field on its page changes;
-how a field is read changes no value (the app offers to read again); a printed
+how a field is read changes no value; a printed
 field's region may be unset in code; one grade per check, any number of checks.
 Overrides have one mechanism at three scopes (exam, source scan, submission;
 `overrides.SCOPES`, `overrides.Layers`): a region, pages and the print area
-all live there, with revisions and history. A submission maps the exam's
+all live there, with revisions. A submission maps the exam's
 printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
 
 ## Open after the rewrite
@@ -82,28 +97,25 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
 - **A code-change fingerprint per check**: today a result is outdated by its
   check's definition hash or by any change to the package's code, so editing
   any file recomputes every result (in the background).
-- After a reader's or region's change, the app says "read again" but does not
-  list which submissions' values came from the old reading.
 - The browser was exercised on a synthetic Exam 2 workspace (verify-next,
   editing a value and the outdated check recomputing, a pseudocode page, the
   grid); the Read page's live counts and one-click read, field defaults,
   turning on the Split tab and the box editors' save buttons on synthetic
   workspaces (2026-11-13), and on Split extra sheets, missing marks and moving
   a sheet, with undo, then the placeholder, extras and a pages override with an
-  extra on a question page (synthetic Exam 3 stacks). Never in a browser yet: the restore button, the
-  Exam data page's "read again" message, Stop on a run slow enough to stop.
+  extra on a question page (synthetic Exam 3 stacks). Never in a browser yet: the restore button, Stop on a run slow enough to stop.
 
 - **Split marks, what is left:** no drag to a far place in the pile (a sheet
   moves one place per press, stepping over dropped sheets); proposed marks
   cover a submission one sheet short or long only, from page readings; a
   placeholder page is shown on the question page as is.
-- **Left from the second review:** overrides apply in path order, so one
-  that is valid only together with a later one is skipped; images are
-  deduplicated within a result, not across results; a region can be saved for
-  a submission or for all, not for one source scan (only the print area can);
-  moving a sheet across a Split boundary and back leaves the next submission
-  marked verified ("a person placed this boundary" and "a person reviewed this
-  submission" are one flag: the owner's call).
+- **Left from the reviews:** images are deduplicated within a result, not
+  across results; a region can be saved for a submission or for all, not for
+  one source scan (only the print area can); `create_app` still takes the
+  exam and should read `ws.exam` per request; the Exam data page shows
+  skipped overrides at exam scope only (`ws.skipped_overrides()` has all);
+  the Read page's "missing only" is unticked by default, which is what a
+  person resuming a stopped batch must tick.
 - **Names, one page per submission** (an experiment, started and stopped
   2026-11-13, uncommitted in a worktree): would make Names like the question
   page and remove the reload of every submission after each pick
