@@ -72,6 +72,10 @@ Choices made here:
   still verified, nothing downstream moves.
 - **No transcript.** Whatever a reader does on the way to the value is not
   stored.
+- **A read value records what it was read from** (`runner.sources`: the
+  reader, region, print area, scanned sheet). It is **stale** when that
+  differs from what the reader would read now and nobody verified it; a
+  person's value never is. "Read again" is that difference, nothing else.
 - **A default is a value nobody need verify.** A field may have a default
   (`Field(label, default='10')`): a setting a person may type, read by no
   reader but its own. While it has no stored value, a check reading it gets
@@ -187,7 +191,9 @@ no value yet, and the app can reload the exam package without losing state.
   apart from grading (`Question.apart`: no grid column, total, facet or batch
   read; read on the Names step). Who wrote a submission is then one stored
   pick per submission, a person's choice among proposals computed purely from
-  those values and the roster (`core.identity`).
+  those values and the roster (`core.identity`). The pick records the person;
+  their place on the roster is derived. Automatic matching acts only on
+  unique evidence; a tie or a conflict is a doubt for a person.
 
 ## Open, to settle by trying
 
