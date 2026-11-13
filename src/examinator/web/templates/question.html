@@ -8,7 +8,8 @@
 <span class="fhead">
 <span class="flabel"{% if f.ask %} title="printed: {{ f.ask }}"{% endif %}>{% if f.own %}{{ f.label }}{% else %}<a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ f.qid|urlencode }}" title="{{ exam.questions[f.qid].title }}">{{ f.title }}</a>{% endif %}{% if f.printed %} <span class="ftag">printed</span>{% endif %}</span>
 <span class="fstate" data-live id="fs-{{ f.n }}">
-{% if not f.read %}<span class="tag" title="no value yet">not read</span>
+{% if not f.read and f.default is not none %}<span class="tag" title="no value set: the default counts">default</span>
+{% elif not f.read %}<span class="tag" title="no value yet">not read</span>
 {% elif f.marker %}<span class="tag unv" title="a review marker: correct the value">review</span>
 {% elif f.settled is none %}<span class="tag unv">unverified</span>{% endif %}
 {% for j in f.judged %}<span class="judged o-{{ j.outcome or 'none' }}" title="{% if checks|length > 1 %}{{ j.check }}: {% endif %}{{ j.outcome or 'undecided' }}{% if j.expected %} · key {{ j.expected }}{% endif %}{% if j.note %} · {{ j.note }}{% endif %}">{{ {'correct': '✓', 'incorrect': '✗', 'blank': '∅'}.get(j.outcome, '?') }}{% if j.note %} <span class="jnote">{{ j.note }}</span>{% endif %}</span>{% endfor %}
@@ -16,13 +17,14 @@
 {% if f.settled is none %}<button type="button" data-action="verify-one" data-key="{{ f.key }}" data-rev="{{ f.rev }}">verify this value</button>
 {% else %}<span class="dim">verified{% if f.by %} · {{ f.by }}{% elif f.settled == 'reader' %} · as read{% endif %}</span>
 <button type="button" data-action="unverify" data-key="{{ f.key }}" data-rev="{{ f.rev }}">unverify</button>{% endif %}
+{% if f.default is not none %}<button type="button" data-action="to-default" data-key="{{ f.key }}" data-rev="{{ f.rev }}">back to default {{ f.default }}</button>{% endif %}
 </span></details>{% endif %}
 </span>
 </span>
 {% if f.crop %}<span class="crop" data-src="{{ root }}/page/{{ sub.id|urlencode }}/{{ f.crop.index }}.jpg" data-box="{{ f.crop.box }}" data-region="{{ f.crop.path }}"></span>{% endif %}
 {% if f.code %}<textarea data-key="{{ f.key }}" data-rev="{{ f.rev }}" spellcheck="false" rows="{{ [[f.value.count('\n') + 2, 6]|max, 40]|min }}">
 {{ f.value }}</textarea>
-{% else %}<input type="text" data-key="{{ f.key }}" data-rev="{{ f.rev }}" value="{{ f.value }}" spellcheck="false"{% if not f.read %} placeholder="not read"{% endif %}>
+{% else %}<input type="text" data-key="{{ f.key }}" data-rev="{{ f.rev }}" value="{{ f.value }}" spellcheck="false"{% if not f.read %} placeholder="{{ 'default ' ~ f.default if f.default is not none else 'not read' }}"{% endif %}>
 {% endif %}
 </div>
 {% endmacro %}
@@ -121,7 +123,6 @@
 {% if not checks %}<div class="part"><span class="pill g-n idle">no grade</span></div>{% endif %}
 <div class="bar"><span class="grow"></span><button type="button" data-action="verify-next" class="primary" title="verify this question's values, then the next submission">Verify, next</button></div>
 </div>
-<div id="chips" class="chips" hidden></div>
 
 <form class="draft panel" id="ed-fields" autocomplete="off">
 <div class="fields">
@@ -153,7 +154,6 @@
 <div id="evidence-{{ loop.index }}" data-live class="panel evidence{% if not c.current %} stale{% endif %}">
 {% if checks|length > 1 %}<span class="plabel">{{ c.name }}</span>{% endif %}
 {% if not c.current %}<span class="tag">outdated</span>{% endif %}
-{% if c.params %}<span class="tag" title="run with these parameters">{% for k, v in c.params.items() %}{{ k }}={{ v }} {% endfor %}</span>{% endif %}
 {% if c.plots %}<div class="plots">{{ blocks.render(c.plots, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) ~ '/' ~ (c.name|urlencode)) }}</div>{% endif %}
 {{ blocks.render(c.rest, root ~ '/raw/' ~ (sub.id|urlencode) ~ '/' ~ (q.id|urlencode) ~ '/' ~ (c.name|urlencode)) }}
 </div>
@@ -172,11 +172,7 @@
 <span class="plabel">run</span>
 {% if can_read %}<button type="button" data-action="read"{% if off %} disabled title="no model"{% else %} title="read this question's values again (not those a person verified)"{% endif %}>read</button>
 <label title="also read again what a person set or verified (kept in history)"><input type="checkbox" id="read-all"> verified too</label>{% endif %}
-{% for c in checks %}{% if c.fn %}<button type="button" data-action="check" data-check="{{ c.name }}" title="run the check now">{{ c.name if checks|length > 1 else 'check' }}</button>{% endif %}{% endfor %}
-{% if model and can_read %}<label><input type="checkbox" id="run-reasoning"> reasoning</label>{% endif %}
-{% if checks|selectattr('fn')|list %}<details class="fmenu"><summary title="more">⋯</summary><span class="fmenu-items">
-<label title="values for the next run of a check here, for this submission only">check with <input type="text" id="run-params" placeholder="key=value" size="14" spellcheck="false"></label>
-</span></details>{% endif %}
+{% for c in checks %}{% if c.fn %}<button type="button" data-action="check" data-check="{{ c.name }}" title="run the check again (checks recompute by themselves after a change; this is for one that timed out, say)">{{ c.name if checks|length > 1 else 'check' }}</button>{% endif %}{% endfor %}
 <span id="reread" hidden><span class="tag unv">reading changed</span></span>
 </div>
 
@@ -185,7 +181,6 @@
 <div class="bar">
 <label>pages <input type="text" id="pg-list" value="{{ pages|join(', ') }}" size="10" placeholder="{{ pages_default|join(', ') }}"
  data-path="{{ own.pages.path }}" data-rev="{{ own.pages.rev }}" data-default="{{ pages_default|join(',') }}"></label>
-<label>note <input type="text" id="pg-note" value="{{ note }}" size="30" data-path="{{ own.note.path }}" data-rev="{{ own.note.rev }}"></label>
 <button type="button" data-action="pages">set</button>
 <span class="dim">default {{ pages_default|join(', ') }} · {{ count }} scanned</span>
 </div>

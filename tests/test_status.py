@@ -1,6 +1,7 @@
 """The grade of a check: one test per row of the status table (MODEL.md), on
 plain stored values. Everything here is synthetic."""
 from examinator import Bool, Check, Exam, Field, Grade, Number
+from examinator.core.defs import DEFAULT
 from examinator.core.status import Decision, Stored, Value, fields_state, status, total
 
 CHECK = Check(lambda ctx: None)
@@ -103,6 +104,15 @@ def test_settled_by_the_reader_is_settled():
     assert st(vals=values(a='reader'), result=stored(True)).state == 'graded'
 
 
+def test_a_field_read_at_its_default_is_settled_while_it_has_no_value():
+    at_default = stored(True, reads={'q/a': 1, 'q/k': DEFAULT})
+    assert st(result=at_default).state == 'graded'
+    # a value set since (by a person, or one nobody settled) outdates it; dropped again, it is current
+    assert st(vals={**values(a=True), 'q/k': Value("20", 4, 'person')}, result=at_default).state == 'outdated'
+    assert st(vals={**values(a=True), 'q/k': Value("20", 4)}, result=at_default).state == 'outdated'
+    assert st(vals=values(a=True), result=at_default).state == 'graded'
+
+
 def test_only_the_fields_read_matter():
     vals = {**values(a=True), 'q/b': Value("x", 2), 'r/c': Value("y", 3)}       # unsettled, but not read
     assert st(vals=vals, result=stored(False)).state == 'graded'
@@ -130,3 +140,5 @@ def test_fields_state_of_a_question_without_checks():
     assert fields_state(q, values(a=True)) == 'not_read'
     assert fields_state(q, values(a=True, b=False)) == 'unverified'
     assert fields_state(q, {'q/a': Value("1", 1, 'reader'), 'q/b': Value("", 2, 'person')}) == 'verified'
+    q = exam.question('r', pages=[1], fields=[Field('a'), Field('k', default='10')])
+    assert fields_state(q, {'r/a': Value("1", 1, 'person')}) == 'verified'          # k: its default

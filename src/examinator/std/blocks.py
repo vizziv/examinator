@@ -3,7 +3,7 @@
 A check returns `Result(grade, fields, blocks)`. Blocks are what graders see; the app
 renders them, and exams never write layout. Plots are stored as data and drawn
 in the browser. Every block serializes with `to_json()` to a dict with a
-`'type'`, and may carry `audience='grader'` to hide it from a student view.
+`'type'`.
 
 Stored shapes (the renderer's contract):
 
@@ -45,65 +45,52 @@ def ecdf(samples, name: str = "samples") -> 'Series':
     return Series(name, x, y, 'step')
 
 
-def _audience(d: dict, audience: str) -> dict:
-    if audience != 'all':
-        d['audience'] = audience
-    return d
-
-
 @dataclass
 class Note:
     text: str
     tone: str = 'info'
-    audience: str = 'all'
 
     def to_json(self) -> dict:
-        return _audience({'type': 'note', 'text': self.text, 'tone': self.tone}, self.audience)
+        return {'type': 'note', 'text': self.text, 'tone': self.tone}
 
 
 @dataclass
 class Table:
     columns: Sequence[str]
     rows: Sequence[Sequence[Any]]
-    audience: str = 'all'
 
     def to_json(self) -> dict:
-        return _audience({'type': 'table', 'columns': list(self.columns),
-                          'rows': [list(r) for r in self.rows]}, self.audience)
+        return {'type': 'table', 'columns': list(self.columns), 'rows': [list(r) for r in self.rows]}
 
 
 @dataclass
 class Code:
     text: str
     highlight: Sequence[int] = ()
-    audience: str = 'all'
 
     def to_json(self) -> dict:
-        return _audience({'type': 'code', 'text': self.text, 'highlight': list(self.highlight)},
-                         self.audience)
+        return {'type': 'code', 'text': self.text, 'highlight': list(self.highlight)}
 
 
 class Details:
     """Collapsed by default: `Details("Samples", Table(...), Note(...))`."""
 
-    def __init__(self, summary: str, *blocks: Any, audience: str = 'all'):
-        self.summary, self.audience = summary, audience
+    def __init__(self, summary: str, *blocks: Any):
+        self.summary = summary
         self.blocks = blocks[0] if len(blocks) == 1 and isinstance(blocks[0], (list, tuple)) else blocks
 
     def to_json(self) -> dict:
-        return _audience({'type': 'details', 'summary': self.summary,
-                          'blocks': [b.to_json() if hasattr(b, 'to_json') else b for b in self.blocks]},
-                         self.audience)
+        return {'type': 'details', 'summary': self.summary,
+                'blocks': [b.to_json() if hasattr(b, 'to_json') else b for b in self.blocks]}
 
 
 @dataclass
 class Raw:
     """Escape hatch: raw SVG or HTML. Scripts do not run (the app's CSP forbids them)."""
     html: str
-    audience: str = 'all'
 
     def to_json(self) -> dict:
-        return _audience({'type': 'raw', 'html': self.html}, self.audience)
+        return {'type': 'raw', 'html': self.html}
 
 
 @dataclass(eq=False)
@@ -123,12 +110,10 @@ class Plot:
     series: Sequence[Series] = ()
     xlabel: str = ""
     ylabel: str = ""
-    audience: str = 'all'
 
     def to_json(self) -> dict:
-        return _audience({'type': 'plot', 'title': self.title, 'xlabel': self.xlabel,
-                          'ylabel': self.ylabel, 'series': [s.to_json() for s in self.series]},
-                         self.audience)
+        return {'type': 'plot', 'title': self.title, 'xlabel': self.xlabel,
+                'ylabel': self.ylabel, 'series': [s.to_json() for s in self.series]}
 
     @staticmethod
     def cdf(samples, cdf: Callable[[np.ndarray], np.ndarray] | None = None, *, title: str = "",

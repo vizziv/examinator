@@ -1,22 +1,19 @@
-"""Batch reading: always planned and previewed first.
+"""Batch reading.
 
-`plan` lists exactly which questions will be read, what is skipped as
-protected or already present, and what is blocked. Its `token` covers the
-selection, the values and the items themselves (so a region drawn or exam data
-changed since the preview counts too); `BatchRun.run` refuses a plan whose
-token no longer matches (`BatchRun.check`, which a caller may run first). A batch has no check step:
-checks recompute by themselves (`Runner.refresh`), and once every read has
-finished the batch refreshes each selected submission, so a check that reads
-another question's fields finds them. Cancelling stops queued work and lets
-running tasks finish.
+`plan` lists exactly which questions a selection would read, what it skips as
+protected or already present, and what is blocked; the app shows it live as
+the options change, and a run plans again when it starts. A batch has no
+check step: checks recompute by themselves (`Runner.refresh`), and once every
+read has finished the batch refreshes each selected submission, so a check
+that reads another question's fields finds them. Cancelling stops queued work
+and lets running tasks finish.
 
 A batch never replaces what a person set or verified unless told to
-(`include_protected`); it never touches a decision.
+(`include_protected`), and a read that finds a value changed meanwhile is
+discarded (`Runner.read`); it never touches a decision.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -27,10 +24,6 @@ from .status import Sheet
 from .store import Store
 
 ACTIONS = ('run', 'skip_protected', 'skip_present', 'blocked')
-
-
-class StalePlan(Exception):
-    """Something relevant changed since the preview."""
 
 
 @dataclass(frozen=True)
@@ -54,7 +47,6 @@ class Item:
 class Plan:
     selection: Selection
     items: tuple[Item, ...]
-    token: str
 
     def count(self, action: str) -> int:
         return sum(1 for i in self.items if i.action == action)
@@ -65,11 +57,8 @@ def plan(exam: Exam, store: Store, selection: Selection, *, model_available: boo
     """`regions(submission, question) -> fields with this submission's regions`
     (`Workspace.fields`); without it, the exam's regions."""
     items: list[Item] = []
-    seen: list = [[selection.submissions, selection.questions,
-                   selection.missing_only, selection.include_protected, model_available]]
     for sub in selection.submissions:
         sheet = Sheet.of(store.all(submission=sub, kinds=('value',)))
-        seen.append([sub, sorted((k, v.rev, v.settled) for k, v in sheet.values.items())])
         for qid in selection.questions:
             q = exam.questions[qid]
 
@@ -95,9 +84,7 @@ def plan(exam: Exam, store: Store, selection: Selection, *, model_available: boo
                     add('blocked', "model unavailable")
                 else:
                     add('run', f"{len(placed)} field{'s' if len(placed) != 1 else ''}")
-    seen.append([[i.submission, i.question, i.action, i.reason] for i in items])
-    token = hashlib.sha256(json.dumps(seen, sort_keys=True).encode()).hexdigest()[:16]
-    return Plan(selection, tuple(items), token)
+    return Plan(selection, tuple(items))
 
 
 @dataclass
@@ -105,7 +92,6 @@ class BatchRun:
     runner: Runner
     plan: Plan
     parallel: int = 2
-    reasoning: bool = False
     outcomes: list[Outcome] = field(default_factory=list)
     total: int = 0                   # reads, plus one refresh per submission
     done: int = 0
@@ -116,26 +102,12 @@ class BatchRun:
         self.total = self.plan.count('run') + len(self.plan.selection.submissions)
         self._cancel = threading.Event()
         self._lock = threading.Lock()
-        self._checked = False
 
     def cancel(self) -> None:
         self._cancel.set()
 
-    def check(self) -> None:
-        """Raise `StalePlan` if planning again would give another plan. `run` checks
-        unless this was called just before (as the app does, to answer at once)."""
-        r = self.runner
-        fresh = plan(r.exam, r.store, self.plan.selection, model_available=r.model is not None,
-                     regions=r.ws.fields)
-        if fresh.token != self.plan.token:
-            raise StalePlan("the preview is out of date")
-        self._checked = True
-
     def run(self) -> list[Outcome]:
         """Execute the plan. Blocks until finished or cancelled."""
-        if not self._checked:
-            self.check()
-        self._checked = False
         self.state = 'running'
         sel = self.plan.selection
 
@@ -143,7 +115,7 @@ class BatchRun:
             if self._cancel.is_set():
                 return None
             outs = self.runner.read(item.submission, item.question, missing_only=sel.missing_only,
-                                    include_protected=sel.include_protected, reasoning=self.reasoning)
+                                    include_protected=sel.include_protected)
             bad = [o for o in outs if not o.ok]
             return [bad[0] if bad else Outcome(item.submission, item.question, 'read', 'done')]
 

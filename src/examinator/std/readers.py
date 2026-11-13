@@ -61,7 +61,7 @@ class Answers:
 
     def read(self, ctx: ReadContext, fields: Sequence[Field]) -> dict[str, str]:
         labels = [f.label for f in fields]
-        context = prompts.context(ctx.question, labels, ctx.note)
+        context = prompts.context(ctx.question, labels)
         images = [ctx.crop(f.region) for f in fields if f.region is not None] if self.crops else ctx.pages()
         transcript = ctx.model(prompts.join(self.prompt, context, self.notes), images=images,
                                step='transcribe').strip()
@@ -105,7 +105,7 @@ class Code:
     def read(self, ctx: ReadContext, fields: Sequence[Field]) -> dict[str, str]:
         from . import pseudocode
         language = self.language or pseudocode.BASE
-        context = prompts.context(ctx.question, [f.label for f in fields], ctx.note)
+        context = prompts.context(ctx.question, [f.label for f in fields])
         transcript = ctx.model(prompts.join(self.prompt, context, self.notes), images=ctx.pages(), step='transcribe')
         out = {}
         for f in fields:

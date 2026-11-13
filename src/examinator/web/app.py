@@ -4,11 +4,11 @@
     GET  /filter                    the filter page: facets of every question
     GET  /focus/values              facet values for all submissions (?sub=: one), JSON
     GET  /s/{sub}/{q}               question page
-    POST /s/{sub}/{q}/{action}      save unverify decide clear read check restore
+    POST /s/{sub}/{q}/{action}      save unverify decide clear read check default restore
     GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
     GET  /raw/{sub}/{q}/{check}/{path}   one evidence 'raw' block, sandboxed
     GET  /jobs/{id}                 background job state
-    GET  /runs                      batch runs;  POST /runs/preview|start|stop,  GET /runs/status
+    GET  /runs                      batch reads;  POST /runs/plan|start|stop,  GET /runs/status
     GET  /settings                  this browser's keys and appearance
     GET  /exam                      exam data (overrides);  POST /exam/set|clear, at a scope:
                                     every submission, one scan's, one submission's
@@ -17,14 +17,14 @@
     POST /scans/{src}/{action}      edit propose undo accept;  POST /scans/roster, /scans/who
     GET  /scans/names               who wrote each submission: identity values, proposals, picks (JSON)
     POST /scans/names/read          read the identity fields with the model (a job)
-    GET  /sheet/{src}/{index}.jpg   one sheet of a source (?o= orientation, ?w= width)
+    GET  /sheet/{src}/{index}.jpg   one sheet of a source (?o= quarter turns, ?w= width)
 
 Every POST needs the page token in an `X-Token` header and (but the upload)
 takes a JSON object of at most MAX_JSON bytes; it answers JSON: 403 bad token,
-415 not JSON, 413 too large, 404 unknown target, 409 stale revision or plan
-(with `current`, where the page can save again knowingly), 400 input a grader
-should correct. Nothing here keeps module-level state; it all hangs
-off `app.state`.
+415 not JSON, 413 too large, 404 unknown target, 409 stale revision or a run
+in progress (with `current`, where the page can save again knowingly), 400
+input a grader should correct. Nothing here keeps module-level state; it all
+hangs off `app.state`.
 """
 from __future__ import annotations
 
@@ -34,7 +34,6 @@ import json
 import os
 import secrets
 import threading
-from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -60,7 +59,7 @@ from ..core.runner import Runner
 from ..core.store import Conflict
 from ..core.workspace import PRINT_AREA, COVER_PAGES, Workspace
 from ..pdf.layout import Layout
-from ..pdf.orient import Orient
+from ..pdf import orient
 from .jobs import Batch, Jobs
 
 HERE = Path(__file__).parent
@@ -172,21 +171,6 @@ def _strings(value: Any, allowed, what: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value))
 
 
-def _params(text: Any) -> dict:
-    """'key=value key2=value2' -> dict. Values that read as JSON scalars are converted."""
-    out = {}
-    for item in str(text or '').replace(',', ' ').split():
-        key, sep, value = item.partition('=')
-        if not sep or not key:
-            raise Bad("params: expected key=value")
-        try:
-            v = json.loads(value)
-            out[key] = v if isinstance(v, (bool, int, float, str)) else value
-        except ValueError:
-            out[key] = value
-    return out
-
-
 # --- view helpers ----------------------------------------------------------------
 
 def selection(text: str | None) -> dict:
@@ -224,7 +208,7 @@ def prepare_blocks(blocks: Any, prefix: str = '') -> list[dict]:
     given the path that addresses them, plots given their series as JSON."""
     out = []
     for i, b in enumerate(blocks if isinstance(blocks, list) else []):
-        if not isinstance(b, dict) or b.get('audience', 'all') not in ('all', 'grader'):
+        if not isinstance(b, dict):
             continue
         path = f'{prefix}{i}'
         kind = b.get('type')
@@ -307,7 +291,7 @@ def picked_key(exam: Exam, q: Question, c: Check, values: dict) -> str | None:
     if by is None or not isinstance(key_, dict):
         return None
     ctx = CheckContext(submission='', question=q, check=c.name, values={k: (v.rev, v.text) for k, v in values.items()},
-                       fields=frozenset(key(x.id, f.label) for x in exam.questions.values() for f in x.fields))
+                       fields=exam.fields())
     try:
         value = normalize(str(by(ctx)))
     except Exception:
@@ -346,7 +330,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     jobs = Jobs()
     # Stored overrides apply from the start, whether or not the caller applied them.
     overrides.refresh(exam, store)
-    plans: OrderedDict[str, batch.Plan] = OrderedDict()
     lock = threading.Lock()
 
     def have_model() -> bool:
@@ -504,7 +487,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 return None
             return {'index': index, 'box': box(layout, region), 'path': path}
 
-        pages, note = ws.selected_pages(sub.id, q)
+        pages = ws.selected_pages(sub.id, q)
         # every scanned page, to scroll through; `on` marks this question's
         shown = {layout.scan_index(p) for p in pages}
         scans = [{'index': i, 'page': i - layout.cover_pages + 1, 'on': i in shown} for i in range(count)]
@@ -529,7 +512,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                            'stored': stored,
                            'current': stored is not None and status.current(
                                stored, sheet.values, defn=exam.check_hash(q, c), code=exam.code_hash),
-                           'params': stored.params if stored else {},
                            'plots': [b for b in blocks if b['type'] == 'plot'],
                            'rest': [b for b in blocks if b['type'] != 'plot']})
 
@@ -555,7 +537,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 'marker': bool(v and v.marker),
                 'code': other.multiline(label),
                 'printed': isinstance(reader, Printed), 'ask': getattr(reader, 'ask', ''),
-                'typed': reader is None,
+                'typed': reader is None, 'default': f.default,
                 'crop': crop(region, overrides.join(qid, 'fields', label, 'region')),
                 'judged': judged.get(label, []) if qid == q.id else []})
         for n, f in enumerate(fields):
@@ -583,8 +565,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                     **levels(lay, e.path, e.base, stored)} for e in entries if e.kind == 'region']
         mine = lay.stored.get(SUBMISSION, {})
         own = {name: {'path': path, 'rev': mine[path].rev if path in mine else ''}
-               for name, path in (('pages', overrides.join(q.id, 'pages')), ('note', overrides.join(q.id, 'note')),
-                                  ('cover', COVER_PAGES))}
+               for name, path in (('pages', overrides.join(q.id, 'pages')), ('cover', COVER_PAGES))}
         own_cover = mine[COVER_PAGES].value if COVER_PAGES in mine else None
         keyed = []
         for c in q.checks:
@@ -598,7 +579,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             'question.html', sub=sub, q=q, checks=checks, fields=fields, waiting=waiting, waiting_other=waiting_other,
             scans=scans, history=history[:60], count=count, keyed=keyed,
             can_read=bool(readers_), off=bool(readers_) and not have_model(),
-            pages=pages, note=note, pages_default=q.pages, layout=layout, own=own, own_cover=own_cover,
+            pages=pages, pages_default=q.pages, layout=layout, own=own, own_cover=own_cover,
             regions=regions, print_area=levels(lay, PRINT_AREA, list(exam.base_attrs['print_area']), stored),
             scopes={'own': overrides.scope(SUBMISSION, sub.id), 'all': '',
                     'scan': overrides.scope(SOURCE, lay.source) if lay.source else None},
@@ -676,19 +657,24 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         if not have_model():
             raise Bad("model unavailable")
         protected = bool(data.get('include_protected'))
-        reasoning = bool(data.get('reasoning'))
 
         def work():
-            outs = runner.read(sub.id, q.id, include_protected=protected, fresh=True, reasoning=reasoning)
+            outs = runner.read(sub.id, q.id, include_protected=protected, fresh=True)
             return outs + runner.refresh(sub.id, questions=[q.id])
         return {'job': jobs.start(work)}
 
     def run_check(request, data):
-        """A grader's explicit run of one check, with optional parameters."""
+        """A grader's explicit run of one check (one that timed out, say)."""
         sub, q = target(request)
         c = check_of(q, data)
-        params = _params(data.get('params'))
-        return {'job': jobs.start(lambda: runner.compute(sub.id, q.id, c.name, params=params))}
+        return {'job': jobs.start(lambda: runner.compute(sub.id, q.id, c.name))}
+
+    def to_default(request, data):
+        """A field back to its default: its stored value dropped."""
+        sub, q = target(request)
+        qid, label = field_of(data, data.get('key'))
+        runner.unset(sub.id, qid, label, expect_rev=_rev(data))
+        return {'job': refresh(sub.id, q.id)}
 
     def restore(request, data):
         """A field's earlier value back, set by this person."""
@@ -755,7 +741,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return page('runs.html', questions=list(exam.grading.values()),
                     total=len(store.submissions()))
 
-    def runs_preview(request, data):
+    def run_plan(data: dict) -> batch.Plan:
+        """What the selection in a request would read now."""
         known = [s.id for s in store.submissions()]
         subs = data.get('submissions')
         subs = tuple(known) if subs is None else _strings(subs, set(known), "submissions")
@@ -765,34 +752,27 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise Bad("nothing selected")
         sel = batch.Selection(subs, questions, missing_only=bool(data.get('missing_only')),
                               include_protected=bool(data.get('include_protected')))
-        plan = batch.plan(exam, store, sel, model_available=have_model(), regions=ws.fields)
-        with lock:
-            plans[plan.token] = plan
-            while len(plans) > 8:
-                plans.popitem(last=False)
+        return batch.plan(exam, store, sel, model_available=have_model(), regions=ws.fields)
+
+    def runs_plan(request, data):
+        plan = run_plan(data)
         groups: dict[tuple, list[str]] = {}
         for item in plan.items:
             groups.setdefault((item.action, item.question, item.reason), []).append(item.submission)
         rank = {a: i for i, a in enumerate(batch.ACTIONS)}
-        return {'plan': plan.token, 'counts': {a: plan.count(a) for a in batch.ACTIONS},
+        return {'counts': {a: plan.count(a) for a in batch.ACTIONS},
                 'groups': [{'action': a, 'question': qn, 'reason': r, 'n': len(ids),
                             'submissions': ids[:200]}
                            for (a, qn, r), ids in sorted(groups.items(), key=lambda kv: (rank[kv[0][0]], kv[0][1:]))]}
 
     def runs_start(request, data):
+        """Read what the selection would read now (planned here, at the start)."""
         with lock:
-            plan = plans.get(str(data.get('plan')))
-            if plan is None:
-                raise Conflict("no such preview; preview again")
             current: Batch | None = request.app.state.batch
             if current is not None and current.active:
                 raise Conflict("a run is already in progress")
-            run = batch.BatchRun(runner, plan, parallel=_int(data.get('parallel', 2), "parallel", 1, 16),
-                                 reasoning=bool(data.get('reasoning')))
-            try:
-                run.check()             # here, to answer at once; the run itself does not plan again
-            except batch.StalePlan:
-                raise Conflict("the preview is out of date; preview again") from None
+            plan = run_plan(data)
+            run = batch.BatchRun(runner, plan, parallel=_int(data.get('parallel', 2), "parallel", 1, 16))
             request.app.state.batch = Batch(run)
             request.app.state.batch.start()
         return {'total': plan.count('run')}
@@ -953,10 +933,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                             'pages': pages[k], 'doubts': [split.DOUBTS[d] for d in doubts[k]],
                             'state': states[k], 'own': e.get('orient') is not None,
                             'name': identity.who(ws, sid)['name'] if sid in made else ''})
-        so = Orient.from_json(body.get('orient'))
         return {'id': src.id, 'name': src.name, 'n': n, 'rev': art.rev, 'length': body['length'],
-                'checked': bool(body.get('checked')) and bool(body.get('readings')), 'failed': body.get('failed', 0), 'o': so.code, 'orient': so.label(),
-                'sheet_o': [intake.sheet_orient(body, i).code for i in range(n)],
+                'checked': bool(body.get('checked')) and bool(body.get('readings')), 'failed': body.get('failed', 0), 'orient': orient.label(int(body.get('orient') or 0)),
+                'sheet_o': [intake.sheet_orient(body, i) for i in range(n)],
                 'turned': sorted(int(i) for i in body.get(intake.SHEET_ORIENT) or {}),
                 'cover': cover, 'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
                 'readings': {i: (None if r is None else 'cover' if r < cover else f'p.{r - cover + 1}')
@@ -1132,21 +1111,17 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         shrunk to one of a few widths, cached; the source and the renderer are untouched."""
         src = the_source(request)
         index = request.path_params['index']
-        w = request.query_params.get('w', '0')
-        try:
-            o = Orient.from_code(request.query_params.get('o', '00'))
-        except ValueError:
-            raise HTTPException(404) from None
-        if not 0 <= index < src.pages or not w.isdigit() or int(w) not in (0, *SHEET_WIDTHS):
+        w, o = request.query_params.get('w', '0'), request.query_params.get('o', '0')
+        if not 0 <= index < src.pages or not w.isdigit() or int(w) not in (0, *SHEET_WIDTHS) or o not in ('0', '1', '2', '3'):
             raise HTTPException(404)
         cache = (ws.root / 'cache').resolve()
-        out = cache / 'sheets' / src.id / f'{index:04d}-{o.code}-{int(w)}.jpg'
+        out = cache / 'sheets' / src.id / f'{index:04d}-{o}-{int(w)}.jpg'
         if not out.exists():
             try:
                 im = ws.renderer.page(intake.source_path(ws, src), index)
             except (KeyError, IndexError, OSError):
                 raise HTTPException(404) from None
-            im = o.apply(im)
+            im = orient.turn(im, int(o))
             if int(w) and im.width > int(w):
                 im = im.resize((int(w), max(1, round(im.height * int(w) / im.width))))
             out.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1171,12 +1146,13 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         post('/s/{sub}/{q}/clear', clear),
         post('/s/{sub}/{q}/read', read),
         post('/s/{sub}/{q}/check', run_check),
+        post('/s/{sub}/{q}/default', to_default),
         post('/s/{sub}/{q}/restore', restore),
         Route('/page/{sub}/{index:int}.jpg', page_image),
         Route('/raw/{sub}/{q}/{check}/{path}', raw_block),
         Route('/jobs/{id}', job),
         Route('/runs', runs_page),
-        post('/runs/preview', runs_preview),
+        post('/runs/plan', runs_plan),
         post('/runs/start', runs_start),
         post('/runs/stop', runs_stop),
         Route('/runs/status', runs_status),

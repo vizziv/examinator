@@ -31,22 +31,12 @@
     return order.some(s => (step > 0 ? rank.get(s) > me : rank.get(s) < me));
   }
 
-  // --- the filter: does this submission still match it; the chips set one to its values. ---
-  async function chips() {
-    const r = await request('/focus/values?sub=' + encodeURIComponent(sub));
-    if (!r.ok) return;
+  // --- the filter: does this submission still match it (asked only while one is set) ---
+  async function inFilter() {
     const sel = Focus.load();
-    $('unfiltered').hidden = !Focus.size(sel) || Focus.matches(r.body.values, sel, sub);
-    const mine = r.body.questions.find(x => x.id === q), links = [];
-    for (const f of mine ? mine.facets : []) {
-      if (f.kind !== 'choice') continue;
-      for (const v of (r.body.values[f.id] || {})[sub] || []) {
-        links.push(make('a', {href: `${ROOT}/${Focus.query({[f.id]: [v]})}`, title: `every submission with ${f.label} = ${v}`},
-          `${f.label} `, make('code', {textContent: v})));
-      }
-    }
-    $('chips').replaceChildren(...(links.length ? [make('span', {className: 'dim', textContent: 'filter:'}), ...links] : []));
-    $('chips').hidden = !links.length;
+    if (!Focus.size(sel)) return;
+    const r = await request('/focus/values?sub=' + encodeURIComponent(sub));
+    if (r.ok) $('unfiltered').hidden = Focus.matches(r.body.values, sel, sub);
   }
 
   // --- the draft: every value on the page, <input|textarea data-key data-rev> in form#ed-fields ---
@@ -123,7 +113,7 @@
       }
     }
     ready();
-    chips();
+    inFilter();
   }
 
   async function settle(body) {          // wait for the background job an action started
@@ -300,6 +290,7 @@
     // Rare, so in each field's menu: verify or unverify that one value.
     'verify-one': {run: ({el}) => act('save', {values: {}, verify: [{key: el.dataset.key, rev: revOf(el)}]})},
     unverify: {run: ({el}) => act('unverify', {key: el.dataset.key, rev: revOf(el)})},
+    'to-default': {run: ({el}) => act('default', {key: el.dataset.key, rev: revOf(el)})},
     'toggle-scan': {run: () => { setPref('hideScan', !pref('hideScan', false)); showScan(); }},
     discard: {run: () => {
       try { sessionStorage.removeItem(draftKey()); } catch (e) { /* private mode */ }
@@ -316,16 +307,16 @@
     read: {available: ({el}) => !el || !el.disabled, run: () => {
       const all = !!$('read-all')?.checked;
       if (all && !confirm("Read again, replacing values a person set or verified?")) return null;
-      return act('read', {include_protected: all, reasoning: !!$('run-reasoning')?.checked});
+      return act('read', {include_protected: all});
     }},
-    check: {run: ({el}) => act('check', {check: el.dataset.check, params: $('run-params')?.value || ''})},
-    // This submission's own pages (none, or the question's: drop them), note and cover pages.
+    check: {run: ({el}) => act('check', {check: el.dataset.check})},
+    // This submission's own pages (none, or the question's: drop them) and cover pages.
     pages: {run: async () => {
-      const list = $('pg-list'), note = $('pg-note');
+      const list = $('pg-list');
       const parts = list.value.split(/[\s,]+/).filter(Boolean);
       const pages = parts.every(p => /^\d+$/.test(p)) ? parts.map(Number) : list.value;    // else the server explains
       const drop = !parts.length || String(pages) === list.dataset.default;
-      if (await own(list, drop ? null : pages) && await own(note, note.value.trim() ? note.value : null)) location.reload();
+      if (await own(list, drop ? null : pages)) location.reload();
     }},
     layout: {run: async () => {
       const el = $('lo-cover'), v = el.value.trim();
@@ -351,7 +342,7 @@
   document.addEventListener('submit', e => e.preventDefault());
   document.addEventListener('DOMContentLoaded', ready);
   ready();
-  chips();
+  inFilter();
 
   // --- an exam-data edit (key panel, regions): this submission is recomputed first ---
   document.addEventListener('entry-saved', async e => {

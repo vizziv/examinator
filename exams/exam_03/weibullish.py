@@ -1,9 +1,11 @@
 """The checks for question 2: `weibull(a, b)` (2.1) and `weibullish()` (2.2), one per field.
 
 Each reads only its own field: 2.2 runs with a trusted `weibull`, so it does not
-depend on the student's 2.1."""
+depend on the student's 2.1. Code that keeps `huge_constant` also reads the
+field of that name, a value a grader may set (default 10)."""
 import math
 import time
+from typing import Callable
 
 import numpy as np
 
@@ -18,9 +20,8 @@ N_WEIBULL = 2000
 N_WEIBULLISH = 1200
 ATTEMPT = 20.0          # seconds for 2.1, and for each attempt at 2.2
 MAX_STEPS = 20_000_000  # per sample: rejection loops are long, so the time limit governs
-TRIALS = (1, 10)        # values tried for huge_constant
-MAX_CUSTOM = 1e6
-PARAM = huge_constants.NAME     # a grader may rerun with one custom value
+MAX_CONSTANT = 1e6
+NAME = huge_constants.NAME      # also a field of question 2, with a default
 
 
 def weibull_cdf(a: float, b: float):
@@ -57,46 +58,42 @@ def check_weibull(program: pseudocode.Program) -> checks.Part:
     return part.combine()
 
 
-def custom_value(params) -> tuple[float | None, str]:
-    """The grader's custom huge_constant, if any: `(value, problem)`."""
-    raw = params.get(PARAM)
-    if raw is None or raw == "":
-        return None, ""
+def constant(text: str) -> tuple[float | None, str]:
+    """The value of the huge_constant field: `(value, problem)`."""
     try:
-        value = float(raw)
-    except (TypeError, ValueError):
+        value = float(text)
+    except ValueError:
         value = math.nan
-    if not 0 < value <= MAX_CUSTOM:
-        return None, f"{PARAM} must be positive, at most {MAX_CUSTOM:g}"
+    if not 0 < value <= MAX_CONSTANT:
+        return None, f"{NAME} must be positive, at most {MAX_CONSTANT:g}"
     return value, ""
 
 
-def check_weibullish(program: pseudocode.Program, params) -> checks.Part:
+def check_weibullish(program: pseudocode.Program, read: Callable[[], str]) -> checks.Part:
+    """`read()` is the huge_constant field's value, read only when the code uses it."""
     part = checks.Part('2.2', shown=12)
     if program.is_blank('weibullish'):
         return part.settle('blank')
-    custom, problem = custom_value(params)
-    if problem:
-        return part.settle(None, problem)
-    idealized = program.references('weibullish', PARAM)
-    values = (custom,) if custom is not None else TRIALS if idealized else (None,)
-    outcome = None
-    for value in values:
-        name = "as written" if value is None else f"{PARAM} = {value:g}"
-        try:
-            xs = draw(program, 'weibullish', n=N_WEIBULLISH, deadline=time.monotonic() + ATTEMPT,
-                            primitives={'weibull': reference_weibull}, max_steps=MAX_STEPS,
-                            constants=None if value is None else {PARAM: value})
-        except checks.Stop as stop:
-            part.stop(name, stop)
-            outcome = stop.outcome
-            continue
+    idealized = program.references('weibullish', NAME)
+    value = None
+    if idealized:
+        value, problem = constant(read())
+        if problem:
+            return part.settle(None, problem)
+    name = "as written" if value is None else f"{NAME} = {value:g}"
+    try:
+        xs = draw(program, 'weibullish', n=N_WEIBULLISH, deadline=time.monotonic() + ATTEMPT,
+                  primitives={'weibull': reference_weibull}, max_steps=MAX_STEPS,
+                  constants=None if value is None else {NAME: value})
         outcome = part.add(name, checks.fit_cdf(xs, weibullish_cdf, lo=1, title=f"weibullish(), {name}"), xs).outcome
-        if outcome == 'correct':
-            return part.settle('correct', name if value is not None else "")
+    except checks.Stop as stop:
+        part.stop(name, stop)
+        outcome = stop.outcome
+    if outcome == 'correct':
+        return part.settle('correct', name if value is not None else "")
     if idealized:
         # A finite substitute that fails proves nothing about the idealized algorithm.
-        return part.settle(None, f"no pass with {PARAM} = {', '.join(f'{v:g}' for v in values)}")
+        return part.settle(None, f"no pass with {name}")
     return part.settle(outcome)
 
 
@@ -105,4 +102,5 @@ def check_21(ctx):
 
 
 def check_22(ctx):
-    return checks.check_source(ctx.read('2.2'), SCALAR, '2.2', lambda program: check_weibullish(program, ctx.params))
+    return checks.check_source(ctx.read('2.2'), SCALAR, '2.2',
+                               lambda program: check_weibullish(program, lambda: ctx.read(NAME)))

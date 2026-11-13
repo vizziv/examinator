@@ -12,8 +12,8 @@ for one submission; a decision is outdated when any field on its page changes;
 how a field is read changes no value (the app offers to read again); a printed
 field's region may be unset in code; one grade per check, any number of checks.
 Overrides have one mechanism at three scopes (exam, source scan, submission;
-`overrides.SCOPES`, `overrides.Layers`): a region, pages and note, the print
-area and the cover pages all live there, with revisions and history.
+`overrides.SCOPES`, `overrides.Layers`): a region, pages, the print area and
+the cover pages all live there, with revisions and history.
 
 ## Open after the rewrite
 
@@ -29,9 +29,10 @@ area and the cover pages all live there, with revisions and history.
   list which submissions' values came from the old reading.
 - The browser was exercised on a synthetic Exam 2 workspace (verify-next,
   editing a value and the outdated check recomputing, a pseudocode page, the
-  grid); never in a browser yet: the per-submission region editor, the
-  restore button, the Read page, the Exam data page's "read again"
-  message.
+  grid); the Read page's live counts and one-click read, field defaults,
+  turning on the Split tab and the box editors' save buttons on synthetic
+  workspaces (2026-11-13). Never in a browser yet: the restore button, the
+  Exam data page's "read again" message, Stop on a run slow enough to stop.
 
 ## Future
 
@@ -54,7 +55,10 @@ area and the cover pages all live there, with revisions and history.
   test-battery lists). Exports by version are dropped.
 - A left-hand key preset, with a left-handed person's input.
 - "Review me later" flag (DESIGN §15).
+- A filter overlay on the question page, opening on that question's filters.
 - Deployment behind an authenticating proxy: not ranked; ask first.
+- Deployment: the server reaching the laptop's model through an SSH tunnel so
+  it appears on the server's loopback (FERPA judgement is the owner's).
 
 ## Known gaps
 
@@ -67,7 +71,7 @@ area and the cover pages all live there, with revisions and history.
   box drawn on synthetic stacks has no scripted answer).
 - Picking a person already named for another submission names both (flagged
   "name twice"); it does not offer to move them.
-- No live-model run yet (`compare` untested live).
+- No live-model run yet.
 
 ## Declined so far, larger than a cleanup
 
@@ -77,18 +81,10 @@ area and the cover pages all live there, with revisions and history.
 - An "ok as is" acknowledgement for flagged submissions.
 - A redesign of the Exam data page.
 
-## Feature candidates to cut (inventory of 2026-11-12; nothing decided)
+## Feature candidates to cut (inventory of 2026-11-12)
 
-Proposed cuts: the accent colour pickers and the key-rebinding editor on
-Settings; the raw HTML evidence block and its route; the `audience` tag on
-evidence blocks (until a student view exists); the crop-scale slider on
-Settings (the header has one); the `status` CLI command.
-
-The owner's call: the `compare` command (never run live; the largest single
-cut); the "reasoning" option on reads; `--public-url` and the proxy user
-header; mirroring a whole scan; the `intake` CLI command; the "filter:" chips
-on the question page; preview-before-read on the Read page; the note that
-goes with a submission's pages.
+Still undecided: `--public-url` and the proxy user header; the `intake` CLI
+command.
 
 Library options no example exam uses (`Bool(worth=)`, `Printed(verify=True)`,
 `Field(multiline=)`, `Exam(crop_pad=)`, `math.Approx`, a custom

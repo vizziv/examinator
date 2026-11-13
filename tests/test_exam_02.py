@@ -251,7 +251,7 @@ def test_printing_reads_bits(exam, pkg):
     """`Printing` names a question's printing from the bits it reads; undecided while one is."""
     v = pkg('versions')
     q = exam.questions['q4']
-    every = frozenset(f'{x.id}/{f.label}' for x in exam.questions.values() for f in x.fields)
+    every = exam.fields()
 
     def context(body):
         return CheckContext(submission=S, question=q, check='check', fields=every,

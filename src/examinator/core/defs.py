@@ -74,12 +74,20 @@ class Field:
     default: the question's reader reads it with the question's other fields,
     and without one a person types it. A value is always text: one line,
     unless the field is `multiline` (None, the default: as its reader says,
-    which is one line for all but code).
+    which is one line for all but code). `default` (text) makes the field a
+    setting a person may type: no reader but its own reads it, and while it
+    has no stored value its value is the default, settled (`DEFAULT`).
     """
     label: str
     region: Region | None = None
     read: Any = None
     multiline: bool | None = None
+    default: str | None = None
+
+
+# The revision a check records for a field it read at its default (stored revisions start at 1):
+# current while the field has no stored value, and settled.
+DEFAULT = 0
 
 
 @dataclass(frozen=True)
@@ -248,8 +256,9 @@ class Question:
 
     @property
     def written(self) -> tuple[Field, ...]:
-        """The fields read by the question's reader (or typed, without one)."""
-        return tuple(f for f in self.fields if f.read is None)
+        """The fields read by the question's reader (or typed, without one): those
+        with neither a reader of their own nor a default."""
+        return tuple(f for f in self.fields if f.read is None and f.default is None)
 
     def groups(self) -> list[tuple[Any, tuple[Field, ...]]]:
         """What reads what: (reader, fields), one per field with its own reader,
@@ -261,7 +270,9 @@ class Question:
 
     def reader_of(self, label: str) -> Any:
         f = self.field(label)
-        return None if f is None else (f.read if f.read is not None else self.read)
+        if f is None or f.read is not None:
+            return f and f.read
+        return self.read if f.default is None else None
 
     def multiline(self, label: str) -> bool:
         """Whether a field's value may span lines: the field's own setting, else its reader's."""
@@ -364,6 +375,10 @@ class Exam:
         """The built-in group of identity fields, live (regions drawn in the app included)."""
         return self.questions[IDENTITY]
 
+    def fields(self) -> dict[str, str | None]:
+        """Every field ('question/label') with its default (None: none): what a check may read."""
+        return {key(q.id, f.label): f.default for q in self.questions.values() for f in q.fields}
+
     def question(self, id: str, *, title: str = "", pages: Sequence[int],
                  fields: Sequence[Field] = (), read: Any = None,
                  check: Any = None, checks: Mapping[str, Any] | None = None,
@@ -415,6 +430,9 @@ class Exam:
         for f in q.fields:
             if f.region is not None:
                 check_region(f.region, self.pages, f"{q.id}: field {f.label!r}")
+            if f.default is not None and (not isinstance(f.default, str) or (not q.multiline(f.label)
+                                                                              and one_line(f.default) != f.default)):
+                raise ValueError(f"{q.id}: field {f.label!r}: a default is text (one line unless multiline)")
             validate = getattr(f.read, 'validate', None)
             if callable(validate):
                 validate(f"{q.id}: field {f.label!r}")

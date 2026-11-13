@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Mapping, Protocol, Sequence
 
 from .context import BadOutput, CheckContext, ReadContext, Unavailable
-from .defs import Exam, Field, Grade, Question, has_marker, key, one_line
+from .defs import DEFAULT, Exam, Field, Grade, Question, has_marker, key, one_line
 from .isolate import CheckTimeout, Pool, PoolClosed
 from .result import Undecided, settle, undecided
 from .status import Decision, Sheet, Stored, Value, current
@@ -33,8 +33,7 @@ class Model(Protocol):
     whose text is structural only: never prompt or response content."""
 
     def complete(self, prompt: str, *, images: Sequence[Any] = (), text: str | None = None,
-                 expect: str = 'text', reasoning: bool = False,
-                 tag: tuple[str, str, str] | None = None) -> str: ...
+                 expect: str = 'text', tag: tuple[str, str, str] | None = None) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -58,8 +57,7 @@ class Services:
         self.ws, self._model, self._memo = workspace, model, memo
 
     def pages(self, submission, question):
-        pages, _ = self.ws.selected_pages(submission, question)
-        return [self.ws.page_image(submission, p) for p in pages]
+        return [self.ws.page_image(submission, p) for p in self.ws.selected_pages(submission, question)]
 
     def crop(self, submission, region):
         return self.ws.crop(submission, region)
@@ -67,11 +65,10 @@ class Services:
     def layout(self, submission):
         return self.ws.layout(submission)
 
-    def model(self, prompt, *, images, text, expect, reasoning, tag):
+    def model(self, prompt, *, images, text, expect, tag):
         if self._model is None:
             raise Unavailable("model unavailable")
-        return self._model.complete(prompt, images=images, text=text, expect=expect,
-                                    reasoning=reasoning, tag=tag)
+        return self._model.complete(prompt, images=images, text=text, expect=expect, tag=tag)
 
     def memo(self, submission, key):
         if self._memo is not None:
@@ -94,12 +91,10 @@ def structural(e: Exception) -> str:
 
 
 def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields: Sequence[Field],
-               services: Services, *, reasoning: bool = False, fresh: bool = False) -> dict[str, str]:
+               services: Services, *, fresh: bool = False) -> dict[str, str]:
     """One reader on some of a question's fields (with this submission's regions):
     `{label: text}`. Model errors and bad output raise."""
-    _, note = ws.selected_pages(submission, q)
-    ctx = ReadContext(submission=submission, question=q, note=note, services=services,
-                      reasoning=reasoning, fresh=fresh)
+    ctx = ReadContext(submission=submission, question=q, services=services, fresh=fresh)
     got = reader.read(ctx, tuple(fields))
     out = {}
     for f in fields:
@@ -111,18 +106,15 @@ def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields:
     return out
 
 
-def try_check(exam: Exam, qid: str, check: str, values: Mapping[str, str], *,
-              params: Mapping | None = None) -> dict:
+def try_check(exam: Exam, qid: str, check: str, values: Mapping[str, str]) -> dict:
     """Run one check in-process on given values (`{'question/label': text}`; a
-    field left out is not read) and return its result as it would be stored:
+    field left out is not read, or at its default) and return its result as it would be stored:
     `{'grade', 'fields', 'blocks', 'reads'}`. For an exam's own tests. A check
     that raises `Undecided` is an undecided result; anything else raises."""
     q = exam.questions[qid]
     c = q.check(check)
     ctx = CheckContext(submission='test', question=q, check=check,
-                       values={k: (i + 1, v) for i, (k, v) in enumerate(values.items())},
-                       params=dict(params or {}),
-                       fields=frozenset(key(x.id, f.label) for x in exam.questions.values() for f in x.fields))
+                       values={k: (i + 1, v) for i, (k, v) in enumerate(values.items())}, fields=exam.fields())
     try:
         body = settle(c.points, c.fn(ctx))
     except Undecided as e:
@@ -155,7 +147,7 @@ class Runner:
     # --- read -------------------------------------------------------------------
 
     def read(self, submission: str, qid: str, *, missing_only: bool = False, include_protected: bool = False, fresh: bool = False,
-             reasoning: bool = False, labels: Sequence[str] | None = None) -> list[Outcome]:
+             labels: Sequence[str] | None = None) -> list[Outcome]:
         """Read a question's fields (or those of `labels`) and write what was read.
         Values a person settled are skipped unless `include_protected`; with
         `missing_only`, only fields with no value are read. One outcome per reader run."""
@@ -191,8 +183,7 @@ class Runner:
                 out('blocked', "model unavailable")
                 continue
             try:
-                got = read_group(self.ws, submission, resolved, reader, targets, self._services,
-                                 reasoning=reasoning, fresh=fresh)
+                got = read_group(self.ws, submission, resolved, reader, targets, self._services, fresh=fresh)
             except Exception as e:
                 out('failed', structural(e))
                 continue
@@ -230,7 +221,7 @@ class Runner:
 
     # --- compute ----------------------------------------------------------------
 
-    def compute(self, submission: str, qid: str, check: str, *, params: Mapping | None = None) -> Outcome:
+    def compute(self, submission: str, qid: str, check: str) -> Outcome:
         """Run one check on the current values and store its result."""
         q = self.exam.questions[qid]
         c = q.check(check)
@@ -249,10 +240,10 @@ class Runner:
             if c.isolate and self.pool is not None:
                 body = self.pool.call(qid, check, {
                     'submission': submission, 'values': {k: list(v) for k, v in values.items()},
-                    'params': dict(params or {}), 'overrides': self.exam.overrides}, timeout, reads)
+                    'overrides': self.exam.overrides}, timeout, reads)
             else:
                 ctx = CheckContext(submission=submission, question=q, check=check, values=values,
-                                   params=dict(params or {}), fields=self.field_keys(), reads=reads)
+                                   fields=self.exam.fields(), reads=reads)
                 body = settle(c.points, c.fn(ctx))
         except Undecided as e:
             body = settle(c.points, undecided(str(e)))
@@ -263,20 +254,15 @@ class Runner:
         except Exception as e:
             detail = getattr(e, 'detail', "") or f"{type(e).__name__}: {e}"
             body = settle(c.points, undecided("the check failed to run", [
-                {'type': 'details', 'summary': "Error", 'audience': 'grader',
+                {'type': 'details', 'summary': "Error",
                  'blocks': [{'type': 'code', 'text': detail}]}]))
         body.update(reads=dict(reads), defn=self.exam.check_hash(q, c), code=self.exam.code_hash)
-        if params:
-            body['params'] = dict(params)
         try:
             self.store.write(submission, key(qid, check), 'result', body, origin='auto',
-                             guard={(k, 'value'): rev for k, rev in reads.items()})
+                             guard={(k, 'value'): None if rev == DEFAULT else rev for k, rev in reads.items()})
         except Conflict as e:
             return out('discarded', str(e))
         return out('done')
-
-    def field_keys(self) -> frozenset[str]:
-        return frozenset(key(q.id, f.label) for q in self.exam.questions.values() for f in q.fields)
 
     def refresh(self, submission: str, *, questions: Sequence[str] = ()) -> list[Outcome]:
         """Recompute every outdated result of a submission, and run the checks of
@@ -322,6 +308,13 @@ class Runner:
         new = Value(text, 0, settled, author if settled else None)
         return Value.of(self.store.write(submission, k, 'value', new.body(), origin='manual', author=author,
                                          expect_rev=expect_rev, keep_rev=keep))
+
+    def unset(self, submission: str, qid: str, label: str, *, expect_rev: Any = ANY) -> None:
+        """Drop a field's stored value: back to its default (only a field with one)."""
+        k = self._field(qid, label)
+        if self.exam.questions[qid].field(label).default is None:
+            raise ValueError(f"{label} has no default")
+        self.store.delete(submission, k, 'value', expect_rev=expect_rev)
 
     def verify(self, submission: str, qid: str, label: str, *, author: str | None, expect_rev: int,
                verified: bool = True) -> Value:

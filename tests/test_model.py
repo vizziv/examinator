@@ -128,23 +128,14 @@ def test_request_shape(serve):
     assert 'tag' not in body
 
 
-def test_reasoning_extras(serve):
+def test_reasoning_off(serve):
     server = serve(reply())
-    c = make(server)
-    c.complete("p")
-    c.complete("p", reasoning=True)
-    off, on = (r[2] for r in server.requests)
+    make(server).complete("p")
+    make(server, extra_body={'a': 1}).complete("p")
+    off, custom = (r[2] for r in server.requests)
     assert off['reasoning_effort'] == 'none'
     assert off['chat_template_kwargs'] == {'enable_thinking': False}
-    assert on['chat_template_kwargs'] == {'enable_thinking': True}
-    assert 'reasoning_effort' not in on
-
-    custom = make(server, extra_body={'a': 1}, reasoning_extra={'b': 2})
-    custom.complete("p")
-    custom.complete("p", reasoning=True)
-    off, on = (r[2] for r in server.requests[2:])
-    assert off['a'] == 1 and 'b' not in off and 'chat_template_kwargs' not in off
-    assert on['b'] == 2 and 'a' not in on
+    assert custom['a'] == 1 and 'chat_template_kwargs' not in custom
 
 
 def test_redirect_refused(serve):
@@ -236,7 +227,7 @@ def test_expect_strips_one_fence(serve):
 
 def test_inline_reasoning_dropped(serve):
     server = serve(reply("<think>\nhmm\n</think>\n\nOK"))
-    assert make(server).complete("p", reasoning=True) == "OK"
+    assert make(server).complete("p") == "OK"
 
 
 def test_proxy_environment_ignored(serve, monkeypatch):
@@ -317,12 +308,12 @@ def test_fake_key_precedence():
 def test_fake_records_calls():
     fake = FakeModel(lambda call: "ok")
     image = Image.new('RGB', (2, 2))
-    fake.complete("first", images=[image], text="data", expect='json', reasoning=True,
+    fake.complete("first", images=[image], text="data", expect='json',
                   tag=('s', 'q', 'transcribe'))
     fake.complete("second")
     assert fake.calls == [
-        Call(('s', 'q', 'transcribe'), "first", "data", (image,), 'json', True),
-        Call(None, "second", None, (), 'text', False),
+        Call(('s', 'q', 'transcribe'), "first", "data", (image,), 'json'),
+        Call(None, "second", None, (), 'text'),
     ]
 
 

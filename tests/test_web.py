@@ -363,10 +363,31 @@ def test_read_and_check_from_the_page(site):
     r = site.post('/s/s1/a/read', {'include_protected': True})
     site.wait(r.json()['job'])
     assert site.value('s1', 'a/x').text == '1'
-    r = site.post('/s/s1/a/check', {'check': 'x', 'params': 'k=2'})
+    r = site.post('/s/s1/a/check', {'check': 'x'})
     assert site.wait(r.json()['job'])['state'] == 'done'
-    assert site.ws.store.get('s1', 'a/x', 'result').body['params'] == {'k': 2}
     assert site.post('/s/s1/a/check', {'check': 'nope'}).status_code == 400
+
+
+def test_a_field_with_a_default_on_the_page(tmp_path):
+    from examinator import Check, Exam, Field
+    exam = Exam('d', pages=1)
+    exam.question('q', pages=[1], fields=[Field('k', default='10')],
+                  check=Check(lambda ctx: int(ctx.read('k')) > 5, isolate=False))
+    ws = workspace(tmp_path, exam, subs=('s1',))
+    site = Site(exam, ws, Runner(exam, ws))
+    site.runner.refresh('s1', questions=['q'])
+    html = site.get('/s/s1/q').text
+    assert 'placeholder="default 10"' in html and '>default</span>' in html and 'data-region="' not in html
+    assert site.state('s1', 'q').state == 'graded'                  # nobody need verify a default
+    r = site.post('/s/s1/q/save', {'values': {'q/k': {'text': '3', 'rev': None}}})
+    site.wait(r.json()['job'])
+    assert (site.state('s1', 'q').state, site.state('s1', 'q').value) == ('graded', False)
+    assert 'back to default 10' in site.get('/s/s1/q').text
+    r = site.post('/s/s1/q/default', {'key': 'q/k', 'rev': site.rev('s1', 'q/k')})
+    site.wait(r.json()['job'])
+    assert site.value('s1', 'q/k') is None and site.state('s1', 'q').value is True
+    assert site.post('/s/s1/q/default', {'key': 'q/k', 'rev': None}).status_code == 200     # nothing to drop
+    ws.close()
 
 
 def test_reading_is_refused_without_a_model(env):
@@ -435,67 +456,55 @@ def wait_batch(site):
     raise AssertionError("batch did not finish")
 
 
-def test_batch_preview_run_status(site):
+def test_batch_plan_run_status(site):
     assert site.get('/runs/status').json() == {'state': 'idle'}
-    r = site.post('/runs/preview', {})
+    r = site.post('/runs/plan', {})
     assert r.status_code == 200
     plan = r.json()
     assert plan['counts']['run'] == 6 and plan['counts']['blocked'] == 0      # 3 reads, twice
-    r = site.post('/runs/start', {'plan': plan['plan'], 'parallel': 2})
-    assert r.status_code == 200
+    r = site.post('/runs/start', {'parallel': 2})
+    assert r.status_code == 200 and r.json()['total'] == 6
     info = wait_batch(site)
     # every read, then one refresh per submission: the checks ran without being asked for
     assert info['state'] == 'done' and info['done'] == info['total'] == 8 and info['failures'] == []
     assert site.state('s2', 'b').state == 'unverified'
-    again = site.post('/runs/preview', {'missing_only': True}).json()
+    again = site.post('/runs/plan', {'missing_only': True}).json()
     assert again['counts']['run'] == 0 and again['counts']['skip_present'] > 0
-    assert site.post('/runs/preview', {'questions': []}).status_code == 400
-    assert site.post('/runs/preview', {'submissions': ['ghost']}).status_code == 400
-    assert site.post('/runs/preview', {'questions': ['ghost']}).status_code == 400
-    one = site.post('/runs/preview', {'submissions': ['s2'], 'questions': ['b']}).json()
+    for bad in ({'questions': []}, {'submissions': ['ghost']}, {'questions': ['ghost']}):
+        assert site.post('/runs/plan', bad).status_code == 400
+        assert site.post('/runs/start', bad).status_code == 400
+    one = site.post('/runs/plan', {'submissions': ['s2'], 'questions': ['b']}).json()
     assert one['counts']['run'] == 1 and one['groups'][0]['submissions'] == ['s2']
+    assert site.post('/runs/stop').status_code == 200
 
 
 def test_a_batch_never_replaces_what_a_person_set_unless_told(site):
     site.run_all()
     site.runner.set('s1', 'a', 'x', "9", author='ta')
-    plan = site.post('/runs/preview', {'submissions': ['s1'], 'questions': ['a']}).json()
+    plan = site.post('/runs/plan', {'submissions': ['s1'], 'questions': ['a']}).json()
     assert plan['counts']['run'] == 1                     # y is not settled: it is read
-    site.post('/runs/start', {'plan': plan['plan']})
+    site.post('/runs/start', {'submissions': ['s1'], 'questions': ['a']})
     wait_batch(site)
     assert site.value('s1', 'a/x').text == '9'
-    plan = site.post('/runs/preview', {'submissions': ['s1'], 'questions': ['a'],
-                                       'include_protected': True}).json()
-    site.post('/runs/start', {'plan': plan['plan']})
+    site.post('/runs/start', {'submissions': ['s1'], 'questions': ['a'], 'include_protected': True})
     wait_batch(site)
     assert site.value('s1', 'a/x').text == '1'
 
 
-def test_stale_preview_is_refused(site):
-    site.run_all()
-    plan = site.post('/runs/preview', {}).json()
-    site.runner.set('s1', 'a', 'x', "4", author='other')
-    r = site.post('/runs/start', {'plan': plan['plan']})
-    assert r.status_code == 409 and 'out of date' in r.json()['error']
-    assert site.post('/runs/start', {'plan': 'unknown'}).status_code == 409
-    assert site.post('/runs/stop').status_code == 200
-
-
 # --- overrides and settings ---
 
-def test_pages_note_and_cover_pages_of_one_submission(site):
+def test_pages_and_cover_pages_of_one_submission(site):
     own = lambda path, value, rev=None: site.post('/exam/set' if value is not None else '/exam/clear',
                                                   {'path': path, 'value': value, 'rev': rev, 'scope': OWN})
-    assert own('a/pages', [1, 2]).status_code == 200 and own('a/note', "continues overleaf").status_code == 200
-    assert site.ws.selected_pages('s1', site.exam.questions['a']) == ((1, 2), "continues overleaf")
-    assert site.ws.selected_pages('s2', site.exam.questions['a']) == ((1,), "")
-    html = site.get('/s/s1/a').text
-    assert '/page/s1/1.jpg' in html and 'continues overleaf' in html
+    assert own('a/pages', [1, 2]).status_code == 200
+    assert site.ws.selected_pages('s1', site.exam.questions['a']) == (1, 2)
+    assert site.ws.selected_pages('s2', site.exam.questions['a']) == (1,)
+    assert '/page/s1/1.jpg' in site.get('/s/s1/a').text
     assert own('a/pages', [7]).status_code == 400 and own('a/pages', []).status_code == 400
-    assert site.post('/exam/set', {'path': 'a/note', 'value': "for all", 'rev': None}).status_code == 400   # one's only
+    assert own('a/note', "continues overleaf").status_code == 400          # no such thing
     rev = site.ws.store.overrides(OWN)['a/pages'].rev
     assert own('a/pages', None, rev).status_code == 200
-    assert site.ws.selected_pages('s1', site.exam.questions['a']) == ((1,), "continues overleaf")
+    assert site.ws.selected_pages('s1', site.exam.questions['a']) == (1,)
     assert own('@print_area', [100, 100, 900, 900]).status_code == 200
     assert own('@cover_pages', 1).status_code == 200
     assert site.ws.layout('s1') == Layout(1, (100, 100, 900, 900)) and site.ws.layout('s2') == Layout(0, (0, 0, 1000, 1000))
@@ -574,11 +583,10 @@ def test_student_text_is_escaped(site):
         {'type': 'note', 'text': f"note {EVIL}", 'tone': 'bad'},
         {'type': 'table', 'columns': [f"col {EVIL}"], 'rows': [[EVIL, None, 3]]},
         {'type': 'code', 'text': f"x = 1\n{EVIL}", 'highlight': [2]},
-        {'type': 'details', 'summary': f"more {EVIL}", 'audience': 'grader',
+        {'type': 'details', 'summary': f"more {EVIL}",
          'blocks': [{'type': 'raw', 'html': f"<svg></svg>{EVIL}"}]},
         {'type': 'plot', 'title': f"plot {EVIL}", 'xlabel': "x", 'ylabel': "y",
          'series': [{'name': EVIL, 'style': 'step', 'x': [0, 1, None], 'y': [0, None, 1]}]},
-        {'type': 'note', 'text': "hidden from everyone", 'audience': 'nobody'},
         "not a block",
     ]
     row = store.get('s1', 'a/x', 'result')
@@ -591,7 +599,6 @@ def test_student_text_is_escaped(site):
     assert r.status_code == 200
     assert '<script>alert' not in r.text and '<img src=x' not in r.text and '</textarea><' not in r.text
     assert '&lt;script&gt;alert(1)&lt;/script&gt;' in r.text
-    assert 'hidden from everyone' not in r.text
     assert r.text.index('class="plot"') < r.text.index('class="note')       # plots first
     assert '\\u003cscript' in r.text
     assert re.search(r'<iframe class="raw" sandbox src="/raw/s1/a/x/3-0"', r.text)

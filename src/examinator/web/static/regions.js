@@ -184,9 +184,10 @@
   Actions.register('print-area', {run: () => toggle('print')});
   pick.addEventListener('change', () => select(pick.value, true));
   const fill = Rects.numbers('rg', cur, put, el => { inputs(el); draw(); });
-  Actions.register('print-save-own', {available: pm, run: () => savePrint('own', false)});
-  Actions.register('print-save-scan', {available: () => pm() && !!scopes.scan, run: () => savePrint('scan', false)});
-  Actions.register('print-save-all', {available: pm, run: () => savePrint('all', false)});
+  // Saving takes an unsaved change: never what this submission shows as it is (it may be its own).
+  Actions.register('print-save-own', {available: () => pm() && paDirty(), run: () => savePrint('own', false)});
+  Actions.register('print-save-scan', {available: () => pm() && paDirty() && !!scopes.scan, run: () => savePrint('scan', false)});
+  Actions.register('print-save-all', {available: () => pm() && paDirty(), run: () => savePrint('all', false)});
   Actions.register('print-clear-own', {available: () => pm() && pa.own != null, run: () => savePrint('own', true)});
   Actions.register('print-clear-scan', {available: () => pm() && pa.scan != null, run: () => savePrint('scan', true)});
   Actions.register('print-clear-all', {available: () => pm() && pa.all != null, run: () => savePrint('all', true)});
@@ -197,8 +198,8 @@
     draw();
   }});
   const regionOn = () => mode === 'regions' && !!sel;
-  Actions.register('region-save-own', {available: () => regionOn() && !!sel.draft, run: () => save('own', false)});
-  Actions.register('region-save-all', {available: () => regionOn() && !!sel.draft, run: () => save('all', false)});
+  Actions.register('region-save-own', {available: () => regionOn() && !!sel.draft && dirty(sel), run: () => save('own', false)});
+  Actions.register('region-save-all', {available: () => regionOn() && !!sel.draft && dirty(sel), run: () => save('all', false)});
   Actions.register('region-clear-own', {available: () => regionOn() && sel.own != null, run: () => save('own', true)});
   Actions.register('region-clear-all', {available: () => regionOn() && sel.all != null, run: () => save('all', true)});
   Actions.register('region-undo', {available: regionOn, run: () => {

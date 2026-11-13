@@ -31,9 +31,9 @@ yet is simply not read.
 
 | Scope | Applies to | May set (`overrides.SCOPES`) |
 | --- | --- | --- |
-| submission | one submission | a region, pages and their note, print area, cover pages |
+| submission | one submission | a region, pages, print area, cover pages |
 | source scan | every submission split from one scanned file | print area, cover pages |
-| exam | every submission | anything editable (not a note) |
+| exam | every submission | anything editable |
 | (package) | what the code says | |
 
 The value in force is the most specific one: the submission's, its scan's,
@@ -72,6 +72,13 @@ Choices made here:
   still settled, nothing downstream moves.
 - **No transcript.** Whatever a reader does on the way to the value is not
   stored.
+- **A default is a value nobody need settle.** A field may have a default
+  (`Field(label, default='10')`): a setting a person may type, read by no
+  reader but its own. While it has no stored value, a check reading it gets
+  the default, recorded at revision `DEFAULT` (0; stored revisions start at
+  1). That read is current while the field still has no stored value, and
+  counts as settled. Setting a value outdates the result like any change;
+  clearing the value (back to the default) outdates it again.
 
 ### 2. Result
 
@@ -86,7 +93,7 @@ Evidence has two parts, both optional:
   note. Interfaces show this beside the field. "4 of 5 right" is the grade;
   which four is this.
 - **Blocks:** an ordered list of things to show (text, table, code, plot,
-  collapsed details), each for graders only or for everyone.
+  collapsed details, sandboxed raw HTML).
 
 Nothing computes from evidence. It is for people.
 
@@ -115,7 +122,7 @@ In order; the first that applies:
 | **to decide** | No check; or the result is current, its fields settled, and the proposal is undecided. | No |
 | **not run** | No result. | No |
 | **outdated** | The result is outdated. | No |
-| **unverified** | The result is current and some field it read is not settled. The proposal is shown. | No |
+| **unverified** | The result is current and some field it read is not settled (a field read at its default is settled). The proposal is shown. | No |
 | **graded** | The result is current, every field it read is settled, the proposal is a grade. | Yes |
 
 A check that read no field at all never counts by itself ("to decide").
@@ -130,6 +137,7 @@ Everything the app or a batch run does is one or more of these.
 | Field value | **set**: a new value, settled by that person. | person |
 | Field value | **verify**: settle the value as it stands. | person |
 | Field value | **unverify**: back to unsettled, value kept. | person |
+| Field value | **unset**: a field with a default back to it (its value dropped). | person |
 | Result | **compute**: run the check on the current values. | automatic |
 | Decision | **decide**, **clear**. | person |
 | Override | **set**, **clear**, at a scope. | person |
@@ -186,7 +194,7 @@ no value yet, and the app can reload the exam package without losing state.
 - **One read per field or per question?** The model allows both (a read fills
   one or more fields; a field may have a reader of its own). The library's
   handwriting readers read a question's fields in one go. Which reads
-  handwriting more reliably is a live-model question; see `compare`.
+  handwriting more reliably is a live-model question.
 - Whether the grid needs a column for a question with no check, once its
   fields show on the pages of the questions that read them. (It has one now:
   not read, unverified, or verified.)
@@ -218,5 +226,6 @@ Choices made while building it:
 - A decision records the question's own fields and the fields that check's
   result read.
 - Automatic recomputation recomputes outdated results only (and, after a
-  change on a question's page, that question's checks that never ran); it never
-  carries a grader's one-off parameters forward.
+  change on a question's page, that question's checks that never ran). A
+  value a grader sets for a check (a constant, say) is a field with a default,
+  so it outdates and recomputes like any other.

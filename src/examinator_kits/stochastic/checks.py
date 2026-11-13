@@ -180,10 +180,10 @@ def result(part: Part, source: str, ran: str | None = None) -> Result:
     if part.tests:
         blocks.append(Details("Tests", Table(["test", '', ''], part.tests)))
     if part.dumps:
-        blocks.append(Details("Samples", Table(['', "first samples"], part.dumps), audience='grader'))
-    blocks.append(Details("Source", Code(source), audience='grader'))
+        blocks.append(Details("Samples", Table(['', "first samples"], part.dumps)))
+    blocks.append(Details("Source", Code(source)))
     if ran and ran != source:
-        blocks.append(Details("As run", Code(ran), audience='grader'))
+        blocks.append(Details("As run", Code(ran)))
     note = part.note or None
     return Result(part.outcome, {part.label: Judgement(part.outcome, note=note)}, blocks,
                   reason=(note or "undecided") if part.outcome is None else None)
@@ -193,7 +193,7 @@ def unparsed(label: str, source: str, error: pseudocode.Unsupported) -> Result:
     """The source is outside the language: undecided."""
     return Result(None, {label: Judgement(None, note=str(error))},
                   [Note(str(error), 'warn'),
-                   Details("Source", Code(source, [error.line] if error.line else []), audience='grader')],
+                   Details("Source", Code(source, [error.line] if error.line else []))],
                   reason=str(error))
 
 

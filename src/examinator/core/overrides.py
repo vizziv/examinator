@@ -3,7 +3,6 @@
 An override replaces one plain-data value at a scope, addressed by a path:
 
     <question>/pages                           printed pages holding the answer
-    <question>/note                            a note for the question's reader (one submission's only)
     <question>/fields/<label>/region           where a field is (may be unset: then it is not read)
     <question>/fields/<label>/read/<field>     a field's own reader (a printed field: ask, reads, verify)
     <question>/read/<field>[/<key>...]         the question's reader (notes, prompts)
@@ -52,8 +51,7 @@ from typing import Any, Mapping
 from .defs import Check, Exam, Field, Question, Region, digest
 from .store import ANY, Store
 
-KINDS = ('region', 'text', 'int', 'number', 'bool', 'pages', 'map', 'choice',
-         'note', 'print_area', 'cover_pages')
+KINDS = ('region', 'text', 'int', 'number', 'bool', 'pages', 'map', 'choice', 'print_area', 'cover_pages')
 AT = '@'            # starts the path of one of the exam's own values: '@print_area'
 
 EXAM, SOURCE, SUBMISSION = 'exam', 'source', 'submission'
@@ -62,7 +60,6 @@ EXAM, SOURCE, SUBMISSION = 'exam', 'source', 'submission'
 SCOPES = {
     'region': (EXAM, SUBMISSION),
     'pages': (EXAM, SUBMISSION),
-    'note': (SUBMISSION,),
     'print_area': (EXAM, SOURCE, SUBMISSION),
     'cover_pages': (EXAM, SOURCE, SUBMISSION),
 }
@@ -193,7 +190,7 @@ def _map_leaves(prefix: tuple[str, ...], m: Mapping):
 def _leaves(q: Question) -> dict[tuple[str, ...], tuple[str, bool]]:
     """Every editable value of a question: {segments after the id: (kind, nullable)}."""
     out: dict[tuple[str, ...], tuple[str, bool]] = {} if q.apart else {   # a group apart has no page to show
-        ('pages',): ('pages', False), ('note',): ('note', False)}
+        ('pages',): ('pages', False)}
 
     def config(prefix, obj):
         if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
@@ -201,7 +198,8 @@ def _leaves(q: Question) -> dict[tuple[str, ...], tuple[str, bool]]:
                 out[(*prefix, *segs)] = (kind, nullable)
 
     for f in q.fields:
-        out[('fields', f.label, 'region')] = ('region', True)
+        if f.default is None:           # a field with a default is a setting: nowhere on paper
+            out[('fields', f.label, 'region')] = ('region', True)
         config(('fields', f.label, 'read'), f.read)
     config(('read',), q.read)
     for c in q.checks:
@@ -311,10 +309,6 @@ def _check(exam: Exam, q: Question, segs: tuple[str, ...], kind: str, nullable: 
     if kind == 'cover_pages':
         if not (_int(value) and 0 <= value < 1000):
             raise ValueError("cover pages: a whole number from 0 to 999")
-        return value
-    if kind == 'note':
-        if not isinstance(value, str) or len(value) > 2000:
-            raise ValueError("a note is text of at most 2000 characters")
         return value
     if kind == 'int':
         if not _int(value):

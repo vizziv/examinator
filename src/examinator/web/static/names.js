@@ -276,14 +276,16 @@
     say('removed: save for all');
   }});
   S.register('names-box-undo', {available: () => bx.edit && bxDirty(), run: () => { bx.touched = false; say(''); renderBoxes(); }});
-  // What saving the drafts changes, one override set or cleared per box: for all submissions, against
-  // every submission's region (the package's again: no override); for this one, against what it shows.
+  // What saving the drafts changes, one override set or cleared per box edited here (a box
+  // that differs from what this submission shows): for all submissions, against every
+  // submission's region (the package's again: no override); for this one, against what it shows.
   function changes(level) {
     const r = row(), out = [], scope = level === 'own' ? `submission:${r.sub}` : '';
     for (const c of view.columns) {
       const d = bx.drafts[c.name];
+      if (!boxDirty(c.name)) continue;
       if (level === 'own') {
-        if (!d || !boxDirty(c.name)) continue;
+        if (!d) continue;
         const own = r.own[c.name];
         out.push(Rects.same(d, c.value) && own ? {path: c.path, scope, clear: true, rev: own.rev}
           : {path: c.path, scope, value: d, rev: own ? own.rev : null});

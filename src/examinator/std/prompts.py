@@ -50,13 +50,10 @@ a solution or pass stub. Return plain pseudocode, no Markdown. Use \
 # [REVIEW: reason] for ambiguity or an unsupported construct."""
 
 
-def context(question: Question, labels: Iterable[str], note: str = "") -> str:
+def context(question: Question, labels: Iterable[str]) -> str:
     """What every reading prompt is followed by: the question and the labels of
     the fields being read (printed fields are read separately)."""
-    lines = [f"Question: {question.title}", f"Answer labels: {', '.join(labels)}"]
-    if note:
-        lines.append(f"Note from the grader about this submission's pages: {note}")
-    return "\n".join(lines)
+    return f"Question: {question.title}\nAnswer labels: {', '.join(labels)}"
 
 
 def notation(symbols: Iterable[str] = (), functions: Iterable[str] | None = None) -> str:

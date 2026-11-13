@@ -13,6 +13,7 @@ import pytest
 
 from examinator import Grade, Printed, load_exam, synth
 from examinator.core import batch
+from examinator.core.defs import DEFAULT
 from examinator.core.runner import Runner, try_check
 from examinator.core.workspace import Workspace
 from examinator.std import readers
@@ -50,19 +51,19 @@ def values(exam, qid, answers, printing=None, body=None):
     return out
 
 
-def outcomes(exam, qid, answers, printing=None, *, check='check', body=None, **params):
+def outcomes(exam, qid, answers, printing=None, *, check='check', body=None):
     """Run one check of a question directly on answers, with `info` read as
     `printing` (or as `body`, or not read): `({label: outcome}, result)`."""
-    got = try_check(exam, qid, check, values(exam, qid, answers, printing, body), params=params)
+    got = try_check(exam, qid, check, values(exam, qid, answers, printing, body))
     return {label: f['outcome'] for label, f in got['fields'].items()}, got
 
 
-def both(exam, qid, answers, **params):
+def both(exam, qid, answers):
     """Both checks of a pseudocode question (q2, q7) on `{label: source}`: the
     outcome of each part, and each check's result by name."""
     got, results = {}, {}
     for check in ('check', 'shiny'):
-        o, results[check] = outcomes(exam, qid, answers, check=check, **params)
+        o, results[check] = outcomes(exam, qid, answers, check=check)
         got.update(o)
     return got, results
 
@@ -287,10 +288,10 @@ def weibullish():
 
 # --- question 2: more synthetic samplers ---------------------------------------------
 
-def q2(exam, pkg, weibullish, weibull=None, **params):
+def q2(exam, pkg, weibullish, weibull=None):
     """Both parts of question 2, with the fixtures' `weibull` unless given."""
     f = pkg('fixtures')
-    return both(exam, 'q2', {'2.1': f.WEIBULL if weibull is None else weibull, '2.2': weibullish}, **params)
+    return both(exam, 'q2', {'2.1': f.WEIBULL if weibull is None else weibull, '2.2': weibullish})
 
 
 def rows_of(result):
@@ -304,14 +305,13 @@ def test_q2_recorded_results(exam, pkg):
     assert got == {'2.1': 'correct', '2.2': 'correct'}
     assert [results[c]['grade']['value'] for c in ('check', 'shiny')] == [True, True]
     tests = rows_of(results['shiny'])
-    assert [(name, result) for name, result, _ in tests] == [
-        ('huge_constant = 1', 'incorrect'), ('huge_constant = 10', 'correct')]
-    assert 'not in [0, 1]' in tests[0][2]          # 1 is rejected as an invalid acceptance probability
+    assert [(name, result) for name, result, _ in tests] == [('huge_constant = 10', 'correct')]   # the default
     for result in results.values():
         assert result['blocks'][0]['type'] == 'plot'                  # plots first
         assert all(b['type'] != 'code' for b in result['blocks'])     # dumps and source only inside details
-    # Each check reads its own field only.
-    assert set(results['check']['reads']) == {'q2/2.1'} and set(results['shiny']['reads']) == {'q2/2.2'}
+    # Each check reads its own field only, and 2.2 the constant (at its default).
+    assert set(results['check']['reads']) == {'q2/2.1'}
+    assert results['shiny']['reads']['q2/huge_constant'] == DEFAULT and set(results['shiny']['reads']) == {'q2/2.2', 'q2/huge_constant'}
 
     rewritten = {label: pkg('huge_constants').rewrite(source) for label, source in f.Q2_LITERAL.items()}
     assert rewritten == f.Q2
@@ -351,22 +351,26 @@ def weibullish():
     assert q2(exam, pkg, direct, weibull=wrong)[0] == {'2.1': 'incorrect', '2.2': 'correct'}
 
 
-def test_q2_custom_huge_constant(exam, pkg):
+def test_q2_huge_constant_set_by_a_grader(exam, pkg):
     f = pkg('fixtures')
-    got, results = both(exam, 'q2', f.Q2, huge_constant=20)
+    got, results = both(exam, 'q2', {**f.Q2, 'huge_constant': '20'})
     assert got['2.2'] == 'correct' and results['shiny']['fields']['2.2']['note'] == 'huge_constant = 20'
-    assert both(exam, 'q2', f.Q2, huge_constant='12')[0]['2.2'] == 'correct'      # typed by a grader
-    for bad in (0, -3, 1e7, 'many'):
-        got, results = both(exam, 'q2', f.Q2, huge_constant=bad)
+    got, results = both(exam, 'q2', {**f.Q2, 'huge_constant': '1'})
+    assert got['2.2'] is None and 'not in [0, 1]' in rows_of(results['shiny'])[0][2]   # an invalid probability
+    for bad in ('0', '-3', '1e7', 'many'):
+        got, results = both(exam, 'q2', {**f.Q2, 'huge_constant': bad})
         assert got == {'2.1': 'correct', '2.2': None}, bad
         assert 'at most 1e+06' in results['shiny']['fields']['2.2']['note']
+    # code without the constant does not read it
+    _, results = both(exam, 'q2', {**f.Q2, '2.2': f.Q2['2.2'].replace('huge_constant', '10')})
+    assert set(results['shiny']['reads']) == {'q2/2.2'}
 
 
 @pytest.mark.slow
 def test_q2_time_budget_is_undecided(exam, pkg):
     """A substitute too large for the one-sample-at-a-time interpreter: a budget runs out
     (up to 20 s), and the part is undecided."""
-    got, result = outcomes(exam, 'q2', pkg('fixtures').Q2, check='shiny', huge_constant=1e6)
+    got, result = outcomes(exam, 'q2', {**pkg('fixtures').Q2, 'huge_constant': '1e6'}, check='shiny')
     assert got == {'2.2': None} and result['grade']['value'] is None
     (_, outcome, note), = rows_of(result)
     assert outcome == '?' and ('time limit' in note or 'steps' in note)
@@ -543,9 +547,20 @@ def test_workflow_rules(exam, pkg, env):
     runner.refresh(S)
     assert (st('q9').state, st('q9').value) == ('graded', True)
 
-    # A grader's rerun with one custom value reaches the check through ctx.params.
-    assert runner.compute(S, 'q2', 'shiny', params={'huge_constant': 20}).ok
-    assert runner.sheet(S).results['q2/shiny'].fields['2.2']['note'] == 'huge_constant = 20'
+    # The constant at its default is settled; a grader's value outdates the result, and
+    # dropping it goes back to the default.
+    assert st('q2', 'shiny').state == 'graded' and 'q2/huge_constant' not in runner.values(S)
+    runner.set(S, 'q2', 'huge_constant', '20', author='ta')
+    assert st('q2', 'shiny').state == 'outdated'
+    runner.refresh(S)
+    assert (st('q2', 'shiny').state, runner.sheet(S).results['q2/shiny'].fields['2.2']['note']) == \
+        ('graded', 'huge_constant = 20')
+    runner.unset(S, 'q2', 'huge_constant')
+    assert st('q2', 'shiny').state == 'outdated'
+    runner.refresh(S)
+    assert st('q2', 'shiny').state == 'graded'
+    runner.set(S, 'q2', 'huge_constant', '20', author='ta')
+    runner.refresh(S)
 
     # A decision survives a batch run.
     runner.decide(S, 'q9', 'check', False, author='ta')
@@ -556,9 +571,8 @@ def test_workflow_rules(exam, pkg, env):
     assert (st('q9').state, st('q9').value, st('q9').author) == ('decided', False, 'ta')
     assert (st('q2', 'shiny').state, st('q2', 'shiny').value) == ('decided', False)
     assert text_of(runner, S, 'q9') == f.ANSWERS['alternate']['q9']         # what a person set stays
-    # A batch only reads: the result run with a custom value stays until a plain run replaces it.
+    # A batch only reads: the result with the grader's constant stays.
     assert 'huge_constant = 20' in runner.sheet(S).results['q2/shiny'].fields['2.2']['note']
-    assert runner.compute(S, 'q2', 'shiny').ok
 
 
 def test_disagreeing_printed_fields_are_undecided_until_a_grader_corrects_info(exam, pkg, tmp_path):

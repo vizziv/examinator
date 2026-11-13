@@ -9,7 +9,9 @@ only when its content changes:
 - a **result** (`Stored`): a check's proposed grade, its evidence, which
   fields it read at which revisions, and which definition computed it. It is
   current while every field it read is at that revision and the definition
-  is unchanged; otherwise outdated (and recomputed automatically).
+  is unchanged; otherwise outdated (and recomputed automatically). A field
+  read at its default is recorded at `defs.DEFAULT`: that read is current
+  while the field has no stored value, and settled.
 - a **decision** (`Decision`): a person's grade for a check, recorded against
   the revisions of the fields on the page; outdated once one of them changes.
 
@@ -33,7 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from .defs import Check, Exam, Grade, Question, has_marker, key
+from .defs import DEFAULT, Check, Exam, Grade, Question, has_marker, key
 from .store import Row
 
 STATES = ('decided', 'decided_outdated', 'to_decide', 'not_run', 'outdated', 'unverified', 'graded')
@@ -80,14 +82,12 @@ class Stored:
     rev: int
     fields: Mapping[str, Mapping] = field(default_factory=dict)    # label -> judgement
     blocks: list | None = None            # None when not loaded
-    params: Mapping[str, Any] = field(default_factory=dict)
 
     @staticmethod
     def of(row: Row) -> 'Stored':
         b = row.body or {}
         return Stored(Grade.from_json(b.get('grade')), dict(b.get('reads') or {}), b.get('defn', ''),
-                      b.get('code', ''), row.rev, dict(b.get('fields') or {}), b.get('blocks'),
-                      dict(b.get('params') or {}))
+                      b.get('code', ''), row.rev, dict(b.get('fields') or {}), b.get('blocks'))
 
 
 @dataclass(frozen=True)
@@ -139,9 +139,10 @@ def rev_of(values: Values, k: str) -> int | None:
 
 
 def current(stored: Stored, values: Values, *, defn: str, code: str) -> bool:
-    """The result was computed under this definition and code, from the values as they are."""
+    """The result was computed under this definition and code, from the values as they
+    are (a field read at its default: one with no stored value)."""
     return (stored.defn == defn and stored.code == code
-            and all(rev_of(values, k) == rev for k, rev in stored.reads.items()))
+            and all(rev_of(values, k) == (None if rev == DEFAULT else rev) for k, rev in stored.reads.items()))
 
 
 def decision_current(d: Decision, values: Values) -> bool:
@@ -160,7 +161,8 @@ def status(check: Check, values: Values, stored: Stored | None, decision: Decisi
         return Status('not_run')
     if not current(stored, values, defn=defn, code=code):
         return Status('outdated', stored.grade)
-    waiting = tuple(k for k in stored.reads if not ((v := values.get(k)) is not None and v.is_settled))
+    waiting = tuple(k for k, rev in stored.reads.items()
+                    if rev != DEFAULT and not ((v := values.get(k)) is not None and v.is_settled))
     if waiting:
         return Status('unverified', stored.grade, waiting=waiting)
     if not stored.reads:
@@ -173,8 +175,9 @@ def status(check: Check, values: Values, stored: Stored | None, decision: Decisi
 
 def fields_state(question: Question, values: Values) -> str:
     """How a question's fields stand, for a question with no checks: 'not_read'
-    (some field has no value), 'unverified' (some value is not settled) or 'verified'."""
-    got = [values.get(key(question.id, f.label)) for f in question.fields]
+    (some field has no value), 'unverified' (some value is not settled) or 'verified'.
+    A field at its default is settled."""
+    got = [values.get(key(question.id, f.label)) for f in question.fields if f.default is None]
     if any(v is not None and not v.is_settled for v in got):
         return 'unverified'
     if any(v is None for v in got):

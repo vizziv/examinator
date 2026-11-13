@@ -150,7 +150,7 @@ def test_identity_fields_are_exam_data():
         assert e.base == (None if f.region is None else [f.region.page, f.region.left, f.region.top,
                                                          f.region.right, f.region.bottom])
         assert entries[f'@identity/fields/{f.label}/read/ask'].kind == 'text'
-    assert '@identity/pages' not in entries and '@identity/note' not in entries     # no page to show
+    assert '@identity/pages' not in entries     # no page to show
     base = exam.identity
     skipped = overrides.apply(exam, {'@identity/fields/name/region': [1, 100, 190, 820, 290],
                                      '@identity/fields/id/region': None,
@@ -364,12 +364,12 @@ def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
     assert region('s1') == Region(1, 2, 2, 8, 8) and region('s2') == Region(1, 1, 1, 9, 9)
     with pytest.raises(ValueError):
         put('a/fields/x/region', [1, 2, 2, 8, 8], SRC)
-    # pages and the note that goes with them
+    # pages
     pages = lambda sid: ws.selected_pages(sid, exam.questions['a'])
-    put('a/pages', [1, 2], ''), put('a/note', "overleaf", S1)
-    assert pages('s1') == ((1, 2), "overleaf") and pages('s2') == ((1, 2), "")
+    put('a/pages', [1, 2], '')
+    assert pages('s1') == pages('s2') == (1, 2)
     put('a/pages', [2], S1)
-    assert pages('s1') == ((2,), "overleaf") and pages('s2') == ((1, 2), "")
+    assert pages('s1') == (2,) and pages('s2') == (1, 2)
     # the print area and the cover pages: the submission's, its scan's, the exam's, the package's
     layout = lambda sid: (ws.layout(sid).cover_pages, ws.layout(sid).print_area)
     assert layout('s1') == layout('s2') == (0, (0, 0, 1000, 1000))
@@ -389,10 +389,9 @@ def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
         overrides.clear(exam, ws.store, 'a/fields/x/region', scope=scope)
         assert region('s1') == want
     overrides.clear(exam, ws.store, 'a/pages', scope=S1)
-    assert pages('s1') == ((1, 2), "overleaf")
-    overrides.clear(exam, ws.store, 'a/note', scope=S1)
+    assert pages('s1') == (1, 2)
     overrides.clear(exam, ws.store, 'a/pages')
-    assert pages('s1') == ((1,), "")
+    assert pages('s1') == (1,)
     # an identity field's region, for one submission too (a student who wrote their name elsewhere)
     assert overrides.validate(load_exam(TOY), '@identity/fields/name/region', [1, 1, 1, 5, 5], S1) == [1, 1, 1, 5, 5]
     with pytest.raises(ValueError):
@@ -417,13 +416,13 @@ def test_one_validator_for_every_scope(scoped):
     bad = [('a/fields/x/region', [1, 500, 0, 10, 10]), ('a/fields/x/region', [9, 0, 0, 10, 10]),
            ('a/fields/x/region', "1 0 0 10 10"), ('a/pages', []), ('a/pages', [0]), ('a/pages', [1, 1]),
            ('@print_area', [0, 0, 1000]), ('@print_area', [500, 0, 400, 1000]), ('@print_area', [0, 0, 1001, 1000]),
-           ('@cover_pages', -1), ('@cover_pages', 1.5), ('@cover_pages', True), ('a/note', 3), ('a/note', 'x' * 2001)]
+           ('@cover_pages', -1), ('@cover_pages', 1.5), ('@cover_pages', True), ('a/note', "x")]
     for path, value in bad:
         for scope in ('', SRC, S1):
             with pytest.raises(ValueError):
                 overrides.set(exam, ws.store, path, value, scope=scope, author='ta')
     assert ws.store.all_overrides() == []
-    for path, value, scope in [('a/note', "x", ''), ('a/pages', [1], SRC), ('a/checks/check/key', 'x', S1),
+    for path, value, scope in [('a/pages', [1], SRC), ('a/checks/check/key', 'x', S1),
                                ('@print_area', None, S1), ('a/fields/x/region', [1, 0, 0, 5, 5], 'nobody:x')]:
         with pytest.raises(ValueError):
             overrides.set(exam, ws.store, path, value, scope=scope, author='ta')
@@ -454,7 +453,7 @@ def test_the_change_list_has_the_print_area_and_cover_pages(scoped):
     assert [x.split('  (')[0] for x in lines] == ['@cover_pages: 0 -> 1', '@print_area: [0, 0, 1000, 1000] -> [5, 5, 995, 995]']
     entries = {e.path: e for e in overrides.editable(exam)}
     assert entries['@print_area'].current == [5, 5, 995, 995] and entries['@print_area'].overridden
-    assert entries['@cover_pages'].base == 0 and not any(p.endswith('/note') for p in entries)
+    assert entries['@cover_pages'].base == 0
     fresh = make_exam()
     assert overrides.refresh(fresh, ws.store) == [] and fresh.print_area == (5, 5, 995, 995) and fresh.cover_pages == 1
     assert fresh.base_attrs == {'print_area': (0, 0, 1000, 1000), 'cover_pages': 0}

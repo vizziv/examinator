@@ -139,13 +139,11 @@ samples; all must be finite and at least 1; KS test.
   reciprocal ≤ 0.01 in an acceptance-probability role) is rewritten to the name
   `huge_constant`. Target and proposal parameters are never touched; ambiguous
   or multiple scales are left alone for a person.
-- The check then runs with `huge_constant = 1`, and if that gives a
-  distribution mismatch or an invalid acceptance probability, with `10`. A pass
-  at either is correct. A mismatch in code that uses `huge_constant` is
-  undecided (a finite substitute proves nothing about the idealized algorithm);
-  a mismatch in code that does not is incorrect.
-- The grader can rerun the check once with one custom value (positive, at most
-  10⁶). Batches never use a custom value.
+- The check then runs with the question's field `huge_constant` (default
+  `10`; a grader may type another, positive, at most 10⁶, for one submission).
+  A pass is correct. A mismatch in code that uses `huge_constant` is undecided
+  (a finite substitute proves nothing about the idealized algorithm); a
+  mismatch in code that does not is incorrect.
 - Rejection loops are slow in a one-sample-at-a-time interpreter. The old tool
   ran all 1,200 samples together in a "masked" batch interpreter (each sample
   keeps its own variables and control flow; NumPy underneath), with a 20-second

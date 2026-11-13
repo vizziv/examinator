@@ -70,9 +70,8 @@ def test_a_bad_case_from_the_cli_is_one_line(toy, tmp_path, capsys, monkeypatch)
 def test_fake_needs_a_workspace_made_by_synth(toy, tmp_path, capsys):
     root = synth.generate(toy, tmp_path / 'ws', synth.load_cases(toy))
     (root / synth.SCRIPT).unlink()
-    for cmd in ('run', 'status'):
-        assert cli.main([cmd, str(TOY), '-w', str(root), '--fake']) == 2
-        err = capsys.readouterr().err
-        assert "has no scripted model" in err and "not made by `synth`" in err and err.count("\n") == 1
-    assert cli.main(['status', str(TOY), '-w', str(tmp_path / 'nowhere'), '--fake']) == 2
+    assert cli.main(['run', str(TOY), '-w', str(root), '--fake']) == 2
+    err = capsys.readouterr().err
+    assert "has no scripted model" in err and "not made by `synth`" in err and err.count("\n") == 1
+    assert cli.main(['run', str(TOY), '-w', str(tmp_path / 'nowhere'), '--fake']) == 2
     assert "no pdfs/ folder" in capsys.readouterr().err

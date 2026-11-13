@@ -314,7 +314,6 @@ def fake_model(root: str | Path):
     (`root`'s store): the student on its first sheet, read the right way up, is
     answered for; shown any other way, its identity fields read as nothing."""
     from .model.fake import FakeModel
-    from .pdf.orient import Orient
     path = Path(root) / SCRIPT
     if not path.is_file():
         raise NoScript(f"{root} has no scripted model ({SCRIPT}): it was not made by `synth`, "
@@ -335,7 +334,7 @@ def fake_model(root: str | Path):
         if row is None or row[0] not in script[STACKS]:
             return False, {}
         sheets = (json.loads(row[2] or '{}').get('sheets') or [None])
-        k = script[STACKS][row[0]].get(f'{json.loads(row[1])[0]}@{Orient.from_json(sheets[0]).code}')
+        k = script[STACKS][row[0]].get(f'{json.loads(row[1])[0]}@{sheets[0] or 0}')
         return True, script.get(f'{STUDENT}{k}', {}) if k is not None else {}
 
     def reply(call):
@@ -420,7 +419,7 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
 
 
 def _stacks(exam: Exam, root: Path, cases: list[Case]) -> list[Path]:
-    from .pdf.orient import HALF, IDENTITY
+    from .pdf.orient import turn
     (root / 'incoming').mkdir(mode=0o700)
     renderer = Renderer(root / 'cache' / 'blanks', dpi=100)
     names = [name for name, _ in STACK_PEOPLE]
@@ -441,12 +440,12 @@ def _stacks(exam: Exam, root: Path, cases: list[Case]) -> list[Path]:
         return sheets[:i] + [(Image.new('RGB', PAGE, 'white'), None)] + sheets[i:]
 
     def turned(sheets, o, k):
-        return [(o.apply(im), p, o, k) for im, p in sheets]
+        return [(turn(im, o), p, o, k) for im, p in sheets]
 
-    one = (turned(student(0), IDENTITY, 0) + turned(without(student(1), 3), IDENTITY, 1)
-           + turned(stray(student(2), 2), IDENTITY, 2) + turned(student(3), IDENTITY, 3)
-           + turned(student(4), HALF, 4) + turned(student(5), IDENTITY, 5))
-    two = [x for k in (6, 7, 8) for x in turned(student(k), HALF, k)] + turned(student(9), HALF, 9)[:2]
+    one = (turned(student(0), 0, 0) + turned(without(student(1), 3), 0, 1)
+           + turned(stray(student(2), 2), 0, 2) + turned(student(3), 0, 3)
+           + turned(student(4), 2, 4) + turned(student(5), 0, 5))
+    two = [x for k in (6, 7, 8) for x in turned(student(k), 2, k)] + turned(student(9), 2, 9)[:2]
     script: dict[str, Any] = {STACKS: {}}
     for k in range(len(STACK_PEOPLE)):
         script[f'{STUDENT}{k}'] = script_for(exam, cases[k % len(cases)], STACK_READS[k])
@@ -460,14 +459,14 @@ def _stacks(exam: Exam, root: Path, cases: list[Case]) -> list[Path]:
         replies, whose = {}, {}
         for i, (_, page, o, k) in enumerate(sheets):
             # the model reads a sheet only when it is shown the right way up: undoing `o`
-            up = HALF if o == HALF else IDENTITY
-            replies[f'{i}@{up.code}|landmark'] = {
+            up = -o % 4
+            replies[f'{i}@{up}|landmark'] = {
                 lm.ask: json.dumps({'quote': "synthetic", 'value': landmark_text(lm, page) if page else None})
                 for lm in exam.landmarks}
-            if up != IDENTITY:      # shown as scanned, it reads as nothing
-                replies[f'{i}@00|landmark'] = {lm.ask: json.dumps({'quote': "", 'value': None})
-                                               for lm in exam.landmarks}
-            whose[f'{i}@{up.code}'] = k
+            if up:      # shown as scanned, it reads as nothing
+                replies[f'{i}@0|landmark'] = {lm.ask: json.dumps({'quote': "", 'value': None})
+                                              for lm in exam.landmarks}
+            whose[f'{i}@{up}'] = k
         script[sid] = replies
         script[STACKS][sid] = whose
         out.append(path)

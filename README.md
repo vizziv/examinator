@@ -62,7 +62,7 @@ large, between its neighbours.
 
 Clicking any small page shows it large in the same view. On a page that is
 not a first page, `A` / `D` look at its neighbours and `Shift+V` starts a
-submission there. The whole scan turns (or mirrors) with a button only; each
+submission there. The whole scan turns with a button only; each
 turn adds to what the levels above it give (scan, then submission, then page). The scan image itself opens from "full size" under the large page.
 
 A verified first page is your decision: it outranks the every-N guess and any
@@ -143,26 +143,3 @@ Without it, reviewing, editing, checking and deciding all still work.
 
 Design notes and history: [`agent_docs/`](agent_docs/README.md). Rules for
 agents working here, including the student data boundary: [`AGENTS.md`](AGENTS.md).
-
-## Comparing reading models
-
-`examinator compare` has several local models read the same answers and
-writes a side-by-side report. It never writes to the workspace's store.
-
-```sh
-uv run examinator compare path/to/my_exam -w WORKSPACE --limit 5 \
-  --model google/gemma-4-26b-a4b-qat \
-  --ocr PaddleOCR-VL-1.6@http://localhost:8242/v1 \
-  --ocr 'LightOnOCR@http://localhost:8243/v1::'
-```
-
-- `--model NAME[@URL]` runs the question's own reader as is with that model
-  (one line per field).
-- `--ocr NAME[@URL][::PROMPT]` is for a dedicated OCR model: each answer box is
-  sent alone with a short prompt (default `OCR:`; `::` with nothing after it
-  sends no prompt text) and no system message.
-- Models run one after another, so the times are comparable. Endpoints must be
-  loopback, as everywhere else.
-- The report (`report.html`, `results.json`) goes to
-  `WORKSPACE/exports/compare-TIME/`. For a real exam it contains student work:
-  leave it in the workspace.

@@ -102,7 +102,7 @@ exam.question('areas', title="Areas", pages=[2], fields=[...], read=..., check=.
 | `Exam(pages=)` | printed pages in one copy of the exam |
 | `print_area`, `cover_pages` | the print area (where the printed page sits in a scan: left, top, right, bottom, per-mille; default the whole sheet), and the sheets a scanning service adds before page 1. Exam data: the app can override them for all submissions, a scan file or one submission (a question page's print-area mode, the Exam data page) |
 | `crop_pad` | per-mille padding around every crop (default 12) |
-| `question(pages=)` | the printed pages holding the answer: what the reader sees. A grader can change them per submission (an extra-space page, with a note that reaches the prompts) |
+| `question(pages=)` | the printed pages holding the answer: what the reader sees. A grader can change them per submission (an extra-space page) |
 | `fields=` | the question's fields (§4) |
 | `read=` | the reader of the fields that have no reader of their own (§5). Without one, a person types them |
 | `check=` / `checks=` | one check (named `'check'`), or several by name: `checks={'answer': ..., 'work': ...}`. None: the question only holds fields (the exam's printing, which other questions read) |
@@ -227,14 +227,18 @@ def check(ctx):
   `fields` are judgements shown beside the field: an outcome
   (`'correct'`, `'incorrect'`, `'blank'`, `None`), optionally `expected=` and
   `note=`. Blocks are shown below.
+- `Raw(html)` is the escape hatch for a display the other blocks cannot make
+  (an SVG figure, say). It is shown in a sandboxed frame: no scripts run and
+  nothing is fetched. Whoever builds the markup must still escape any
+  student-written text in it (`html.escape`).
 - Raise `Undecided("a few words")` when nothing can be decided. Anything else
   a check raises, and a timeout, is undecided, never incorrect (the error is
   shown to graders): decide outcomes instead of crashing.
 - `Check(fn, Number(int, min=0, max=3), timeout=90)` sets the points and the
   time limit (default 60 s). `Bool(counts=False)` keeps a grade out of the
   total. `Check(None)` is decided by a person only.
-- `ctx.params` is `{key: value}` typed by a grader for one deliberate run
-  ("run with `huge_constant=10`"; `custom_value` in `exams/exam_03/weibullish.py`).
+- A setting a grader may change is a field with a default: `Field('huge_constant', default='10')`
+  reads as `'10'`, settled, until a grader types another value (`exams/exam_03`, question 2).
 - A question with two grades has two checks. Each reads what it needs
   (Exam 2's `answer` and `check` for "answer + work", Exam 3's two-function
   questions); nothing reads a check.
@@ -350,13 +354,12 @@ Workspaces always live **outside** the repository.
 ```sh
 uv run examinator selftest my_exam [WS]                       # fixtures end to end; "ok" or the mismatches
 uv run examinator synth my_exam /tmp/x/ws                     # synthetic workspace with a scripted model
-uv run examinator run my_exam -w /tmp/x/ws --fake             # read; checks follow (-s SUB, -q Q, --dry-run)
-uv run examinator status my_exam -w /tmp/x/ws --fake          # the grade grid
+uv run examinator run my_exam -w /tmp/x/ws --fake             # read; checks follow; prints the grid (-s SUB, -q Q, --dry-run)
 uv run examinator serve my_exam -w /tmp/x/ws --fake           # the app
 uv run examinator synth my_exam /tmp/x/st --stacks            # stacks of scans for intake
 ```
 
-**Reading `status`.** A cell is the grade (`✓`, `✗`, a number, `blank`), or
+**Reading the grid `run` prints.** A cell is the grade (`✓`, `✗`, a number, `blank`), or
 `-` when undecided. A grade that does not count yet carries its state; the
 total adds what counts, with `+?` while something does not. The states are
 MODEL.md's: `unverified` (normal after `run`: a value it read is not verified),

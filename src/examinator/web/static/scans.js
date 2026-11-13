@@ -220,7 +220,6 @@
   S.register('split-turn-page', {available: () => !done(), run: async () => turned(await edit('turn_page', {sheet: focus()}))});
   S.register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: async () => turned(await edit('turn', {k}))});
   S.register('split-turn-source', {run: async () => turned(await edit('turn_source'))});
-  S.register('split-mirror', {run: () => edit('flip_source')});
   S.register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {})});
   S.register('split-guess', {run: async () => {
     const r = await send('propose', {length: $('s-length').value});

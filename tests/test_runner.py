@@ -2,7 +2,7 @@
 Everything here is synthetic."""
 import pytest
 
-from examinator import Check, Exam, Field, Printed
+from examinator import Check, Exam, Field, Printed, Region
 from examinator.core import overrides
 from examinator.core.runner import Runner
 from examinator.core.store import Conflict
@@ -291,30 +291,42 @@ def test_a_decision_needs_a_value_that_fits(env):
 
 # --- batch ---
 
-def test_a_batch_plan_is_stale_once_its_items_would_change(tmp_path):
+def test_a_cancelled_batch_stops_queued_reads(tmp_path):
+    from examinator.core import batch
+    exam = Exam('r', pages=1)
+    exam.question('info', pages=[1], fields=[Field('c', Region(1, 0, 0, 500, 100),
+                                                    read=Printed("the cue", reads={'1': 'one'}))])
+    ws = workspace(tmp_path, exam, subs=('s1', 's2', 's3'))
+    holder = {}
+
+    def reply(call):
+        holder['run'].cancel()                      # stop pressed during the first read
+        return '{"value": "1"}'
+    runner = Runner(exam, ws, model=FakeModel(reply))
+    plan = batch.plan(exam, ws.store, batch.Selection(('s1', 's2', 's3'), ('info',)), model_available=True,
+                      regions=ws.fields)
+    run = holder['run'] = batch.BatchRun(runner, plan, parallel=1)
+    run.run()
+    assert run.state == 'cancelled' and run.done == 1 < run.total
+    assert [value(ws, s, 'info/c') is not None for s in ('s1', 's2', 's3')] == [True, False, False]
+    runner.close()
+    ws.close()
+
+
+def test_a_batch_reads_what_it_plans_and_never_what_a_person_set_meanwhile(tmp_path):
     from examinator.core import batch
     exam = Exam('r', pages=1)
     exam.question('info', pages=[1], fields=[Field('c', read=Printed("the cue", reads={'1': 'one'}))])
-    ws = workspace(tmp_path, exam, subs=('s1',))
+    ws = workspace(tmp_path, exam, subs=('s1', 's2'))
     runner = Runner(exam, ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
-    sel = batch.Selection(('s1',), ('info',))
-    plan = batch.plan(exam, ws.store, sel, model_available=True, regions=ws.fields)
-    assert [(i.question, i.action) for i in plan.items] == [('info', 'blocked')]
-    overrides.set(exam, ws.store, 'info/fields/c/region', [1, 0, 0, 500, 100], scope='submission:s1',
-                  author='ta')                                                  # no value changed
-    run = batch.BatchRun(runner, plan)
-    with pytest.raises(batch.StalePlan):
-        run.check()
-    with pytest.raises(batch.StalePlan):
-        run.run()
-    assert value(ws, 's1', 'info/c') is None
-    plan = batch.plan(exam, ws.store, sel, model_available=True, regions=ws.fields)
-    assert plan.count('run') == 1
-    run = batch.BatchRun(runner, plan)
-    run.check()                                     # checked just before: the run does not plan again
-    assert all(o.ok for o in run.run()) and value(ws, 's1', 'info/c').text == 'one'
-    run = batch.BatchRun(runner, plan)              # what it planned has happened: stale
-    with pytest.raises(batch.StalePlan):
-        run.run()
+    sel = batch.Selection(('s1', 's2'), ('info',))
+    plan = lambda: batch.plan(exam, ws.store, sel, model_available=True, regions=ws.fields)
+    assert [(i.question, i.action) for i in plan().items] == [('info', 'blocked')] * 2
+    overrides.set(exam, ws.store, 'info/fields/c/region', [1, 0, 0, 500, 100], author='ta')   # no value changed
+    planned = plan()
+    assert planned.count('run') == 2
+    runner.set('s2', 'info', 'c', "two", author='ta')            # after the plan, before the run
+    assert all(o.ok for o in batch.BatchRun(runner, planned).run())
+    assert value(ws, 's1', 'info/c').text == 'one' and value(ws, 's2', 'info/c').text == 'two'
     runner.close()
     ws.close()

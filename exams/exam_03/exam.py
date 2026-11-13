@@ -104,7 +104,8 @@ exam.question(
 
 exam.question(
     'q2', title="Feeling Weibullish", pages=[4, 5],
-    fields=[Field('2.1', region=band(4, 290, 930)), Field('2.2', region=band(5, 300, 930))],
+    fields=[Field('2.1', region=band(4, 290, 930)), Field('2.2', region=band(5, 300, 930)),
+            Field(huge_constants.NAME, default='10')],          # a grader may set another value
     read=readers.code({'2.1': ['weibull'], '2.2': ['weibullish']}, language=language.SCALAR,
                       notes=notes.KEEP_CONSTANTS, then=huge_constants.rewrite),
     checks={'check': Check(weibullish.check_21, timeout=100),

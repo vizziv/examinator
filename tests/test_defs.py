@@ -90,6 +90,10 @@ def test_who_reads_what():
     assert [(type(r).__name__, [f.label for f in fs]) for r, fs in q.groups()] == \
         [('Printed', ['side']), ('Answers', ['1', '2'])]
     assert define(read=None).groups() == []             # typed by a person only
+    q = define(fields=[ANSWER, Field('k', default='10')])  # a default: a setting, not read
+    assert [[f.label for f in fs] for _, fs in q.groups()] == [['1']] and q.reader_of('k') is None
+    with pytest.raises(ValueError, match="default"):
+        define(fields=[ANSWER, Field('k', default=10)])
 
 
 def test_checks_and_their_columns():

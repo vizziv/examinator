@@ -2,7 +2,7 @@
 import pytest
 
 from examinator.core import split
-from examinator.pdf.orient import ALL, HALF, IDENTITY, MIRROR, QUARTER, Orient
+from examinator.pdf.orient import turn
 
 L = 5        # one cover sheet + four printed pages
 ANCHOR = 1   # the first position with a landmark
@@ -182,20 +182,17 @@ def test_drop_restore_join_and_ids_survive():
 
 # --- orientation ---
 
-def test_orientation_compose_and_apply_all_eight():
+def test_orientation_quarter_turns():
     from PIL import Image
     im = Image.new('L', (3, 2))
     im.putdata(range(6))
     seen = set()
-    for a in ALL:
-        out = a.apply(im)
-        assert out.size == ((2, 3) if a.swaps else (3, 2))
+    for a in range(4):
+        out = turn(im, a)
+        assert out.size == ((2, 3) if a % 2 else (3, 2))
         seen.add(bytes(out.tobytes()) + bytes(out.size))
-        for b in ALL:
-            assert b.apply(a.apply(im)).tobytes() == a.then(b).apply(im).tobytes(), (a, b)
-    assert len(seen) == 8
-    assert QUARTER.then(QUARTER).then(QUARTER).then(QUARTER) == IDENTITY
-    assert HALF.then(HALF) == IDENTITY and MIRROR.then(MIRROR) == IDENTITY
-    assert Orient.from_json(Orient(3, True).to_json()) == Orient(3, True)
+        for b in range(4):
+            assert turn(turn(im, a), b).tobytes() == turn(im, a + b).tobytes(), (a, b)
+    assert len(seen) == 4
     # a quarter turn is clockwise: the top-left pixel goes to the top-right
-    assert QUARTER.apply(im).getpixel((1, 0)) == 0
+    assert turn(im, 1).getpixel((1, 0)) == 0

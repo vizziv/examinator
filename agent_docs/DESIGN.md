@@ -95,8 +95,7 @@ Design rules for this layer:
 
 A **reader** reads some fields of one submission: `reader.read(ctx, fields) ->
 {label: text}`. Its context gives the question's selected pages, crops of
-regions (with this submission's regions), the note a grader left about the
-pages, and the loopback model (`ctx.model(prompt, images=, text=, expect=,
+regions (with this submission's regions), and the loopback model (`ctx.model(prompt, images=, text=, expect=,
 step=)`; `step` tags the call). A reader may vouch for a value
 (`vouches(field, text)`), need a region (`needs_region`), offer facets, and
 script its own replies for a synthetic workspace (`script`).
@@ -112,8 +111,10 @@ A **check** is `fn(ctx) -> Result` (or a bare grade), wrapped as
 `Check(fn, points, timeout=, isolate=)`. `ctx.read(label)` reads its own
 question's field, `ctx.read(label, question=...)` another's; each read is
 recorded with the field's revision. A field not read, or with a review marker,
-raises `Undecided`. `ctx.params` is the one generic hook for "run this check
-once with a different setting"; the library gives it no meaning. Checks run in
+raises `Undecided`. A setting a grader may change (a constant the check uses)
+is a field with a default (`Field(label, default='10')`): it reads as the
+default, settled, until a person sets a value, and a change recomputes the
+check like any other (MODEL.md). Checks run in
 a warm worker process with a wall-clock limit (default 60 s; a worker's
 start-up is not counted).
 
@@ -174,8 +175,8 @@ Result(grade, fields={'1.1': 'correct', '1.2': Judgement('incorrect', expected='
 - Per-field judgements are shown beside the field: an outcome, optionally the
   expected answer and a short note. Blocks are shown below, plots first.
 - Blocks come from a small vocabulary (`std.blocks`): note, table, plot (from
-  data), code excerpt, collapsed details, and raw SVG or HTML. A block may be
-  marked grader-only.
+  data), code excerpt, collapsed details, and raw SVG or HTML (shown in a
+  sandboxed frame: no scripts, nothing fetched).
 - **Nothing computes from evidence.** The grade is the check's own.
 
 ## 7. Whether a grade counts
@@ -232,7 +233,7 @@ In code and prose a row is written as the store's methods take it,
 
 Bodies: a value `{'text', 'settled': None | 'reader' | 'person', 'by'}`; a
 result `{'grade', 'fields', 'blocks', 'reads': {'question/label': rev | None},
-'defn', 'code', 'params'?}`; a decision `{'grade', 'seen': {'question/label':
+'defn', 'code'}` (a field read at its default: revision `DEFAULT`, 0); a decision `{'grade', 'seen': {'question/label':
 rev | None}}`.
 
 - Every read on the normal path is a keyed lookup. The grid and the filter
@@ -253,12 +254,14 @@ the PDF's identity, the page and the resolution.
 ## 9. Running work
 
 - **From a question page:** read (the question's fields; not what a person
-  settled unless asked), run a check (with optional parameters).
-- **Batch:** reading only, for a selection of submissions and questions.
-  Always previewed first: what will be read, what is skipped as protected or
-  present, what is blocked (no model, no region). Refused if anything relevant
-  changed since the preview. Checks have no batch: they recompute by
-  themselves, and the batch refreshes each submission once its reads finish.
+  settled unless asked), run a check again (one that timed out, say).
+- **Batch:** reading only, for a selection of submissions and questions. The
+  Read page shows live, as the options change, what will be read, what is
+  skipped as protected or present, and what is blocked (no model, no region);
+  one button reads it, planned again at the start. A read never replaces what
+  a person settled unless asked, and a read that finds a value changed
+  meanwhile is discarded. Checks have no batch: they recompute by themselves,
+  and the batch refreshes each submission once its reads finish.
 - **Missing only** reads only fields with no value, runs only checks that are
   not current. **Include protected** reads again what a person settled.
 - **Cancellation** stops queued work and lets running tasks finish.
@@ -273,7 +276,7 @@ the PDF's identity, the page and the resolution.
   instructions, and that the model must not solve, grade or complete answers.
   The reader's prompt follows it.
 - Temperature 0. Defaults that worked: 4,096 output tokens, 120 s timeout,
-  reasoning off, with an explicit per-run "retry with reasoning" for one read.
+  reasoning off (reads never ask for it).
 - Retry HTTP 500 and 503 twice, after 10 s and 20 s. Fail immediately on
   anything else. A response that did not stop normally, or is empty, is a
   failure, not a value.
@@ -294,8 +297,7 @@ the PDF's identity, the page and the resolution.
   scan's, else the exam's, else the package's (`overrides.Layers`, behind
   `Workspace.layout`, `fields`, `region`, `selected_pages`). Which scopes a kind
   of value may be set at is one table (`overrides.SCOPES`): a region and pages
-  for the exam or a submission, a reader's note for a submission, the print
-  area and cover pages at all three; everything else for the exam only. The
+  for the exam or a submission, the print area and cover pages at all three; everything else for the exam only. The
   identity fields' regions are field regions like any (exam or submission). One validator (`overrides.validate`) serves every scope;
   every scope has revisions, history and conflicts alike; the app sets and
   clears them all through `/exam/set` and `/exam/clear` with a `scope`.
@@ -311,9 +313,8 @@ the PDF's identity, the page and the resolution.
   exam definition are in printed-page coordinates; the library applies the
   print area and adds padding. The question page's print-area mode draws it on
   every sheet, to drag and save for this submission, its scan, or all.
-- Each question's selected pages can be overridden per submission, with a note
-  (`<question>/note`, a submission's only), for answers that continue onto
-  extra-space pages. The note is passed to the model.
+- Each question's selected pages can be overridden per submission, for answers
+  that continue onto extra-space pages.
 - Render with PDFium at about 160 DPI. PDFium must not be used from several
   threads at once; confine it to a worker. Cache rendered pages, and cut crops
   from the cache.
@@ -385,7 +386,8 @@ Screens for the first version:
   collapsed; per-field history. The main actions are combinations: **Verify**
   (save edits and verify everything here), **save** (a person who sets a value
   verifies it), **Verify, next** (V).
-- **Read:** scope, options, preview, progress, stop.
+- **Read:** scope, options, what they would read (live counts, the breakdown
+  collapsed), one read button, progress, stop.
 - **Settings:** per-browser keys and appearance. Exam data (the print area and
   cover pages for all, too) is on the Exam data page, which also lists what a
   scan or a submission has of its own, each revertible.
@@ -443,7 +445,7 @@ Do not build these in M1–M3. Do not block them either.
 | Live-editable logic (small rules) | Grade rules are functions of outcomes. A restricted interpreter (the pseudocode interpreter with a rules profile, or an embedded hermetic language) could supply such a function from stored text. |
 | Filter and search facets (group by normalized answer; search comments in code) | **Built** (`core/focus.py`). A facet is a small function of one submission's view (values, statuses), computed on read in one query and cached by the store's version. |
 | Listing which grades changed after a check changed | Not built. Old results stay in history, so the app can compare. |
-| Static student view | Evidence blocks carry an audience mark. The view is a second renderer over stored rows. |
+| Static student view | A second renderer over stored rows; which blocks it shows is its own decision (no mark on blocks yet). |
 | Several exams in one process | No module-level state; exam packages loaded under distinct names. |
 | "Review me later" flag (a TA marks an answer for the professor to look over) | Not built. The glyph `!` is reserved for it in the grid and on the question page; `?` means only "a person must decide". The flag would be a small manual row per submission and question, with author and an optional note, and a built-in facet so the filter page can gather flagged answers. It must not affect whether a grade counts. |
 | A pluggable interpreter back end (vectorized, masked execution) | Not built; the closure interpreter is fast enough so far. The route: keep one front end (parse, whitelist, validate), expose the validated tree, and route operators through an overridable table; a masked executor is then a second back end. |
@@ -482,14 +484,13 @@ submission into `pdfs/`; everything downstream is unchanged.
   move a page, W/S back/forward). A confirmed start is never moved by a guess;
   guesses after it are recomputed from it (every N kept sheets, adjusted by
   stored readings). A length mismatch after confirmation is a flag, not a block.
-- **Orientation**: one of the 8 square symmetries (`pdf/orient.py`: mirror,
-  then quarter turns clockwise; `then` composes, `apply` transposes exactly).
-  The plan holds three levels, each added to the one above: the source's
-  (`orient`), a submission's own (entries' `orient`) and a sheet's own
-  (`sheet_orient`); `intake.sheet_orient` is the one place that composes them.
-  Every turn is a quarter turn clockwise per press (four return to the start):
-  R the sheet shown, Shift+R its submission, the whole scan by button only
-  (mirroring too). The page shows sheets turned in the web layer
+- **Orientation**: quarter turns clockwise, 0-3 (`pdf/orient.py`: `turn`
+  transposes exactly). The plan holds three levels, each added to the one
+  above (mod 4): the source's (`orient`), a submission's own (entries'
+  `orient`) and a sheet's own (`sheet_orient`); `intake.sheet_orient` is the
+  one place that adds them. Every turn is a quarter turn clockwise per press
+  (four return to the start): R the sheet shown, Shift+R its submission, the
+  whole scan by button only. The page shows sheets turned in the web layer
   (`/sheet/...?o=`), landmark crops are cut from the turned sheet, and
   accepting writes pages upright (so name-box crops and question pages are).
 - **Accepting** writes changed submissions (pages or orientation) with

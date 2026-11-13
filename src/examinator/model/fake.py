@@ -20,7 +20,6 @@ class Call:
     text: str | None
     images: tuple[Any, ...]
     expect: str
-    reasoning: bool
 
 
 class FakeModel:
@@ -34,10 +33,8 @@ class FakeModel:
         self.calls: list[Call] = []
 
     def complete(self, prompt: str, *, images: Sequence[Any] = (), text: str | None = None,
-                 expect: str = 'text', reasoning: bool = False,
-                 tag: tuple[str, str, str] | None = None) -> str:
-        call = Call(tuple(tag) if tag is not None else None, prompt, text, tuple(images),
-                    expect, reasoning)
+                 expect: str = 'text', tag: tuple[str, str, str] | None = None) -> str:
+        call = Call(tuple(tag) if tag is not None else None, prompt, text, tuple(images), expect)
         self.calls.append(call)
         answer = self._answer(call)
         if answer is None:

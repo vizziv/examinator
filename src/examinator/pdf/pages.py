@@ -1,7 +1,7 @@
 """Writing a submission's PDF from sheets of a source PDF.
 
 An upright sheet is copied as it is (PDFium imports the page; its embedded scan
-image is not touched). A sheet that must be turned or mirrored is baked: its
+image is not touched). A sheet that must be turned is baked: its
 image (the renderer's `scan_image`, at native resolution, or a rasterization
 when the page is not a plain scan) is transposed and written as a new page
 holding exactly one full-page JPEG (quality 95), the page shaped like the image.
@@ -19,7 +19,7 @@ from typing import Sequence
 from PIL import Image
 
 from . import render
-from .orient import Orient
+from .orient import turn
 
 BAKE_DPI = 200          # rasterizing a page that is not a plain scan
 BAKE_QUALITY = 95
@@ -36,8 +36,8 @@ def _image(page) -> Image.Image:
     return got
 
 
-def write(src: str | Path, sheets: Sequence[tuple[int, Orient]], out: str | Path) -> None:
-    """Write `out` from `sheets` of `src`: (0-based page index, orientation) in order.
+def write(src: str | Path, sheets: Sequence[tuple[int, int]], out: str | Path) -> None:
+    """Write `out` from `sheets` of `src`: (0-based page index, quarter turns clockwise) in order.
     Written to a temporary file first and moved into place."""
     import pypdfium2
     out = Path(out)
@@ -46,20 +46,20 @@ def write(src: str | Path, sheets: Sequence[tuple[int, Orient]], out: str | Path
         doc = pypdfium2.PdfDocument(str(src))
         dst = pypdfium2.PdfDocument.new()
         try:
-            for pos, (index, orient) in enumerate(sheets):
+            for pos, (index, turns) in enumerate(sheets):
                 if not 0 <= index < len(doc):
                     raise IndexError(f"page {index + 1} of {len(doc)}")
-                if orient.identity:
+                if not turns % 4:
                     dst.import_pages(doc, [index], index=pos)
                     continue
                 page = doc[index]
                 w, h = page.get_size()
-                image = orient.apply(_image(page))
+                image = turn(_image(page), turns)
                 if image.mode not in ('RGB', 'L'):
                     image = image.convert('RGB')
                 # The page is as wide as the turned page and takes the image's shape (a scan
                 # may sit on a page of another size): the height that keeps the pixels square.
-                w = h if orient.swaps else w
+                w = h if turns % 2 else w
                 h = w * image.height / image.width
                 buf = io.BytesIO()
                 image.save(buf, 'JPEG', quality=BAKE_QUALITY)

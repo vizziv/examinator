@@ -76,11 +76,10 @@ class Workspace:
         """A source scan's sheets as they come (no cover pages), with its print area."""
         return Layout(0, tuple(self.layers(source=source).value(PRINT_AREA)))
 
-    def selected_pages(self, submission: str, question: Question) -> tuple[tuple[int, ...], str]:
-        """The question's printed pages for this submission, and the grader's note."""
-        lay = self.layers(submission)
-        pages = lay.own(overrides.join(question.id, 'pages'))
-        return (tuple(pages) if pages else question.pages), lay.own(overrides.join(question.id, 'note')) or ""
+    def selected_pages(self, submission: str, question: Question) -> tuple[int, ...]:
+        """The question's printed pages for this submission."""
+        pages = self.layers(submission).own(overrides.join(question.id, 'pages'))
+        return tuple(pages) if pages else question.pages
 
     def fields(self, submission: str, question: Question) -> tuple[Field, ...]:
         """The question's fields with this submission's regions."""

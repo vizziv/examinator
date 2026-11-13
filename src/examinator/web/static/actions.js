@@ -28,7 +28,7 @@ const Actions = (() => {
     ['grade-number', "grade: number box"],
     ['edit', "edit: first field"], ['save', "save"],
     ['grid', "grid"], ['regions', "regions on/off"], ['print-area', "print area on/off"],
-    ['search', "search"], ['leave-field', "leave field"], ['run-preview', "runs: preview"],
+    ['search', "search"], ['leave-field', "leave field"],
     ['cell-left', "grid: cell left", 'grid'], ['cell-right', "grid: cell right", 'grid'],
     ['cell-up', "grid: cell up", 'grid'], ['cell-down', "grid: cell down", 'grid'],
     ['cell-open', "grid: open cell", 'grid'],
@@ -39,7 +39,7 @@ const Actions = (() => {
     ['split-cut', "split: new submission here", 'split'],
     ['split-turn-page', "split: turn page 90°", 'split'], ['split-turn', "split: turn submission 90°", 'split'],
     ['split-turn-source', "split: turn whole scan 90°", 'split'],
-    ['split-mirror', "split: mirror whole scan", 'split'], ['split-undo', "split: undo", 'split'],
+    ['split-undo', "split: undo", 'split'],
     ['split-guess', "split: guess again", 'split'], ['split-read', "split: read pages", 'split'],
     ['split-accept', "split: accept", 'split'],
     // Names (the scans page's other tab): submissions left and right, proposals up and down.

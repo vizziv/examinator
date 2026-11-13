@@ -110,7 +110,7 @@ def test_check_turn_and_accept(site):
     plan, r = check_and_accept(client, token, src)
     assert plan['checked'] and plan['failed'] == 0 and [e['start'] for e in plan['entries']] == [0, 4, 7, 12, 16, 20]
     assert plan['readings']['4'] == 'p.1'
-    assert plan['sheet_o'][17] == '20' and plan['entries'][4]['own']
+    assert plan['sheet_o'][17] == 2 and plan['entries'][4]['own']
     assert r.status_code == 200 and len(r.json()['report']['new']) == 6
     assert len(list(ws.pdfs.glob('*.pdf'))) == 6
     assert client.get('/').status_code == 200 and 's0005' in client.get('/').text
@@ -138,12 +138,12 @@ def test_naming_and_a_forced_accept(site):
 def test_sheet_images(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[1]).json()['id']
-    r = client.get(f'/sheet/{src}/0.jpg?o=20&w=140')
+    r = client.get(f'/sheet/{src}/0.jpg?o=2&w=140')
     assert r.status_code == 200 and r.headers['content-type'] == 'image/jpeg'
     from io import BytesIO
     from PIL import Image
     assert Image.open(BytesIO(r.content)).width == 140
-    for bad in ('/sheet/{s}/99.jpg', '/sheet/{s}/0.jpg?o=40', '/sheet/{s}/0.jpg?w=17', '/sheet/nosuch/0.jpg'):
+    for bad in ('/sheet/{s}/99.jpg', '/sheet/{s}/0.jpg?o=4', '/sheet/{s}/0.jpg?o=20', '/sheet/{s}/0.jpg?w=17', '/sheet/nosuch/0.jpg'):
         assert client.get(bad.format(s=src)).status_code == 404
 
 
@@ -307,7 +307,7 @@ def test_the_group_is_not_graded_in_the_app(site):
     assert '@identity' not in grid
     assert '@identity' not in client.get('/runs').text
     assert all(q['id'] != '@identity' for q in client.get('/focus/values').json()['questions'])
-    assert post(client, token, '/runs/preview', {'questions': ['@identity']}).status_code == 400
+    assert post(client, token, '/runs/plan', {'questions': ['@identity']}).status_code == 400
     first = next(iter(ws.exam.grading))
     assert 'data-action="prev-question"' not in client.get(f'/s/s0001/{first}').text
 

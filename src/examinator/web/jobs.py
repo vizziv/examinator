@@ -7,7 +7,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
-from ..core.batch import BatchRun, StalePlan
+from ..core.batch import BatchRun
 
 KEEP = 300   # finished jobs remembered
 
@@ -99,8 +99,6 @@ class Batch:
     def _work(self) -> None:
         try:
             self.run.run()
-        except StalePlan:
-            self.error = 'stale'
         except Exception as e:
             self.error = type(e).__name__
 
@@ -111,8 +109,7 @@ class Batch:
     def info(self) -> dict:
         run = self.run
         outcomes = list(run.outcomes)
-        state = 'running' if self.active else 'stale' if self.error == 'stale' else \
-            'failed' if self.error else run.state
+        state = 'running' if self.active else 'failed' if self.error else run.state
         failures = [o for o in outcomes if not o.ok]
         return {'state': state, 'done': run.done, 'total': run.total, 'current': run.current,
                 'error': self.error if state == 'failed' else '',

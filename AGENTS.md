@@ -73,5 +73,4 @@ uv run examinator intake exams/toy_exam -w WS --fake --roster R.csv A.pdf   # ad
 uv run examinator intake exams/toy_exam -w WS --fake --names                # read name/ID boxes, list proposals
 uv run examinator run exams/toy_exam --workspace WS --fake     # read, then check, from the CLI
 uv run examinator serve exams/toy_exam --workspace WS --fake   # the app
-uv run examinator compare exams/toy_exam --workspace WS --fake # compare reading models (report only)
 ```

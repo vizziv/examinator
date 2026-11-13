@@ -93,8 +93,8 @@ class Pool:
     def call(self, question: str, check: str, payload: dict, timeout: float, reads: dict) -> dict:
         """Run one check in a worker and return its stored form (`result.settle`).
 
-        `payload` holds the context: submission, values ({key: [rev, text]}),
-        params, and the exam's applied `overrides`. What the check read is
+        `payload` holds the context: submission, values ({key: [rev, text]})
+        and the exam's applied `overrides`. What the check read is
         added to `reads`, whatever the outcome. Raises `CheckTimeout`,
         `CheckCrash` or `Undecided`.
         """
@@ -138,7 +138,7 @@ class Pool:
 
 def _worker(exam_path: str) -> None:
     from .context import CheckContext
-    from .defs import key, load_exam
+    from .defs import load_exam
     from .overrides import apply
     from .result import Undecided, settle
 
@@ -162,9 +162,7 @@ def _worker(exam_path: str) -> None:
             c = q.check(req['check'])
             ctx = CheckContext(submission=req['submission'], question=q, check=c.name,
                                values={k: tuple(v) for k, v in (req.get('values') or {}).items()},
-                               params=req.get('params') or {},
-                               fields=frozenset(key(x.id, f.label) for x in exam.questions.values()
-                                                for f in x.fields))
+                               fields=exam.fields())
             reply = {'body': settle(c.points, c.fn(ctx))}
             json.dumps(reply)
         except Undecided as e:

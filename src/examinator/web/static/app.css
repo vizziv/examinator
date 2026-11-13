@@ -310,7 +310,6 @@ details.others > .fields { margin-top: 4px; }
 .fmenu > summary { list-style: none; padding: 0 4px; border-radius: 4px; line-height: 16px; }
 .fmenu > summary::-webkit-details-marker { display: none; }
 .fmenu[open] > summary { margin: 0; background: var(--accent-soft); }
-#run .fmenu-items { right: auto; left: 0; }
 .fmenu-items { position: absolute; right: 0; top: 100%; z-index: 5; display: flex; flex-direction: column; gap: 3px; padding: 5px;
   white-space: nowrap; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: var(--shadow); }
 #question.no-scan { grid-template-columns: minmax(0, 1fr); }
@@ -324,8 +323,6 @@ form.draft.dirty .bar button[data-action=save] { border-color: var(--warn); colo
 .ftag { font-family: system-ui, sans-serif; font-size: 10.5px; }   /* a field read from the printing */
 .evidence.stale > :not(.tag) { opacity: .55; }
 details.key .scope { margin: 0 0 3px; font-size: 12px; }
-.chips { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 12px; }
-.chips a code { font-size: 12px; }
 
 /* evidence blocks */
 .plots { display: flex; flex-wrap: wrap; gap: 6px; }

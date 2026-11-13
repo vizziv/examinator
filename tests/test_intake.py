@@ -14,7 +14,6 @@ from examinator.core.store import Conflict, Made
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
 from examinator.pdf import pages as pdf_pages, render
-from examinator.pdf.orient import HALF, QUARTER, Orient
 from examinator.pdf.layout import Layout
 from examinator.pdf.render import Renderer
 
@@ -92,7 +91,7 @@ def test_orientation_source_and_submission(stacked):
     assert all('start' in d for d in split.doubts(art.body, two.pages))   # upside down: nothing reads
     for _ in range(2):
         art = intake.edit(ws, two.id, 'turn_source', expect_rev=art.rev, author='t')
-    assert Orient.from_json(art.body['orient']) == HALF and art.body['readings'] == {}
+    assert art.body['orient'] == 2 and art.body['readings'] == {}
     art = intake.reguess(ws, two.id, model=model)
     assert starts(art) == [0, 4, 8, 12]
     assert split.doubts(art.body, two.pages) == [[], [], [], ['short']]
@@ -100,16 +99,16 @@ def test_orientation_source_and_submission(stacked):
     one, _ = intake.add_source(ws, paths[0])
     art = intake.reguess(ws, one.id, model=model)
     art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')   # one exam upside down
-    assert intake.sheet_orient(art.body, 17) == QUARTER
+    assert intake.sheet_orient(art.body, 17) == 1
     art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')   # a quarter turn a press
-    assert intake.sheet_orient(art.body, 17) == HALF and intake.sheet_orient(art.body, 21) == Orient()
+    assert intake.sheet_orient(art.body, 17) == 2 and intake.sheet_orient(art.body, 21) == 0
     art = intake.reguess(ws, one.id, model=model)
     assert split.doubts(art.body, one.pages)[4] == []
     # the submission's own turn adds to the source's
     art = intake.edit(ws, one.id, 'turn_source', expect_rev=art.rev, author='t')
-    assert intake.sheet_orient(art.body, 17) == Orient(3) and intake.sheet_orient(art.body, 21) == QUARTER
+    assert intake.sheet_orient(art.body, 17) == 3 and intake.sheet_orient(art.body, 21) == 1
     art = intake.edit(ws, one.id, 'upright', k=4, expect_rev=art.rev, author='t')
-    assert intake.sheet_orient(art.body, 17) == QUARTER
+    assert intake.sheet_orient(art.body, 17) == 1
 
 
 def test_orientation_resolves_source_then_submission_then_sheet(stacked):
@@ -118,16 +117,14 @@ def test_orientation_resolves_source_then_submission_then_sheet(stacked):
     step = lambda op, **kw: intake.edit(ws, one.id, op, expect_rev=intake.plan(ws, one.id).rev, author='t', **kw)
     at = lambda i: intake.sheet_orient(intake.plan(ws, one.id).body, i)
     step('turn_page', sheet=9)                      # one sheet: only it
-    assert at(9) == QUARTER and at(8) == at(10) == Orient()
+    assert at(9) == 1 and at(8) == at(10) == 0
     step('turn', k=2)                               # its submission (sheets 8..11): adds to the sheet's
-    assert at(9) == HALF and at(8) == at(11) == QUARTER and at(12) == Orient()
+    assert at(9) == 2 and at(8) == at(11) == 1 and at(12) == 0
     step('turn_source')                             # the whole scan: adds to everything
-    assert at(9) == Orient(3) and at(8) == HALF and at(0) == at(12) == QUARTER
+    assert at(9) == 3 and at(8) == 2 and at(0) == at(12) == 1
     for _ in range(3):                              # four presses on a sheet come back to the start
         step('turn_page', sheet=9)
-    assert at(9) == HALF and 'sheet_orient' not in intake.plan(ws, one.id).body
-    step('flip_source')
-    assert at(0) == Orient(1).then(Orient(0, True)) and at(8) == Orient(1).then(Orient(0, True)).then(QUARTER)
+    assert at(9) == 2 and 'sheet_orient' not in intake.plan(ws, one.id).body
     # a turned sheet's reading is stale; others are kept
     art = intake.plan(ws, one.id)
     ws.store.write(one.id, '', intake.PLAN, {**art.body, 'readings': {'3': 2, '5': 1}}, origin='auto',
@@ -142,7 +139,7 @@ def test_orientation_resolves_source_then_submission_then_sheet(stacked):
     # a fresh guess keeps the sheets' own turns
     step('turn_page', sheet=5)
     intake.reguess(ws, one.id, fresh=True)
-    assert at(5) == at(0).then(QUARTER)
+    assert at(5) == (at(0) + 1) % 4
 
 
 def test_a_sheet_that_changes_submission_keeps_how_it_looks(stacked):
@@ -155,17 +152,17 @@ def test_a_sheet_that_changes_submission_keeps_how_it_looks(stacked):
     step('turn', k=2)
     step('turn_page', sheet=13)                     # and one sheet of submission 3
     before = looks()
-    assert before[8] == before[11] == HALF and before[12] == Orient() and before[13] == QUARTER
+    assert before[8] == before[11] == 2 and before[12] == 0 and before[13] == 1
     step('move', k=3, delta=-1)                     # sheet 11 now starts submission 3
     assert starts(intake.plan(ws, one.id))[3] == 11 and looks() == before
     step('move', k=3, delta=1)                      # and back: no sheet needs a turn of its own
-    assert looks() == before and body()['sheet_orient'] == {'13': QUARTER.to_json()}
+    assert looks() == before and body()['sheet_orient'] == {'13': 1}
     step('cut', sheet=10)                           # a new submission inside the turned one
     assert looks() == before
     step('join', k=1)                               # submissions 1 and 2 become one
     assert looks() == before
     step('turn', k=1)                               # turning a submission still turns all of it
-    assert all(intake.sheet_orient(body(), i) == before[i].then(QUARTER) for i in range(4, 10))
+    assert all(intake.sheet_orient(body(), i) == (before[i] + 1) % 4 for i in range(4, 10))
 
 
 def test_a_turned_page_is_written_upright(stacked):
@@ -179,7 +176,7 @@ def test_a_turned_page_is_written_upright(stacked):
     intake.edit(ws, one.id, 'turn_page', sheet=5, expect_rev=intake.plan(ws, one.id).rev, author='t')
     assert intake.state(ws, one.id) == ['made', 'changed', 'made', 'made', 'made', 'made']
     assert intake.accept(ws, one.id)['rewritten'] == [sid]
-    assert ws.store.made()[sid].orient['sheets'][1] == QUARTER.to_json()
+    assert ws.store.made()[sid].orient['sheets'][1] == 1
     doc = pdfium.PdfDocument(str(ws.pdfs / f'{sid}.pdf'))
     after = [tuple(round(v) for v in page.get_size()) for page in doc]
     doc.close()
@@ -276,7 +273,7 @@ def test_writing_a_pdf_that_fails_leaves_no_temporary_file(tmp_path, monkeypatch
         raise OSError("disk full")
     monkeypatch.setattr(pdfium.PdfDocument, 'save', broken)
     with pytest.raises(OSError):
-        pdf_pages.write(pdf, [(0, QUARTER)], tmp_path / 'out.pdf')
+        pdf_pages.write(pdf, [(0, 1)], tmp_path / 'out.pdf')
     assert sorted(p.name for p in tmp_path.iterdir()) == ['one.pdf']
 
 
@@ -411,7 +408,7 @@ def test_a_plan_edit_during_accept_leaves_pdfs_alone(stacked, monkeypatch):
 
     def write_then_edit(*a):
         real(*a)
-        intake.edit(ws, one.id, 'flip', k=0, expect_rev=intake.plan(ws, one.id).rev, author='u')
+        intake.edit(ws, one.id, 'turn', k=0, expect_rev=intake.plan(ws, one.id).rev, author='u')
     monkeypatch.setattr(intake.pdf_pages, 'write', write_then_edit)
     with pytest.raises(Conflict):
         intake.accept(ws, one.id)
@@ -429,14 +426,6 @@ def test_a_page_selection_does_not_hold_a_submission(stacked):
     intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
     assert intake.accept(ws, one.id)['rewritten'] == ['s0003']        # not Busy: settings are not work
 
-
-def test_orientation_codes():
-    for o in (Orient(), HALF, QUARTER, Orient(3, True)):
-        assert Orient.from_code(o.code) == o
-    assert HALF.code == '20' and Orient(1, True).code == '11'
-    for bad in ('40', '0', '002', '0x', None):
-        with pytest.raises(ValueError):
-            Orient.from_code(bad)
 
 
 def test_undo_steps_back_one_edit_at_a_time(stacked):
