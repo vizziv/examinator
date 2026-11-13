@@ -30,8 +30,11 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
     and which run is which written submission is derived (`split.link`). A
     mark is a guess or a person's, and guessing touches only guesses. A
     submission is its kept sheets. An edit names a submission by its first
-    sheet. (In progress: a verified submission is its sheets; a written file
-    is never changed and the store names it; Accept asks about picks too.)
+    sheet. A verified submission is its sheets (V says the whole run;
+    `verified` means a person looked at it, `said` that a person placed a
+    mark). A written file is never changed: Accept writes fresh files in
+    `made/` and one commit names them. Accept speaks for a person and asks
+    about everything a person said (grades, picks, own boxes).
   - *The interface:* a POST is a change to a row (names the revision drawn),
     a run in a slot (one at a time), or a query; a test built from the route
     table covers every one. `Changes.send` is the only way a page sends a
@@ -126,6 +129,26 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
   read" but counts to N plus one refresh per submission.
 
 ## Future
+
+- **Simple exams made in the app** (the owner's direction, 2026-11-13; not
+  designed in detail, nothing built). No self-editing Python: a package is
+  one way to produce a definition and the only home of custom checks; the
+  workspace holds edits as data; the app can render changes as Python, one
+  way. Three steps, smallest first:
+  1. *Versions as a list on the exam and a level at which any value can be
+     set* (alongside all / one scan / one submission). A makeup exam printed
+     after grading starts is a new version with its own keys and, if needed,
+     regions. Would replace answer keys that differ by a printed value. Open:
+     where a submission's version comes from (read once per copy, typed, or
+     from its scan). To be written up as a short design for the owner first.
+  2. *Structure editable in the app* (add a question, a field, pick a check
+     kind): the definition becomes something the workspace owns. Hard part:
+     reconciling with a package whose code changes afterwards.
+  3. *An exam with no package*: upload a blank PDF, draw the questions, set
+     the keys.
+  If a field's set of possible values comes back, it is a plain list on the
+  field (no translation, no per-question override), driving a dropdown when
+  typing, the wording the model sees, and which keys are expected.
 
 - **Non-rectangular regions:** click points for a polygon around the actual
   answer, so the model sees the answer and not the surrounding work. Pairs
