@@ -227,18 +227,24 @@ def check(ctx):
   `fields` are judgements shown beside the field: an outcome
   (`'correct'`, `'incorrect'`, `'blank'`, `None`), optionally `expected=` and
   `note=`. Blocks are shown below: `Note`, `Table`, `Code`, `Details`
-  (collapsed) and `Image`.
+  (collapsed) and `Image`, or the plain dicts they stand for (`std.blocks`).
+  They are checked when the check returns: a block that does not fit (a
+  table cell that is not text, a number, a boolean or None; an unknown key)
+  is a check error, shown as undecided with the reason.
 - `Image(data, media_type='image/png', alt=, title=)` shows an image file's
-  bytes (PNG, JPEG, GIF, WebP or SVG, at most 2 MB) with an `<img>`; images
-  go first, in a row. Draw on a light background: in dark mode images are
-  inverted with the scans. A figure from matplotlib (render with the Agg
-  canvas, no pyplot; no metadata, so a recompute gives the same bytes):
+  bytes (PNG, JPEG, GIF, WebP or SVG, at most 2 MB; at most 8 MB of evidence
+  per result) with an `<img>`; top-level images go first, in a row. Draw on a
+  light background: in dark mode images are inverted with the scans. Make a
+  figure a function of its arguments, so a recompute gives the same bytes and
+  changes nothing: matplotlib with the Agg canvas, no pyplot, no metadata, and
+  a fixed style (`plots` in the stochastic kit does all this):
 
   ```python
-  fig = matplotlib.figure.Figure(figsize=(4.5, 3), dpi=110)
-  fig.add_subplot().plot(xs, ys)
-  out = io.BytesIO()
-  fig.savefig(out, format='png', metadata={'Software': None}, bbox_inches='tight')
+  with matplotlib.style.context('default'):
+      fig = matplotlib.figure.Figure(figsize=(4.5, 3), dpi=110)
+      fig.add_subplot().plot(xs, ys)
+      out = io.BytesIO()
+      fig.savefig(out, format='png', metadata={'Software': None}, bbox_inches='tight')
   return Result(grade, blocks=[Image(out.getvalue(), title="f(x)")])
   ```
 - Raise `Undecided("a few words")` when nothing can be decided. Anything else
@@ -353,8 +359,12 @@ In fixtures, a pseudocode answer is the source as one string; `None` is blank.
 
 **`examinator_kits.stochastic`** (optional) is for questions that ask for a
 sampler: random builtins (`primitives`), goodness-of-fit tests with plots
-(`fit`), the figures themselves (`plots.cdf`, `plots.hist`, `plots.scatter`,
-`plots.cdfs`: samples against a target, as PNG `Image` blocks), and `checks.check_source(source, language, label, judge)`, which
+(`fit`; a `Fit`'s `plot` is drawn only when shown, so pass a function:
+`functools.partial(plots.scatter, x, y, title=...)`), the figures themselves
+(`plots.cdf`, `plots.hist`, `plots.scatter`, `plots.cdfs`: samples against a
+target, as PNG `Image` blocks; the same arguments give the same bytes; text is
+literal unless `math=True`; a figure that cannot be drawn is a warning
+`Note`), and `checks.check_source(source, language, label, judge)`, which
 applies the run-time policy and returns a `Result` from one `checks.Part`.
 Examples: `exams/exam_02/normal.py` (short), `exams/exam_03/weibullish.py`.
 

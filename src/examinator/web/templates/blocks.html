@@ -1,3 +1,4 @@
+{# Stored evidence blocks, as `result.settle` shaped them (std/blocks.py). #}
 {% macro render(blocks, base) %}
 {% for b in blocks %}
 {% if b.type == 'note' %}
@@ -6,12 +7,12 @@
 <table class="ev"><thead><tr>{% for c in b.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
 <tbody>{% for r in b.rows %}<tr>{% for c in r %}<td>{{ '' if c is none else c }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
 {% elif b.type == 'code' %}
-<pre class="code">{% for n, line, hl in b.lines %}<span class="ln{% if hl %} hl{% endif %}" data-n="{{ n }}">{{ line }}</span>
+<pre class="code">{% for line in b.text.split('\n') %}<span class="ln{% if loop.index in b.highlight %} hl{% endif %}" data-n="{{ loop.index }}">{{ line }}</span>
 {% endfor %}</pre>
 {% elif b.type == 'details' %}
 <details{% if b.summary == 'Key' %} class="ev-key"{% endif %}><summary>{{ b.summary }}</summary>{{ render(b.blocks, base) }}</details>
 {% elif b.type == 'image' %}
-<img class="figure" src="{{ base }}/{{ b.path }}?v={{ b.v }}" alt="{{ b.alt }}"{% if b.title %} title="{{ b.title }}"{% endif %} loading="lazy">
+<img class="figure" src="{{ base }}/{{ b.digest }}" alt="{{ b.alt }}"{% if b.title %} title="{{ b.title }}"{% endif %} loading="lazy">
 {% endif %}
 {% endfor %}
 {% endmacro %}

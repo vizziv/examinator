@@ -565,8 +565,7 @@ def test_workflow_rules(exam, pkg, env):
     # A decision survives a batch run.
     runner.decide(S, 'q9', 'check', False, author='ta')
     runner.decide(S, 'q2', 'shiny', False, author='ta')
-    plan = batch.plan(exam, ws.store, batch.Selection((S,), ('q9', 'q2')), model_available=True,
-                      regions=ws.fields)
+    plan = batch.plan(ws, batch.Selection((S,), ('q9', 'q2')), model_available=True)
     batch.BatchRun(runner, plan).run()
     assert (st('q9').state, st('q9').value, st('q9').author) == ('decided', False, 'ta')
     assert (st('q2', 'shiny').state, st('q2', 'shiny').value) == ('decided', False)

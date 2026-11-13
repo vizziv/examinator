@@ -131,7 +131,7 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
         subs = tuple(args.submission or [s.id for s in ws.store.submissions()])
         sel = batch.Selection(subs, tuple(args.question or exam.grading), missing_only=args.missing_only,
                               include_protected=args.include_protected)
-        plan = batch.plan(exam, ws.store, sel, model_available=model is not None, regions=ws.fields, missing=ws.missing)
+        plan = batch.plan(ws, sel, model_available=model is not None)
         for action in batch.ACTIONS:
             print(f"{action}: {plan.count(action)}")
         if args.dry_run:

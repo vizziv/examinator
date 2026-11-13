@@ -9,6 +9,7 @@
 <span class="flabel"{% if f.ask %} title="printed: {{ f.ask }}"{% endif %}>{% if f.own %}{{ f.label }}{% else %}<a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ f.qid|urlencode }}" title="{{ exam.questions[f.qid].title }}">{{ f.title }}</a>{% endif %}{% if f.printed %} <span class="ftag">printed</span>{% endif %}</span>
 <span class="fstate" data-live id="fs-{{ f.n }}">
 {% if not f.read and f.default is not none %}<span class="tag" title="no value set: the default counts">default</span>
+{% elif not f.read and f.blocked %}<span class="tag" title="its reader cannot read it: type it">{{ f.blocked }}</span>
 {% elif not f.read %}<span class="tag" title="no value yet">not read</span>
 {% elif f.marker %}<span class="tag unv" title="a review marker: correct the value">review</span>
 {% elif f.verified is none %}<span class="tag unv">unverified</span>{% endif %}

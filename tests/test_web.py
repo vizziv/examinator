@@ -1,5 +1,4 @@
 """The web app, against the synthetic mini exam and the scripted model."""
-import base64
 import json
 import re
 import time
@@ -15,8 +14,10 @@ from examinator.core.store import Made, Submission
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
 from examinator.pdf.layout import Layout
-from examinator.std.blocks import MAX_IMAGE, Image
-from examinator.web.app import create_app, find_image, prepare_blocks
+from examinator import Result
+from examinator.core.result import settle
+from examinator.std.blocks import Details, Image, Note
+from examinator.web.app import create_app
 
 from conftest import SCRIPT, workspace
 from test_overrides import make_keyed_exam
@@ -159,6 +160,16 @@ def test_theme_and_actions_are_static_and_controls_declare_actions(site):
     assert 'pill g-' in html and 'pill st st-' in html          # grade and state: two pills
     grid = site.get('/').text
     assert 'class="c cell s-' in grid and 'title="incomplete' in grid
+
+
+def test_a_field_on_a_missing_page_says_so_and_is_not_planned(site):
+    from PIL import Image as PILImage
+    PILImage.new('RGB', (200, 260), 'white').save(site.ws.pdfs / 's1.pdf', 'PDF')     # s1 lost page 2
+    html = site.get('/s/s1/b').text
+    assert '>page missing</span>' in html
+    assert '>page missing</span>' not in site.get('/s/s2/b').text
+    plan = site.post('/read/plan', {'questions': ['b']}).json()
+    assert 'page missing' in json.dumps(plan)
 
 
 def test_page_image(site):
@@ -343,7 +354,7 @@ def test_evidence_of_an_outdated_result_is_marked_stale(site):
     site.run_all()
     store = site.ws.store
     row = store.get('s1', 'a/x', 'result')
-    store.write('s1', 'a/x', 'result', {**row.body, 'blocks': [{'type': 'note', 'text': "evidence"}]}, origin='auto')
+    store.write('s1', 'a/x', 'result', {**row.body, 'blocks': [Note("evidence").to_json()]}, origin='auto')
     assert site.decide('s1', 'a', 'x', True).status_code == 200
     html = site.get('/s/s1/a').text
     assert 'class="panel evidence"' in html and 'evidence stale' not in html
@@ -576,44 +587,60 @@ def test_settings_page_has_no_exam_data(site):
 
 # --- untrusted content ---
 
+def put_result(site, sub, name, out):
+    """Store what a check returned, through the one boundary (`settle`)."""
+    qid, check = name.split('/')
+    got = settle(site.exam.questions[qid].check(check).points, out)
+    row = site.ws.store.get(sub, name, 'result')
+    site.ws.store.write(sub, name, 'result', {**row.body, **got.body}, origin='auto', images=got.images)
+    return got
+
+
 def test_student_text_is_escaped(site):
     site.run_all()
-    store = site.ws.store
-    blocks = [
+    put_result(site, 's1', 'a/x', Result(None, {'x': {'outcome': None, 'note': EVIL, 'expected': EVIL}}, [
         {'type': 'note', 'text': f"note {EVIL}", 'tone': 'bad'},
         {'type': 'table', 'columns': [f"col {EVIL}"], 'rows': [[EVIL, None, 3]]},
         {'type': 'code', 'text': f"x = 1\n{EVIL}", 'highlight': [2]},
-        {'type': 'details', 'summary': f"more {EVIL}",
-         'blocks': [Image(SVG, 'image/svg+xml', alt=EVIL).to_json()]},
-        Image(PNG, title=f"plot {EVIL}").to_json(),
-        {'type': 'image', 'media_type': 'text/html', 'data': base64.b64encode(EVIL.encode()).decode()},
-        "not a block",
-    ]
-    row = store.get('s1', 'a/x', 'result')
-    store.write('s1', 'a/x', 'result', {**row.body, 'blocks': blocks,
-                                        'fields': {'x': {'outcome': None, 'note': EVIL, 'expected': EVIL}}},
-                origin='auto')
+        Details(f"more {EVIL}", Image(SVG, 'image/svg+xml', alt=EVIL)),
+        Image(PNG, title=f"plot {EVIL}").to_json()]))
     site.runner.set('s1', 'a', 'x', EVIL, author='t')
     site.runner.set('s1', 'a', 'y', '"><img src=x onerror=alert(1)>\n</textarea>' + EVIL, author='t')
     r = site.get('/s/s1/a')
     assert r.status_code == 200
     assert '<script>alert' not in r.text and '<img src=x' not in r.text and '</textarea><' not in r.text
     assert '&lt;script&gt;alert(1)&lt;/script&gt;' in r.text
-    assert r.text.index('class="figure"') < r.text.index('class="note')       # images first
-    png = re.search(r'<img class="figure" src="(/image/s1/a/x/4\?v=[0-9a-f]{16})"', r.text).group(1)
-    svg = re.search(r'<img class="figure" src="(/image/s1/a/x/3-0\?v=[0-9a-f]{16})"', r.text).group(1)
-    assert r.text.count('class="figure"') == 2                                 # not the text/html one
-    for url, data, kind in ((png, PNG, 'image/png'), (svg, SVG, 'image/svg+xml')):
+    assert r.text.index('class="figure"') < r.text.index('class="note')       # top-level images first
+    assert re.search(r'<details><summary>more [^<]*</summary>\s*<img class="figure"', r.text)   # stays inside
+    urls = re.findall(r'<img class="figure" src="(/image/s1/a/x/[0-9a-f]{64})"', r.text)
+    assert len(urls) == 2 and '?' not in ''.join(urls)                         # the digest is the version
+    for url in urls:
         got = site.get(url)
-        assert got.status_code == 200 and got.content == data
-        assert got.headers['content-type'] == kind and got.headers['x-content-type-options'] == 'nosniff'
+        assert got.status_code == 200 and got.content in (PNG, SVG)
+        assert got.headers['content-type'] in ('image/png', 'image/svg+xml')
+        assert got.headers['x-content-type-options'] == 'nosniff'
         assert got.headers['content-security-policy'] == "default-src 'none'; style-src 'unsafe-inline'; sandbox"
         assert 'immutable' in got.headers['cache-control']
-    assert site.get('/image/s1/a/x/4?v=old').headers['cache-control'] == 'no-store'     # any other version
-    for path in ('/image/s1/a/x/0', '/image/s1/a/x/3', '/image/s1/a/x/3-1', '/image/s1/a/x/5',
-                 '/image/s1/a/x/9', '/image/s1/a/y/3-0'):
-        assert site.get(path).status_code == 404, path
     assert '<script>alert' not in site.get('/').text
+
+
+def test_an_image_is_served_only_by_the_result_that_shows_it(site):
+    site.run_all()
+    png = put_result(site, 's1', 'a/x', Result(True, blocks=[Image(PNG)]))
+    (digest,) = png.images
+    other = put_result(site, 's1', 'a/y', Result(True, blocks=[Image(PNG + b'2')]))
+    (theirs,) = other.images
+    assert site.get(f'/image/s1/a/x/{digest}').content == PNG
+    for path in (f'/image/s1/a/y/{digest}', f'/image/s1/a/x/{theirs}', f'/image/s2/a/x/{digest}',
+                 f'/image/s1/b/x/{digest}', f'/image/s1/a/x/{digest.upper()}', f'/image/s1/a/x/{digest[:-1]}',
+                 '/image/s1/a/x/0', '/image/s1/a/x/\u00b2', '/image/s1/a/x/%C2%B2', '/image/s1/a/x/1-0-3',
+                 f'/image/s1/a/x/{digest}%00', f'/image/s1/a/x/..%2f{digest}', '/image/s1/a/zz/0',
+                 f'/image/nobody/a/x/{digest}'):
+        r = site.get(path)
+        assert r.status_code == 404, path
+    put_result(site, 's1', 'a/x', Result(True, blocks=[Note("no figure now")]))     # replaced: gone
+    assert site.get(f'/image/s1/a/x/{digest}').status_code == 404
+    assert site.ws.store.image('s1', 'a/x', digest) is None
 
 
 def test_names_are_escaped_in_the_grid(env):
@@ -623,29 +650,6 @@ def test_names_are_escaped_in_the_grid(env):
     for path in ('/', '/s/s1/a', '/settings'):
         assert '<script>alert' not in site.get(path).text
     assert 'Eve &lt;script&gt;' in site.get('/').text
-
-
-def test_block_helpers():
-    image = Image(PNG, alt="a").to_json()
-    blocks = [{'type': 'details', 'summary': "d", 'blocks': [image]},
-              {'type': 'code', 'text': "a\nb", 'highlight': [2]}, {'type': 'mystery'}]
-    out = prepare_blocks(blocks)
-    assert [b['type'] for b in out] == ['details', 'code']
-    assert out[0]['blocks'] == [{'type': 'image', 'path': '0-0', 'v': out[0]['blocks'][0]['v'], 'alt': "a", 'title': ""}]
-    assert out[1]['lines'] == [(1, 'a', False), (2, 'b', True)]
-    assert find_image(blocks, '0-0') == image
-    assert find_image(blocks, '0') is None and find_image(blocks, '') is None
-
-
-def test_image_block():
-    b = Image(PNG, title="t").to_json()
-    assert b['type'] == 'image' and b['media_type'] == 'image/png' and base64.b64decode(b['data']) == PNG
-    assert json.loads(json.dumps(b)) == b
-    for kind in ('text/html', 'image/svg', 'application/octet-stream'):
-        with pytest.raises(ValueError):
-            Image(PNG, kind)
-    with pytest.raises(ValueError):
-        Image(b'x' * (MAX_IMAGE + 1))
 
 
 # --- exam data: overrides ------------------------------------------------------

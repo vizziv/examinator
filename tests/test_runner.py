@@ -8,7 +8,8 @@ from examinator.core.runner import Runner
 from examinator.core.store import Conflict
 from examinator.model.fake import FakeModel
 
-from conftest import SCRIPT, make_exam, workspace
+from conftest import SCRIPT, Parse, make_exam, workspace
+
 
 
 def value(ws, sub, k):
@@ -300,8 +301,7 @@ def test_a_cancelled_batch_stops_queued_reads(tmp_path):
         holder['run'].cancel()                      # stop pressed during the first read
         return '{"value": "1"}'
     runner = Runner(exam, ws, model=FakeModel(reply))
-    plan = batch.plan(exam, ws.store, batch.Selection(('s1', 's2', 's3'), ('info',)), model_available=True,
-                      regions=ws.fields)
+    plan = batch.plan(ws, batch.Selection(('s1', 's2', 's3'), ('info',)), model_available=True)
     run = holder['run'] = batch.BatchRun(runner, plan, parallel=1)
     run.run()
     assert run.state == 'cancelled' and run.done == 1 < run.total
@@ -317,7 +317,7 @@ def test_a_batch_reads_what_it_plans_and_never_what_a_person_set_meanwhile(tmp_p
     ws = workspace(tmp_path, exam, subs=('s1', 's2'))
     runner = Runner(exam, ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
     sel = batch.Selection(('s1', 's2'), ('info',))
-    plan = lambda: batch.plan(exam, ws.store, sel, model_available=True, regions=ws.fields)
+    plan = lambda: batch.plan(ws, sel, model_available=True)
     assert [(i.question, i.action) for i in plan().items] == [('info', 'blocked')] * 2
     overrides.set(ws, 'info/fields/c/region', [1, 0, 0, 500, 100], author='ta')   # no value changed
     planned = plan()
@@ -327,3 +327,62 @@ def test_a_batch_reads_what_it_plans_and_never_what_a_person_set_meanwhile(tmp_p
     assert value(ws, 's1', 'info/c').text == 'one' and value(ws, 's2', 'info/c').text == 'two'
     runner.close()
     ws.close()
+
+
+# --- a read needs its pages ---
+
+def short_pdf(ws, sub, pages):
+    """Rewrite one submission's PDF with only its first `pages` pages: the rest are missing."""
+    from PIL import Image
+    imgs = [Image.new('RGB', (200, 260), 'white') for _ in range(pages)]
+    imgs[0].save(ws.pdfs / f'{sub}.pdf', 'PDF', save_all=True, append_images=imgs[1:])
+
+
+def test_a_whole_page_reader_on_a_missing_page_is_blocked_and_not_planned(tmp_path):
+    """Question 'b' (a field without a region, read from the question's page) on a
+    missing page: the runner blocks it, the batch plan does not count it, and the
+    model is never asked."""
+    from examinator.core import batch
+    from examinator.core.runner import unreadable
+    exam = make_exam()
+    ws = workspace(tmp_path, exam, subs=('s1', 's2'))
+    short_pdf(ws, 's1', 1)                                  # s1 has no page 2
+    model = FakeModel(dict(SCRIPT))
+    runner = Runner(exam, ws, model=model)
+    try:
+        assert ws.missing('s1') == {2}
+        assert unreadable(ws, 's1', exam.questions['b']) == {'x': 'page missing'}
+        assert unreadable(ws, 's2', exam.questions['b']) == {}
+        assert [(o.status, o.detail) for o in runner.read('s1', 'b')] == [('blocked', "page missing: x")]
+        assert value(ws, 's1', 'b/x') is None and not model.calls
+        plan = batch.plan(ws, batch.Selection(('s1', 's2'), ('b',)), model_available=True)
+        assert [(i.submission, i.action, i.reason) for i in plan.items] == [
+            ('s1', 'blocked', "page missing"), ('s2', 'read', "1 field")]
+        assert all(o.ok for o in runner.read('s2', 'b')) and value(ws, 's2', 'b/x').text == 'yes'
+    finally:
+        runner.close()
+        ws.close()
+
+
+def test_a_whole_page_reader_needs_every_page_of_its_question(tmp_path):
+    """Some of a whole-page reader's pages missing: none of its fields is read (a
+    field with a region on a page that is there included). A region reader reads
+    a field whose page is there."""
+    from examinator.core.runner import unreadable
+    exam = Exam('two', pages=2)
+    exam.question('w', pages=[1, 2], fields=[Field('x', Region(1, 0, 0, 500, 100)), Field('y')], read=Parse())
+    cue = Printed("cue", reads={'1': 'one'})
+    exam.question('r', pages=[1, 2], fields=[Field('c', Region(1, 0, 0, 500, 100), read=cue),
+                                            Field('d', Region(2, 0, 0, 500, 100), read=cue), Field('e', read=cue)])
+    ws = workspace(tmp_path, exam, subs=('s1',))
+    short_pdf(ws, 's1', 1)
+    try:
+        assert unreadable(ws, 's1', exam.questions['w']) == {'x': 'page missing', 'y': 'page missing'}
+        assert unreadable(ws, 's1', exam.questions['r']) == {'d': 'page missing', 'e': 'no region'}
+    finally:
+        ws.close()
+
+
+def test_a_crops_reader_reads_regions():
+    from examinator.std import readers
+    assert readers.answers(crops=True).needs_region and not readers.answers().needs_region

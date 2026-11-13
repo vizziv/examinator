@@ -22,12 +22,13 @@ from typing import Any, Mapping, Protocol, Sequence
 from .context import BadOutput, CheckContext, ReadContext, Unavailable
 from .defs import DEFAULT, Exam, Field, Grade, Question, digest, has_marker, key, one_line
 from .isolate import CheckTimeout, Pool, PoolClosed
-from .result import Undecided, settle, undecided
+from .result import BadResult, Undecided, settle, undecided
 from .status import Decision, Sheet, Stored, Value, current
 from .store import ANY, Conflict
 from .workspace import Workspace
 
 DEFAULT_TIMEOUT = 60.0
+MAX_DETAIL = 20_000      # characters of a traceback shown
 
 
 class Model(Protocol):
@@ -59,9 +60,8 @@ class Services:
         self.ws, self._model, self._memo = workspace, model, memo
 
     def pages(self, submission, question):
-        gone = self.ws.missing(submission)          # a placeholder is never shown to a reader
-        return [self.ws.page_image(submission, p) for p in self.ws.selected_pages(submission, question)
-                if p not in gone]
+        # all there: a reader of pages runs only when none is missing (`unreadable`)
+        return [self.ws.page_image(submission, p) for p in self.ws.selected_pages(submission, question)]
 
     def crop(self, submission, region):
         return self.ws.crop(submission, region)
@@ -92,6 +92,35 @@ def structural(e: Exception) -> str:
     if isinstance(e, (Unavailable, BadOutput)) or type(e).__name__ == 'ModelError':
         return str(e)
     return type(e).__name__
+
+
+def looks_at(reader: Any, f: Field, pages: Sequence[int]) -> tuple[int, ...]:
+    """The pages reading field `f` with `reader` looks at: its region's page for a
+    reader of regions (`needs_region`; none without a region), else all of the
+    question's `pages`."""
+    if getattr(reader, 'needs_region', False):
+        return (f.region.page,) if f.region is not None else ()
+    return tuple(pages)
+
+
+def unreadable(ws: Workspace, submission: str, q: Question, gone: set[int] | None = None) -> dict[str, str]:
+    """Why each field of `q` that its reader cannot read now cannot be, by label:
+    'no region', 'no pages', or 'page missing' (a page it would look at is not in
+    this submission's PDF; `gone`: `Workspace.missing`). A field not listed can be
+    read. A read needs its pages: a reader of the question's pages reads only
+    when all of them are there, so no reader is ever called without images. The
+    one rule for the runner, the batch plan and the question page."""
+    selected = ws.selected_pages(submission, q)
+    gone = ws.missing(submission) if gone is None else gone
+    out = {}
+    for reader, fields in replace(q, fields=ws.fields(submission, q)).groups():
+        for f in fields:
+            pages = looks_at(reader, f, selected)
+            if not pages:
+                out[f.label] = 'no region' if getattr(reader, 'needs_region', False) else 'no pages'
+            elif gone.intersection(pages):
+                out[f.label] = 'page missing'
+    return out
 
 
 def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields: Sequence[Field],
@@ -149,17 +178,18 @@ def sheet(made: Any, page: int) -> list | None:
 def try_check(exam: Exam, qid: str, check: str, values: Mapping[str, str]) -> dict:
     """Run one check in-process on given values (`{'question/label': text}`; a
     field left out is not read, or at its default) and return its result as it would be stored:
-    `{'grade', 'fields', 'blocks', 'reads'}`. For an exam's own tests. A check
-    that raises `Undecided` is an undecided result; anything else raises."""
+    `{'grade', 'fields', 'blocks', 'reads', 'images'}` (`images`: {digest: bytes}).
+    For an exam's own tests. A check that raises `Undecided` is an undecided
+    result; anything else raises (`BadResult` for evidence that does not fit)."""
     q = exam.questions[qid]
     c = q.check(check)
     ctx = CheckContext(submission='test', question=q, check=check,
                        values={k: (i + 1, v) for i, (k, v) in enumerate(values.items())}, fields=exam.fields())
     try:
-        body = settle(c.points, c.fn(ctx))
+        out = settle(c.points, c.fn(ctx))
     except Undecided as e:
-        body = settle(c.points, undecided(str(e)))
-    return {**body, 'reads': dict(ctx.reads)}
+        out = settle(c.points, undecided(str(e)))
+    return {**out.body, 'reads': dict(ctx.reads), 'images': {d: b for d, (_, b) in out.images.items()}}
 
 
 class Runner:
@@ -193,7 +223,7 @@ class Runner:
         `missing_only`, only fields with no value are read. One outcome per reader run."""
         resolved = self.ws.question(submission, qid)
         have = self.values(submission)
-        gone = self.ws.missing(submission)
+        why = unreadable(self.ws, submission, q)
         outs = []
 
         def out(status, detail=""):
@@ -212,15 +242,13 @@ class Runner:
                 targets.append(f)
             if not targets:
                 continue
-            if getattr(reader, 'needs_region', False):
-                bare = [f.label for f in targets if f.region is None]
-                if bare:
-                    out('blocked', f"no region: {', '.join(bare)}")
-                targets = [f for f in targets if f.region is not None]
-            off = [f.label for f in targets if f.region is not None and f.region.page in gone]
-            if off:                 # never read from a placeholder
-                out('blocked', f"page missing: {', '.join(off)}")
-                targets = [f for f in targets if f.label not in off]
+            blocked: dict[str, list[str]] = {}
+            for f in targets:
+                if f.label in why:
+                    blocked.setdefault(why[f.label], []).append(f.label)
+            for reason, labels in blocked.items():
+                out('blocked', f"{reason}: {', '.join(labels)}")
+            targets = [f for f in targets if f.label not in why]
             if not targets:
                 continue
             if getattr(reader, 'uses_model', True) and self.model is None:
@@ -283,27 +311,27 @@ class Runner:
         timeout = c.timeout or DEFAULT_TIMEOUT
         try:
             if c.isolate and self.pool is not None:
-                body = self.pool.call(qid, check, {
+                got = self.pool.call(qid, check, {
                     'submission': submission, 'values': {k: list(v) for k, v in values.items()},
                     'overrides': self.exam.overrides}, timeout, reads)
             else:
                 ctx = CheckContext(submission=submission, question=q, check=check, values=values,
                                    fields=self.exam.fields(), reads=reads)
-                body = settle(c.points, c.fn(ctx))
-        except Undecided as e:
-            body = settle(c.points, undecided(str(e)))
+                got = settle(c.points, c.fn(ctx))
+        except (Undecided, BadResult) as e:
+            got = settle(c.points, undecided(str(e)))
         except PoolClosed:
             return out('failed', "shutting down")
         except CheckTimeout:
-            body = settle(c.points, undecided(f"timed out after {timeout:g} s"))
+            got = settle(c.points, undecided(f"timed out after {timeout:g} s"))
         except Exception as e:
             detail = getattr(e, 'detail', "") or f"{type(e).__name__}: {e}"
-            body = settle(c.points, undecided("the check failed to run", [
+            got = settle(c.points, undecided("the check failed to run", [
                 {'type': 'details', 'summary': "Error",
-                 'blocks': [{'type': 'code', 'text': detail}]}]))
-        body.update(reads=dict(reads), defn=self.exam.check_hash(q, c), code=self.exam.code_hash)
+                 'blocks': [{'type': 'code', 'text': detail[-MAX_DETAIL:]}]}]))
+        body = {**got.body, 'reads': dict(reads), 'defn': self.exam.check_hash(q, c), 'code': self.exam.code_hash}
         try:
-            self.store.write(submission, key(qid, check), 'result', body, origin='auto',
+            self.store.write(submission, key(qid, check), 'result', body, origin='auto', images=got.images,
                              guard={(k, 'value'): None if rev == DEFAULT else rev for k, rev in reads.items()})
         except Conflict as e:
             return out('discarded', str(e))

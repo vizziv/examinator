@@ -59,10 +59,15 @@ class Answers:
     notes: str = ""
     crops: bool = False     # send each field's crop instead of whole pages
 
+    @property
+    def needs_region(self) -> bool:
+        """With `crops`, it reads each field's region (a field needs one), not the pages."""
+        return self.crops
+
     def read(self, ctx: ReadContext, fields: Sequence[Field]) -> dict[str, str]:
         labels = [f.label for f in fields]
         context = prompts.context(ctx.question, labels)
-        images = [ctx.crop(f.region) for f in fields if f.region is not None] if self.crops else ctx.pages()
+        images = [ctx.crop(f.region) for f in fields] if self.crops else ctx.pages()
         transcript = ctx.model(prompts.join(self.prompt, context, self.notes), images=images,
                                step='transcribe').strip()
         out = ctx.model(prompts.join(self.parse_prompt, context, prompts.notation(self.symbols, self.functions),

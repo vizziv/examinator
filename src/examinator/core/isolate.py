@@ -90,13 +90,14 @@ class Pool:
             raise CheckCrash("the exam package did not load in a worker")
         return proc
 
-    def call(self, question: str, check: str, payload: dict, timeout: float, reads: dict) -> dict:
-        """Run one check in a worker and return its stored form (`result.settle`).
+    def call(self, question: str, check: str, payload: dict, timeout: float, reads: dict) -> 'Record':
+        """Run one check in a worker and return its stored form (`result.settle`,
+        settled in the worker; it crosses the pipe as `Record.to_json`).
 
         `payload` holds the context: submission, values ({key: [rev, text]})
         and the exam's applied `overrides`. What the check read is
         added to `reads`, whatever the outcome. Raises `CheckTimeout`,
-        `CheckCrash` or `Undecided`.
+        `CheckCrash`, `Undecided` or `BadResult`.
         """
         with self._lock:
             if self._closed:
@@ -122,10 +123,12 @@ class Pool:
         reads.update(reply.get('reads') or {})
         if 'error' in reply:
             raise CheckCrash(reply['error'], reply.get('detail', ""))
+        from .result import BadResult, Record, Undecided
         if 'undecided' in reply:
-            from .result import Undecided
             raise Undecided(reply['undecided'])
-        return reply['body']
+        if 'bad' in reply:
+            raise BadResult(reply['bad'])
+        return Record.of_json(reply['record'])
 
     def close(self) -> None:
         with self._lock:
@@ -140,7 +143,7 @@ def _worker(exam_path: str) -> None:
     from .context import CheckContext
     from .defs import load_exam
     from .overrides import apply
-    from .result import Undecided, settle
+    from .result import BadResult, Undecided, settle
 
     out = os.fdopen(os.dup(sys.stdout.fileno()), 'wb')
     sys.stdout = sys.stderr            # stray prints must not corrupt the protocol
@@ -163,10 +166,11 @@ def _worker(exam_path: str) -> None:
             ctx = CheckContext(submission=req['submission'], question=q, check=c.name,
                                values={k: tuple(v) for k, v in (req.get('values') or {}).items()},
                                fields=exam.fields())
-            reply = {'body': settle(c.points, c.fn(ctx))}
-            json.dumps(reply)
+            reply = {'record': settle(c.points, c.fn(ctx)).to_json()}
         except Undecided as e:
             reply = {'undecided': str(e)}
+        except BadResult as e:
+            reply = {'bad': str(e)}
         except Exception as e:
             reply = {'error': f"{type(e).__name__}: {e}", 'detail': traceback.format_exc()}
         reply['reads'] = ctx.reads if ctx is not None else {}
