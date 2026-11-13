@@ -254,7 +254,7 @@ create table setting (key text primary key, value text);        -- roster, count
 create table override (scope, path, value, author, updated_at, rev,   -- live edits of exam data:
   primary key (scope, path));    -- scope '' (the exam), 'source:<id>', 'submission:<id>'; no history
 create table source (...);  create table made (...);             -- intake
-create table memo (submission, key, value);                      -- model readings (printed fields, landmarks, boxes)
+create table memo (submission, key, value);                      -- Split's landmark readings, by source
 ```
 
 In code and prose a row is written as the store's methods take it,
@@ -293,8 +293,12 @@ the PDF's identity, the page and the resolution.
   a person verified unless asked, and a read that finds a value changed
   meanwhile is discarded. Checks have no batch: they recompute by themselves,
   and the batch refreshes each submission once its reads finish.
-- **Missing only** reads only fields with no value, runs only checks that are
-  not current. **Include protected** reads again what a person verified.
+- **Missing only** reads only fields with no value: how a person resumes a
+  batch read that stopped halfway (the Read page leaves it unticked by
+  default). **Include protected** reads again what a person verified.
+- **Every read asks the model.** Reads happen only when a person asks, so
+  nothing remembers a field's reading but its value; only Split's landmark
+  readings are memoised (the plan re-reads every sheet without being asked).
 - **Cancellation** stops queued work and lets running tasks finish.
 - A timeout or crash yields an undecided result, never "incorrect".
 - A read that fails leaves the previous values intact.
@@ -677,7 +681,7 @@ submission into `pdfs/`; everything downstream is unchanged.
   grading work (a value, a result or a decision; identity fields' values are
   not grading work) is refused with the
   list (`Busy`); a forced accept keeps what people typed, verified or decided. Every rewritten submission
-  loses its model memo and the values a reader wrote that no person typed or
+  loses the values a reader wrote that no person typed or
   verified (`intake.forget_reads`): those fields are not read again until asked.
   Order: PDFs are written to temporary files; one commit checks
   the plan is unchanged and notes the ids about to be placed (setting
@@ -719,8 +723,8 @@ submission into `pdfs/`; everything downstream is unchanged.
     page, batch reads, prev/next question) leaves it out. Everything else is
     a field's: values with revisions, history and `verified`; `Runner.read`,
     `set`, `verify`; re-read protection; regions at exam and submission scope
-    (`@identity/fields/<column>/region`, the Exam data page); the memo;
-    scripted fake-model replies.
+    (`@identity/fields/<column>/region`, the Exam data page); scripted
+    fake-model replies.
   - **Boxes** on the Names tab ("boxes", B) are those regions, drawn on a
     submission's page with the question page's rectangle editor
     (`static/rects.js`): "+ <column>" for a column with none, "save for this
@@ -732,9 +736,7 @@ submission into `pdfs/`; everything downstream is unchanged.
     lists what "read names" reads, and the page counts as "to read": the
     submissions nobody has named with such a field. A named submission is never
     read (its pick stands; the boxes only propose who). With nothing to read no
-    run starts, and the page says why. The model memo is
-    keyed by the region and print area, so reading a moved box asks the
-    model again. "Are there boxes" is one
+    run starts, and the page says why. "Are there boxes" is one
     predicate, `identity.boxed` (any submission's, its own included). No
     roster text ever reaches a prompt. Each value shows under its crop on
     the Names tab, where it can be corrected (Enter) or verified (✓), through

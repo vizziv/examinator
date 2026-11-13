@@ -676,7 +676,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         protected = bool(data.get('include_protected'))
 
         def work():
-            outs = runner.read(sub.id, q.id, include_protected=protected, fresh=True)
+            outs = runner.read(sub.id, q.id, include_protected=protected)
             return outs + runner.refresh(sub.id, questions=[q.id])
         job_ = jobs.start(work, slot=read_slot(sub.id, q.id), seen=_rev(data))
         return {'job': job_, 'rev': job_}

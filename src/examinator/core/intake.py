@@ -403,9 +403,8 @@ def disturbed(ws, rows, gone) -> list[str]:
 
 
 def forget_reads(ws, sid: str) -> None:
-    """A submission's pages changed: drop what was read from the old ones (the memo,
-    and values a reader wrote that no person typed or verified)."""
-    ws.store.clear_memo(sid)
+    """A submission's pages changed: drop what was read from the old ones (values
+    a reader wrote that no person typed or verified)."""
     for r in ws.store.all(kinds=['value'], submission=sid):
         if r.origin != 'manual' and (r.body or {}).get('verified') != 'person':
             ws.store.delete(sid, r.name, 'value')

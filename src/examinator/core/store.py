@@ -462,10 +462,6 @@ class Store:
         with self._lock:
             self._db.execute('delete from made where submission=?', (submission,))
 
-    def clear_memo(self, submission: str) -> None:
-        with self._lock:
-            self._db.execute('delete from memo where submission=?', (submission,))
-
     def setting(self, key: str, default: Any = None) -> Any:
         with self._lock:
             r = self._db.execute('select value from setting where key=?', (key,)).fetchone()
@@ -475,6 +471,8 @@ class Store:
         assert key not in ('rev', 'changes')
         with self._lock:
             self._db.execute('insert or replace into setting values (?, ?)', (key, json.dumps(value)))
+
+    # The memo: Split's landmark readings, by source (`intake.LandmarkReader`).
 
     def memo(self, submission: str, key: str) -> str | None:
         with self._lock:

@@ -71,8 +71,9 @@ Choices made here:
 - **Blank is a value** (empty text, read as such). It differs from not read.
 - **Reading again and getting the same value changes nothing**: same revision,
   still verified, nothing downstream moves.
-- **No transcript.** Whatever a reader does on the way to the value is not
-  stored.
+- **No transcript, no memo.** Whatever a reader does on the way to the value
+  is not stored, so every read asks the model again. A read happens only
+  when a person asks for one; "missing only" resumes a read that stopped.
 - **Changing how a field is read changes no value.** A value does not record
   what it was read from; reading again is a person's choice (a question's
   "read", the Read page, "read names").

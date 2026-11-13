@@ -245,7 +245,7 @@ def test_identity_fields_are_ordinary_values(written):
     assert all(c.prompt.count("Read the HANDWRITTEN") == 1 and c.tag[1] == IDENTITY for c in model.calls[-2:])
     assert "Avery" not in " ".join(c.prompt for c in model.calls)            # no roster in any prompt
     identity.read(runner, 's0001', again=True)
-    assert len(model.calls) == calls and runner.values('s0001') == got      # remembered: free, unchanged
+    assert len(model.calls) == calls + 2 and runner.values('s0001') == got  # asked again; the same values
     assert ws.store.get('s0001', '', identity.WHO) is None                  # reading never picks
     # set, verify, history, and a read never replaces what a person set
     v = runner.set('s0001', IDENTITY, 'name', "Avery  Testwell", author='t')
@@ -258,8 +258,7 @@ def test_identity_fields_are_ordinary_values(written):
 
 def test_moving_a_box_changes_no_value_and_reading_again_is_asked(written):
     """The standing rule: changing how a field is read changes no value. Reading
-    again is explicit (`again`), and the memo is keyed by the region, so a moved box
-    asks the model again while an unmoved one is free."""
+    again is explicit (`again`), and asks the model about every box no person verified."""
     ws, runner, model = written
     for sid in ('s0001', 's0002'):
         identity.read(runner, sid)
@@ -274,14 +273,14 @@ def test_moving_a_box_changes_no_value_and_reading_again_is_asked(written):
     calls = len(model.calls)
     assert identity.read(runner, 's0001') == [] and len(model.calls) == calls     # only missing values are read
     identity.read(runner, 's0001', again=True)
-    assert len(model.calls) == calls + 1        # the moved box asks again; the ID box is remembered
+    assert len(model.calls) == calls + 2        # both boxes asked again
     # every submission's box moved: reading again replaces what no person verified, only
     runner.verify('s0002', IDENTITY, 'name', author='t', expect_rev=runner.values('s0002')['@identity/name'].rev)
     overrides.set(ws, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='t')
     assert runner.values('s0002') == {**before['s0002'], '@identity/name': runner.values('s0002')['@identity/name']}
     calls = len(model.calls)
     identity.read(runner, 's0002', again=True)
-    assert len(model.calls) == calls + 1 and [c.tag[2] for c in model.calls[-1:]] == ['read:id']
+    assert len(model.calls) == calls + 1 and [c.tag[2] for c in model.calls[-1:]] == ['read:id']   # name: verified
     assert runner.values('s0002')['@identity/name'].verified == 'person'
 
 
@@ -411,8 +410,8 @@ def test_empty_is_not_unreadable(written):
 
 def test_rewriting_a_submission_drops_its_unverified_readings(written):
     """Split's Accept rewrites a submission from other sheets: what a reader wrote and no
-    person typed or verified is dropped (identity and grading fields alike: not read), and
-    the memo with it; values a person typed or verified, and the pick, stay."""
+    person typed or verified is dropped (identity and grading fields alike: not read);
+    values a person typed or verified, and the pick, stay."""
     ws, runner, model = written
     identity.read(runner, 's0001')
     runner.set('s0001', IDENTITY, 'id', "90412873", author='t')
@@ -426,7 +425,7 @@ def test_rewriting_a_submission_drops_its_unverified_readings(written):
     assert 's0001' not in identity.unread(ws)            # named: "read names" leaves it alone
     calls = len(model.calls)
     identity.read(runner, 's0001')
-    assert len(model.calls) == calls + 1 and texts(ws, 's0001')['name'] == "Avery Testwell"   # memo dropped too
+    assert len(model.calls) == calls + 1 and texts(ws, 's0001')['name'] == "Avery Testwell"
     # grading values: only a forced Accept rewrites a submission with grading work; the same rule
     runner._put_read('s0001', 'areas', 'A.1', "4", False, False)                 # read, unverified
     runner._put_read('s0001', 'areas', 'side', "red", True, False)              # read, vouched by the reader
@@ -443,7 +442,7 @@ def test_rewriting_a_submission_drops_its_unverified_readings(written):
     assert identity.who(ws, 's0001')['name'] == "Avery Testwell"
 
 
-def test_a_failed_call_is_no_reading_and_not_remembered(tmp_path):
+def test_a_failed_call_is_no_reading(tmp_path):
     toy = load_exam(TOY)
     root = tmp_path / 'ws'
     paths = synth.stacks(toy, root)

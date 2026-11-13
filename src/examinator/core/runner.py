@@ -52,11 +52,10 @@ class Outcome:
 
 
 class Services:
-    """What a reader's context reaches: pages and crops from the workspace, the
-    model, and the memo: the store's, or with `memo` (a dict) one kept in memory."""
+    """What a reader's context reaches: pages and crops from the workspace, and the model."""
 
-    def __init__(self, workspace: Workspace, model: Model | None, memo: dict | None = None):
-        self.ws, self._model, self._memo = workspace, model, memo
+    def __init__(self, workspace: Workspace, model: Model | None):
+        self.ws, self._model = workspace, model
 
     def pages(self, submission, question):
         # all there: a reader of pages runs only when none is missing (`unreadable`)
@@ -65,24 +64,10 @@ class Services:
     def crop(self, submission, region):
         return self.ws.crop(submission, region)
 
-    def layout(self, submission):
-        return self.ws.layout(submission)
-
     def model(self, prompt, *, images, text, expect, tag):
         if self._model is None:
             raise Unavailable("model unavailable")
         return self._model.complete(prompt, images=images, text=text, expect=expect, tag=tag)
-
-    def memo(self, submission, key):
-        if self._memo is not None:
-            return self._memo.get((submission, key))
-        return self.ws.store.memo(submission, key)
-
-    def set_memo(self, submission, key, value):
-        if self._memo is not None:
-            self._memo[(submission, key)] = value
-        else:
-            self.ws.store.set_memo(submission, key, value)
 
 
 def structural(e: Exception) -> str:
@@ -123,10 +108,10 @@ def unreadable(ws: Workspace, submission: str, q: Question, gone: set[int] | Non
 
 
 def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields: Sequence[Field],
-               services: Services, *, fresh: bool = False) -> dict[str, str]:
+               services: Services) -> dict[str, str]:
     """One reader on some of a question's fields (with this submission's regions):
     `{label: text}`. Model errors and bad output raise."""
-    ctx = ReadContext(submission=submission, question=q, services=services, fresh=fresh)
+    ctx = ReadContext(submission=submission, question=q, services=services)
     got = reader.read(ctx, tuple(fields))
     out = {}
     for f in fields:
@@ -179,7 +164,7 @@ class Runner:
 
     # --- read -------------------------------------------------------------------
 
-    def read(self, submission: str, qid: str, *, missing_only: bool = False, include_protected: bool = False, fresh: bool = False,
+    def read(self, submission: str, qid: str, *, missing_only: bool = False, include_protected: bool = False,
              labels: Sequence[str] | None = None) -> list[Outcome]:
         """Read a question's fields (or those of `labels`) and write what was read.
         Values a person verified are skipped unless `include_protected`; with
@@ -218,7 +203,7 @@ class Runner:
                 out('blocked', "model unavailable")
                 continue
             try:
-                got = read_group(self.ws, submission, resolved, reader, targets, self._services, fresh=fresh)
+                got = read_group(self.ws, submission, resolved, reader, targets, self._services)
             except Exception as e:
                 out('failed', structural(e))
                 continue

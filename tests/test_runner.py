@@ -90,7 +90,10 @@ def test_a_field_without_a_region_is_not_read_until_it_has_one(tmp_path):
     ws.close()
 
 
-def test_a_printed_reading_is_remembered_per_crop_and_a_new_print_area_reads_again(env):
+def test_a_read_asks_the_model_every_time_and_keeps_only_the_value(env):
+    """Nothing remembers a field's reading but its value: reading again (always a
+    person's request) asks the model again, for the same crop or another; reading
+    only what is missing (resuming a read) asks nothing of what has a value."""
     exam, ws, _ = env
     replies = {'read:c1': '{"value": "1"}', 'read:c2': '{"value": "i"}'}
     runner = Runner(exam, ws, model=FakeModel(lambda call: replies[call.tag[2]]))
@@ -99,16 +102,11 @@ def test_a_printed_reading_is_remembered_per_crop_and_a_new_print_area_reads_aga
         return len([c for c in runner.model.calls if c.tag[1] == 'p'])
     assert all(o.ok for o in runner.read('s1', 'p'))
     assert calls() == 2 and value(ws, 's1', 'p/c1').text == 'one'
-    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 2        # the same crops: remembered
+    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 4        # the same crops: asked again
     replies.update({'read:c1': '{"value": "2"}', 'read:c2': '{"value": "ii"}'})
-    own = lambda path, value: (overrides.set(ws, path, value, scope='submission:s1', author='ta')
-                               if value is not None else overrides.clear(ws, path, scope='submission:s1'))
-    own('@print_area', [50, 50, 950, 950])                                       # another crop
-    assert all(o.ok for o in runner.read('s1', 'p'))
-    assert calls() == 4 and value(ws, 's1', 'p/c1').text == 'two'
-    own('@print_area', None)                                                     # the first crop again
-    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 4
-    assert value(ws, 's1', 'p/c1').text == 'one'
+    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 6
+    assert value(ws, 's1', 'p/c1').text == 'two'
+    assert runner.read('s1', 'p', missing_only=True) == [] and calls() == 6
 
 
 def test_a_failed_read_writes_nothing_and_says_why_structurally(env):
