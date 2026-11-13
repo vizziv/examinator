@@ -89,6 +89,7 @@
     const fields = names.fields > 0;
     if (names.unread && fields && MODEL) return 'next: read the name boxes';
     if (!PEOPLE) return 'next: add a roster';
+    if (!names.proposal && names.named) return 'named; next: D';
     if (!names.proposal) return MODEL || !fields ? 'type the name or ID' : 'no model: type names';
     return 'is this who wrote it?';
   }
@@ -269,9 +270,9 @@
       say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`, 'bad');      // failed, or lost
     }, true)});
   // Accept, having said what it would disturb: written submissions it rewrites or removes that
-  // something was said or done about. The person agrees to exactly those (`allow`).
-  const SAID = {pick: 'named', grading: 'graded', boxes: 'own boxes'};
-  const AFTER = {rewrite: 'Rewritten: the name, decisions and values a person verified stay; readings and own boxes go.',
+  // a person said something about. The person agrees to exactly those (`allow`).
+  const SAID = {values: 'verified values', decisions: 'decisions', name: 'a name', regions: 'own regions'};
+  const AFTER = {rewrite: 'Rewritten: the name, decisions and verified values stay; what was read and own regions go.',
                  remove: 'Removed: the submission and all of it go.'};
   register('split-accept', {run: () => {
     const flagged = plan.entries.filter(e => e.doubts.length).length;
@@ -407,7 +408,7 @@
   function renderRows() {
     const E = plan.entries;
     const order = E.map((e, j) => j);
-    const fine = j => (E[j].doubts.length || !E[j].verified ? 0 : 1);
+    const fine = j => (E[j].doubts.length ? -E[j].doubts.length : E[j].verified ? 1 : 0);   // doubtful first, most first; then unverified
     const here = done() || (peek !== null && owner(peek) < 0) ? -1 : k;
     order.sort((a, b) => fine(a) - fine(b) || a - b);
     const twice = {};

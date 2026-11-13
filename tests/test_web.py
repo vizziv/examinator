@@ -92,7 +92,7 @@ class Site:
         if verify_printing:
             for label in ('c1', 'c2'):
                 self.runner.verify(sub, 'p', label, author='t', expect_rev=self.rev(sub, f'p/{label}'))
-        self.runner.refresh(sub, questions=['a'])
+        self.runner.refresh(sub)
 
 
 @pytest.fixture
@@ -304,7 +304,7 @@ def test_save_conflict_keeps_the_stored_value(site):
     rev = site.rev('s1', 'a/x')
     site.runner.set('s1', 'a', 'x', "5", author='other', expect_rev=rev)
     r = site.post('/s/s1/a/save', {'values': {'a/x': {'text': 'mine', 'rev': rev}}})
-    assert r.status_code == 409 and r.json()['conflict']
+    assert r.status_code == 409 and r.json()['conflict'] and r.json()['error'] == "x changed"     # as the page names it
     assert site.value('s1', 'a/x').text == '5'
     assert site.post('/s/s1/a/save', {'values': {'a/x': {'text': 'mine'}}}).status_code == 400    # no rev
     assert site.post('/s/s1/a/save', {'values': {'a/nope': {'text': 'x', 'rev': None}}}).status_code == 400
@@ -386,13 +386,14 @@ def page_seen(html):
 
 def test_a_decision_is_made_against_what_the_page_shows(site):
     assert all(o.ok for o in site.runner.read('s1', 'a'))
-    site.runner.refresh('s1', questions=['a'])              # 'a' reads the printing, not read yet
+    site.runner.refresh('s1')              # 'a' reads the printing, not read yet
     seen = page_seen(site.get('/s/s1/a').text)
     assert set(seen) == set(site.runner.page('s1', 'a'))   # other questions' fields included
     assert seen['p/c1'] is None and seen['a/x'] is not None
     assert all(o.ok for o in site.runner.read('s1', 'p'))  # read meanwhile: the page still shows no value
     r = site.post('/s/s1/a/decide', {'check': 'x', 'value': True, 'rev': None, 'seen': seen})
     assert r.status_code == 409 and site.ws.store.get('s1', 'a/x', 'decision') is None
+    assert r.json()['error'] == "c1 changed"
     seen = page_seen(site.get('/s/s1/a').text)              # reloaded: now it shows them
     r = site.post('/s/s1/a/decide', {'check': 'x', 'value': True, 'rev': None, 'seen': seen})
     assert r.status_code == 200 and site.state('s1', 'a', 'x').state == 'decided'
@@ -440,7 +441,7 @@ def test_a_field_with_a_default_on_the_page(tmp_path):
                   check=Check(lambda ctx: int(ctx.read('k')) > 5, isolate=False))
     ws = workspace(tmp_path, exam, subs=('s1',))
     site = Site(exam, ws, Runner(ws))
-    site.runner.refresh('s1', questions=['q'])
+    site.runner.refresh('s1')
     html = site.get('/s/s1/q').text
     assert 'placeholder="default 10"' in html and '>default</span>' in html and 'data-region="' not in html
     assert site.state('s1', 'q').state == 'graded'                  # nobody need verify a default
@@ -522,6 +523,17 @@ def wait_batch(site):
     raise AssertionError("batch did not finish")
 
 
+def test_opening_a_workspace_runs_every_check_whose_fields_are_there(env):
+    """The background rule on open: values stored but checks never run (a batch
+    stopped mid-way, a crash) do not stay 'not run'."""
+    exam, ws, runner = env
+    for q in ('p', 'a'):
+        runner.read('s1', q)
+    site = Site(exam, ws, runner)
+    assert site.state('s1', 'a', 'x').state == 'unverified'
+    assert site.state('s1', 'b').state == site.state('s2', 'a', 'x').state == 'not_run'     # nothing read
+
+
 def test_batch_plan_run_status(site):
     assert site.get('/read/status').json() == {'id': None, 'state': 'idle'}
     r = site.post('/read/plan', {})
@@ -532,8 +544,8 @@ def test_batch_plan_run_status(site):
     assert r.status_code == 200 and r.json()['total'] == 6
     info = wait_batch(site)
     assert info['id'] == r.json()['id']
-    # every read, then one refresh per submission: the checks ran without being asked for
-    assert info['state'] == 'done' and info['done'] == info['total'] == 8 and info['failures'] == []
+    # progress counts the reads; the checks then ran without being asked for
+    assert info['state'] == 'done' and info['done'] == info['total'] == 6 and info['failures'] == []
     assert site.state('s2', 'b').state == 'unverified'
     again = site.post('/read/plan', {'missing_only': True}).json()
     assert again['counts']['read'] == 0 and again['counts']['skip_present'] > 0
@@ -722,7 +734,7 @@ def ksite(tmp_path):
             assert all(o.ok for o in runner.read(sid, qid))
         for k, v in runner.values(sid).items():
             runner.verify(sid, *k.split('/'), author='t', expect_rev=v.rev)
-        runner.refresh(sid, questions=list(exam.questions))
+        runner.refresh(sid)
     yield Site(exam, ws, runner)
     runner.close()
     ws.close()

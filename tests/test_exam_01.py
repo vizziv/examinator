@@ -221,7 +221,7 @@ def test_disagreeing_printed_fields_wait_for_a_grader(exam, pkg, tmp_path):
             assert all(o.ok for o in runner.read('split', qid))
         for k, v in runner.values('split').items():
             runner.verify('split', *k.split('/'), author='ta', expect_rev=v.rev)
-        runner.refresh('split', questions=['q2', 'q4', 'q5'])
+        runner.refresh('split')
         assert {k: v.text for k, v in runner.values('split').items() if k.startswith('info/')} == \
             {f'info/{k}': v for k, v in printed['info'].items()}
         assert (status(runner, 'split', 'q2').state, status(runner, 'split', 'q2').value) == ('graded', True)

@@ -246,9 +246,15 @@ functions over stored rows, in `core/status.py`, with one test per row
 asked (`include_protected`); the replaced value goes to history. Nothing
 automatic touches a decision.
 
-**Automatic recomputation.** A result outdated by a changed value, a changed
-check (an override) or changed exam code is recomputed in the background: after
-a change in the app, when the app starts, and before a batch run from the CLI.
+**Automatic recomputation.** One background rule (`Runner.refresh`): a check
+whose result is not current is computed, if it has something to compute from:
+an outdated result always (a changed value, a changed check, changed exam
+code); a check that never ran once every field of its question has a value.
+So "not run" means a field of the question is not read. It is applied, in the
+background, to every submission when the app starts, to a submission after
+any change to its values (a save, a read, a reset to default, Accept
+rewriting it), to every submission after an override that changes a check,
+and by a batch to the submissions it read for once its reads stop.
 
 ## 8. Storage
 
@@ -309,15 +315,17 @@ the PDF's identity, the page and the resolution.
   skipped as protected or present, and what is blocked (no model, no region);
   one button reads it, planned again at the start. A read never replaces what
   a person verified unless asked, and a read that finds a value changed
-  meanwhile is discarded. Checks have no batch: they recompute by themselves,
-  and the batch refreshes each submission once its reads finish.
+  meanwhile is discarded. The batch is its reads: its progress counts reads,
+  as the plan does, and Stop stops reads. Checks recompute by themselves:
+  once the reads stop, finished or stopped, every submission something was
+  read for is refreshed, which is not counted and cannot be stopped.
 - **Missing only** reads only fields with no value: how a person resumes a
   batch read that stopped halfway (the Read page leaves it unticked by
   default). **Include protected** reads again what a person verified.
 - **Every read asks the model.** Reads happen only when a person asks, so
   nothing remembers a field's reading but its value; only Split's landmark
   readings are memoised (the plan re-reads every sheet without being asked).
-- **Cancellation** stops queued work and lets running tasks finish.
+- **Cancellation** stops queued reads and lets running ones finish.
 - A timeout or crash yields an undecided result, never "incorrect".
 - A read that fails leaves the previous values intact.
 
@@ -470,7 +478,11 @@ same way:
   *query* (the route table says which: `change(...)`, `run(...)`, `query(...)`
   in `web/app.py`). A change requires the revision drawn (`rev`, or each
   item's in a multi-value save) and answers the new one; a stale one is
-  refused with 409, the reason in `error` and `current`, what is there now. A
+  refused with 409, the reason in `error` and `current`, what is there now.
+  The reason is in the page's words, written where the kind of row is known
+  (`store.Conflict` carries only which row: `runner.worded` names a field by
+  its label, "x changed"; `identity.stale`, "the name changed: now Kit
+  Absentia"; intake, "the plan changed"). A
   run (a read, a check, a batch, reading the name boxes, reading a scan's
   pages) names no revision: a slot runs one thing at a time, and a second
   while one runs is refused as "already running". Every answer is JSON, an
@@ -664,10 +676,12 @@ gives a submission's file, written or handed in).
      first sheet starts one, none of its other sheets does (its dropped ones
      dropped), and the next kept sheet starts one; its first sheet gets
      `verified`. Every edit keeps each verified submission whole, so no guess
-     moves it, and verifying what the guess already says changes nothing. The
-     mark moves with its submission when a person moves its first sheet (A/D,
-     Shift+A/D, dropping it), and goes when that sheet stops starting one; a
-     boundary a person moves is theirs but verifies no neighbour. "Unverified"
+     moves it, and verifying what the guess already says changes nothing.
+     `verified` means a person looked at the submission as it is (`split.looks`:
+     its sheets in order, its extra and missing marks; not turns), so an edit
+     that changes that (A/D, Shift+A/D, drop, put back, a cut or join inside it,
+     an extra or missing mark) takes it away: the person verifies it again.
+     Edits that do not touch it leave it alone. "Unverified"
      in the step view and V's "next" mean nobody verified it.
   4. **Guessing works in stretches**, each from the first kept sheet or a start
      a person said up to the next one; a stretch's starts are what `propose`
@@ -760,11 +774,12 @@ gives a submission's file, written or handed in).
     so a rewritten submission's pages are new URLs. Accepts run one at a time
     (the server's lock).
   - *Accept speaks for a person*, recorded as the plan's author. A written
-    submission it would rewrite or remove that something was said or done
-    about (its pick, grading work: a value, result or decision outside the
-    identity group, boxes of its own: overrides at its scope) is named first
-    (`intake.disturbed`, on the page; `Busy`, 409) and touched only when the
-    person agrees to that id (`allow`). The confirm says what follows.
+    submission it would rewrite or remove that a person said something about
+    (values a person typed or verified, decisions, the name, its own regions
+    or print area) is named first (`intake.disturbed`, on the page; `Busy`,
+    409) and touched only when the person agrees to that id (`allow`). The
+    confirm says what follows. One with only model readings and results is
+    rewritten without asking: they are read and computed again.
   - *A rewritten submission has new pages* (`intake.repaged`): what was read
     from the old ones goes (every value no person verified),
     and so does where things are on them (its own regions and print area,
@@ -776,8 +791,10 @@ gives a submission's file, written or handed in).
   1. *A naming is a change like any other* (§13, Changes): `{sub, rev, key |
      text | restore}` (take a proposal, pick from the list, type a name, unname,
      undo), about the submission drawn, against the pick's revision last drawn. The server refuses a stale `rev` (409,
-     with the pick as it is now) and an unknown key (400), and never
-     reinterprets one as another.
+     with the pick as it is now, saying who it is now) and an unknown key (400), and never
+     reinterprets one as another. A named submission is shown as it is: its
+     name large, V not offered, until W/S step onto its proposals; after a
+     refused naming the page shows it so, and V does not act on a stale proposal.
   2. *Automatic matching acts only on unique evidence.* Each identifying
      column (of a reading, a file name or a pick) supports some roster people;
      a match needs them to single out one person. Ties and conflicts between

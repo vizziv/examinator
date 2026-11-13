@@ -265,19 +265,29 @@ def typed(text: str) -> dict:
     return _person(name, id) if comma and name.strip() and looks_like_id(id.strip()) else _person(text)
 
 
+def stale(ws, sid: str) -> Conflict:
+    """A naming refused because the pick changed since the person saw it, saying who
+    the submission is now."""
+    return Conflict(f"the name changed: now {who(ws, sid)['name'] or 'nobody'}", name='', kind=WHO)
+
+
 def pick(ws, sid: str, person: Mapping | None, *, author: str | None, expect_rev: int | None,
          origin: str = 'manual') -> dict:
     """Name a submission: the person (`on_roster`, `typed`), or None to unname it.
-    `expect_rev` is the pick's revision the person saw (None: there was none)."""
+    `expect_rev` is the pick's revision the person saw (None: there was none);
+    otherwise `stale`."""
     s = ws.store.submission(sid)
     if s is None:
         raise KeyError(sid)
-    if person is None:
-        ws.store.delete(sid, '', WHO, expect_rev=expect_rev)
-        rev = None
-    else:
-        body = {c: str(person.get(c) or '') for c in COLUMNS}
-        rev = ws.store.write(sid, '', WHO, body, origin=origin, author=author, expect_rev=expect_rev).rev
+    try:
+        if person is None:
+            ws.store.delete(sid, '', WHO, expect_rev=expect_rev)
+            rev = None
+        else:
+            body = {c: str(person.get(c) or '') for c in COLUMNS}
+            rev = ws.store.write(sid, '', WHO, body, origin=origin, author=author, expect_rev=expect_rev).rev
+    except Conflict:
+        raise stale(ws, sid) from None
     return {**who(ws, sid), 'rev': rev}
 
 
@@ -286,7 +296,10 @@ def restore(ws, sid: str, rev: int, *, expect_rev: int | None) -> dict:
     removal is undone so; unnaming again is `pick(None)`), under a new revision."""
     if ws.store.submission(sid) is None:
         raise KeyError(sid)
-    row = ws.store.restore(sid, '', WHO, rev, expect_rev=expect_rev)
+    try:
+        row = ws.store.restore(sid, '', WHO, rev, expect_rev=expect_rev)
+    except Conflict:
+        raise stale(ws, sid) from None
     return {**who(ws, sid), 'rev': row.rev}
 
 

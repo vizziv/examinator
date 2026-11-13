@@ -24,7 +24,7 @@ def test_builtin_facets_agree_with_the_status_rules(env):
     exam, ws, runner = env
     for qid in ('p', 'a'):
         runner.read('s1', qid)
-    runner.refresh('s1', questions=['a'])
+    runner.refresh('s1')
     table = focus.values_table(exam, ws.store)
     rows = {r.submission.id: r for r in grid.load(exam, ws.store)}
     for sid in ('s1', 's2'):
@@ -43,6 +43,20 @@ def test_builtin_facets_agree_with_the_status_rules(env):
     ids = {q['id']: [f['id'] for f in q['facets']] for q in focus.describe_facets(exam)}
     assert ids['p'] == ['p/state', 'p/field/c1', 'p/field/c2']
     assert not any('/field/' in f for f in ids['a'] + ids['b'])
+
+
+def test_every_state_a_person_sees_is_shown_in_words(env, tmp_path):
+    """One table of state labels (`status.LABELS`), used by the grid, the filter and the CLI."""
+    from examinator.cli import status_table
+    from examinator.core.status import FIELD_STATES, LABELS, STATES
+    exam, ws, runner = env
+    assert set(LABELS) == set(STATES) | set(FIELD_STATES) and all('_' not in v for v in LABELS.values())
+    for q in focus.describe_facets(exam):
+        for f in q['facets']:
+            if f['name'].startswith('state'):
+                assert set(f['order']) <= set(f['shown']) and f['shown'] == LABELS
+    text = status_table(exam, ws)
+    assert '(not run)' in text and 'not_run' not in text
 
 
 def test_state_facet_names_each_column_and_what_is_still_to_do(env):

@@ -41,8 +41,8 @@
         changed();
       });
       const count = make('span', {className: 'dim n'});
-      const label = make('label', {title: value}, input, make('code', {textContent: value}), count);
-      label.dataset.value = value.toLowerCase();
+      const label = make('label', {title: value}, input, make('code', {textContent: f.shown[value] ?? value}), count);
+      label.dataset.value = (f.shown[value] ?? value).toLowerCase();
       list.append(label);
       entry.items.push({value, input, count, label});
     }

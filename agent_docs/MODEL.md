@@ -119,6 +119,9 @@ A result is a cache of a pure function. Its states are derived, never stored:
 | **current** | Every field it read is at the revision it read, under the current check. |
 | **outdated** | Otherwise. Recomputed automatically; visible only until that finishes. |
 
+A check with no result runs automatically once every field of its question
+has a value (stored, or its default); so "not run" means a field is not read.
+
 ### 3. Decision
 
 One per check, only where a person decided the grade by hand. Content:
@@ -228,7 +231,7 @@ no value yet, and the app can reload the exam package without losing state.
 | The small changes (read, set, verify, compute, decide, clear) | `core/runner.py` |
 | Asking about one region (`Ask`, `Printed`); handwriting readers | `core/ask.py`; `std/readers.py` |
 | A workspace's own definition (`Workspace.exam`); overrides at every scope; what applies to one submission (`Layers`: `question`, `layout`) | `core/workspace.py`; `core/overrides.py`; `Workspace.layers` |
-| Batch: reads, then computes | `core/batch.py` |
+| Batch: reads (counted, stoppable), then the refresh of what was read for | `core/batch.py` |
 | One row table, addressed `(submission, name, kind)` | `core/store.py` |
 
 Choices made while building it:
@@ -243,7 +246,8 @@ Choices made while building it:
   it read. Points are not part of it.
 - A decision records the question's own fields and the fields that check's
   result read.
-- Automatic recomputation recomputes outdated results only (and, after a
-  change on a question's page, that question's checks that never ran). A
-  value a grader sets for a check (a constant, say) is a field with a default,
-  so it outdates and recomputes like any other.
+- Automatic recomputation is one rule (`Runner.refresh`): an outdated result
+  is recomputed; a check that never ran runs once its question's fields all
+  have a value. DESIGN.md §7 lists where it is applied. A value a grader sets
+  for a check (a constant, say) is a field with a default, so it outdates and
+  recomputes like any other.
