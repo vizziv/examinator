@@ -36,12 +36,14 @@ uv run examinator serve path/to/my_exam -w WORKSPACE      # then the Scans page
 
 (or add the PDFs with **Add scans** on the Scans page). Each PDF is kept
 unchanged under `WORKSPACE/sources/`; adding the same file twice is noticed.
-Examinator proposes a split, every N pages (N = the exam's pages: a raw stack has no cover sheets; set a larger N on the page if yours does), and
+Examinator proposes a split, every N pages (N = the exam's pages; set a larger N on the page if every student has extra sheets at the end), and
 if the exam declares landmarks (`Exam(landmarks=[...])`: a printed title on
 page 1, a page-number footer) and the model is up, **read pages** reads them only
 at the expected boundaries and their neighbours, moving each boundary to where
 a first page really is and flagging what looks wrong: too few or too many
-pages, an unexpected page number, a first page not recognised.
+pages, an unexpected page number, a first page not recognised. In a submission
+one page short (or long) it looks for the missing page (or the extra sheet) and
+proposes marking it.
 
 The Scans page walks through the steps in a strip at its top, each with what is
 left: **1 Scans** (add them), **2 Split**, **3 Roster**, **4 Names**, then
@@ -55,7 +57,10 @@ large, between its neighbours.
 | `A` / `D` (or arrows) | the guess is a page too late / too early |
 | `W` / `S` | previous / next submission |
 | `Shift+V` | a new submission starts at the page shown (when it is not a first page) |
-| `X` | drop this page (blank or stray) |
+| `X` | drop this page (blank or stray: a leading junk sheet, say) |
+| `E` | this page is extra (kept with the submission, not a printed page); again: counted |
+| `G` / `Shift+G` | a printed page that was not scanned comes before this one / not missing after all |
+| `Shift+A` / `Shift+D` | move this page one place earlier / later in its submission (double-sided mix-ups) |
 | `R` | turn the page shown 90° clockwise (twice: 180°) |
 | `Shift+R` | turn its whole submission 90° clockwise |
 | `⌘Z` / `Ctrl+Z` | undo |
@@ -68,12 +73,21 @@ turn adds to what the levels above it give (scan, then submission, then page). T
 A verified first page is your decision: it outranks the every-N guess and any
 landmark reading, and later guesses follow from it. Turn a stack fed in
 sideways or upside down before reading pages: landmarks are read on the turned page.
-The overview below lists every submission (doubtful ones first) with its pages, where
-pages are dropped, a submission is started at a page or joined with the next.
+The overview below lists every submission (doubtful ones first) with its pages, each
+labelled with the printed page it counts as ("p3", or "extra"), and a "missing p3"
+box where a page was not scanned; there pages are dropped, a submission is started
+at a page or joined with the next. A submission's sheets, less the extra ones, with
+the missing pages, are the exam's pages in order; sheets past the last page are
+extra and pages past the last sheet are missing (and flagged), until you say otherwise.
 
 **Accept** writes one PDF per submission into `pdfs/`, named by an opaque id
 (`s0001`, ...) that never changes, with pages upright (turned pages are written
-as new single-image pages; others are copied untouched). Accepting again after
+as new single-image pages; others are copied untouched): the exam's pages in
+order, a blank "missing page" placeholder for one not scanned, then the extra
+sheets. On a question page the pages panel shows them so ("missing", "extra 1");
+nothing on a missing page is read, and a question's pages for one submission
+may name its extra sheets (pages after the exam's last: the first extra is
+the exam's pages + 1). Accepting again after
 a fix rewrites only the submissions whose pages or turning changed; one that already
 has grading work is not changed unless you insist.
 

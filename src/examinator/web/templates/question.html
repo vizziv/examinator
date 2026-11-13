@@ -56,7 +56,7 @@
 <main id="question" data-sub="{{ sub.id }}" data-q="{{ q.id }}" data-name="{{ sub.name }}" data-count="{{ count }}"
  data-ids='{{ ids|tojson }}'>
 <section id="scan" data-regions='{{ regions|tojson }}' data-print='{{ print_area|tojson }}' data-scopes='{{ scopes|tojson }}'
- data-cover="{{ layout.cover_pages }}" data-pad="{{ exam.crop_pad }}" data-first="{{ first_page }}" data-pages="{{ exam.pages }}">
+ data-pad="{{ exam.crop_pad }}" data-first="{{ first_page }}" data-pages="{{ exam.pages }}">
 {% if regions or count %}
 <div id="rg" class="bar">
 <button type="button" id="pa-on" data-action="print-area" aria-pressed="false" title="edit the print area: where the printed page sits on the scanned sheet">print area</button>
@@ -87,7 +87,7 @@
 </div>
 {% endif %}
 {% for s in scans %}
-<div class="sheet{% if s.on %} on{% endif %}" data-index="{{ s.index }}"><span class="pno">{{ s.page if s.page > 0 else 'cover' }}</span><img class="scan" src="{{ root }}/page/{{ sub.id|urlencode }}/{{ s.index }}.jpg" alt="page {{ s.page }}" loading="lazy"></div>
+<div class="sheet{% if s.on %} on{% endif %}" data-index="{{ s.index }}"><span class="pno">{{ s.label }}</span><img class="scan" src="{{ root }}/page/{{ sub.id|urlencode }}/{{ s.index }}.jpg" alt="page {{ s.label }}" loading="lazy"></div>
 {% else %}
 <p class="dim">no scan pages</p>
 {% endfor %}
@@ -177,18 +177,12 @@
 </div>
 
 <details id="pages" class="panel">
-<summary>pages{% if pages != pages_default %} <span class="tag">{{ pages|join(', ') }}</span>{% endif %}{% if own_cover is not none %} <span class="tag">cover {{ own_cover }}</span>{% endif %}</summary>
+<summary>pages{% if pages != pages_default %} <span class="tag">{{ pages|join(', ') }}</span>{% endif %}</summary>
 <div class="bar">
 <label>pages <input type="text" id="pg-list" value="{{ pages|join(', ') }}" size="10" placeholder="{{ pages_default|join(', ') }}"
- data-path="{{ own.pages.path }}" data-rev="{{ own.pages.rev }}" data-default="{{ pages_default|join(',') }}"></label>
-<button type="button" data-action="pages">set</button>
-<span class="dim">default {{ pages_default|join(', ') }} · {{ count }} scanned</span>
-</div>
-<div class="bar">
-<label>cover pages <input type="number" id="lo-cover" min="0" max="999" size="3" value="{{ own_cover if own_cover is not none else '' }}" placeholder="{{ layout.cover_pages }}"
- data-path="{{ own.cover.path }}" data-rev="{{ own.cover.rev }}"></label>
-<button type="button" data-action="layout">set for this submission</button>
-<span class="dim">print area: on the scan</span>
+ data-path="{{ own.path }}" data-rev="{{ own.rev }}" data-default="{{ pages_default|join(',') }}"></label>
+<button type="button" data-action="pages">set for this submission</button>
+<span class="dim">default {{ pages_default|join(', ') }}{% if extras %} · extra {{ extras }}: {{ exam.pages + 1 }}{% if extras > 1 %}–{{ exam.pages + extras }}{% endif %}{% endif %} · print area: on the scan</span>
 </div>
 </details>
 

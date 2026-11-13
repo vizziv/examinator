@@ -300,14 +300,18 @@ the PDF's identity, the page and the resolution.
   scan's, else the exam's, else the package's (`overrides.Layers`, behind
   `Workspace.layout`, `fields`, `region`, `selected_pages`). Which scopes a kind
   of value may be set at is one table (`overrides.SCOPES`): a region and pages
-  for the exam or a submission, the print area and cover pages at all three; everything else for the exam only. The
+  for the exam or a submission, the print area at all three; everything else for the exam only. The
   identity fields' regions are field regions like any (exam or submission). One validator (`overrides.validate`) serves every scope;
   every scope has revisions, history and conflicts alike; the app sets and
   clears them all through `/exam/set` and `/exam/clear` with a `scope`.
-- Page numbers in an exam definition are **printed exam pages**. A scan may
-  start with cover pages (scanning services add them): `Exam(cover_pages=)`,
-  an override `@cover_pages`. Intake writes each scan's own (`cover(plan)`:
-  its PDFs start with that many cover sheets, whatever the exam's).
+- Page numbers in an exam definition are **printed exam pages**, and a
+  submission's PDF has printed page p at index p - 1, then its extra sheets
+  (intake writes it so: §16; a blank placeholder stands for a page not
+  scanned). Nothing downstream offsets a page. `Workspace.missing(sub)` is the
+  printed pages a submission does not have (a placeholder, or the PDF ends
+  first): nothing on them is read (`Runner.read`: "page missing"; the Read
+  page counts it blocked, like a field with no region), and a reader is never
+  shown a placeholder (`ctx.pages()` leaves them out).
 - A question names the `pages` that hold its answer (what its reader sees).
 - The printed page may be reduced and inset within the scanned page. The
   **print area** (`print_area`: left, top, right, bottom, per-mille of the
@@ -317,12 +321,14 @@ the PDF's identity, the page and the resolution.
   print area and adds padding. The question page's print-area mode draws it on
   every sheet, to drag and save for this submission, its scan, or all.
 - Each question's selected pages can be overridden per submission, for answers
-  that continue onto extra-space pages.
+  that continue onto extra-space pages; pages beyond the exam's name that
+  submission's extra sheets in order (exam pages + 1 is its first), checked
+  against how many it has (`Workspace.selected_pages` keeps those it has).
 - Render with PDFium at about 160 DPI. PDFium must not be used from several
   threads at once; confine it to a worker. Cache rendered pages, and cut crops
   from the cache.
 - A field's region may be replaced for one submission, as the page selection
-  can. Changing where a field is read (region, print area, cover pages, pages)
+  can. Changing where a field is read (region, print area, pages)
   changes no value: the app offers to read again.
 - The same regions serve three purposes: crops shown beside the grader's input,
   crops sent to the model for printed fields, and (optionally) cropped reading
@@ -392,8 +398,8 @@ Screens for the first version:
   verifies it), **Verify, next** (V).
 - **Read:** scope, options, what they would read (live counts, the breakdown
   collapsed), one read button, progress, stop.
-- **Settings:** per-browser keys and appearance. Exam data (the print area and
-  cover pages for all, too) is on the Exam data page, which also lists what a
+- **Settings:** per-browser keys and appearance. Exam data (the print area
+  for all, too) is on the Exam data page, which also lists what a
   scan or a submission has of its own, each revertible.
 
 Details that graders relied on and should survive: keyboard navigation between
@@ -467,6 +473,15 @@ submission into `pdfs/`; everything downstream is unchanged.
   sheet where each submission begins; its pages run to the next start, less
   dropped sheets), each marked confirmed or a guess, plus dropped sheets,
   landmark readings, the expected length and orientation (`core/split.py`).
+- **A submission maps the exam's printed pages to sheets** (`split.lay_out`):
+  its sheets in order (`order`, a permutation, only when a person moved a
+  sheet within its submission), less those marked `extra` (kept, not a printed
+  page), with a page *missing* wherever `missing` names the sheet it comes
+  before, are printed pages 1, 2, .... Sheets beyond the exam's pages are extra
+  by default; pages after the last sheet are missing by default (still
+  flagged "too few pages"). `length` (sheets per submission, default the
+  exam's pages) is only the splitter's grouping size: more means trailing
+  extras are expected. A leading junk sheet is simply dropped.
   Boundary logic is pure: `split.propose(n, length, read)` takes a reader
   `sheet -> position | None` and is tested with plain dicts.
   `intake.reguess` guesses a source's plan again and writes it.
@@ -477,15 +492,24 @@ submission into `pdfs/`; everything downstream is unchanged.
   needed: at the expected boundary, then neighbours back and forth (a page
   number jumps straight to the right place), and memoised per source, sheet,
   landmark, orientation and print area (`core/reading.py`'s `region_key`, the key
-  `Ask` uses too, with the cover pages). A landmark is asked as a `Printed`
+  `Ask` uses too). A reading is a printed page, 0-based. A landmark is asked as a `Printed`
   would be (`Ask.call`). A
   failed model call leaves its sheet unread, not read as nothing; the plan
   counts such sheets (`failed`) and is not marked checked when every call failed.
 - **Doubts** are computed, never stored: too few or too many pages, a first
-  page whose landmark did not read as one, a page number out of place. A sheet
-  never read is no doubt.
+  page whose landmark did not read as one, a page number out of place, a
+  proposed mark. A sheet never read is no doubt.
+- **Proposed marks.** For an unconfirmed submission one sheet short (or long)
+  whose sheets carry none of a person's marks, the page missing (or the sheet
+  extra) is searched by halves (log N readings, memoised) and proposed
+  (entries' `proposed`) when the readings either side agree; at the end it is
+  the default already. Confirming the submission, a person's mark on it, or
+  accepting makes proposals a person's (`split.settle`).
 - **People decide.** The Scans page steps through boundaries (V confirm, A/D
-  move a page, W/S back/forward). A confirmed start is never moved by a guess;
+  move a page, W/S back/forward). On the page shown: E extra or counted, G a
+  missing page before it, Shift+G not missing, Shift+A/Shift+D move it within
+  its submission; the overview labels each sheet with its printed page
+  ("p3", "extra") and shows "missing p3" placeholders. A confirmed start is never moved by a guess;
   guesses after it are recomputed from it (every N kept sheets, adjusted by
   stored readings). A length mismatch after confirmation is a flag, not a block.
 - **Orientation**: quarter turns clockwise, 0-3 (`pdf/orient.py`: `turn`
@@ -501,8 +525,10 @@ submission into `pdfs/`; everything downstream is unchanged.
   `pdf/pages.py`: an upright sheet is copied untouched by PDFium; a turned one
   is baked as a new page holding one full-page JPEG (quality 95) shaped like
   the image, so every written page is a plain scan for the renderer's fast
-  path. A `made` table records each submission's source sheets and their
-  orientation. Ids are opaque (`s0001`), allocated once, never reused.
+  path. A submission's PDF is its printed pages in order, a blank placeholder
+  ("missing page" in small grey letters) where one is missing, then its extra
+  sheets (`split.written`). A `made` table records each submission's source
+  sheets in that order (None for a placeholder) and their orientation. Ids are opaque (`s0001`), allocated once, never reused.
   Accepting marks every start confirmed. An entry left with no pages removes
   its submission. A submission that would change or disappear while it has
   grading work (a value, a result or a decision; identity fields' values are

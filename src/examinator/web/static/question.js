@@ -309,17 +309,13 @@
       return act('read', {include_protected: all});
     }},
     check: {run: ({el}) => act('check', {check: el.dataset.check})},
-    // This submission's own pages (none, or the question's: drop them) and cover pages.
+    // This submission's own pages (none, or the question's: drop them); beyond the exam's: its extra sheets.
     pages: {run: async () => {
       const list = $('pg-list');
       const parts = list.value.split(/[\s,]+/).filter(Boolean);
       const pages = parts.every(p => /^\d+$/.test(p)) ? parts.map(Number) : list.value;    // else the server explains
       const drop = !parts.length || String(pages) === list.dataset.default;
       if (await own(list, drop ? null : pages)) location.reload();
-    }},
-    layout: {run: async () => {
-      const el = $('lo-cover'), v = el.value.trim();
-      if (await own(el, v === '' ? null : /^\d+$/.test(v) ? Number(v) : v)) location.reload();
     }},
     restore: {run: ({el}) => {
       const field = inputs().find(i => i.dataset.key === el.dataset.key);

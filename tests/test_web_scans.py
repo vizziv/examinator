@@ -116,6 +116,37 @@ def test_check_turn_and_accept(site):
     assert client.get('/').status_code == 200 and 's0005' in client.get('/').text
 
 
+def test_missing_pages_and_extra_sheets_downstream(site):
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    plan, r = check_and_accept(client, token, src)
+    short, stray = r.json()['report']['new'][1:3]       # page 3 missing; a stray sheet after page 2
+    assert plan['entries'][1]['lay'] == [[4, 1], [5, 2], [None, 3], [6, 4]]
+    assert plan['entries'][2]['lay'] == [[7, 1], [8, 2], [9, None], [10, 3], [11, 4]]
+    # the pages panel: the placeholder labelled missing, the extra sheet last
+    html = client.get(f'/s/{short}/parity').text
+    assert '<span class="pno">missing</span>' in html and 'data-region="parity/fields/B/region"' not in html
+    assert '<span class="pno">extra 1</span>' in client.get(f'/s/{stray}/parity').text
+    # a field on the missing page is not read: blocked, like one with no region
+    groups = post(client, token, '/runs/plan', {'submissions': [short, stray], 'questions': ['parity']}).json()['groups']
+    assert {(g['action'], g['reason']) for g in groups} == {('blocked', "page missing"), ('run', "1 field")}
+    runner = Runner(ws.exam, ws, model=synth.fake_model(ws.root))
+    try:
+        assert [(o.status, o.detail) for o in runner.read(short, 'parity')] == [('blocked', "page missing: B")]
+        assert ws.store.get(short, 'parity/B', 'value') is None
+        assert all(o.ok for o in runner.read(stray, 'parity')) and ws.store.get(stray, 'parity/B', 'value')
+    finally:
+        runner.close()
+    # one submission's pages may name its extra sheets (pages beyond the exam's), and only those it has
+    own = lambda sid, value: post(client, token, '/exam/set', {'path': 'parity/pages', 'value': value, 'rev': None,
+                                                               'scope': f'submission:{sid}'})
+    assert own(stray, [3, 5]).status_code == 200
+    assert ws.selected_pages(stray, ws.exam.questions['parity']) == (3, 5)
+    assert own(short, [3, 5]).status_code == 400
+    html = client.get(f'/s/{stray}/parity').text
+    assert 'class="sheet on" data-index="4"' in html
+
+
 def test_naming_and_a_forced_accept(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
@@ -221,8 +252,8 @@ def test_roster_on_the_page_and_who_is_matched(site):
     # a person picked twice: both submissions carry the key, and are flagged
     assert rows['s0005']['who']['key'] == rows['s0003']['who']['key'] == people[4]['key']
     assert rows['s0005']['who']['twice'] and rows['s0003']['who']['twice']
-    # what the page needs to show the first page without boxes: cover pages and print area
-    assert rows['s0001']['cover'] == ws.layout('s0001').cover_pages and len(rows['s0001']['print_area']) == 4
+    # what the page needs to show the first page without boxes: the print area
+    assert len(rows['s0001']['print_area']) == 4 and 'cover' not in rows['s0001']
 
 
 def test_drawing_the_name_boxes_for_every_submission(site):

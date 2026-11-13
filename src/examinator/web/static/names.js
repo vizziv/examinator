@@ -222,7 +222,7 @@
     for (const el of sheet.querySelectorAll('.rbox, .parea')) el.remove();
     if (!r || !bx.edit) return;
     const p = cur() ? cur()[0] : 1;
-    const img = sheet.querySelector('img'), src = page(r.sub, r.cover + p - 1);
+    const img = sheet.querySelector('img'), src = page(r.sub, p - 1);
     if (img.getAttribute('src') !== src) img.src = src;
     sheet.append(Rects.area(r.print_area));          // context: where the printed page is on this scan
     for (const name of placed()) {
@@ -416,7 +416,7 @@
         make('figcaption', {}, ...valueBox(r, c.name)))));
     }
     // The page: with no boxes, always (its top, or whole); with boxes, on request.
-    const boxes = r.crops.length > 0, img = $('w-page').querySelector('img'), src = page(r.sub, r.cover);
+    const boxes = r.crops.length > 0, img = $('w-page').querySelector('img'), src = page(r.sub, 0);
     $('w-page').hidden = boxes && !whole;
     $('w-page').classList.toggle('whole', whole);
     if (!$('w-page').hidden && img.getAttribute('src') !== src) img.src = src;
@@ -437,7 +437,7 @@
       make('b', {textContent: `${named.name}${named.id ? ' · ' + named.id : ''}`})) : '');
     renderList();
     const next = view.byId[order[k + 1]];
-    if (next) for (const x of next.crops.length ? next.crops : [{index: next.cover}]) { const im = new Image(); im.src = page(next.sub, x.index); }
+    if (next) for (const x of next.crops.length ? next.crops : [{index: 0}]) { const im = new Image(); im.src = page(next.sub, x.index); }
   }
 
   function renderRows() {

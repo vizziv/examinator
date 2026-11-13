@@ -14,7 +14,7 @@ from . import keys, lshape, normal, notes, samplers, snow_cone
 from .keys import number, point
 from .versions import FIELDS, band, names, printing
 
-exam = Exam('exam_02', title="Exam 2", pages=28, cover_pages=1)
+exam = Exam('exam_02', title="Exam 2", pages=28)
 
 
 # --- helpers local to this exam ---------------------------------------------

@@ -24,7 +24,7 @@ from . import overrides
 from .defs import Exam, Field, Question, Region
 from .store import Store, Submission
 
-PRINT_AREA, COVER_PAGES = '@print_area', '@cover_pages'     # their override paths
+PRINT_AREA = '@print_area'      # its override path
 
 
 class Workspace:
@@ -68,18 +68,39 @@ class Workspace:
         return m.source if m else None
 
     def layout(self, submission: str) -> Layout:
-        """This submission's cover pages and print area."""
-        lay = self.layers(submission)
-        return Layout(lay.value(COVER_PAGES), tuple(lay.value(PRINT_AREA)))
+        """This submission's print area."""
+        return Layout(tuple(self.layers(submission).value(PRINT_AREA)))
 
     def source_layout(self, source: str | None) -> Layout:
-        """A source scan's sheets as they come (no cover pages), with its print area."""
-        return Layout(0, tuple(self.layers(source=source).value(PRINT_AREA)))
+        """A source scan's sheets, with its print area."""
+        return Layout(tuple(self.layers(source=source).value(PRINT_AREA)))
 
     def selected_pages(self, submission: str, question: Question) -> tuple[int, ...]:
-        """The question's printed pages for this submission."""
+        """The question's pages for this submission: printed pages, and (its own
+        choice only) its extra sheets, numbered on from the exam's last page."""
         pages = self.layers(submission).own(overrides.join(question.id, 'pages'))
-        return tuple(pages) if pages else question.pages
+        if not pages:
+            return question.pages
+        last = self.exam.pages + self.extras(submission)
+        return tuple(p for p in pages if p <= last) or question.pages
+
+    def missing(self, submission: str) -> set[int]:
+        """The printed pages this submission's PDF does not have: intake wrote a
+        placeholder, or the PDF ends before them. Nothing on them is read."""
+        m = self.store.made_of(submission)
+        gone = {p for p, i in enumerate(m.pages[:self.exam.pages], 1) if i is None} if m else set()
+        try:
+            count = self.scan_page_count(submission)
+        except Exception:       # no readable PDF: reading it fails anyway
+            count = self.exam.pages
+        return gone | set(range(count + 1, self.exam.pages + 1))
+
+    def extras(self, submission: str) -> int:
+        """How many sheets the PDF has beyond the exam's pages."""
+        try:
+            return max(0, self.scan_page_count(submission) - self.exam.pages)
+        except Exception:
+            return 0
 
     def fields(self, submission: str, question: Question) -> tuple[Field, ...]:
         """The question's fields with this submission's regions."""
@@ -112,9 +133,9 @@ class Workspace:
         """Cached rendering of one scanned page (0-based index into the PDF)."""
         return self.renderer.page_path(self.pdf_path(submission), index)
 
-    def page_image(self, submission: str, printed_page: int) -> Image.Image:
-        index = self.layout(submission).scan_index(printed_page)
-        return self.renderer.page(self.pdf_path(submission), index)
+    def page_image(self, submission: str, page: int) -> Image.Image:
+        """A printed page (or an extra sheet: exam pages + 1, ...) of the submission's PDF."""
+        return self.renderer.page(self.pdf_path(submission), page - 1)
 
     def crop(self, submission: str, region: Region, pad: int | None = None) -> Image.Image:
         pad = self.exam.crop_pad if pad is None else pad

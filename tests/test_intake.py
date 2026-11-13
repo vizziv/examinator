@@ -78,7 +78,9 @@ def test_check_with_landmarks_flags_the_awkward_cases(stacked):
     one, _ = intake.add_source(ws, paths[0])
     art = intake.reguess(ws, one.id, model=model)
     assert starts(art) == [0, 4, 7, 12, 16, 20]
-    assert split.doubts(art.body, one.pages) == [[], ['short'], ['long', 'number'], [], ['start'], []]
+    # student 1 lost page 3, student 2 has a stray sheet after page 2: both found and proposed
+    assert split.doubts(art.body, one.pages) == [[], ['missing'], ['extra'], [], ['start'], []]
+    assert art.body['entries'][1]['proposed'] == {'missing': [6]} and art.body['entries'][2]['proposed'] == {'extra': [9]}
     calls = len(model.calls)
     intake.reguess(ws, one.id, model=model)
     assert len(model.calls) == calls                 # memoised: a re-run reads nothing again
@@ -209,7 +211,7 @@ def test_landmark_crops_come_from_the_oriented_page(tmp_path):
 def test_accept_copies_pages_untouched_and_the_fast_path_applies(stacked, monkeypatch):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
-    report = intake.accept(ws, one.id, author='t')
+    report = intake.accept(ws, one.id)
     assert report['new'] == ['s0001', 's0002', 's0003', 's0004', 's0005', 's0006']
     src_images = images(paths[0])
     for k, sid in enumerate(report['new']):
@@ -225,19 +227,56 @@ def test_accept_copies_pages_untouched_and_the_fast_path_applies(stacked, monkey
     assert [s.id for s in ws.store.submissions()] == report['new']
     assert ws.sync() == 6
     assert intake.state(ws, one.id) == ['made'] * 6
-    # no cover sheets in a raw stack: the scan says so, whatever every submission's
-    overrides.set(ws.exam, ws.store, '@cover_pages', 1, author='t')
-    assert ws.layout('s0002').cover_pages == 0 and intake.cover(ws, intake.plan(ws, one.id).body) == 0
-    assert ws.store.overrides(overrides.scope(overrides.SOURCE, one.id))['@cover_pages'].value == 0
 
 
-def test_a_longer_plan_means_cover_sheets(stacked):
+def test_a_longer_plan_means_trailing_extra_sheets(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     art = intake.reguess(ws, one.id, length=ws.exam.pages + 1)
-    assert intake.cover(ws, art.body) == 1 and art.body['anchor'] == 1
+    assert art.body['anchor'] == 0 and starts(art) == [0, 5, 10, 15, 20]
+    assert split.doubts(art.body, one.pages)[0] == []          # one extra sheet each is expected
     intake.accept(ws, one.id)
-    assert ws.layout('s0001').cover_pages == 1
+    assert ws.store.made()['s0001'].pages == (0, 1, 2, 3, 4) and ws.extras('s0001') == 1
+
+
+def test_the_written_pdf_is_the_printed_pages_then_the_extras(stacked):
+    ws, paths, model = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    intake.reguess(ws, one.id, model=model)
+    report = intake.accept(ws, one.id)           # the proposals are taken as they stand
+    assert 'proposed' not in str(intake.plan(ws, one.id).body['entries'])
+    short, stray = report['new'][1], report['new'][2]
+    # student 1 lost page 3: a placeholder there, the rest in place
+    assert ws.store.made()[short].pages == (4, 5, None, 6)
+    assert ws.missing(short) == {3} and ws.extras(short) == 0
+    src_images, got = images(paths[0]), images(ws.pdfs / f'{short}.pdf')
+    assert len(got) == 4 and got[:2] == [src_images[4], src_images[5]] and got[3] == src_images[6]
+    page = ws.page_image(short, 3).convert('L')
+    assert page.getextrema()[0] > 100 and page.getextrema()[1] == 255     # blank but for small grey text
+    # student 2's stray sheet: after the printed pages
+    assert ws.store.made()[stray].pages == (7, 8, 10, 11, 9) and ws.extras(stray) == 1
+    assert ws.missing(stray) == set()
+
+
+def test_marks_and_moves_are_edits_with_undo(stacked):
+    ws, paths, _ = stacked
+    one, _ = intake.add_source(ws, paths[0])
+    step = lambda op, **kw: intake.edit(ws, one.id, op, expect_rev=intake.plan(ws, one.id).rev, author='t', **kw)
+    lay = lambda k: split.layouts(intake.plan(ws, one.id).body, one.pages)[k]
+    step('extra', sheet=5)
+    assert lay(1) == [(4, 1), (5, None), (6, 2), (7, 3), (None, 4)]
+    step('missing', sheet=6)
+    assert lay(1) == [(4, 1), (5, None), (None, 2), (6, 3), (7, 4)]
+    step('shift', sheet=7, delta=-1)
+    assert split.pages(intake.plan(ws, one.id).body, one.pages)[1] == [4, 5, 7, 6]
+    with pytest.raises(ValueError):
+        step('shift', sheet=7, delta=2)
+    step('unmissing', sheet=6)
+    for want in ([4, 5, 7, 6], [4, 5, 6, 7]):          # undo: one step back at a time
+        intake.undo(ws, one.id, expect_rev=intake.plan(ws, one.id).rev)
+        assert split.pages(intake.plan(ws, one.id).body, one.pages)[1] == want
+    intake.undo(ws, one.id, expect_rev=intake.plan(ws, one.id).rev)
+    assert intake.plan(ws, one.id).body['extra'] == [5] and not intake.plan(ws, one.id).body.get('missing')
 
 
 def test_baked_pages_are_upright_plain_scans(tmp_path):
@@ -470,7 +509,7 @@ def test_print_area_resolves_submission_scan_exam_package(tmp_path):
         assert ws.source_layout('src1').print_area == (0, 0, 1000, 1000)
         put((30, 30, 900, 900), at('source', 'src1'), expect_rev=None)
         assert win('s1') == win('s2') == (30, 30, 900, 900)                  # the scan's, for all from it
-        assert ws.source_layout('src1') == Layout(0, (30, 30, 900, 900))     # and its sheets, for intake
+        assert ws.source_layout('src1') == Layout((30, 30, 900, 900))     # and its sheets, for intake
         assert win('handed') == (0, 0, 1000, 1000)                           # no scan: no such level
         put((40, 40, 800, 800), at('submission', 's1'))
         assert win('s1') == (40, 40, 800, 800) and win('s2') == (30, 30, 900, 900)

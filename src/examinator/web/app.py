@@ -58,7 +58,7 @@ from ..core.overrides import EXAM, SOURCE, SUBMISSION
 from ..core.reading import normalize
 from ..core.runner import Runner
 from ..core.store import Conflict
-from ..core.workspace import PRINT_AREA, COVER_PAGES, Workspace
+from ..core.workspace import PRINT_AREA, Workspace
 from ..pdf.layout import Layout
 from ..std.blocks import MEDIA_TYPES
 from ..pdf import orient
@@ -487,18 +487,19 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         except Exception:
             count = 0
 
+        gone = ws.missing(sub.id)
+
         def crop(region, path):
-            if region is None:
+            if region is None or region.page in gone or not 0 < region.page <= count:
                 return None
-            index = layout.scan_index(region.page)
-            if not 0 <= index < count:
-                return None
-            return {'index': index, 'box': box(layout, region), 'path': path}
+            return {'index': region.page - 1, 'box': box(layout, region), 'path': path}
 
         pages = ws.selected_pages(sub.id, q)
-        # every scanned page, to scroll through; `on` marks this question's
-        shown = {layout.scan_index(p) for p in pages}
-        scans = [{'index': i, 'page': i - layout.cover_pages + 1, 'on': i in shown} for i in range(count)]
+        # every page of the PDF, to scroll through: the printed pages (a missing one is its
+        # placeholder), then the extra sheets; `on` marks this question's
+        scans = [{'index': i, 'on': i + 1 in pages,
+                  'label': "missing" if i + 1 in gone else str(i + 1) if i < exam.pages else f"extra {i + 1 - exam.pages}"}
+                 for i in range(count)]
 
         # the checks: status, proposal, evidence
         checks, judged = [], {}
@@ -572,9 +573,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         regions = [{'label': overrides.split(e.path)[2], 'printed': isinstance(q.reader_of(overrides.split(e.path)[2]), Printed),
                     **levels(lay, e.path, e.base, stored)} for e in entries if e.kind == 'region']
         mine = lay.stored.get(SUBMISSION, {})
-        own = {name: {'path': path, 'rev': mine[path].rev if path in mine else ''}
-               for name, path in (('pages', overrides.join(q.id, 'pages')), ('cover', COVER_PAGES))}
-        own_cover = mine[COVER_PAGES].value if COVER_PAGES in mine else None
+        path = overrides.join(q.id, 'pages')
+        own = {'path': path, 'rev': mine[path].rev if path in mine else ''}
         keyed = []
         for c in q.checks:
             picked = picked_key(exam, q, c, sheet.values)
@@ -587,7 +587,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             'question.html', sub=sub, q=q, checks=checks, fields=fields, waiting=waiting, waiting_other=waiting_other,
             scans=scans, history=history[:60], count=count, keyed=keyed,
             can_read=bool(readers_), off=bool(readers_) and not have_model(),
-            pages=pages, pages_default=q.pages, layout=layout, own=own, own_cover=own_cover,
+            pages=pages, pages_default=q.pages, own=own, extras=max(0, count - exam.pages),
             regions=regions, print_area=levels(lay, PRINT_AREA, list(exam.base_attrs['print_area']), stored),
             scopes={'own': overrides.scope(SUBMISSION, sub.id), 'all': '',
                     'scan': overrides.scope(SOURCE, lay.source) if lay.source else None},
@@ -766,7 +766,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise Bad("nothing selected")
         sel = batch.Selection(subs, questions, missing_only=bool(data.get('missing_only')),
                               include_protected=bool(data.get('include_protected')))
-        return batch.plan(exam, store, sel, model_available=have_model(), regions=ws.fields)
+        return batch.plan(exam, store, sel, model_available=have_model(), regions=ws.fields, missing=ws.missing)
 
     def runs_plan(request, data):
         plan = run_plan(data)
@@ -814,7 +814,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         for e in overrides.editable(exam):
             root = overrides.split(e.path)[0]
             by_q.setdefault(overrides.AT if root[1:] in exam.ATTRS else root, []).append(entry_view(e, revs))
-        titles = {overrides.AT: "print area and cover pages"}
+        titles = {overrides.AT: "print area"}
         questions = [{'id': qid, 'title': titles.get(qid) or getattr(exam.questions.get(qid), 'title', ''),
                       'entries': items} for qid, items in by_q.items()]
         skipped = []
@@ -910,6 +910,11 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def exam_set(request, data):
         path, rev, scope = _path(data), _rev(data), _scope(data, True)
+        level, id_ = overrides.parse_scope(scope)
+        if level == SUBMISSION and isinstance(data.get('value'), list) and overrides.kind(exam, path) == 'pages':
+            last = exam.pages + ws.extras(id_)          # one submission's pages may name its extra sheets
+            if any(isinstance(p, int) and p > last for p in data['value']):
+                raise Bad(f"pages must be in 1..{last}" + (f" (pages beyond {exam.pages}: its extra sheets)" if last > exam.pages else ""))
         try:
             with lock:
                 change = overrides.set(exam, store, path, data.get('value'), scope=scope, author=who(request),
@@ -937,28 +942,30 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def plan_view(src) -> dict:
         art = intake.plan(ws, src.id)
-        body, n, cover = art.body, src.pages, intake.cover(ws, art.body)
+        body, n = {**art.body, 'pages': exam.pages}, src.pages
         pages, doubts, states = split.pages(body, n), split.doubts(body, n), intake.state(ws, src.id)
+        lays = split.layouts(body, n)
         made = store.made()
         entries = []
         for k, e in enumerate(body['entries']):
             sid = e.get('id')
             entries.append({'start': e['start'], 'verified': bool(e.get('confirmed')), 'id': sid,
-                            'pages': pages[k], 'doubts': [split.DOUBTS[d] for d in doubts[k]],
+                            'pages': pages[k], 'lay': lays[k], 'proposed': e.get('proposed') or {},
+                            'doubts': [split.DOUBTS[d] for d in doubts[k]],
                             'state': states[k], 'own': e.get('orient') is not None,
                             'name': identity.who(ws, sid)['name'] if sid in made else ''})
         return {'id': src.id, 'name': src.name, 'n': n, 'rev': art.rev, 'length': body['length'],
                 'checked': bool(body.get('checked')) and bool(body.get('readings')), 'failed': body.get('failed', 0), 'orient': orient.label(int(body.get('orient') or 0)),
                 'sheet_o': [intake.sheet_orient(body, i) for i in range(n)],
                 'turned': sorted(int(i) for i in body.get(intake.SHEET_ORIENT) or {}),
-                'cover': cover, 'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
-                'readings': {i: (None if r is None else 'cover' if r < cover else f'p.{r - cover + 1}')
-                             for i, r in split.readings(body).items()},
+                'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
+                'extra': body.get('extra') or [], 'missing': body.get('missing') or [],
+                'readings': {i: None if r is None else f'p.{r + 1}' for i, r in split.readings(body).items()},
                 'removed': intake.removed(ws, src.id), 'cursor': split.cursor(body),
                 'undo': intake.can_undo(ws, src.id), 'idboxes': idboxes(src.id)}
 
     def idboxes(source: str | None) -> list[dict]:
-        """Where the identity fields are on a sheet of a source (the plan adds cover sheets)."""
+        """Where the identity fields are on a sheet of a source, by printed page."""
         layout = ws.source_layout(source)
         return [{'name': f.label, 'offset': f.region.page - 1, 'box': box(layout, f.region)}
                 for f in identity.placed(ws)]
@@ -1051,7 +1058,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     def scans_accept(request, data):
         src = the_source(request)
         with lock:
-            report = intake.accept(ws, src.id, author=who(request), force=bool(data.get('force')),
+            report = intake.accept(ws, src.id, force=bool(data.get('force')),
                                    expect_rev=_rev(data))
         return {'report': report, 'plan': plan_view(src)}
 
@@ -1091,12 +1098,11 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         for row in view['rows']:
             sid = row['sub']
             layout = ws.layout(sid)
-            row['crops'] = [{'name': f.label, 'index': layout.scan_index(f.region.page), 'box': box(layout, f.region)}
+            row['crops'] = [{'name': f.label, 'index': f.region.page - 1, 'box': box(layout, f.region)}
                             for f in identity.placed(ws, sid)]
             mine = ws.layers(sid).stored.get(SUBMISSION, {})
             row['own'] = {c: {'value': mine[p].value, 'rev': mine[p].rev} for c, p in paths.items() if p in mine}
-            # for the page itself, and the boxes drawn on it: printed page p is scan index cover + p - 1
-            row['cover'], row['print_area'] = layout.cover_pages, list(layout.print_area)
+            row['print_area'] = list(layout.print_area)     # for the boxes drawn on the page
         stored = store.overrides()
         view['nobody'] = [identity.label(p) for p in view['nobody']]
         view['fields'] = [{'name': f.label} for f in identity.placed(ws)]

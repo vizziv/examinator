@@ -31,8 +31,8 @@ yet is simply not read.
 
 | Scope | Applies to | May set (`overrides.SCOPES`) |
 | --- | --- | --- |
-| submission | one submission | a region, pages, print area, cover pages |
-| source scan | every submission split from one scanned file | print area, cover pages |
+| submission | one submission | a region, pages (its extra sheets too), print area |
+| source scan | every submission split from one scanned file | print area |
 | exam | every submission | anything editable |
 | (package) | what the code says | |
 

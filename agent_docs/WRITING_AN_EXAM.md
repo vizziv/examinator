@@ -92,7 +92,7 @@ from examinator.core.runner import try_check                       # in your tes
 ## 3. Declaring the exam
 
 ```python
-exam = Exam('toy', title="Toy exam", pages=4, print_area=[50, 40, 950, 900], cover_pages=1,
+exam = Exam('toy', title="Toy exam", pages=4, print_area=[50, 40, 950, 900],
             landmarks=[...], identity={...})
 exam.question('areas', title="Areas", pages=[2], fields=[...], read=..., check=... or checks={...})
 ```
@@ -100,9 +100,9 @@ exam.question('areas', title="Areas", pages=[2], fields=[...], read=..., check=.
 | Argument | Meaning |
 | --- | --- |
 | `Exam(pages=)` | printed pages in one copy of the exam |
-| `print_area`, `cover_pages` | the print area (where the printed page sits in a scan: left, top, right, bottom, per-mille; default the whole sheet), and the sheets a scanning service adds before page 1. Exam data: the app can override them for all submissions, a scan file or one submission (a question page's print-area mode, the Exam data page) |
+| `print_area` | where the printed page sits in a scan: left, top, right, bottom, per-mille; default the whole sheet. Exam data: the app can override it for all submissions, a scan file or one submission (a question page's print-area mode, the Exam data page). Page numbers are always printed pages: intake writes each submission's PDF with printed page p as its page p (a placeholder where one was not scanned), then its extra sheets |
 | `crop_pad` | per-mille padding around every crop (default 12) |
-| `question(pages=)` | the printed pages holding the answer: what the reader sees. A grader can change them per submission (an extra-space page) |
+| `question(pages=)` | the printed pages holding the answer: what the reader sees. A grader can change them per submission (an extra-space page; pages beyond the exam's are that submission's extra sheets, in order) |
 | `fields=` | the question's fields (§4) |
 | `read=` | the reader of the fields that have no reader of their own (§5). Without one, a person types them |
 | `check=` / `checks=` | one check (named `'check'`), or several by name: `checks={'answer': ..., 'work': ...}`. None: the question only holds fields (the exam's printing, which other questions read) |

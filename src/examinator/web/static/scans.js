@@ -6,7 +6,9 @@
 // Split: one first page at a time, large, with its neighbours; verify it (V) or move it
 // a page earlier (A) or later (D). Clicking any small page shows it large the same way;
 // on a page that is not a first page, A and D look around and Shift+V starts a submission
-// there. The overview below shows every submission, doubtful ones first.
+// there. The page shown can be marked extra (kept, not a printed page) or have a missing
+// page marked before it, and moved within its submission. The overview below shows every
+// submission, doubtful ones first, each page with the printed page it is.
 (() => {
   const main = $('scans');
   if (!main) return;
@@ -215,6 +217,19 @@
     run: () => edit('cut', {sheet: peek})});
   S.register('split-drop', {available: () => !done() && !plan.dropped.includes(focus()),
     run: () => edit('drop', {sheet: focus()})});
+  // The page shown, in its submission: extra or counted, a missing page before it, its place.
+  const inSub = () => !done() && owner(focus()) >= 0;
+  const marked = i => plan.missing.includes(i) || (plan.entries[owner(i)].proposed.missing || []).includes(i);
+  const place = d => { const p = plan.entries[owner(focus())].pages, j = p.indexOf(focus()) + d; return j >= 0 && j < p.length; };
+  S.register('split-extra', {available: inSub, run: () => edit('extra', {sheet: focus()})});
+  S.register('split-missing', {available: inSub, run: () => edit('missing', {sheet: focus()})});
+  S.register('split-unmissing', {available: () => inSub() && marked(focus()), run: () => edit('unmissing', {sheet: focus()})});
+  const shift = d => ({available: () => inSub() && place(d), run: async () => {
+    const i = focus(), r = await edit('shift', {sheet: i, delta: d});
+    if (r && r.ok) show(i);
+  }});
+  S.register('split-shift-earlier', shift(-1));
+  S.register('split-shift-later', shift(1));
   // Turning, a quarter turn clockwise each time: the page shown, its submission, or (a button only) the whole scan.
   const turned = r => { if (r && r.ok) say(LANDMARKS && MODEL ? 'turned: read pages again' : 'turned'); };
   S.register('split-turn-page', {available: () => !done(), run: async () => turned(await edit('turn_page', {sheet: focus()}))});
@@ -251,13 +266,26 @@
     }
   }});
 
+  // What sheet `i` is in its submission: 'p3' or 'extra', and the pages marked missing just before it.
+  function slot(i) {
+    const j = owner(i);
+    if (j < 0) return null;
+    const lay = plan.entries[j].lay, at = lay.findIndex(([s]) => s === i), before = [];
+    for (let x = at - 1; x >= 0 && lay[x][0] === null; x--) before.unshift(lay[x][1]);
+    return {label: lay[at][1] ? `p${lay[at][1]}` : 'extra', before};
+  }
+  const slotTags = i => {
+    const s = slot(i);
+    return s ? [...s.before.map(p => tag('bad', `missing p${p}`, 'a printed page not scanned, before this one')),
+                tag(s.label === 'extra' ? 'unv' : '', s.label, s.label === 'extra' ? 'kept, not a printed page' : 'the printed page it counts as')] : [];
+  };
   function figure(el, i, w, what) {
     const img = el.querySelector('img'), cap = el.querySelector('figcaption');
     el.hidden = i < 0 || i >= plan.n;
     if (el.hidden) return;
     img.src = sheet(i, w);
     const gone = plan.loose.includes(i);
-    cap.replaceChildren(make('span', {textContent: `${what} · page ${i + 1}`}),
+    cap.replaceChildren(make('span', {textContent: `${what} · page ${i + 1}`}), ...slotTags(i),
       reading(i) ? tag('', reading(i), 'what the page says it is') : '',
       gone ? tag('', plan.dropped.includes(i) ? 'dropped' : 'in no submission') : '');
   }
@@ -289,7 +317,7 @@
     $('st-pages').hidden = finished;
     const mine = peek === null ? -1 : owner(peek);
     $('st-k').textContent = finished ? 'done' : peek === null ? `submission ${k + 1} of ${E.length}`
-      : mine < 0 ? 'in no submission' : `submission ${mine + 1} of ${E.length} · its page ${E[mine].pages.indexOf(peek) + 1}`;
+      : mine < 0 ? 'in no submission' : `submission ${mine + 1} of ${E.length} · its sheet ${E[mine].pages.indexOf(peek) + 1}`;
     const towrite = counts[plan.id].write;
     $('st-done-sum').textContent = !finished ? '' : towrite ? `Accept writes them (${towrite} to write).` : 'All written.';
     const tags = [];
@@ -316,10 +344,11 @@
     b.addEventListener('click', () => { if (!S.busy()) S.enqueue(fn); });
     return b;
   };
-  function thumb(i, w, buttons) {
-    const fig = make('figure', {className: 'sh'},
+  function thumb(i, w, buttons, label) {
+    const fig = make('figure', {className: 'sh' + (label === 'extra' ? ' extra' : '')},
       opener(i, make('img', {src: sheet(i, w), alt: `page ${i + 1}`, loading: 'lazy'})),
-      make('figcaption', {}, String(i + 1), reading(i) ? make('span', {className: 'dim', textContent: ' ' + reading(i)}) : ''));
+      make('figcaption', {}, String(i + 1), label ? make('b', {textContent: ' ' + label}) : '',
+           reading(i) ? make('span', {className: 'dim', textContent: ' ' + reading(i)}) : ''));
     if (buttons.length) fig.append(make('span', {className: 'acts'}, ...buttons));
     return fig;
   }
@@ -329,15 +358,21 @@
     b.addEventListener('click', () => { show(i); $('step').scrollIntoView({block: 'nearest'}); });
     return b;
   }
-  // The submission's name and ID boxes, cut from the sheets as planned (cover sheets come first),
+  // A page the plan says was not scanned; one marked before a sheet can be unmarked.
+  function gap(p, before) {
+    return make('figure', {className: 'sh gap'}, make('span', {textContent: `missing p${p}`}),
+      before === undefined ? '' : make('span', {className: 'acts'},
+        button('✕', 'not missing after all', () => edit('unmissing', {sheet: before}))));
+  }
+  // The submission's name and ID boxes, cut from the sheets that are their printed pages,
   // inside the scan's print area.
   const idboxes = JSON.parse(main.dataset.idboxes || '[]');
   function nameCrops(e) {
     return (plan.idboxes || idboxes).map(b => {
-      const off = b.offset + (plan.cover || 0);
-      if (e.pages.length <= off) return '';
+      const at = e.lay.find(([, p]) => p === b.offset + 1);
+      if (!at || at[0] === null) return '';
       const c = make('span', {className: 'crop', title: b.name});
-      Object.assign(c.dataset, {src: sheet(e.pages[off], LARGE), box: b.box, width: 240});
+      Object.assign(c.dataset, {src: sheet(at[0], LARGE), box: b.box, width: 240});
       drawCrop(c);
       return c;
     });
@@ -373,10 +408,12 @@
         make('span', {className: 'grow'}),
         nameLink(e),
         j + 1 < E.length ? button('join with next', 'this submission and the next are one', () => edit('join', {k: j})) : '');
-      const sheets = make('div', {className: 'sheets'}, ...e.pages.map((i, n) => {
+      const sheets = make('div', {className: 'sheets'}, ...e.lay.map(([i, p], x) => {
+        if (i === null) return gap(p, (e.lay.slice(x).find(([s]) => s !== null) || [])[0]);
+        const n = e.pages.indexOf(i);
         const fig = thumb(i, n ? SMALL : MID, [
           ...(n ? [button('✂', 'new submission here', () => edit('cut', {sheet: i}))] : []),
-          button('✕', 'drop page', () => edit('drop', {sheet: i}))]);
+          button('✕', 'drop page', () => edit('drop', {sheet: i}))], p ? `p${p}` : 'extra');
         if (!n) fig.classList.add('first');
         return fig;
       }), ...nameCrops(e));

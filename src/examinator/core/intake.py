@@ -16,7 +16,10 @@ made records each sheet's orientation (`Made.orient`); nothing downstream
 turns a page again.
 
 Accepting a plan writes the PDFs whose sheets (or orientation) changed and
-records, per submission, which sheets of which source it holds. A submission
+records, per submission, which sheets of which source it holds (`Made.pages`).
+A submission's PDF is the exam's printed pages in order, page p at index p - 1,
+with a blank placeholder where a page is missing (None in `Made.pages`), then
+its extra sheets in order (`split.lay_out`). Nothing downstream offsets a page. A submission
 that would change or disappear while it has grading work (identity fields are
 not grading work) is not touched unless the caller insists (`force`): `Busy`
 names them. A rewritten submission's remembered readings, and what a reader
@@ -43,7 +46,7 @@ from PIL import Image
 
 from ..pdf import pages as pdf_pages, render
 from ..pdf.orient import turn
-from . import identity, overrides, split
+from . import identity, split
 from .ask import Printed
 from .defs import Landmark, digest
 from .reading import normalize, region_key
@@ -131,23 +134,16 @@ def source(ws, id: str) -> Source:
 # --- the plan ---------------------------------------------------------------------
 
 def expected_length(ws) -> int:
-    """Sheets per submission unless the plan says otherwise: the exam's pages. A raw
-    stack has no cover sheets; the scanning services that add them also split."""
+    """Sheets per submission unless the plan says otherwise: the exam's pages."""
     return ws.exam.pages
 
 
-def cover(ws, body: Mapping | None = None) -> int:
-    """Leading sheets of each submission that are not exam pages: whatever the
-    plan's length has beyond the exam's pages."""
-    return max(0, int(body['length']) - ws.exam.pages) if body else 0
-
-
-def anchor(ws, cover: int = 0) -> int:
-    """The first position in a submission that carries a landmark."""
+def anchor(ws) -> int:
+    """The first printed page (0-based) that carries a landmark."""
     first = []
     for lm in ws.exam.landmarks:
         first += list(lm.reads.values()) if lm.reads else [lm.region.page]
-    return cover + (min(first) if first else 1) - 1
+    return (min(first) if first else 1) - 1
 
 
 def plan(ws, id: str) -> Row | None:
@@ -199,7 +195,6 @@ class LandmarkReader:
     def __init__(self, ws, src: Source, body: Mapping, model):
         self.ws, self.src, self.body, self.model = ws, src, body, model
         self.layout = ws.source_layout(src.id)
-        self.lead = cover(ws, body)
         self.calls = 0                  # model calls made (memoised answers aside)
         self.failures = 0               # calls that failed
         self.failed: set[int] = set()   # sheets left unread by a failed call
@@ -227,7 +222,7 @@ class LandmarkReader:
                 ws.store.set_memo(self.src.id, key, hit)
             p = page_of(lm, json.loads(hit))
             if p is not None:
-                return self.lead + p - 1
+                return p - 1
         if failed:
             self.failed.add(i)
         return None
@@ -254,7 +249,7 @@ def reguess(ws, id: str, *, model=None, length: int | None = None, fresh: bool =
     src = source(ws, id)
     cur = plan(ws, id)
     if cur is None or fresh or not cur.body:
-        body = split.new_plan(src.pages, length or expected_length(ws), anchor=anchor(ws))
+        body = split.new_plan(src.pages, length or expected_length(ws), pages=ws.exam.pages, anchor=anchor(ws))
         if cur is not None:         # a fresh guess keeps how the sheets are turned
             body['orient'] = (cur.body or {}).get('orient', body['orient'])
             if (cur.body or {}).get(SHEET_ORIENT):
@@ -264,7 +259,7 @@ def reguess(ws, id: str, *, model=None, length: int | None = None, fresh: bool =
     resized = bool(length) and int(length) != body['length']
     if resized:
         body['length'] = int(length)
-    body['anchor'] = anchor(ws, cover(ws, body))
+    body['anchor'], body['pages'] = anchor(ws), ws.exam.pages
     read = reader(ws, src, body, model)
     # Readings are positions within a submission: a new length makes them meaningless,
     # and a check reads every sheet again (cheaply: the model's answers are memoised).
@@ -291,6 +286,10 @@ _SPLIT_EDITS: dict[str, Callable[..., dict]] = {
     'join': lambda body, n, k, sheet, delta: split.join(body, k),
     'drop': lambda body, n, k, sheet, delta: split.drop(body, sheet, n),
     'restore': lambda body, n, k, sheet, delta: split.restore(body, sheet, n),
+    'extra': lambda body, n, k, sheet, delta: split.toggle_extra(body, sheet, n),
+    'missing': lambda body, n, k, sheet, delta: split.add_missing(body, sheet, n),
+    'unmissing': lambda body, n, k, sheet, delta: split.remove_missing(body, sheet, n),
+    'shift': lambda body, n, k, sheet, delta: split.shift(body, sheet, _step(delta), n),
 }
 EDITS = (*_SPLIT_EDITS, 'turn_source', 'turn', 'upright', 'turn_page')
 
@@ -370,7 +369,10 @@ def _keep_appearance(old: Mapping, new: Mapping, n: int) -> dict:
 def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | None = None,
          sheet: int | None = None, delta: int | None = None) -> Row:
     """One person's edit of a plan (see `core.split`), against the revision they saw.
-    A split edit (move, cut, join, ...) leaves every sheet looking as it did, even
+    The split edits: `confirm`, `move` (submission `k`'s start, `delta`), `cut`, `join`,
+    `drop`, `restore`, and of one `sheet` in its submission: `extra` (toggle),
+    `missing` (a missing page before it), `unmissing`, `shift` (`delta` places).
+    A split edit leaves every sheet looking as it did, even
     one that changes submission (`_keep_appearance`). Orientation, each a quarter
     turn clockwise more: `turn_source` (the whole source), `turn` (submission `k`;
     `upright` drops its own), `turn_page` (one `sheet`)."""
@@ -382,7 +384,8 @@ def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | 
         raise Conflict("the plan changed")
     n = src.pages
     if op in _SPLIT_EDITS:
-        body = _keep_appearance(cur.body, _SPLIT_EDITS[op](cur.body, n, k, sheet, delta), n)
+        old = {**cur.body, 'pages': ws.exam.pages}
+        body = _keep_appearance(old, _SPLIT_EDITS[op](old, n, k, sheet, delta), n)
     elif op == 'turn_source':
         body = _turn_source(cur.body, n)
     elif op in ('turn', 'upright'):
@@ -421,8 +424,13 @@ def undo(ws, id: str, *, expect_rev: Any) -> Row:
 
 # --- accepting: writing submissions ---------------------------------------------------
 
-def _sheets_of(body: Mapping, n: int) -> list[tuple[list[int], list[int]]]:
-    return [(sheets, [sheet_orient(body, i) for i in sheets]) for sheets in split.pages(body, n)]
+def _sheets_of(body: Mapping, n: int) -> list[tuple[list[int | None], list[int]]]:
+    """Per entry, its PDF's pages (`split.written`: None, a missing page) and their turns."""
+    out = []
+    for lay in split.layouts(body, n):
+        pages = split.written(lay)
+        out.append((pages, [0 if i is None else sheet_orient(body, i) for i in pages]))
+    return out
 
 
 def state(ws, id: str) -> list[str]:
@@ -460,7 +468,7 @@ def _next_ids(ws, taken: set[str]):
             yield sid, n
 
 
-def accept(ws, id: str, *, author: str | None = None, force: bool = False,
+def accept(ws, id: str, *, force: bool = False,
            expect_rev: Any = ANY) -> dict:
     """Write the plan's submissions into `pdfs/`. Unchanged ones are left alone;
     a submission whose entry lost all its pages is removed (the entry keeps no id).
@@ -483,8 +491,9 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
     sheets = _sheets_of(body, src.pages)
     def work(sid):
         return ws.store.has_work(sid, besides=identity.IDENTITY + '/')
-    busy = [e['id'] for e, st, (pages, _) in zip(entries, states, sheets)
-            if st == 'changed' and pages and work(e['id'])]
+    kept = split.pages(body, src.pages)
+    busy = [e['id'] for e, st, mine in zip(entries, states, kept)
+            if st == 'changed' and mine and work(e['id'])]
     busy += [s for s in gone if work(s)]
     if busy and not force:
         raise Busy(busy)
@@ -492,9 +501,10 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
     next_n = None
     report = {'new': [], 'rewritten': [], 'removed': [], 'unchanged': 0, 'empty': 0}
     writes = []
-    for e, st, (pages, orients) in zip(entries, states, sheets):
-        e['confirmed'] = True       # accepted: every start is now a person's decision
-        if not pages:
+    for k, (e, st, mine, (pages, orients)) in enumerate(zip(entries, states, kept, sheets)):
+        e['confirmed'] = True       # accepted: every start (and every proposed mark) is now a person's decision
+        split.settle(body, k)
+        if not mine:
             if e.get('id') in gone:
                 e['id'] = None      # its submission is removed below
             report['empty'] += 1
@@ -523,10 +533,6 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
                 ws.store.put_submissions([identity.submission(ws, sid, f'{sid}.pdf')])
                 ws.store.clear_memo(sid)        # readings of the old pages
                 identity.forget(ws, sid)        # and what a reader read in the identity fields
-            # Every PDF written from this scan starts with as many cover sheets as the plan has,
-            # whatever the exam's default: the scan's own cover pages.
-            overrides.set(ws.exam, ws.store, '@cover_pages', cover(ws, body),
-                          scope=overrides.scope(overrides.SOURCE, id), author=author)
             for sid in gone:
                 ws.store.delete_made(sid)
                 ws.store.delete_submission(sid)

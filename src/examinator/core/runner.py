@@ -57,7 +57,9 @@ class Services:
         self.ws, self._model, self._memo = workspace, model, memo
 
     def pages(self, submission, question):
-        return [self.ws.page_image(submission, p) for p in self.ws.selected_pages(submission, question)]
+        gone = self.ws.missing(submission)          # a placeholder is never shown to a reader
+        return [self.ws.page_image(submission, p) for p in self.ws.selected_pages(submission, question)
+                if p not in gone]
 
     def crop(self, submission, region):
         return self.ws.crop(submission, region)
@@ -154,6 +156,7 @@ class Runner:
         q = self.exam.questions[qid]
         resolved = replace(q, fields=self.ws.fields(submission, q))
         have = self.values(submission)
+        gone = self.ws.missing(submission)
         outs = []
 
         def out(status, detail=""):
@@ -177,8 +180,12 @@ class Runner:
                 if bare:
                     out('blocked', f"no region: {', '.join(bare)}")
                 targets = [f for f in targets if f.region is not None]
-                if not targets:
-                    continue
+            off = [f.label for f in targets if f.region is not None and f.region.page in gone]
+            if off:                 # never read from a placeholder
+                out('blocked', f"page missing: {', '.join(off)}")
+                targets = [f for f in targets if f.label not in off]
+            if not targets:
+                continue
             if getattr(reader, 'uses_model', True) and self.model is None:
                 out('blocked', "model unavailable")
                 continue

@@ -92,7 +92,7 @@ class ReadContext:
         return self._services().crop(self.submission, region)
 
     def layout(self) -> 'Layout':
-        """This submission's scan layout (cover pages, print area): what a crop depends on."""
+        """This submission's scan layout (its print area): what a crop depends on."""
         return self._services().layout(self.submission)
 
     def model(self, prompt: str, *, images: Sequence['Image'] = (), text: str | None = None,

@@ -174,7 +174,7 @@ def test_post_needs_token(site):
     body = {'values': {'a/x': {'text': '9', 'rev': rev}}}
     assert site.client.post('/s/s1/a/save', json=body).status_code == 403
     assert site.client.post('/s/s1/a/save', json=body, headers={'X-Token': 'wrong'}).status_code == 403
-    assert site.client.post('/exam/set', json={'path': '@cover_pages', 'value': 1, 'rev': None}).status_code == 403
+    assert site.client.post('/exam/set', json={'path': '@print_area', 'value': [1, 1, 999, 999], 'rev': None}).status_code == 403
     assert site.client.post('/runs/stop').status_code == 403
     assert site.value('s1', 'a/x').text == '1'
     # the token header, then JSON only: no forms, no token in the body
@@ -226,7 +226,7 @@ def test_unknown_targets_are_404(site, tmp_path):
         assert b'secret' not in r.content
     assert site.post('/s/nobody/a/save', {'values': {}}).status_code == 404
     assert site.post('/s/s1/zzz/decide', {'check': 'check', 'value': True, 'rev': None, 'seen': {}}).status_code == 404
-    assert site.post('/exam/set', {'path': '@cover_pages', 'value': 1, 'rev': None,
+    assert site.post('/exam/set', {'path': '@print_area', 'value': [1, 1, 999, 999], 'rev': None,
                                   'scope': 'submission:nobody'}).status_code == 400
 
 
@@ -417,7 +417,7 @@ def test_a_region_for_this_submission_only(site):
     html = site.get('/s/s1/p').text
     layout = site.ws.layout('s1')
     from examinator import Region
-    want = ','.join(f'{v:.4f}' for v in Layout(layout.cover_pages, layout.print_area).box(Region(1, 0, 0, 500, 100), 12))
+    want = ','.join(f'{v:.4f}' for v in Layout(layout.print_area).box(Region(1, 0, 0, 500, 100), 12))
     assert f'data-box="{want}" data-region="p/fields/c1/region"' in html
     r = site.post('/exam/clear', {'path': path, 'rev': r.json()['rev'], 'scope': OWN, 'sub': 's1'})
     assert r.status_code == 200 and r.json()['levels']['own'] is None and r.json()['rev'] is None
@@ -497,7 +497,7 @@ def test_a_batch_never_replaces_what_a_person_set_unless_told(site):
 
 # --- overrides and settings ---
 
-def test_pages_and_cover_pages_of_one_submission(site):
+def test_pages_of_one_submission(site):
     own = lambda path, value, rev=None: site.post('/exam/set' if value is not None else '/exam/clear',
                                                   {'path': path, 'value': value, 'rev': rev, 'scope': OWN})
     assert own('a/pages', [1, 2]).status_code == 200
@@ -510,11 +510,7 @@ def test_pages_and_cover_pages_of_one_submission(site):
     assert own('a/pages', None, rev).status_code == 200
     assert site.ws.selected_pages('s1', site.exam.questions['a']) == (1,)
     assert own('@print_area', [100, 100, 900, 900]).status_code == 200
-    assert own('@cover_pages', 1).status_code == 200
-    assert site.ws.layout('s1') == Layout(1, (100, 100, 900, 900)) and site.ws.layout('s2') == Layout(0, (0, 0, 1000, 1000))
-    assert own('@cover_pages', 'x', site.ws.store.overrides(OWN)['@cover_pages'].rev).status_code == 400
-    assert own('@cover_pages', -1, site.ws.store.overrides(OWN)['@cover_pages'].rev).status_code == 400
-    assert 'cover 1' in site.get('/s/s1/a').text
+    assert site.ws.layout('s1') == Layout((100, 100, 900, 900)) and site.ws.layout('s2') == Layout((0, 0, 1000, 1000))
 
 
 def test_print_area_at_each_scope(site):
@@ -559,23 +555,23 @@ def test_print_area_at_each_scope(site):
 def test_the_exam_page_lists_every_scope(site):
     from examinator.core import overrides
     site.post('/exam/set', {'path': '@print_area', 'value': [5, 5, 995, 995], 'rev': None})
-    site.post('/exam/set', {'path': '@cover_pages', 'value': 1, 'rev': None})
     site.post('/exam/set', {'path': 'a/pages', 'value': [1], 'rev': None, 'scope': OWN})
     html = site.get('/exam').text
-    assert '@print_area: [0, 0, 1000, 1000] -&gt; [5, 5, 995, 995]' in html and '@cover_pages: 0 -&gt; 1' in html
-    assert 'data-path="@print_area"' in html and 'data-path="@cover_pages"' in html     # editable here
+    assert '@print_area: [0, 0, 1000, 1000] -&gt; [5, 5, 995, 995]' in html
+    assert 'data-path="@print_area"' in html and 'cover' not in html                   # editable here
     assert 'data-action="scoped-revert" class="danger" data-scope="submission:s1" data-path="a/pages"' in html
     rev = site.ws.store.overrides(OWN)['a/pages'].rev
     assert site.post('/exam/clear', {'path': 'a/pages', 'rev': rev + 1, 'scope': OWN}).status_code == 409
     assert site.post('/exam/clear', {'path': 'a/pages', 'rev': rev, 'scope': OWN}).status_code == 200
     assert 'data-scope="submission:s1"' not in site.get('/exam').text
-    assert overrides.validate(site.exam, '@cover_pages', 2) == 2
+    with pytest.raises(ValueError):
+        overrides.validate(site.exam, '@cover_pages', 2)
 
 
 def test_settings_page_has_no_exam_data(site):
     html = site.get('/settings').text
     assert 'print area' not in html and 'id="keymap"' in html
-    assert site.post('/settings', {'cover_pages': 1}).status_code == 405
+    assert site.post('/settings', {'print_area': [1, 1, 999, 999]}).status_code == 405
 
 
 # --- untrusted content ---

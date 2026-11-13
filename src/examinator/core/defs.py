@@ -335,20 +335,19 @@ class Exam:
     (`identity_group`), read on the scans page's Names step, never graded.
     `ATTRS` are the exam's own values overrides may replace (paths '@<attr>'):
     the print area (where the printed page sits on a scanned sheet: left, top,
-    right, bottom, per-mille of the sheet) and the cover pages (scanned pages
-    before printed page 1); `base_attrs` keeps them as the package built them."""
+    right, bottom, per-mille of the sheet); `base_attrs` keeps it as the package
+    built it."""
 
-    ATTRS: tuple[str, ...] = ('print_area', 'cover_pages')
+    ATTRS: tuple[str, ...] = ('print_area',)
 
     def __init__(self, id: str, *, title: str = "", pages: int,
-                 print_area: Sequence[int] = (0, 0, 1000, 1000), cover_pages: int = 0,
+                 print_area: Sequence[int] = (0, 0, 1000, 1000),
                  crop_pad: int = 12, landmarks: Sequence[Landmark] = (),
                  identity: Mapping[str, Field] | None = None):
         self.id = id
         self.title = title or id
         self.pages = pages
         self.print_area = tuple(print_area)     # live: the package's, or an exam-wide override
-        self.cover_pages = cover_pages          # likewise
         self.crop_pad = crop_pad                # per-mille of the printed page around every crop
         self.landmarks = tuple(landmarks)       # how to tell which printed page a scanned sheet is (intake)
         names = [x.name for x in self.landmarks]

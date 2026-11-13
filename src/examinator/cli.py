@@ -67,7 +67,7 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
             print(f"  #{k + 1} pages {span}: {', '.join(split.DOUBTS[x] for x in d)}")
         if args.accept:
             try:
-                r = intake.accept(ws, src.id, author=getpass.getuser())
+                r = intake.accept(ws, src.id)
             except intake.Busy as e:
                 print(f"  not accepted: {e}", file=sys.stderr)
                 continue
@@ -126,7 +126,7 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
         subs = tuple(args.submission or [s.id for s in ws.store.submissions()])
         sel = batch.Selection(subs, tuple(args.question or exam.grading), missing_only=args.missing_only,
                               include_protected=args.include_protected)
-        plan = batch.plan(exam, ws.store, sel, model_available=model is not None, regions=ws.fields)
+        plan = batch.plan(exam, ws.store, sel, model_available=model is not None, regions=ws.fields, missing=ws.missing)
         for action in batch.ACTIONS:
             print(f"{action}: {plan.count(action)}")
         if args.dry_run:
@@ -167,7 +167,7 @@ def main(argv=None) -> int:
     p.add_argument('pdf', nargs='*', help="scanned PDFs to add (kept unchanged under WORKSPACE/sources/)")
     p.add_argument('--roster', help="students: a CSV with a header (Name or First/Last Name, Student ID, Email), "
                                     "or plain lines of name and ID separated by a comma or tab")
-    p.add_argument('--length', type=int, help="sheets per submission (default: the exam's pages; more means cover sheets come first)")
+    p.add_argument('--length', type=int, help="sheets per submission (default: the exam's pages; sheets beyond them are extra)")
     p.add_argument('--no-check', action='store_true', help="do not read landmarks with the model")
     p.add_argument('--accept', action='store_true', help="write the submissions into pdfs/ as proposed")
     p.add_argument('--names', action='store_true',

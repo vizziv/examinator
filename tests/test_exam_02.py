@@ -102,7 +102,7 @@ def test_selftest(exam, tmp_path):
 def test_definition(exam, pkg):
     v = pkg('versions')
     assert list(exam.grading) == ['info'] + [f'q{i}' for i in range(1, 13)]
-    assert exam.pages == 28 and exam.cover_pages == 1 and exam.print_area == (0, 0, 1000, 1000)
+    assert exam.pages == 28 and exam.print_area == (0, 0, 1000, 1000)
     q = exam.grading
     assert q['info'].checks == () and q['info'].read is None
     assert all(isinstance(f.read, Printed) for f in q['info'].fields)

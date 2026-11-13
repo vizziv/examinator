@@ -16,7 +16,7 @@ checker settings). None of it is student data.
 - 22 printed pages. Page 1 is the front page. Question *q* (1–9) has its
   statement on page 2*q* and its answer area on page 2*q*+1. Two questions (Q2,
   Q7) use both of their pages for answers. Pages 20–22 are extra space.
-- Scans usually have one prepended cover page. The printed page is reduced and
+- The old export prepended one sheet to each scan (drop such a sheet on Split). The printed page is reduced and
   inset on the scan: the default scan window was left 6%, top 5.5%, right 92%,
   bottom 82.5% of the scanned page.
 - Eight blank PDFs exist, one per printed version (`alt0` … `alt7`). Ask the
@@ -323,8 +323,7 @@ roster and no model:
 7. The library contains no Exam 3 identifiers, and the toy exam described in the
    brief still runs unchanged.
 
-Later, for exports: each student's stub for a question contains any cover
-pages, page 1, both of the question's pages, any pages the grader added, and
+Later, for exports: each student's stub for a question contains page 1, both of the question's pages, any pages the grader added, and
 pages 20–22; stubs are grouped by question and printing (16 groups), each with a
 combined PDF, a blank template cut from the matching blank exam, and a manifest
 of page ranges.

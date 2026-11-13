@@ -1,7 +1,7 @@
 {# One editable value of the exam package: a form that entries.js saves to /exam/set. #}
 {% macro input(e) %}
 {% if e.kind == 'bool' %}<input type="checkbox" class="ev"{% if e.current %} checked{% endif %} aria-label="{{ e.label }}">
-{% elif e.kind in ('int', 'number', 'cover_pages') %}<input type="number" class="ev" step="{{ 'any' if e.kind == 'number' else 1 }}" value="{{ e.text }}" aria-label="{{ e.label }}"{% if e.nullable %} placeholder="none"{% endif %}>
+{% elif e.kind in ('int', 'number') %}<input type="number" class="ev" step="{{ 'any' if e.kind == 'number' else 1 }}" value="{{ e.text }}" aria-label="{{ e.label }}"{% if e.nullable %} placeholder="none"{% endif %}>
 {% elif e.area %}<textarea class="ev" rows="{{ e.rows }}" spellcheck="false" aria-label="{{ e.label }}"
  {%- if e.kind == 'map' %} placeholder="reading = value"{% elif e.kind == 'choice' %} placeholder="one accepted text per line"{% endif %}>
 {{ e.text }}</textarea>

@@ -53,12 +53,14 @@ class Plan:
 
 
 def plan(exam: Exam, store: Store, selection: Selection, *, model_available: bool,
-         regions=None) -> Plan:
+         regions=None, missing=None) -> Plan:
     """`regions(submission, question) -> fields with this submission's regions`
-    (`Workspace.fields`); without it, the exam's regions."""
+    (`Workspace.fields`); without it, the exam's regions. `missing(submission)
+    -> printed pages it does not have` (`Workspace.missing`): a field there is not read."""
     items: list[Item] = []
     for sub in selection.submissions:
         sheet = Sheet.of(store.all(submission=sub, kinds=('value',)))
+        gone = missing(sub) if missing is not None else set()
         for qid in selection.questions:
             q = exam.questions[qid]
 
@@ -72,13 +74,14 @@ def plan(exam: Exam, store: Store, selection: Selection, *, model_available: boo
                 todo = [f for f, v in zip(readable, vals)
                         if not (selection.missing_only and v is not None)
                         and not (v is not None and v.settled == 'person' and not selection.include_protected)]
-                placed = [f for f in todo if f.region is not None
-                          or not getattr(q.reader_of(f.label), 'needs_region', False)]
+                off = [f for f in todo if f.region is not None and f.region.page in gone]
+                placed = [f for f in todo if f not in off and (
+                    f.region is not None or not getattr(q.reader_of(f.label), 'needs_region', False))]
                 if not todo:
                     protected = any(v is not None and v.settled == 'person' for v in vals)
                     add('skip_protected' if protected and not selection.missing_only else 'skip_present')
                 elif not placed:
-                    add('blocked', "no region")
+                    add('blocked', "page missing" if off else "no region")
                 elif not model_available and any(getattr(q.reader_of(f.label), 'uses_model', True)
                                                  for f in placed):
                     add('blocked', "model unavailable")

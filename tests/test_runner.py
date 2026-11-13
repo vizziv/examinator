@@ -105,11 +105,8 @@ def test_a_printed_reading_is_remembered_per_crop_and_a_new_print_area_reads_aga
     own('@print_area', [50, 50, 950, 950])                                       # another crop
     assert all(o.ok for o in runner.read('s1', 'p'))
     assert calls() == 4 and value(ws, 's1', 'p/c1').text == 'two'
-    own('@cover_pages', 1)                                                       # another page
-    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 6
-    own('@cover_pages', None)
     own('@print_area', None)                                                     # the first crop again
-    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 6
+    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 4
     assert value(ws, 's1', 'p/c1').text == 'one'
 
 

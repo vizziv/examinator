@@ -15,7 +15,7 @@
       return parts.every(p => /^-?\d+$/.test(p)) ? parts.map(Number) : text;   // else the server explains
     };
     if (kind === 'region' || kind === 'pages' || kind === 'print_area') return nums();
-    if (kind === 'int' || kind === 'cover_pages') return /^\s*-?\d+\s*$/.test(text) ? Number(text) : text;
+    if (kind === 'int') return /^\s*-?\d+\s*$/.test(text) ? Number(text) : text;
     if (kind === 'number') return text.trim() !== '' && !isNaN(Number(text)) ? Number(text) : text;
     if (kind === 'choice') return text.split('\n').map(s => s.trim()).filter(Boolean);
     if (kind === 'map') {

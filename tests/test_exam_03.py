@@ -94,7 +94,7 @@ def test_selftest(exam, tmp_path):
 
 def test_definition(exam, pkg):
     assert list(exam.grading) == ['info'] + [f'q{i}' for i in range(1, 10)]
-    assert exam.pages == 22 and exam.cover_pages == 1 and exam.print_area == (0, 0, 1000, 1000)
+    assert exam.pages == 22 and exam.print_area == (0, 0, 1000, 1000)
     info = exam.questions['info']
     assert info.checks == () and info.read is None and all(isinstance(f.read, Printed) for f in info.fields)
     assert {label for labels in pkg('versions').FIELDS.values() for label in labels} == {f.label for f in info.fields}

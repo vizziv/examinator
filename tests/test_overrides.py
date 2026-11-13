@@ -370,20 +370,19 @@ def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
     assert pages('s1') == pages('s2') == (1, 2)
     put('a/pages', [2], S1)
     assert pages('s1') == (2,) and pages('s2') == (1, 2)
-    # the print area and the cover pages: the submission's, its scan's, the exam's, the package's
-    layout = lambda sid: (ws.layout(sid).cover_pages, ws.layout(sid).print_area)
-    assert layout('s1') == layout('s2') == (0, (0, 0, 1000, 1000))
-    put('@print_area', [5, 5, 995, 995], ''), put('@cover_pages', 1, '')
-    assert layout('s1') == layout('s2') == (1, (5, 5, 995, 995))
-    put('@print_area', [10, 10, 990, 990], SRC), put('@cover_pages', 2, SRC)
-    assert layout('s1') == (2, (10, 10, 990, 990)) and layout('s2') == (1, (5, 5, 995, 995))   # s2: no scan
-    put('@print_area', [20, 20, 980, 980], S1), put('@cover_pages', 3, S1)
+    # the print area: the submission's, its scan's, the exam's, the package's
+    layout = lambda sid: ws.layout(sid).print_area
+    assert layout('s1') == layout('s2') == (0, 0, 1000, 1000)
+    put('@print_area', [5, 5, 995, 995], '')
+    assert layout('s1') == layout('s2') == (5, 5, 995, 995)
+    put('@print_area', [10, 10, 990, 990], SRC)
+    assert layout('s1') == (10, 10, 990, 990) and layout('s2') == (5, 5, 995, 995)   # s2: no scan
+    put('@print_area', [20, 20, 980, 980], S1)
     put('@print_area', [30, 30, 970, 970], S2)
-    assert layout('s1') == (3, (20, 20, 980, 980)) and layout('s2') == (1, (30, 30, 970, 970))
+    assert layout('s1') == (20, 20, 980, 980) and layout('s2') == (30, 30, 970, 970)
     # dropping each level falls back to the next
-    for scope, want in ((S1, (2, (10, 10, 990, 990))), (SRC, (1, (5, 5, 995, 995))), ('', (0, (0, 0, 1000, 1000)))):
+    for scope, want in ((S1, (10, 10, 990, 990)), (SRC, (5, 5, 995, 995)), ('', (0, 0, 1000, 1000))):
         overrides.clear(exam, ws.store, '@print_area', scope=scope)
-        overrides.clear(exam, ws.store, '@cover_pages', scope=scope)
         assert layout('s1') == want
     for scope, want in ((S1, Region(1, 1, 1, 9, 9)), ('', base)):
         overrides.clear(exam, ws.store, 'a/fields/x/region', scope=scope)
@@ -416,7 +415,7 @@ def test_one_validator_for_every_scope(scoped):
     bad = [('a/fields/x/region', [1, 500, 0, 10, 10]), ('a/fields/x/region', [9, 0, 0, 10, 10]),
            ('a/fields/x/region', "1 0 0 10 10"), ('a/pages', []), ('a/pages', [0]), ('a/pages', [1, 1]),
            ('@print_area', [0, 0, 1000]), ('@print_area', [500, 0, 400, 1000]), ('@print_area', [0, 0, 1001, 1000]),
-           ('@cover_pages', -1), ('@cover_pages', 1.5), ('@cover_pages', True), ('a/note', "x")]
+           ('a/note', "x")]
     for path, value in bad:
         for scope in ('', SRC, S1):
             with pytest.raises(ValueError):
@@ -439,21 +438,19 @@ def test_changes_below_the_exam_outdate_no_check(scoped):
     assert change.checks == () and change.fields == (('a', 'x'),)
     change = overrides.set(exam, ws.store, '@print_area', [5, 5, 995, 995], scope=SRC, author='ta')
     assert change.checks == () and ('a', 'x') in change.fields and ('p', 'c1') in change.fields
-    change = overrides.set(exam, ws.store, '@cover_pages', 1, author='ta')       # every crop moves
+    change = overrides.set(exam, ws.store, '@print_area', [9, 9, 991, 991], author='ta')     # every crop moves
     assert change.checks == () and ('a', 'x') in change.fields
     assert {qc: exam.check_hash(exam.questions[qc[0]], exam.questions[qc[0]].check(qc[1])) for qc in before} == before
 
 
-def test_the_change_list_has_the_print_area_and_cover_pages(scoped):
+def test_the_change_list_has_the_print_area(scoped):
     exam, ws = scoped
     overrides.set(exam, ws.store, '@print_area', [5, 5, 995, 995], author='ta')
-    overrides.set(exam, ws.store, '@cover_pages', 1, author='ta')
     overrides.set(exam, ws.store, 'a/pages', [2], scope=S1, author='ta')         # one submission's: not for the package
     lines = describe_changes(exam, ws.store)
-    assert [x.split('  (')[0] for x in lines] == ['@cover_pages: 0 -> 1', '@print_area: [0, 0, 1000, 1000] -> [5, 5, 995, 995]']
+    assert [x.split('  (')[0] for x in lines] == ['@print_area: [0, 0, 1000, 1000] -> [5, 5, 995, 995]']
     entries = {e.path: e for e in overrides.editable(exam)}
     assert entries['@print_area'].current == [5, 5, 995, 995] and entries['@print_area'].overridden
-    assert entries['@cover_pages'].base == 0
     fresh = make_exam()
-    assert overrides.refresh(fresh, ws.store) == [] and fresh.print_area == (5, 5, 995, 995) and fresh.cover_pages == 1
-    assert fresh.base_attrs == {'print_area': (0, 0, 1000, 1000), 'cover_pages': 0}
+    assert overrides.refresh(fresh, ws.store) == [] and fresh.print_area == (5, 5, 995, 995)
+    assert fresh.base_attrs == {'print_area': (0, 0, 1000, 1000)}

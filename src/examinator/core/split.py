@@ -2,27 +2,39 @@
 
 A source is `n` sheets, numbered from 0. A plan is a list of entries, each the
 sheet where one submission starts, plus the sheets set aside (`dropped`). An
-entry's pages are its start up to the next entry's start, less dropped sheets;
-sheets before the first start belong to no submission.
+entry's sheets are its start up to the next entry's start, less dropped sheets,
+in `order` (a permutation of all sheets; absent: as scanned); sheets before the
+first start belong to no submission.
 
-    {'length': L, 'anchor': a, 'checked': bool,
-     'entries': [{'start': i, 'confirmed': bool, 'id': str | None, 'orient': turns?}],
-     'dropped': [i, ...], 'readings': {'i': position | None}, 'orient': turns,
-     'sheet_orient': {'i': turns}?}
+    {'length': L, 'pages': P, 'anchor': a, 'checked': bool,
+     'entries': [{'start': i, 'confirmed': bool, 'id': str | None, 'orient': turns?,
+                  'proposed': {'missing' | 'extra': [i]}?}],
+     'dropped': [i, ...], 'extra': [i, ...], 'missing': [i, ...], 'order': [i, ...]?,
+     'readings': {'i': position | None}, 'orient': turns, 'sheet_orient': {'i': turns}?}
+
+A submission maps the exam's `P` printed pages to its sheets (`lay_out`): its
+sheets in order, less those marked `extra`, with a missing page wherever
+`missing` names the sheet it comes before (a sheet may carry several), are
+printed pages 1, 2, ... P. Sheets beyond page P are extra too; pages beyond
+the last sheet are missing. A person marks and moves sheets; an entry's
+`proposed` marks are a guess from the landmarks, kept apart until the entry is
+confirmed.
 
 Orientation (`core.intake.sheet_orient`), in quarter turns clockwise, is the
 source's `orient`, plus an entry's own, plus a sheet's own; here it is only
 carried along.
 
-A submission is expected to be `length` sheets. A *reading* says which position
-(0-based, within its submission) a sheet is, from the exam's landmarks; it is
-`None` when nothing could be read. `anchor` is the first position that carries
-a landmark (after any cover sheets).
+A submission is expected to be `length` sheets (the exam's `pages`, unless a
+person says each has more). A *reading* says which printed page (0-based) a
+sheet is, from the exam's landmarks; it is `None` when nothing could be read.
+`anchor` is the first page that carries a landmark.
 
 The first proposal is the simple one: every `length` sheets. With a reader,
 each expected boundary is checked where it is expected; when the sheet there
 disagrees, its neighbours forward and backward are tried until one reads as a
-first page. Nothing is read that is not needed.
+first page. Nothing is read that is not needed. A submission one sheet short
+(or long) is then searched by halves for the page that is missing (or the
+sheet that is extra), and the mark is proposed when the readings around it agree.
 
 A start a person confirmed is never moved by a proposal: later guesses are
 computed from the last confirmed start before them.
@@ -30,13 +42,15 @@ computed from the last confirmed start before them.
 from __future__ import annotations
 
 import copy
+from collections import Counter
 from typing import Any, Callable, Iterable, Mapping, NamedTuple, Sequence
 
 Reader = Callable[[int], 'int | None']
 
 REACH = 3        # how many sheets either side of an expected boundary a proposal looks at
 DOUBTS = {'short': "too few pages", 'long': "too many pages",
-          'start': "first page not recognised", 'number': "unexpected page number"}
+          'start': "first page not recognised", 'number': "unexpected page number",
+          'missing': "missing page?", 'extra': "extra page?"}
 
 
 # --- proposing ------------------------------------------------------------------
@@ -112,7 +126,11 @@ def pages(plan: Mapping, n: int) -> list[list[int]]:
     """Each entry's sheets, in order."""
     gone = set(plan.get('dropped') or ())
     starts = [e['start'] for e in plan['entries']] + [n]
-    return [[i for i in range(a, b) if i not in gone] for a, b in zip(starts, starts[1:])]
+    out = [[i for i in range(a, b) if i not in gone] for a, b in zip(starts, starts[1:])]
+    if plan.get('order'):
+        rank = {s: j for j, s in enumerate(plan['order'])}
+        out = [sorted(p, key=rank.__getitem__) for p in out]
+    return out
 
 
 def loose(plan: Mapping, n: int) -> list[int]:
@@ -125,30 +143,74 @@ def readings(plan: Mapping) -> dict[int, int | None]:
     return {int(k): v for k, v in (plan.get('readings') or {}).items()}
 
 
-def assess(sheets: Sequence[int], length: int, read: Mapping[int, int | None], anchor: int = 0) -> list[str]:
-    """Doubts about one submission (see `DOUBTS`), from its length and whatever
-    readings exist for its sheets. A sheet that was never read is no doubt."""
+def marks(plan: Mapping) -> tuple[set[int], list[int]]:
+    """The extra sheets and the missing marks: a person's, and the entries' proposals."""
+    extra, missing = set(plan.get('extra') or ()), list(plan.get('missing') or ())
+    for e in plan['entries']:
+        extra.update((e.get('proposed') or {}).get('extra', ()))
+        missing += (e.get('proposed') or {}).get('missing', ())
+    return extra, missing
+
+
+def lay_out(sheets: Sequence[int], pages: int, extra=(), missing=()) -> list[tuple[int | None, int | None]]:
+    """One submission in order, as (sheet, printed page): page None, an extra
+    sheet; sheet None, a page not scanned (a mark, before the next sheet; or
+    a page after the last sheet)."""
+    out, p, before = [], 0, Counter(missing)
+    for i in sheets:
+        for _ in range(before[i]):
+            if p < pages:
+                p += 1
+                out.append((None, p))
+        if i in extra or p >= pages:
+            out.append((i, None))
+        else:
+            p += 1
+            out.append((i, p))
+    return out + [(None, q) for q in range(p + 1, pages + 1)]
+
+
+def layouts(plan: Mapping, n: int) -> list[list[tuple[int | None, int | None]]]:
+    extra, missing = marks(plan)
+    return [lay_out(p, plan.get('pages', plan['length']), extra, missing) for p in pages(plan, n)]
+
+
+def written(lay: Sequence[tuple[int | None, int | None]]) -> list[int | None]:
+    """A submission's PDF: the printed pages in order (None: missing), then the extra sheets."""
+    return [i for i, p in lay if p is not None] + [i for i, p in lay if p is None]
+
+
+def assess(lay: Sequence[tuple[int | None, int | None]], read: Mapping[int, int | None], *,
+           anchor: int = 0, spare: int = 0, extra=(), proposed: Mapping | None = None) -> list[str]:
+    """Doubts about one submission (see `DOUBTS`), from how its sheets lay out
+    and whatever readings exist for them. A sheet that was never read is no
+    doubt; sheets a person marked extra are none either, nor `spare` more
+    (sheets per submission beyond the exam's pages)."""
     out = []
-    if len(sheets) < length:
+    if lay and lay[-1][0] is None:
         out.append('short')
-    elif len(sheets) > length:
+    if sum(p is None and i not in extra for i, p in lay) > spare:
         out.append('long')
-    if anchor < len(sheets) and sheets[anchor] in read and read[sheets[anchor]] != anchor:
+    first = next((i for i, p in lay if p == anchor + 1), None)
+    if first is not None and first in read and read[first] != anchor:
         out.append('start')
-    if any(read.get(i) is not None and read[i] != j for j, i in enumerate(sheets) if j != anchor):
+    if any(i is not None and p is not None and p - 1 != anchor and read.get(i) is not None and read[i] != p - 1
+           for i, p in lay):
         out.append('number')
-    return out
+    return out + sorted(proposed or ())
 
 
 def doubts(plan: Mapping, n: int) -> list[list[str]]:
-    read = readings(plan)
-    return [assess(p, plan['length'], read, plan.get('anchor', 0)) for p in pages(plan, n)]
+    read, spare = readings(plan), max(0, plan['length'] - plan.get('pages', plan['length']))
+    extra = marks(plan)[0]
+    return [assess(lay, read, anchor=plan.get('anchor', 0), spare=spare, extra=extra, proposed=e.get('proposed'))
+            for e, lay in zip(plan['entries'], layouts(plan, n))]
 
 
 # --- building and editing plans (each returns a new plan) --------------------------
 
-def new_plan(n: int, length: int, *, anchor: int = 0, read: Reader | None = None) -> dict:
-    plan = {'length': length, 'anchor': anchor, 'checked': read is not None, 'entries': [],
+def new_plan(n: int, length: int, *, pages: int | None = None, anchor: int = 0, read: Reader | None = None) -> dict:
+    plan = {'length': length, 'pages': pages or length, 'anchor': anchor, 'checked': read is not None, 'entries': [],
             'dropped': [], 'readings': {}, 'orient': 0}
     return refill(plan, n, read)
 
@@ -240,7 +302,7 @@ def refill(plan: Mapping, n: int, read: Reader | None = None) -> dict:
             continue
         starts = _fill(plan, n, seg.first, seg.end, seg.fixed, get)
         _replace(plan, seg.lo, seg.hi, starts or ([seg.first] if seg.fixed else []))
-    return plan
+    return _propose(plan, n, get)
 
 
 def reguess_after(plan: dict, k: int, n: int) -> dict:
@@ -251,7 +313,48 @@ def reguess_after(plan: dict, k: int, n: int) -> dict:
     hi = next((j for j in range(k + 1, len(entries)) if entries[j].get('confirmed')), len(entries))
     end = entries[hi]['start'] if hi < len(entries) else n
     starts = _fill(plan, n, entries[k]['start'], end, True, get)
-    return _replace(plan, k, hi, starts or [entries[k]['start']])
+    return _propose(_replace(plan, k, hi, starts or [entries[k]['start']]), n, get)
+
+
+def _gap(sheets: Sequence[int], pages: int, read: Reader) -> dict | None:
+    """In a submission one sheet short (or long), the page missing (or the sheet
+    extra), found by halves: the first sheet that does not read as its position;
+    proposed only if its neighbours' readings agree, and not where the default
+    already has it (at the end)."""
+    d = len(sheets) - pages
+    if d not in (-1, 1):
+        return None
+    lo, hi = 0, len(sheets)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if read(sheets[mid]) == mid:
+            lo = mid + 1
+        else:
+            hi = mid
+    x = lo
+    if x >= len(sheets) - max(d, 0) or (x and read(sheets[x - 1]) != x - 1):
+        return None
+    if d < 0:
+        return {'missing': [sheets[x]]} if read(sheets[x]) == x + 1 else None
+    return {'extra': [sheets[x]]} if read(sheets[x + 1]) == x else None
+
+
+def _propose(plan: dict, n: int, read: Reader) -> dict:
+    """Propose marks for every unconfirmed entry whose sheets carry none of a person's."""
+    mine = set(plan.get('extra') or ()) | set(plan.get('missing') or ())
+    for e, sheets in zip(plan['entries'], pages(plan, n)):
+        e.pop('proposed', None)
+        if not e.get('confirmed') and not mine.intersection(sheets):
+            got = _gap(sheets, plan.get('pages', plan['length']), read)
+            if got:
+                e['proposed'] = got
+    return plan
+
+
+def settle(plan: dict, k: int) -> None:
+    """Entry `k`'s proposed marks become a person's."""
+    for name, sheets in (plan['entries'][k].pop('proposed', None) or {}).items():
+        plan[name] = sorted([*(plan.get(name) or ()), *sheets])
 
 
 def entry_index(plan: Mapping, k: Any) -> int:
@@ -265,6 +368,7 @@ def confirm(plan: Mapping, k: int, n: int) -> dict:
     """A person says entry `k` starts where it does; later guesses follow from it."""
     plan = copy.deepcopy(dict(plan))
     plan['entries'][entry_index(plan, k)]['confirmed'] = True
+    settle(plan, k)
     return reguess_after(plan, k, n)
 
 
@@ -312,6 +416,7 @@ def join(plan: Mapping, k: int) -> dict:
     if not 0 <= entry_index(plan, k) < len(plan['entries']) - 1:
         raise ValueError("nothing after it to join")
     gone = plan['entries'].pop(k + 1)
+    plan['entries'][k].pop('proposed', None)       # guessed for its old sheets
     if not plan['entries'][k].get('id'):
         plan['entries'][k]['id'] = gone.get('id')
     return plan
@@ -335,6 +440,62 @@ def restore(plan: Mapping, sheet: int, n: int) -> dict:
 def _after_sheet(plan: dict, sheet: int, n: int) -> dict:
     k = sum(e['start'] <= sheet for e in plan['entries']) - 1
     return reguess_after(plan, k, n) if k >= 0 else plan
+
+
+# --- marking and ordering a submission's sheets ------------------------------------
+
+def _holder(plan: dict, sheet: Any, n: int) -> list[int]:
+    """The sheets of the submission that holds `sheet` (its proposals settled: a
+    person is marking it), else ValueError."""
+    for k, sheets in enumerate(pages(plan, n)):
+        if sheet in sheets:
+            settle(plan, k)
+            return sheets
+    raise ValueError("the page is in no submission")
+
+
+def toggle_extra(plan: Mapping, sheet: int, n: int) -> dict:
+    """Mark a sheet extra (kept, not a printed page), or count it again."""
+    plan = copy.deepcopy(dict(plan))
+    _holder(plan, sheet, n)
+    have = set(plan.get('extra') or ())
+    plan['extra'] = sorted(have ^ {sheet})
+    return plan
+
+
+def add_missing(plan: Mapping, sheet: int, n: int) -> dict:
+    """A printed page that was not scanned comes before `sheet`."""
+    plan = copy.deepcopy(dict(plan))
+    _holder(plan, sheet, n)
+    plan['missing'] = sorted([*(plan.get('missing') or ()), sheet])
+    return plan
+
+
+def remove_missing(plan: Mapping, sheet: int, n: int) -> dict:
+    plan = copy.deepcopy(dict(plan))
+    _holder(plan, sheet, n)
+    missing = list(plan.get('missing') or ())
+    if sheet not in missing:
+        raise ValueError("no missing page marked there")
+    missing.remove(sheet)
+    plan['missing'] = missing
+    return plan
+
+
+def shift(plan: Mapping, sheet: int, delta: int, n: int) -> dict:
+    """Move a sheet `delta` (-1 or 1) places within its submission."""
+    plan = copy.deepcopy(dict(plan))
+    sheets = _holder(plan, sheet, n)
+    j = sheets.index(sheet) + delta
+    if not 0 <= j < len(sheets):
+        raise ValueError("no more pages that way")
+    order = list(plan.get('order') or range(n))
+    a, b = order.index(sheet), order.index(sheets[j])
+    order[a], order[b] = order[b], order[a]
+    plan['order'] = order
+    if order == list(range(n)):
+        del plan['order']
+    return plan
 
 
 def cursor(plan: Mapping) -> int | None:

@@ -515,6 +515,10 @@ figure.sh img { display: block; border: 1px solid var(--line); background: #fff;
 figure.sh.first img { width: 120px; }
 .srow .crop { margin: 2px 0 0; }
 figure.sh figcaption { line-height: 1.2; font-size: 11px; color: var(--muted); text-align: center; }
+/* an extra sheet (kept, not a printed page) and a printed page not scanned */
+figure.sh.extra img { border-style: dashed; opacity: .7; }
+figure.sh.gap { width: 64px; height: 83px; border: 1px dashed var(--bad); display: flex; align-items: center;
+  justify-content: center; line-height: 1.2; font-size: 11px; color: var(--bad); text-align: center; }
 /* a page's own controls: always there, quiet until pointed at */
 figure.sh .acts { position: absolute; top: 2px; right: 2px; display: inline-flex; gap: 2px; line-height: 1.2; opacity: .55; }
 figure.sh:hover .acts, figure.sh:focus-within .acts { opacity: 1; }

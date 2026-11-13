@@ -20,6 +20,17 @@ def test_library_contains_no_exam_identifiers():
     assert not hits, "\n".join(hits)
 
 
+def test_nothing_mentions_cover_pages():
+    """Printed page p is a submission's PDF page p: there are no cover sheets to skip."""
+    pattern = re.compile(r'cover[ _]?(page|sheet)', re.I)
+    files = [*(ROOT / 'src').rglob('*'), *(ROOT / 'exams').rglob('*.py'), *(ROOT / 'agent_docs').glob('*.md'),
+             ROOT / 'README.md']
+    hits = [f"{f.relative_to(ROOT)}:{n}: {line.strip()}" for f in files
+            if f.suffix in ('.py', '.html', '.js', '.css', '.md') and f.name != 'LESSONS.md'
+            for n, line in enumerate(f.read_text().splitlines(), 1) if pattern.search(line)]
+    assert not hits, "\n".join(hits)
+
+
 def test_library_never_imports_an_exam():
     for f in (ROOT / 'src' / 'examinator').rglob('*.py'):
         assert 'toy_exam' not in f.read_text() and 'exam_03' not in f.read_text(), f

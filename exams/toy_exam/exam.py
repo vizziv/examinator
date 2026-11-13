@@ -6,7 +6,7 @@ from examinator import Ask, Check, Exam, Field, Grade, Landmark, Number, Printed
 from examinator.std import math, readers
 
 exam = Exam('toy', title="Toy exam", pages=4,
-            print_area=[50, 40, 950, 900], cover_pages=1,
+            print_area=[50, 40, 950, 900],
             # intake: how to tell a scanned sheet's printed page, and where students write who they are
             landmarks=[Landmark('title', region=Region(1, 300, 90, 700, 150),
                                 ask="the title printed in this box", reads={'TOY EXAM': 1}),

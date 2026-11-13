@@ -20,7 +20,7 @@
   const pa = JSON.parse(scan.dataset.print);
   const scopes = JSON.parse(scan.dataset.scopes);   // own, scan, all: each scope as the server names it
   pa.draft = [...pa.value];
-  const cover = Number(scan.dataset.cover), pad = Number(scan.dataset.pad);
+  const pad = Number(scan.dataset.pad);
   const first = Number(scan.dataset.first);
   const pick = $('rg-pick'), msg = $('rg-msg');
   for (const r of regions) r.draft = r.value && [...r.value];
@@ -37,7 +37,7 @@
   const resize = (d, h, dx, dy) => Rects.resize(d, h, dx, dy, least());
   const say = (text, bad) => { msg.textContent = text; msg.classList.toggle('notice', !!bad); };
 
-  const sheet = page => scan.querySelector(`.sheet[data-index="${cover + page - 1}"]`);
+  const sheet = page => scan.querySelector(`.sheet[data-index="${page - 1}"]`);
   const place = (box, d) => Rects.place(box, d, pa.draft, pad);
 
   function draw() {
@@ -111,7 +111,7 @@
       if (crop.dataset.region !== r.path || !r.value) continue;
       const [page, l, t, rt, b] = r.value, w = pa.value;      // the saved print area, as the server crops
       const box = [fx(l - pad, w), fy(t - pad, w), fx(rt + pad, w), fy(b + pad, w)].map(v => Math.min(1, Math.max(0, v)));
-      const src = `${ROOT}/page/${encodeURIComponent(sub)}/${cover + page - 1}.jpg`;
+      const src = `${ROOT}/page/${encodeURIComponent(sub)}/${page - 1}.jpg`;
       if (crop.dataset.src !== src) { crop.dataset.src = src; crop.replaceChildren(); }
       crop.dataset.box = box.map(v => v.toFixed(4)).join(',');
       drawCrop(crop);
@@ -247,7 +247,7 @@
         const q = s.getBoundingClientRect();
         return e.clientY >= q.top && e.clientY < q.bottom;
       }) || sheet(sel.draft[0]);
-      const page = Math.max(1, Number(over.dataset.index) - cover + 1), q = over.getBoundingClientRect();
+      const page = Math.min(Number(over.dataset.index) + 1, Number(scan.dataset.pages)), q = over.getBoundingClientRect();
       const w = r - l, h = b - t;
       const nl = Math.min(Math.max(back((e.clientX - q.left) / q.width, wl, wr) - drag.ox, 0), 1000 - w);
       const nt = Math.min(Math.max(back((e.clientY - q.top) / q.height, wt, wb) - drag.oy, 0), 1000 - h);

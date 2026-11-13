@@ -12,8 +12,9 @@ for one submission; a decision is outdated when any field on its page changes;
 how a field is read changes no value (the app offers to read again); a printed
 field's region may be unset in code; one grade per check, any number of checks.
 Overrides have one mechanism at three scopes (exam, source scan, submission;
-`overrides.SCOPES`, `overrides.Layers`): a region, pages, the print area and
-the cover pages all live there, with revisions and history.
+`overrides.SCOPES`, `overrides.Layers`): a region, pages and the print area
+all live there, with revisions and history. A submission maps the exam's
+printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
 
 ## Open after the rewrite
 
@@ -31,8 +32,17 @@ the cover pages all live there, with revisions and history.
   editing a value and the outdated check recomputing, a pseudocode page, the
   grid); the Read page's live counts and one-click read, field defaults,
   turning on the Split tab and the box editors' save buttons on synthetic
-  workspaces (2026-11-13). Never in a browser yet: the restore button, the
+  workspaces (2026-11-13), and on Split extra sheets, missing marks and moving
+  a sheet, with undo, then the placeholder, extras and a pages override with an
+  extra on a question page (synthetic Exam 3 stacks). Never in a browser yet: the restore button, the
   Exam data page's "read again" message, Stop on a run slow enough to stop.
+
+- **Split marks, what is left:** a sheet moved within its submission keeps
+  its place in `order` if a boundary later moves across it (it then sorts
+  into the neighbouring submission by that order, which may look odd);
+  proposed marks cover a submission one sheet short or long only, from page
+  readings; a placeholder page is shown on the question page as is (its crop
+  is withheld, nothing is read from it).
 
 ## Future
 

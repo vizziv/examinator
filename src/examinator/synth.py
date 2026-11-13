@@ -1,7 +1,7 @@
 """Synthetic workspaces: fabricated submissions built from an exam's definition.
 
 An exam package may ship `fixtures.py` with `cases() -> list[Case]`. Each case
-becomes one fabricated submission: a scan-like PDF (cover pages, the printed
+becomes one fabricated submission: a scan-like PDF (the printed
 page inset in the print area, answers typed into the field regions), a roster
 row, and scripted model replies, so the whole pipeline runs offline. Each
 reader writes its own replies (`reader.script(fields, given)`).
@@ -225,15 +225,11 @@ def _draw_answers(exam: Exam, case: Case, pages: list[Image.Image]) -> None:
 
 
 def _scan(exam: Exam, printed: list[Image.Image]) -> list[Image.Image]:
-    """Inset each printed page in the print area and prepend cover pages."""
+    """Inset each printed page in the print area."""
     w, h = PAGE
     l, t, r, b = exam.print_area
     box = (l * w // 1000, t * h // 1000, r * w // 1000, b * h // 1000)
     out = []
-    for _ in range(exam.cover_pages):
-        cover = Image.new('RGB', PAGE, 'white')
-        ImageDraw.Draw(cover).text((60, 60), "Scan cover page (synthetic)", fill='black', font=_font(24))
-        out.append(cover)
     for im in printed:
         page = Image.new('RGB', PAGE, 'white')
         page.paste(im.resize((box[2] - box[0], box[3] - box[1])), box[:2])
@@ -333,8 +329,9 @@ def fake_model(root: str | Path):
             con.close()
         if row is None or row[0] not in script[STACKS]:
             return False, {}
-        sheets = (json.loads(row[2] or '{}').get('sheets') or [None])
-        k = script[STACKS][row[0]].get(f'{json.loads(row[1])[0]}@{sheets[0] or 0}')
+        pages, turns = json.loads(row[1]), json.loads(row[2] or '{}').get('sheets') or []
+        first = next((j for j, i in enumerate(pages) if i is not None), 0)     # page 1 may be missing
+        k = script[STACKS][row[0]].get(f'{pages[first]}@{turns[first] if first < len(turns) else 0}')
         return True, script.get(f'{STUDENT}{k}', {}) if k is not None else {}
 
     def reply(call):
@@ -429,7 +426,7 @@ def _stacks(exam: Exam, root: Path, cases: list[Case]) -> list[Path]:
         printed = _printed_pages(exam, case, renderer)
         _draw_answers(exam, case, printed)
         _draw_identity(exam, printed, {'name': names[k], 'id': STACK_PEOPLE[k][1]})
-        sheets = _scan(exam, printed)[exam.cover_pages:]       # a raw stack has no cover sheets
+        sheets = _scan(exam, printed)
         return list(zip(sheets, range(1, len(sheets) + 1)))
 
     def without(sheets, printed_page):

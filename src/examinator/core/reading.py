@@ -31,6 +31,6 @@ def normalize(reading: str) -> str:
 def region_key(kind: str, name: str, defn: str, layout: Any, *where: Any) -> str:
     """The memo key of reading one region under a scan layout (`pdf.layout.Layout`):
     what is read (`kind`, `name`), a digest of its definition, the layout's print
-    area and cover pages (which scanned page is cropped, and where), and anything
-    else the crop depends on (`where`: a sheet's orientation, its index)."""
-    return ':'.join(str(x) for x in (kind, name, defn, list(layout.print_area), layout.cover_pages, *where))
+    area (where on the page it is cropped), and anything else the crop depends on
+    (`where`: a sheet's orientation, its index)."""
+    return ':'.join(str(x) for x in (kind, name, defn, list(layout.print_area), *where))

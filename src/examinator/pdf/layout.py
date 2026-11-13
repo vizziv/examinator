@@ -1,8 +1,9 @@
 """Scan layout: from printed-page coordinates to the scanned page.
 
 Exam definitions speak in printed pages and per-mille of the printed page. A
-scan usually has prepended cover pages, and shows the printed page reduced and
-inset. `Layout` holds both corrections for one submission.
+submission's PDF has printed page p at index p - 1 (intake writes it so); a
+scan may show the printed page reduced and inset. `Layout` holds that
+correction (the print area) for one submission.
 """
 from __future__ import annotations
 
@@ -17,13 +18,8 @@ DEFAULT_PAD = 12   # per-mille of the printed page, added around every crop
 
 @dataclass(frozen=True)
 class Layout:
-    cover_pages: int = 0
     print_area: tuple[int, int, int, int] = (0, 0, 1000, 1000)   # left, top, right, bottom of the
                                                                  # printed page, per-mille of the scan
-
-    def scan_index(self, printed_page: int) -> int:
-        """0-based index into the scanned PDF of a 1-based printed page."""
-        return self.cover_pages + printed_page - 1
 
     def box(self, region: Region, pad: int = DEFAULT_PAD) -> tuple[float, float, float, float]:
         """The region as fractions (left, top, right, bottom) of the scanned page."""

@@ -12,7 +12,6 @@ An override replaces one plain-data value at a scope, addressed by a path:
 and the exam's own values (`Exam.ATTRS`), under '@':
 
     @print_area                                where the printed page sits on a scanned sheet
-    @cover_pages                               scanned pages before printed page 1
 
 The built-in group of identity fields (`defs.IDENTITY`, '@identity') is a
 question like any other here: '@identity/fields/name/region' is where the name
@@ -51,7 +50,7 @@ from typing import Any, Mapping
 from .defs import Check, Exam, Field, Question, Region, digest
 from .store import ANY, Store
 
-KINDS = ('region', 'text', 'int', 'number', 'bool', 'pages', 'map', 'choice', 'print_area', 'cover_pages')
+KINDS = ('region', 'text', 'int', 'number', 'bool', 'pages', 'map', 'choice', 'print_area')
 AT = '@'            # starts the path of one of the exam's own values: '@print_area'
 
 EXAM, SOURCE, SUBMISSION = 'exam', 'source', 'submission'
@@ -61,7 +60,6 @@ SCOPES = {
     'region': (EXAM, SUBMISSION),
     'pages': (EXAM, SUBMISSION),
     'print_area': (EXAM, SOURCE, SUBMISSION),
-    'cover_pages': (EXAM, SOURCE, SUBMISSION),
 }
 
 _SCALARS = {'str': 'text', 'int': 'int', 'float': 'number', 'bool': 'bool', 'Region': 'region'}
@@ -276,8 +274,10 @@ def _int(x: Any) -> bool:
     return isinstance(x, int) and not isinstance(x, bool)
 
 
-def _check(exam: Exam, q: Question, segs: tuple[str, ...], kind: str, nullable: bool, value: Any) -> Any:
-    """The value in normal JSON form, or `ValueError`."""
+def _check(exam: Exam, q: Question, segs: tuple[str, ...], kind: str, nullable: bool, value: Any,
+           level: str = EXAM) -> Any:
+    """The value in normal JSON form, or `ValueError`. One submission's pages may go
+    beyond the exam's: its extra sheets (`Workspace.selected_pages` keeps those it has)."""
     if value is None:
         if not nullable:
             raise ValueError("a value is required")
@@ -294,8 +294,9 @@ def _check(exam: Exam, q: Question, segs: tuple[str, ...], kind: str, nullable: 
     if kind == 'pages':
         if not (isinstance(value, (list, tuple)) and value and all(_int(v) for v in value)):
             raise ValueError("pages are a non-empty list of page numbers")
-        if any(not 1 <= p <= exam.pages for p in value):
-            raise ValueError(f"pages must be in 1..{exam.pages}")
+        last = exam.pages if level != SUBMISSION else 999
+        if any(not 1 <= p <= last for p in value):
+            raise ValueError(f"pages must be in 1..{last}")
         if len({*value}) != len(value):
             raise ValueError("repeated page")
         return list(value)
@@ -306,10 +307,6 @@ def _check(exam: Exam, q: Question, segs: tuple[str, ...], kind: str, nullable: 
         if not (0 <= left < right <= 1000 and 0 <= top < bottom <= 1000):
             raise ValueError("a print area needs 0 <= left < right <= 1000 and 0 <= top < bottom <= 1000")
         return list(value)
-    if kind == 'cover_pages':
-        if not (_int(value) and 0 <= value < 1000):
-            raise ValueError("cover pages: a whole number from 0 to 999")
-        return value
     if kind == 'int':
         if not _int(value):
             raise ValueError("expected an integer")
@@ -374,9 +371,9 @@ def _locate(exam: Exam, path: str) -> _Loc:
     return _Loc(segs[0], q, segs[1:], kind, nullable, scopes=SCOPES.get(kind, (EXAM,)))
 
 
-def _value(exam: Exam, loc: _Loc, value: Any) -> Any:
+def _value(exam: Exam, loc: _Loc, value: Any, level: str = EXAM) -> Any:
     """`value` checked for where `loc` points, in normal JSON form; `ValueError` if it does not fit."""
-    return _check(exam, loc.base, loc.segs, loc.kind, loc.nullable, value)
+    return _check(exam, loc.base, loc.segs, loc.kind, loc.nullable, value, level)
 
 
 def _at(loc: _Loc, level: str, path: str) -> None:
@@ -393,7 +390,7 @@ def validate(exam: Exam, path: str, value: Any, scope: str = '') -> Any:
     _at(loc, level, path)
     if value is None and level != EXAM:
         raise ValueError("a value is required (to drop it, clear it)")
-    return _value(exam, loc, value)
+    return _value(exam, loc, value, level)
 
 
 def kind(exam: Exam, path: str) -> str:
@@ -515,7 +512,7 @@ class Layers:
             try:
                 loc = _locate(self.exam, path)
                 if level in loc.scopes and o.value is not None:
-                    return _value(self.exam, loc, o.value)
+                    return _value(self.exam, loc, o.value, level)
             except (ValueError, KeyError, TypeError):
                 pass            # no longer fits the package: not applied, as at the exam's scope
         return None
@@ -542,7 +539,7 @@ class Change:
 
 def _hashes(exam: Exam) -> tuple[dict, dict]:
     checks = {(qid, c.name): exam.check_hash(q, c) for qid, q in exam.questions.items() for c in q.checks}
-    layout = [list(exam.print_area), exam.cover_pages]
+    layout = list(exam.print_area)
     fields = {(qid, f.label): digest({'region': f.region, 'read': q.reader_of(f.label), 'pages': q.pages,
                                       'layout': layout})
               for qid, q in exam.questions.items() for f in q.fields}
@@ -560,7 +557,7 @@ def _changed(exam: Exam, store: Store, path: str, scope: str) -> Change:
         loc = _locate(exam, path)
     except ValueError:
         return Change(())
-    if _attr(exam, loc.root) is not None:       # the print area, the cover pages: every crop
+    if _attr(exam, loc.root) is not None:       # the print area: every crop
         return Change((), tuple((qid, f.label) for qid, q in exam.questions.items() for f in q.fields))
     q = exam.questions[loc.root]
     labels = [loc.segs[1]] if loc.segs[0] == 'fields' else q.labels
