@@ -265,7 +265,7 @@ body.p-question { background: var(--bg); }
 .sheet.on .pno { color: var(--accent2-text); border-color: var(--accent2); }
 #split { position: sticky; top: var(--head); height: calc(100vh - var(--head)); cursor: col-resize; touch-action: none;
   border-left: 1px solid var(--line); border-right: 1px solid var(--line); background: var(--panel-2); }
-#split:hover, #split.dragging { background: var(--accent2-soft); border-color: var(--accent2); }
+#split:hover, #split.dragging { background: var(--accent-soft); }
 #work { padding: 8px 12px 24px; min-width: 0; }
 #work > * { margin-bottom: var(--panel-gap); }
 #who { font-weight: 650; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
