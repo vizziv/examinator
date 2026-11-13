@@ -29,7 +29,7 @@ def make_site(tmp_path):
         ws = Workspace(root, exam, create=True)
         runner = Runner(ws, model=synth.fake_model(root) if model else None)
         opened.append((runner, ws))
-        client = TestClient(create_app(exam, ws, runner, author='tester'), base_url=BASE)
+        client = TestClient(create_app(ws, runner, author='tester'), base_url=BASE)
         token = re.search(r'<meta name="token" content="([^"]+)"', client.get('/scans').text).group(1)
         return client, token, ws, paths
     yield make
@@ -174,14 +174,19 @@ def test_missing_pages_and_extra_sheets_downstream(site):
         assert all(o.ok for o in runner.read(stray, 'parity')) and ws.store.get(stray, 'parity/B', 'value')
     finally:
         runner.close()
-    # one submission's pages may name its extra sheets (pages beyond the exam's), and only those it has
-    own = lambda sid, value: post(client, token, '/exam/set', {'path': 'parity/pages', 'value': value, 'rev': None,
-                                                               'scope': f'submission:{sid}'})
-    assert own(stray, [3, 5]).status_code == 200
-    assert ws.layers(stray).question('parity').pages == (3, 5)
-    assert own(short, [3, 5]).status_code == 400
+    # a field's region may sit on one submission's extra sheets (pages beyond the exam's), and only those it has
+    region = lambda sid, value, scope: post(client, token, '/exam/set', {
+        'path': 'parity/fields/B/region', 'value': value, 'rev': None, 'scope': scope})
+    assert region(stray, [5, 0, 0, 500, 500], f'submission:{stray}').status_code == 200
+    assert ws.layers(stray).question('parity').field('B').region.page == 5
+    assert ws.layers(stray).question('parity').pages == (3,)                  # the package's
+    r = region(short, [5, 0, 0, 500, 500], f'submission:{short}')
+    assert r.status_code == 400 and "page 5 is not a printed page (1..4)" in r.json()['error']
+    r = region(stray, [5, 0, 0, 500, 500], '')                                # for every submission: no
+    assert r.status_code == 400 and "page 5 is not a printed page (1..4)" in r.json()['error']
     html = client.get(f'/s/{stray}/parity').text
-    assert 'class="sheet on" data-index="4"' in html
+    assert 'class="sheet on" data-index="2"' in html and 'data-pages="5"' in html     # every sheet, extra too
+    assert re.search(r'data-src="[^"]*/4\.jpg"[^>]*data-region="parity/fields/B/region"', html)   # its crop: the extra sheet
 
 
 def test_naming_and_a_forced_accept(site):

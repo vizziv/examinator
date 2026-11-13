@@ -4,9 +4,8 @@ An override replaces one plain-data value of the definition (`Exam.roots`: each
 question by id, and the print area), addressed by a path:
 
     @print_area                                where the printed page sits on a scanned sheet
-    <question>/pages                           pages holding the answer
     <question>/fields/<label>/region           where a field is (may be unset: then it is not read)
-    <question>/fields/<label>/read/<field>     a field's own reader (a printed field: ask, reads, verify)
+    <question>/fields/<label>/read/<field>     a field's own reader (a printed field: ask, prompt)
     <question>/read/<field>[/<key>...]         the question's reader (notes, prompts)
     <question>/checks/<name>/<field>[/<key>...]    a check's configuration: a field of its
                                                function's dataclass, then mapping keys (a key)
@@ -22,24 +21,27 @@ Which scopes a value may be set at goes with its kind (`SCOPES`). The value in
 force for a submission is its own, else its source scan's, else the exam's,
 else the package's.
 
+- **What is overridable is where an answer is (field regions, the print area)
+  and how it is read and graded (a reader's or a check's own configuration
+  values); each override is valid on its own.** So each is validated alone,
+  against the definition below its scope, and the order they are applied in
+  does not matter (`_layer`). A question's pages and a printed field's readings
+  are the package's.
 - **An override is a change to the definition**, valid exactly when the
   definition with it applied is valid: `Exam.validate`, the validation the
   package goes through, runs on a copy with the change, in the context of its
-  scope (one submission's extra sheets are pages it may name). Here a JSON value
-  is only decoded into the kind of object it replaces. One scope's overrides of
-  one root are applied together when the definition with all of them validates
-  (so one valid only with another is not lost), else all but the one that
-  breaks them, else one by one in path order (`_layer`).
-  A stored override that does not validate is skipped and reported, at every
-  scope alike (`Skipped`, `Workspace.skipped_overrides`).
+  scope (a region may sit on one submission's extra sheets: a fact of its scan,
+  not another override). Here a JSON value is only decoded into the kind of
+  object it replaces. A stored override that does not validate is skipped and
+  reported, at every scope alike (`Skipped`, `Workspace.skipped_overrides`).
 - **A workspace's definition is its own**: opening one makes `Workspace.exam`
   the package's definition with the exam's overrides (`apply`, repeated by
   every exam-wide edit; the package's `Exam` is never changed), and what holds
   for one submission is `Layers` (`Workspace.layers`), the one resolver.
 
 What can be edited is what is plain data: text, numbers, booleans, a `Region`,
-page lists, a printed field's `reads` map, and key entries that are text or a
-choice (an object with an `accepted` tuple of texts). Functions are never
+and key entries that are text or a choice (an object with an `accepted` tuple
+of texts). Functions are never
 editable, and neither are names used as addresses or result specs. A
 configuration field can opt out with `dataclasses.field(metadata={'override': False})`.
 
@@ -66,7 +68,6 @@ EXAM, SOURCE, SUBMISSION = 'exam', 'source', 'submission'
 # Where each kind of value may be set (any other kind: the exam only).
 SCOPES = {
     'region': (EXAM, SUBMISSION),
-    'pages': (EXAM, SUBMISSION),
     'print_area': (EXAM, SOURCE, SUBMISSION),
 }
 
@@ -169,9 +170,6 @@ def _config_leaves(obj: Any):
         if not f.init or f.name.startswith('_') or f.metadata.get('override') is False:
             continue
         v = getattr(obj, f.name)
-        if f.metadata.get('override') == 'map':        # edited whole: readings -> values
-            yield (f.name,), 'map', False
-            continue
         if isinstance(v, Mapping):
             yield from _map_leaves((f.name,), v)
             continue
@@ -199,8 +197,7 @@ def _leaves(root: str, node: Any) -> dict[tuple[str, ...], tuple[str, bool]]:
     """Every editable value under one root: {segments after the root: (kind, nullable)}."""
     if root == PRINT_AREA:
         return {(): ('print_area', False)}
-    out: dict[tuple[str, ...], tuple[str, bool]] = {} if node.apart else {   # a group apart has no page to show
-        ('pages',): ('pages', False)}
+    out: dict[tuple[str, ...], tuple[str, bool]] = {}
 
     def config(prefix, obj):
         if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
@@ -267,12 +264,10 @@ def _ints(x: Any, n: int | None = None) -> bool:
 _SHAPES = {
     'region': (lambda v: _ints(v, 5), "a region is [page, left, top, right, bottom]"),
     'print_area': (lambda v: _ints(v, 4), "a print area is [left, top, right, bottom]"),
-    'pages': (_ints, "pages are a list of page numbers"),
     'int': (_int, "expected an integer"),
     'number': (lambda v: _int(v) or isinstance(v, float), "expected a number"),
     'bool': (lambda v: isinstance(v, bool), "expected true or false"),
     'text': (lambda v: isinstance(v, str), "expected text"),
-    'map': (lambda v: isinstance(v, Mapping), "expected a map of readings to values"),
     'choice': (lambda v: isinstance(v, (list, tuple)) and all(isinstance(a, str) for a in v),
                "a choice is a list of accepted texts"),
 }
@@ -288,10 +283,8 @@ def _decode(kind: str, value: Any, base: Any) -> Any:
         raise ValueError(want)
     if kind == 'region':
         return Region(*value)
-    if kind in ('pages', 'print_area'):
+    if kind == 'print_area':
         return tuple(value)
-    if kind == 'map':
-        return dict(value)
     if kind == 'number':
         return float(value)
     if kind == 'choice':        # the base entry with other texts: the core does not import std
@@ -306,10 +299,8 @@ def _encode(kind: str, x: Any) -> Any:
         return None
     if kind == 'region':
         return [x.page, x.left, x.top, x.right, x.bottom]
-    if kind in ('pages', 'print_area'):
+    if kind == 'print_area':
         return list(x)
-    if kind == 'map':
-        return dict(x)
     if kind == 'choice':
         return list(x.accepted)
     return x
@@ -367,48 +358,19 @@ FAILS = (ValueError, KeyError, TypeError)
 
 def _layer(exam: Exam, roots: dict[str, Any], items: Mapping[str, Any], level: str,
            pages: int | None = None) -> tuple[dict[str, Any], dict[str, Any], list[Skipped]]:
-    """`roots` with one scope's overrides (`items`, {path: JSON value}) put in, root by
-    root: all of a root's together when the definition with them validates; else all
-    but the one that breaks them; else one by one in path order, each if the
-    definition with it validates. (roots, {path: normal JSON value applied}, skipped)."""
-    roots, applied, skipped = dict(roots), {}, []
-    by_root: dict[str, list[str]] = {}
+    """`roots` with one scope's overrides (`items`, {path: JSON value}) put in: each
+    that is valid alone, against `roots` (the definition below this scope); the
+    others skipped. Each sets a value no other sets, so the order does not matter.
+    (roots, {path: normal JSON value applied}, skipped)."""
+    out, applied, skipped = dict(roots), {}, []
     for path in sorted(items):
-        by_root.setdefault(split(path)[0], []).append(path)
-
-    def together(root, paths):
-        trial, got = dict(roots), {}
-        for path in paths:
-            trial[root], got[path] = _put(exam, trial, path, items[path], level)
-        exam.with_roots(trial).validate(pages=pages)
-        return trial, got
-
-    for root, paths in by_root.items():
         try:
-            roots, got = together(root, paths)
-            applied.update(got)
-            continue
+            _change(exam, roots, path, items[path], level, pages)
         except FAILS as e:
-            why = e
-        for bad in paths if len(paths) > 1 else ():
-            try:
-                roots, got = together(root, [p for p in paths if p != bad])
-            except FAILS:
-                continue
-            applied.update(got)
-            try:
-                _change(exam, roots, bad, items[bad], level, pages)
-            except FAILS as e:
-                why = e
-            skipped.append(Skipped(bad, str(why)))
-            break
-        else:
-            for path in paths:
-                try:
-                    roots[root], applied[path] = _change(exam, roots, path, items[path], level, pages)
-                except FAILS as e:
-                    skipped.append(Skipped(path, str(e)))
-    return roots, applied, skipped
+            skipped.append(Skipped(path, str(e)))
+            continue
+        out[split(path)[0]], applied[path] = _put(exam, out, path, items[path], level)
+    return out, applied, skipped
 
 
 def validate(exam: Exam, path: str, value: Any) -> Any:
@@ -480,7 +442,8 @@ class Layers:
         self._pages: int | None = None
 
     def pages(self) -> int:
-        """The pages a value may name here: the printed pages, and a submission's extra sheets."""
+        """The pages a region may sit on here: the printed pages, and a submission's
+        extra sheets (a fact of its scan, not an override)."""
         if self._pages is None:
             self._pages = self.exam.pages + (self.ws.extras(self.submission) if self.submission else 0)
         return self._pages
@@ -501,8 +464,8 @@ class Layers:
         return self._roots[name]
 
     def question(self, id: str):
-        """A question (or the identity group, by name) as it is here: its regions, its
-        pages (a submission's extra sheets among them). `KeyError` if there is none."""
+        """A question (or the identity group, by name) as it is here: its regions (one
+        may sit on a submission's extra sheet). `KeyError` if there is none."""
         if self.exam.group(id) is None:
             raise KeyError(id)
         return self.root(id)

@@ -6,7 +6,7 @@
 {% macro field_block(f) %}
 <div class="field{% if f.marker %} marked{% endif %}{% if not f.own %} elsewhere{% endif %}{% if f.multiline %} multiline{% endif %}" data-key="{{ f.key }}">
 <span class="fhead">
-<span class="flabel"{% if f.ask %} title="printed: {{ f.ask }}"{% endif %}>{% if f.own %}{{ f.label }}{% else %}<a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ f.qid|urlencode }}" title="{{ exam.questions[f.qid].title }}">{{ f.title }}</a>{% endif %}{% if f.printed %} <span class="ftag">printed</span>{% endif %}</span>
+<span class="flabel"{% if f.ask %} title="printed: {{ f.ask }}"{% endif %}>{% if f.own %}{{ f.label }}{% elif f.graded %}<a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ f.qid|urlencode }}" title="{{ f.group }}">{{ f.title }}</a>{% else %}<span title="{{ f.group }}">{{ f.title }}</span>{% endif %}{% if f.printed %} <span class="ftag">printed</span>{% endif %}</span>
 <span class="fstate">
 {% if not f.read and f.default is not none %}<span class="tag" title="no value set: the default counts">default</span>
 {% elif not f.read and f.blocked %}<span class="tag" title="its reader cannot read it: type it">{{ f.blocked }}</span>
@@ -56,7 +56,7 @@
 {% block body %}
 <main id="question" data-sub="{{ sub.id }}" data-q="{{ q.id }}" data-ids='{{ ids|tojson }}'>
 <section id="scan" data-scan="{{ scan }}" data-regions='{{ regions|tojson }}' data-print='{{ print_area|tojson }}' data-scopes='{{ scopes|tojson }}'
- data-pad="{{ exam.crop_pad }}" data-first="{{ first_page }}" data-pages="{{ exam.pages }}">
+ data-pad="{{ exam.crop_pad }}" data-first="{{ first_page }}" data-pages="{{ count }}">
 {% if regions or count %}
 <div id="rg" class="bar">
 <button type="button" id="pa-on" data-action="print-area" aria-pressed="false" title="edit the print area: where the printed page sits on the scanned sheet">print area</button>
@@ -64,7 +64,7 @@
 <span id="rg-panel" class="bar" hidden>
 <select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.printed %} (printed){% endif %}</option>{% endfor %}</select>
 <span class="rg-group">
-{{ rects.numbers('rg', exam.pages) }}
+{{ rects.numbers('rg', count) }}
 </span>
 <span id="rg-region-btns" class="rg-group">
 <button type="button" id="rg-save" data-action="region-save-own" class="primary" title="this submission's own region">save for this submission</button>
@@ -175,16 +175,6 @@
 <label title="also read again what a person set or verified (kept in history)"><input type="checkbox" id="read-all"> verified too</label>{% endif %}
 {% for c in checks %}{% if c.fn %}<button type="button" data-action="check" data-check="{{ c.name }}" title="run the check again (checks recompute by themselves after a change; this is for one that timed out, say)">{{ c.name if checks|length > 1 else 'check' }}</button>{% endif %}{% endfor %}
 </div>
-
-<details id="pages" class="panel">
-<summary>pages{% if pages != pages_default %} <span class="tag">{{ pages|join(', ') }}</span>{% endif %}</summary>
-<div class="bar">
-<label>pages <input type="text" id="pg-list" value="{{ pages|join(', ') }}" size="10" placeholder="{{ pages_default|join(', ') }}"
- data-path="{{ own.path }}" data-rev="{{ own.rev }}" data-default="{{ pages_default|join(',') }}"></label>
-<button type="button" data-action="pages">set for this submission</button>
-<span class="dim">default {{ pages_default|join(', ') }}{% if extras %} · extra {{ extras }}: {{ exam.pages + 1 }}{% if extras > 1 %}–{{ exam.pages + extras }}{% endif %}{% endif %} · print area: on the scan</span>
-</div>
-</details>
 
 <details id="history" class="panel">
 <summary>history <span class="dim">{{ history|length }}</span></summary>

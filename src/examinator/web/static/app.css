@@ -399,7 +399,7 @@ details.key form.entry .elabel { min-width: 6em; }
 details.key form.entry .ebase { padding-left: 0; }
 #changes { position: sticky; top: calc(var(--head) + 4px); z-index: 4; }
 form.entry input[type=text] { flex: 0 1 28em; min-width: 8em; }
-form.entry.k-region input[type=text], form.entry.k-pages input[type=text] { flex: 0 1 14em; }
+form.entry.k-region input[type=text] { flex: 0 1 14em; }
 #exam-data .qdata { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px 4px; box-shadow: var(--shadow); margin-bottom: var(--panel-gap); }
 #exam-data .qdata h2 { border-bottom: 1px solid var(--line); padding-bottom: 3px; scroll-margin-top: calc(var(--head) + 8px); }
 #exam-data .qdata > div { scroll-margin-top: calc(var(--head) + 8px); }

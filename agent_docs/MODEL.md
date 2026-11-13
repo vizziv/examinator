@@ -18,21 +18,23 @@ to those.
 | Object | What it is |
 | --- | --- |
 | **Field** | A named slot for one value read from paper: where to look (pages, region) and which reader reads it. |
-| **Reader** | How values get from page images into fields: handwriting (model), printed text (model, from a closed set of expected readings), later a barcode. One read fills one or more fields. A reader may **vouch** for a value it read. |
+| **Reader** | How values get from page images into fields: handwriting (model), printed text (model), later a barcode. One read fills one or more fields. A reader may **vouch** for a value it read. |
 | **Check** | A function from field values to a **result**: one proposed grade, and evidence to show. It may read any field in the exam. Nothing reads a check. Its points are part of its definition. |
 | **Question** | A group: some fields and any number of checks. The page a grader sees; each check is a grid column. |
 
 An **override** replaces one of these values from the app without editing the
-code (a region, pages, the print area, a printed field's expected readings, an
+code (a region, the print area, a printed field's question, an
 answer key) at a **scope**. It is stored in the workspace and wins while it
 exists; clearing it brings the next scope's value back. A value may also be
 left unset in code and given only as an override. A field that cannot be read
 yet is simply not read. An override is valid exactly when the definition with
 it is: the one validation the package goes through (`Exam.validate`) decides.
+Each is valid on its own, never only together with another; a question's
+pages are not overridable.
 
 | Scope | Applies to | May set (`overrides.SCOPES`) |
 | --- | --- | --- |
-| submission | one submission | a region, pages (its extra sheets too), print area |
+| submission | one submission | a region (on its extra sheets too), print area |
 | source scan | every submission split from one scanned file | print area |
 | exam | every submission | anything editable |
 | (package) | what the code says | |

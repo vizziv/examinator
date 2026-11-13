@@ -14,20 +14,10 @@
       const parts = text.split(/[\s,]+/).filter(Boolean);
       return parts.every(p => /^-?\d+$/.test(p)) ? parts.map(Number) : text;   // else the server explains
     };
-    if (kind === 'region' || kind === 'pages' || kind === 'print_area') return nums();
+    if (kind === 'region' || kind === 'print_area') return nums();
     if (kind === 'int') return /^\s*-?\d+\s*$/.test(text) ? Number(text) : text;
     if (kind === 'number') return text.trim() !== '' && !isNaN(Number(text)) ? Number(text) : text;
     if (kind === 'choice') return text.split('\n').map(s => s.trim()).filter(Boolean);
-    if (kind === 'map') {
-      const out = {};
-      for (const line of text.split('\n')) {
-        if (!line.trim()) continue;
-        const at = line.lastIndexOf('=');
-        if (at < 0) return text;
-        out[line.slice(0, at).trim()] = line.slice(at + 1).trim();
-      }
-      return out;
-    }
     return text;
   }
   // The entry for a path as drawn now (the question page draws its key panel again after a change).

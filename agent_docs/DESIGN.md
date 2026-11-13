@@ -70,14 +70,13 @@ exam = Exam('midterm', title="Midterm", pages=12)
 exam.question(
     'q1', title="Rectangles", pages=[3],             # where the answer is; what the reader sees
     fields=[Field('width', Region(2, 80, 120, 920, 300),        # printed: tells the printing
-                  read=Printed("the printed width of the rectangle, as a number",
-                               reads={'3': 'original', '4': 'alternate'})),
+                  read=Printed("the printed width of the rectangle, as a number (3 or 4)")),
             Field('1.1', Region(3, 500, 96, 885, 196)),
             Field('1.2', Region(3, 500, 207, 885, 307))],
     read=readers.answers(symbols=['a']),             # reads the handwritten fields
     check=math.keyed(symbols={'a': 'positive'}, by='width', grade=math.at_least(1), key={
-        'original': {'1.1': '3*a', '1.2': '1/2'},
-        'alternate': {'1.1': '4*a', '1.2': '1/2'}}))
+        '3': {'1.1': '3*a', '1.2': '1/2'},
+        '4': {'1.1': '4*a', '1.2': '1/2'}}))
 ```
 
 Design rules for this layer:
@@ -144,18 +143,19 @@ value is never verified, so every grade that read it waits for a person.
 from fields. Which printing a submission has is not a library concept: it is
 read into fields like anything else, and checks use it.
 
-- **A printed field** (`Field(label, region, read=Printed(ask, reads=...))`)
-  is a field whose value the model reads from the *printed* text in its region
+- **A printed field** (`Field(label, region, read=Printed(ask))`) is a field
+  whose value the model reads from the *printed* text in its region
   (`core/ask.py`: `Printed` is `Ask` with a prompt about printed text; `Ask`
-  alone asks about handwriting, as the identity fields do), asked `ask`. With `reads`, a reading is normalised (case,
-  spaces, one layer of brackets or quotes, a trailing `.` or `%`) and mapped to a
-  value; the prompt lists the expected readings and tells the model to answer
-  with a review marker when it sees none of them. A reading that is absent, or
-  not one of `reads`, becomes a value with a review marker. Never guess.
-- **A reader may vouch for its value**: `Printed` does when the reading was one
-  of a closed set of expected ones, unless `verify=True`. Such a value is
-  verified by the reader; reading again replaces it, never a value a person
-  verified.
+  alone asks about handwriting, as the identity fields do), asked `ask`. The
+  reading is the value: what to expect and in what form is the `ask`'s to say
+  ("as a number (3 or 4)"). A reading that is absent becomes a value with a
+  review marker. Never guess.
+- **A reader may vouch for its value**: `Printed` does for any value without a
+  review marker, unless `verify=True`; `Ask` (handwriting) never does. Such a
+  value is verified by the reader; reading again replaces it, never a value a
+  person verified. A value nothing expects is caught where it matters: a key
+  per value with no key for it is undecided, naming the field and the value
+  ("no key for width = 5").
 - A question with only printed fields and no checks holds the exam's printing.
   Its grid column shows how its fields stand (not read, unverified, verified).
 - **A check reads other questions' fields** with `ctx.read(label,
@@ -337,8 +337,8 @@ the PDF's identity, the page and the resolution.
   submission), a source scan (every submission intake split from that file) or
   one submission. The value in force for a submission is its own, else its
   scan's, else the exam's, else the package's. Which scopes a kind
-  of value may be set at is one table (`overrides.SCOPES`): a region and pages
-  for the exam or a submission, the print area at all three; everything else for the exam only. The
+  of value may be set at is one table (`overrides.SCOPES`): a region for the
+  exam or a submission, the print area at all three; everything else for the exam only. The
   identity fields' regions are field regions like any (exam or submission).
   Every scope has revisions and conflicts alike (no history); the app sets and
   clears them all through `/exam/set` and `/exam/clear` with a `scope`. Three
@@ -349,12 +349,15 @@ the PDF's identity, the page and the resolution.
      is one validation, `Exam.validate` (regions, pages, defaults, each reader's
      and check's own `validate`, such as a key that must parse), which the
      package's questions and every override go through, on a copy with the
-     change. A scope enters only as context: one submission's extra sheets are
-     pages it may name. One scope's overrides of one root go in together when
-     the definition with all of them validates, else all but the one that
-     breaks them, else one by one in path order. A stored override that does
-     not validate is skipped and reported, at every scope alike
-     (`Workspace.skipped_overrides`; the Exam data page shows the exam's).
+     change. A scope enters only as context: a region may sit on one
+     submission's extra sheets (how many is a fact of its scan). **What is
+     overridable is where an answer is (field regions, the print area) and how
+     it is read and graded (a reader's or a check's own configuration values);
+     each override is valid on its own**, so each is validated alone and the
+     order they are applied in does not matter. A question's pages and how a
+     key is picked are the package's. A stored override that does not
+     validate is skipped and reported, at every scope alike
+     (`Workspace.skipped_overrides`, all of which the Exam data page shows).
   2. **A workspace's definition is its own.** `Workspace.exam` is the
      package's definition with the exam's overrides (`overrides.apply`, at
      opening and after every exam-wide edit); the package's `Exam` is never
@@ -374,7 +377,8 @@ the PDF's identity, the page and the resolution.
   printed pages a submission does not have (a placeholder, or the PDF ends
   first): no field whose reader would look at them is read (§4, "A read
   needs its pages").
-- A question names the `pages` that hold its answer (what its reader sees).
+- A question names the `pages` that hold its answer (what its reader sees):
+  printed pages, the package's, not overridable.
 - The printed page may be reduced and inset within the scanned page. The
   **print area** (`print_area`: left, top, right, bottom, per-mille of the
   scanned page; `Exam(print_area=)`, an override `@print_area`; default the
@@ -382,15 +386,18 @@ the PDF's identity, the page and the resolution.
   exam definition are in printed-page coordinates; the library applies the
   print area and adds padding. The question page's print-area mode draws it on
   every sheet, to drag and save for this submission, its scan, or all.
-- Each question's selected pages can be overridden per submission, for answers
-  that continue onto extra-space pages; pages beyond the exam's name that
-  submission's extra sheets in order (exam pages + 1 is its first), checked
-  against how many it has; so may its own regions.
+- An answer that continues onto an extra sheet is reached by a region: one
+  submission's region may sit on its extra sheets (exam pages + 1 is its
+  first), checked against how many it has. A field read from its region (a
+  printed field, a cropped reader) is then read from that sheet; a reader of a
+  question's whole pages (answers without crops, code) never sees an extra
+  sheet, so a person types that value. The question page shows every sheet of
+  the submission, extras included.
 - Render with PDFium at about 160 DPI. PDFium must not be used from several
   threads at once; confine it to a worker. Cache rendered pages, and cut crops
   from the cache.
-- A field's region may be replaced for one submission, as the page selection
-  can. Changing where a field is read (region, print area, pages)
+- A field's region may be replaced for one submission. Changing where a
+  field is read (region, print area)
   changes no value; reading again is a person's explicit choice.
 - The same regions serve three purposes: crops shown beside the grader's input,
   crops sent to the model for printed fields, and (optionally) cropped reading

@@ -34,12 +34,17 @@ class Site:
     """A test client that sends the page token on POST, as the page's script does."""
 
     def __init__(self, exam, ws, runner, **kw):
-        self.exam, self.ws, self.runner = ws.exam, ws, runner      # the workspace's definition
-        self.app = create_app(ws.exam, ws, runner, author='tester', **kw)
+        self.ws, self.runner = ws, runner
+        self.app = create_app(ws, runner, author='tester', **kw)
         self.client = TestClient(self.app, base_url=BASE)
         self.wait(self.app.state.startup)
         html = self.client.get('/').text
         self.token = re.search(r'<meta name="token" content="([^"]+)"', html).group(1)
+
+    @property
+    def exam(self):
+        """The workspace's definition, as it is now."""
+        return self.ws.exam
 
     def get(self, path, **kw):
         return self.client.get(path, **kw)
@@ -557,18 +562,18 @@ def test_a_batch_never_replaces_what_a_person_set_unless_told(site):
 
 # --- overrides and settings ---
 
-def test_pages_of_one_submission(site):
+def test_one_submissions_own_values(site):
     own = lambda path, value, rev=None: site.post('/exam/set' if value is not None else '/exam/clear',
                                                   {'path': path, 'value': value, 'rev': rev, 'scope': OWN})
-    assert own('a/pages', [1, 2]).status_code == 200
-    assert site.ws.layers('s1').question('a').pages == (1, 2)
-    assert site.ws.layers('s2').question('a').pages == (1,)
-    assert site.page('s1', 1) in site.get('/s/s1/a').text
-    assert own('a/pages', [7]).status_code == 400 and own('a/pages', []).status_code == 400
+    html = site.get('/s/s1/a').text                     # every sheet; no editing of a question's pages
+    assert site.page('s1', 0) in html and site.page('s1', 1) in html
+    assert 'data-action="pages"' not in html and 'pg-list' not in html
+    assert own('a/pages', [1, 2]).status_code == 400                        # the package's
     assert own('a/note', "continues overleaf").status_code == 400          # no such thing
-    rev = site.ws.store.overrides(OWN)['a/pages'].rev
-    assert own('a/pages', None, rev).status_code == 200
-    assert site.ws.layers('s1').question('a').pages == (1,)
+    assert own('a/fields/x/region', [2, 0, 0, 500, 500]).status_code == 200
+    assert site.ws.layers('s1').question('a').field('x').region.page == 2
+    rev = site.ws.store.overrides(OWN)['a/fields/x/region'].rev
+    assert own('a/fields/x/region', None, rev).status_code == 200
     assert own('@print_area', [100, 100, 900, 900]).status_code == 200
     assert site.ws.layout('s1') == Layout((100, 100, 900, 900)) and site.ws.layout('s2') == Layout((0, 0, 1000, 1000))
 
@@ -615,14 +620,16 @@ def test_print_area_at_each_scope(site):
 def test_the_exam_page_lists_every_scope(site):
     from examinator.core import overrides
     site.post('/exam/set', {'path': '@print_area', 'value': [5, 5, 995, 995], 'rev': None})
-    site.post('/exam/set', {'path': 'a/pages', 'value': [1], 'rev': None, 'scope': OWN})
+    site.post('/exam/set', {'path': 'a/fields/x/region', 'value': [1, 0, 0, 5, 5], 'rev': None, 'scope': OWN})
+    site.ws.store.set_override('b/fields/x/region', [9, 0, 0, 5, 5], scope='submission:s2', author='ta')
     html = site.get('/exam').text
+    assert 'not applied (submission s2): <code>b/fields/x/region</code>' in html        # every scope's
     assert '@print_area: (0, 0, 1000, 1000) -&gt; (5, 5, 995, 995)' in html
     assert 'data-path="@print_area"' in html and 'cover' not in html                   # editable here
-    assert 'data-action="scoped-revert" class="danger" data-scope="submission:s1" data-path="a/pages"' in html
-    rev = site.ws.store.overrides(OWN)['a/pages'].rev
-    assert site.post('/exam/clear', {'path': 'a/pages', 'rev': rev + 1, 'scope': OWN}).status_code == 409
-    assert site.post('/exam/clear', {'path': 'a/pages', 'rev': rev, 'scope': OWN}).status_code == 200
+    assert 'data-action="scoped-revert" class="danger" data-scope="submission:s1" data-path="a/fields/x/region"' in html
+    rev = site.ws.store.overrides(OWN)['a/fields/x/region'].rev
+    assert site.post('/exam/clear', {'path': 'a/fields/x/region', 'rev': rev + 1, 'scope': OWN}).status_code == 409
+    assert site.post('/exam/clear', {'path': 'a/fields/x/region', 'rev': rev, 'scope': OWN}).status_code == 200
     assert 'data-scope="submission:s1"' not in site.get('/exam').text
     with pytest.raises(ValueError):
         overrides.validate(site.exam, '@cover_pages', 2)
@@ -728,10 +735,10 @@ def crop_box(html, path):
 def test_exam_page_lists_entries(site):
     r = site.get('/exam')
     assert r.status_code == 200
-    for path in ('a/pages', 'a/fields/x/region', 'p/fields/c1/region', 'p/fields/c1/read/reads',
-                 'p/fields/c1/read/ask', 'a/read/notes', 'b/pages'):
+    for path in ('a/fields/x/region', 'p/fields/c1/region', 'p/fields/c1/read/ask', 'p/fields/c1/read/prompt',
+                 'a/read/notes'):
         assert f'data-path="{path}"' in r.text, path
-    assert '1 = one\n2 = two' in r.text          # a map, one reading per line
+    assert '/pages"' not in r.text and '/reads"' not in r.text          # a question's pages; no readings map
     html = r.text
     assert '<script>' not in html and ' style="' not in html and not re.search(r'\son\w+="', html)
 
@@ -743,7 +750,7 @@ def test_exam_page_of_the_toy_exam(tmp_path):
     try:
         r = Site(exam, ws, runner).get('/exam')
         assert r.status_code == 200
-        assert 'data-path="areas/checks/check/key/green/A.2"' in r.text
+        assert 'data-path="areas/checks/check/key/3/A.2"' in r.text
         assert 'data-path="parity/checks/check/key/B" data-kind="choice"' in r.text
         assert 'even\nE\noption 1' in r.text and 'value="2 400 300 900 420"' in r.text
     finally:

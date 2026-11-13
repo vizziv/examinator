@@ -241,12 +241,8 @@ def show_value(kind: str, value: Any) -> str:
     """An entry's JSON value as the text its input holds (see entries.js `readEntry`)."""
     if value is None:
         return ''
-    if kind == 'pages':
-        return ', '.join(str(p) for p in value)
     if kind == 'print_area':
         return ' '.join(str(v) for v in value)
-    if kind == 'map':
-        return '\n'.join(f'{k} = {v}' for k, v in value.items())
     if kind == 'choice':
         return '\n'.join(value)
     if kind == 'region':
@@ -263,7 +259,7 @@ def entry_view(e: overrides.Entry, revs: dict, label: str | None = None) -> dict
             'text': text, 'base_text': show_value(e.kind, e.base), 'overridden': e.overridden,
             'stored': e.path in revs, 'nullable': e.nullable, 'rev': revs.get(e.path, ''),
             'long': e.kind == 'text' and (len(text) > LONG_TEXT or text.count('\n') > 2),
-            'area': e.kind in ('map', 'choice') or (e.kind == 'text' and (len(text) > 50 or '\n' in text)),
+            'area': e.kind == 'choice' or (e.kind == 'text' and (len(text) > 50 or '\n' in text)),
             'rows': min(max(text.count('\n') + 2, 2), 24)}
 
 
@@ -302,8 +298,9 @@ def key_entries(entries: list[overrides.Entry], revs: dict, c: Check, picked: st
 
 # --- the app -----------------------------------------------------------------------
 
-def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None = None,
+def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                public_url: str | None = None) -> Starlette:
+    """The app on one workspace: each request reads its definition (`ws.exam`) anew."""
     store = ws.store
     token = secrets.token_urlsafe(32)
     root = urlsplit(public_url).path.rstrip('/') if public_url else ''
@@ -325,12 +322,12 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return author
 
     def page(name: str, **ctx) -> HTMLResponse:
-        html = env.get_template(name).render(exam=exam, token=token, root=root, model=have_model(), **ctx)
+        html = env.get_template(name).render(exam=ws.exam, token=token, root=root, model=have_model(), **ctx)
         return HTMLResponse(html)
 
     def box(layout: Layout, region) -> str:
         """Where a region's crop is on its scanned page, as the page's script reads it."""
-        return ','.join(f'{v:.4f}' for v in layout.box(region, exam.crop_pad))
+        return ','.join(f'{v:.4f}' for v in layout.box(region, ws.exam.crop_pad))
 
     def target(request: Request, need_question: bool = True):
         """The submission and question a path names, looked up; never used as paths.
@@ -341,7 +338,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise HTTPException(404)
         if not need_question:
             return sub, None
-        q = exam.questions.get(request.path_params['q'])
+        q = ws.exam.questions.get(request.path_params['q'])
         if q is None:
             raise HTTPException(404)
         return sub, q
@@ -395,18 +392,18 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         def todo(q, check=None) -> dict:      # the column's state facet, and its values still to do
             name, values = focus.state_facet(q, check)
             return {'facet': f'{q.id}/{name}', 'todo': ' '.join(values)}
-        for q in exam.questions.values():
+        for q in ws.exam.questions.values():
             for c in q.checks:
                 columns.append({'q': q, 'name': q.column(c.name), 'counts': c.points.counts, **todo(q, c.name)})
             if not q.checks:        # no checks: the column shows how its fields stand
                 columns.append({'q': q, 'name': q.id, 'counts': False, **todo(q)})
         sel = selection(request.query_params.get('focus'))
         table = values() if sel else {}
-        rows, started, graded = [], False, exam.questions     # started: anything of a graded question
-        for row in grid.load(exam, store):
+        rows, started, graded = [], False, ws.exam.questions     # started: anything of a graded question
+        for row in grid.load(ws.exam, store):
             cells = []
             started = started or any(split_key(k)[0] in graded for k in (*row.sheet.values, *row.sheet.results))
-            for q in exam.questions.values():
+            for q in ws.exam.questions.values():
                 for c in q.checks:
                     st = row.status[(q.id, c.name)]
                     cells.append({'qid': q.id, 'col': q.column(c.name), 'state': st.state,
@@ -437,7 +434,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 return cached['table']
             if len(memo) > 200_000:
                 memo.clear()
-        table = focus.values_table(exam, store, memo=memo)
+        table = focus.values_table(ws.exam, store, memo=memo)
         with lock:
             cached.update(key=key_, table=table)
         return table
@@ -451,16 +448,17 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise HTTPException(404)
         subs = store.submissions() if sid is None else [store.submission(sid)]
         return JSONResponse({'subs': [s.id for s in subs], 'names': [s.name for s in subs],
-                             'questions': focus.describe_facets(exam),
+                             'questions': focus.describe_facets(ws.exam),
                              'values': values() if sid is None else
-                             focus.values_table(exam, store, submission=sid, memo=memo)})
+                             focus.values_table(ws.exam, store, submission=sid, memo=memo)})
 
     # --- question page ---
 
     def question_page(request: Request) -> Response:
         sub, q = target(request)
+        exam, lay = ws.exam, ws.layers(sub.id)          # the definition, as it is for this submission
         sheet = runner.sheet(sub.id)
-        layout = ws.layout(sub.id)
+        layout = lay.layout
         try:
             count = ws.scan_page_count(sub.id)
         except Exception:
@@ -473,10 +471,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 return None
             return {'index': region.page - 1, 'box': box(layout, region), 'path': path}
 
-        pages = ws.layers(sub.id).question(q.id).pages
-        # every page of the PDF, to scroll through: the printed pages (a missing one is its
-        # placeholder), then the extra sheets; `on` marks this question's
-        scans = [{'index': i, 'on': i + 1 in pages,
+        # every sheet of the PDF, to scroll through: the printed pages (a missing one is its
+        # placeholder), then the extra sheets; `on` marks this question's pages
+        scans = [{'index': i, 'on': i + 1 in q.pages,
                   'label': "missing" if i + 1 in gone else str(i + 1) if i < exam.pages else f"extra {i + 1 - exam.pages}"}
                  for i in range(count)]
 
@@ -516,19 +513,20 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 continue
             v = sheet.values.get(k)
             reader = other.reader_of(label)
-            region = ws.layers(sub.id).question(qid).field(label).region
+            here = lay.question(qid)
             if qid not in why:
-                why[qid] = to_read(ws.layers(sub.id).question(qid), sheet.values, gone, include_protected=True).blocked
+                why[qid] = to_read(here, sheet.values, gone, include_protected=True).blocked
             fields.append({
                 'key': k, 'qid': qid, 'label': label, 'own': qid == q.id,
-                'title': label if qid == q.id else f"{qid} {label}",
+                'title': label if qid == q.id else f"{qid} {label}", 'group': other.title,
+                'graded': qid in exam.questions,        # else a group apart (identity): no question page
                 'value': v.text if v else '', 'rev': v.rev if v else '', 'read': v is not None,
                 'verified': v.verified if v else None, 'by': v.by if v else None,
                 'marker': bool(v and v.marker),
                 'multiline': other.multiline(label),
                 'printed': isinstance(reader, Printed), 'ask': getattr(reader, 'ask', ''),
                 'typed': reader is None, 'default': f.default,
-                'crop': crop(region, overrides.join(qid, 'fields', label, 'region')),
+                'crop': crop(here.field(label).region, overrides.join(qid, 'fields', label, 'region')),
                 'blocked': why[qid].get(label),         # 'page missing', 'no region': not read
                 'judged': judged.get(label, []) if qid == q.id else []})
         for n, f in enumerate(fields):
@@ -548,15 +546,11 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
         qids = list(exam.questions)
         i = qids.index(q.id) if q.id in qids else None
-        lay = ws.layers(sub.id)
         stored = store.overrides()
         revs = {p: o.rev for p, o in stored.items()}
         entries = overrides.editable(exam, q.id)
         regions = [{'label': overrides.split(e.path)[2], 'printed': isinstance(q.reader_of(overrides.split(e.path)[2]), Printed),
                     **levels(lay, e.path, e.base, stored)} for e in entries if e.kind == 'region']
-        mine = lay.stored.get(SUBMISSION, {})
-        path = overrides.join(q.id, 'pages')
-        own = {'path': path, 'rev': mine[path].rev if path in mine else ''}
         keyed = []
         for c in q.checks:
             picked = picked_key(exam, q, c, sheet.values)
@@ -569,8 +563,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             'question.html', sub=sub, q=q, checks=checks, fields=fields, waiting=waiting, waiting_other=waiting_other,
             scans=scans, history=history[:60], keyed=keyed,
             can_read=bool(readers_), off=bool(readers_) and not have_model(), scan=scan_key(sub.id),
-            pages=pages, pages_default=q.pages, own=own, extras=max(0, count - exam.pages),
-            regions=regions, print_area=levels(lay, PRINT_AREA, overrides.entry(exam, PRINT_AREA).base, stored),
+            count=count, regions=regions, print_area=levels(lay, PRINT_AREA, overrides.entry(exam, PRINT_AREA).base, stored),
             scopes={'own': overrides.scope(SUBMISSION, sub.id), 'all': '',
                     'scan': overrides.scope(SOURCE, lay.source) if lay.source else None},
             first_page=(q.pages or (1,))[0], ids=[s.id for s in store.submissions()],
@@ -578,7 +571,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def field_of(k: Any, questions: dict | None = None) -> tuple[str, str]:
         """A field of the questions graders work through (or of `questions`), by key."""
-        questions = exam.questions if questions is None else questions
+        questions = ws.exam.questions if questions is None else questions
         if not isinstance(k, str) or '/' not in k:
             raise Bad("unknown field")
         qid, label = split_key(k)
@@ -625,7 +618,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     def names_save(request, data):
         """The Names step's own save: the identity fields' values, typed or verified."""
         sub, _ = target(request, need_question=False)
-        revs, wrote = save_values(request, sub, data, {IDENTITY: exam.identity})
+        revs, wrote = save_values(request, sub, data, {IDENTITY: ws.exam.identity})
         return {'revs': revs, 'job': refresh(sub.id) if wrote else None}
 
     def unverify(request, data):
@@ -770,7 +763,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         return JSONResponse(info)
 
     def read_page(request: Request) -> Response:
-        return page('read.html', questions=list(exam.questions.values()),
+        return page('read.html', questions=list(ws.exam.questions.values()),
                     total=len(store.submissions()))
 
     def batch_plan(data: dict) -> batch.Plan:
@@ -779,7 +772,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         subs = data.get('submissions')
         subs = tuple(known) if subs is None else _strings(subs, set(known), "submissions")
         questions = data.get('questions')
-        questions = tuple(exam.questions) if questions is None else _strings(questions, exam.questions, "questions")
+        questions = tuple(ws.exam.questions) if questions is None else _strings(questions, ws.exam.questions, "questions")
         if not subs or not questions:
             raise Bad("nothing selected")
         sel = batch.Selection(subs, questions, missing_only=bool(data.get('missing_only')),
@@ -836,21 +829,26 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         stored = store.overrides()
         revs = {p: o.rev for p, o in stored.items()}
         by_q: dict[str, list] = {}
-        for e in overrides.editable(exam):
+        for e in overrides.editable(ws.exam):
             by_q.setdefault(overrides.split(e.path)[0], []).append(entry_view(e, revs))
-        questions = [{'id': qid, 'title': "print area" if qid == PRINT_AREA else exam.group(qid).title,
+        questions = [{'id': qid, 'title': "print area" if qid == PRINT_AREA else ws.exam.group(qid).title,
                       'entries': items} for qid, items in by_q.items()]
-        skipped = [{'path': s.path, 'reason': s.reason} for s in ws.skipped]
+        names, first = {s.id: s.name for s in store.sources()}, next(iter(ws.exam.questions), None)
+
+        def where(scope: str) -> str:
+            level, id_ = overrides.parse_scope(scope)
+            return {EXAM: "all", SOURCE: f"scan {names.get(id_, id_)}", SUBMISSION: f"submission {id_}"}[level]
+
+        skipped = [{'path': s.path, 'reason': s.reason, 'where': where(s.scope)} for s in ws.skipped_overrides()]
         active = [{'path': p, 'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')}
                   for p, o in stored.items()]
-        names, first = {s.id: s.name for s in store.sources()}, next(iter(exam.questions), None)
         scoped = []             # what one scan or one submission has of its own
         for o in store.all_overrides():
             if not o.scope:
                 continue
             level, id_ = overrides.parse_scope(o.scope)
             try:
-                kind = overrides.kind(exam, o.path)
+                kind = overrides.kind(ws.exam, o.path)
             except ValueError:
                 kind = ''
             root = overrides.split(o.path)[0]
@@ -858,12 +856,12 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                            'where': names.get(id_, id_) if level == SOURCE else id_,
                            'gone': store.submission(id_) is None if level == SUBMISSION else id_ not in names,
                            'href': (f'/scans#sub={id_}' if root == IDENTITY else
-                                    f'/s/{id_}/{root if root in exam.questions else first}' if first else None)
+                                    f'/s/{id_}/{root if root in ws.exam.questions else first}' if first else None)
                            if level == SUBMISSION else None,
                            'path': o.path, 'text': show_value(kind, o.value), 'rev': o.rev,
                            'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')})
         return page('exam.html', questions=questions, active=active, skipped=skipped, scoped=scoped,
-                    lines=describe_changes(exam, store))
+                    lines=describe_changes(ws.exam, store))
 
     def _path(data: dict) -> str:
         path = data.get('path')
@@ -895,7 +893,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         job = recompute(subs) if change.checks else None
         level, id_ = overrides.parse_scope(scope)
         try:
-            kind = overrides.kind(exam, path)
+            kind = overrides.kind(ws.exam, path)
         except ValueError:
             kind = ''
         value = ws.layers(**({} if level == EXAM else {level: id_})).value(path) if kind else None
@@ -904,7 +902,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                'affected': len(change.checks) * len(subs), 'job': job,
                'skipped': [{'path': s.path, 'reason': s.reason} for s in change.skipped]}
         if first in subs and kind in ('region', 'print_area'):     # the page's scope editor, now
-            out['levels'] = levels(ws.layers(first), path, overrides.entry(exam, path).base, store.overrides())
+            out['levels'] = levels(ws.layers(first), path, overrides.entry(ws.exam, path).base, store.overrides())
         return out
 
     def _conflict(e: Conflict, path: str, scope: str) -> Conflict:
@@ -946,8 +944,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         art = intake.plan(ws, src.id)
         body, L = art.body, art.body['sheets']
         rows, gone = intake.outline(ws, src.id, body)
-        said, lays = split.verified(body), split.layouts(body, exam.pages)
-        doubts, turns = split.doubts(body, exam.pages), split.turns(body)
+        said, lays = split.verified(body), split.layouts(body, ws.exam.pages)
+        doubts, turns = split.doubts(body, ws.exam.pages), split.turns(body)
         owner, slot, entries = [-1] * src.pages, [None] * src.pages, []
         for k, (run, row, lay) in enumerate(zip(split.runs(body), rows, lays)):
             before = []
@@ -993,7 +991,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         roster = [{k: p[k] for k in ('name', 'id', 'email', 'key')} for p in identity.people(ws)]
         return page('scans.html', sources=sources, counts=json.dumps(counts), people=roster,
                     roster_rev=identity.roster_rev(ws) or '',
-                    expected=exam.pages, idboxes=json.dumps(boxes), fields=identity.boxed(ws),
+                    expected=ws.exam.pages, idboxes=json.dumps(boxes), fields=identity.boxed(ws),
                     widths=json.dumps(SHEET_WIDTHS), made=len(store.submissions()),
                     handed=sum(1 for s in store.submissions() if s.id not in made))
 
@@ -1051,7 +1049,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             if data.get('check'):
                 if not have_model():
                     raise Bad("model unavailable")
-                if not exam.landmarks:
+                if not ws.exam.landmarks:
                     raise Bad("the exam declares no landmarks")
                 if intake.plan(ws, src.id).rev != kw['expect_rev']:
                     raise Conflict("the plan changed")
@@ -1163,10 +1161,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         view['unread'] = len(identity.unread(ws, ats=ats))      # what "read names" reads
         view['columns'] = []
         for c, path in paths.items():           # the regions for every submission, for the box editor
-            e = overrides.entry(exam, path)
+            e = overrides.entry(ws.exam, path)
             view['columns'].append({'name': c, 'path': path, 'value': e.current, 'base': e.base,
                                     'rev': stored[path].rev if path in stored else None})
-        view['pad'] = exam.crop_pad
+        view['pad'] = ws.exam.crop_pad
         view['doubts'] = identity.DOUBTS
         view['roster'] = len(identity.people(ws))
         return JSONResponse(view)

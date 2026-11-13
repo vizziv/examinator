@@ -433,11 +433,11 @@ def test_a_plan_edit_during_accept_leaves_pdfs_alone(stacked, monkeypatch):
     assert ws.store.setting('intake_next') == counter
 
 
-def test_a_page_selection_does_not_hold_a_submission(stacked):
+def test_an_override_of_its_own_does_not_hold_a_submission(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    overrides.set(ws, 'parity/pages', [1, 2], scope=overrides.scope(overrides.SUBMISSION, 's0003'),
+    overrides.set(ws, 'parity/fields/B/region', [3, 0, 0, 500, 500], scope=overrides.scope(overrides.SUBMISSION, 's0003'),
                   author='t')
     intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
     assert intake.accept(ws, one.id)['rewritten'] == ['s0003']        # not Busy: settings are not work

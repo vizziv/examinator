@@ -455,8 +455,8 @@ class Exam:
     def validate(self, *, pages: int | None = None) -> None:
         """The one validation of the definition as it stands, which the package's
         questions and every override go through: `ValueError` with the mistake.
-        `pages`: the pages a question or a region may name (default: the printed
-        pages; one submission's extra sheets add to them)."""
+        `pages`: the pages a region may sit on (default: the printed pages; one
+        submission's extra sheets add to them). A question's pages are printed pages."""
         check_print_area(self.print_area)
         for q in self.groups().values():
             self._question(q, pages or self.pages)
@@ -470,8 +470,8 @@ class Exam:
         if not q.pages or len(set(q.pages)) != len(q.pages):
             raise ValueError(f"{q.id}: pages are one or more page numbers, none repeated")
         for p in q.pages:
-            if not 1 <= p <= pages:
-                raise ValueError(f"{q.id}: {_no_page(p, self.pages, pages)}")
+            if not 1 <= p <= self.pages:
+                raise ValueError(f"{q.id}: {_no_page(p, self.pages, self.pages)}")
         for f in q.fields:
             if f.region is not None:
                 check_region(f.region, pages, f"{q.id}: field {f.label!r}", self.pages)

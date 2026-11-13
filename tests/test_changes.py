@@ -162,9 +162,9 @@ def test_how_a_field_is_read_changes_and_no_value_changes(tmp_path):
     before = snapshot(ws, 's1')
     change = overrides.set(ws, 'q/fields/a/region', [1, 0, 0, 500, 100], author='ta')
     assert change.checks == ()
-    # the same below the exam: one submission's region, pages, print area
+    # the same below the exam: one submission's region, print area
     own = overrides.scope(overrides.SUBMISSION, 's1')
-    for path, value in (('q/fields/b/region', [1, 0, 100, 500, 200]), ('q/pages', [1]),
+    for path, value in (('q/fields/b/region', [1, 0, 100, 500, 200]),
                         ('@print_area', [10, 10, 990, 990])):
         change = overrides.set(ws, path, value, scope=own, author='ta')
         assert change.checks == ()
