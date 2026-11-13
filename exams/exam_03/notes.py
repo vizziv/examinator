@@ -11,7 +11,14 @@ FORMULAS = "Do not repair missing probability formulas."
 KEEP_CONSTANTS = """\
 Preserve every numeric constant exactly as written, including enormous powers and \
 tiny reciprocals. Never evaluate, clip or replace them, and do not substitute \
-`huge_constant` yourself. """ + FORMULAS
+`huge_constant` yourself. `huge_constant` is a name the exam allows: where the \
+student wrote it, keep it, with no review marker for it. """ + FORMULAS
+
+# Question 5's one box has no printed label, and its printed options are numbers
+# (one of them equal to the label).
+ONE_BOX = """\
+The page has one answer box, labelled 5 here: the printed numbers in it are its \
+options, not answer labels. The answer is the option the student marked or wrote."""
 
 POINT_PROCESS = """\
 Preserve collections and multiplicities. `poisson_dist(m)` is a permitted primitive \

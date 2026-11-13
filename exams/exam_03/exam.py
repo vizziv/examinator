@@ -135,7 +135,7 @@ exam.question(
 exam.question(
     'q5', title="Mmm, measuring multiple means", pages=[11],
     fields=boxes(11, ['5'], [98], 710, 900, 150),
-    read=readers.answers(),
+    read=readers.answers(notes=notes.ONE_BOX),
     check=math.keyed(by=BIT1, key={'original':  {'5': numbered(4, '30')},
                                    'alternate': {'5': numbered(3, '15')}}))
 

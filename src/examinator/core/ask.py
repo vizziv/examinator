@@ -52,7 +52,8 @@ PRINTED_PROMPT = """\
 Read the PRINTED text in this image of an exam page region. Ignore all handwriting.
 Report: {ask}.
 Answer with exactly this JSON, without Markdown: {{"quote": "a short quote of the printed text you relied on", "value": "the value"}}
-Copy the value exactly as it is printed, with no added words, units or formatting. If the printed \
+Give the value in exactly the form the request above asks for (a number, a word, a JSON list); \
+within that form copy what is printed exactly, with no added words or units. If the printed \
 text is unreadable or absent, give JSON null for the value (not the string "null"). Do not infer \
 the value from anything other than the printed text in this image."""
 
