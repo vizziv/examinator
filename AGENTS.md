@@ -12,7 +12,7 @@ This software processes real student exams.
 - Use only instructor-provided blank exams and explicitly synthetic fixtures.
 - Never read, list, or search real scans, transcriptions, parsed answers,
   feedback, model logs or model caches, even if such folders are reachable.
-  A real workspace (`pdfs/`, `exam.sqlite`, `cache/`, `exports/`) is off limits.
+  A real workspace (`sources/`, `made/`, `pdfs/`, `exam.sqlite`, `cache/`, `exports/`) is off limits.
 - Automated tests use mocked model responses. Live-model tests are opt-in
   (`pytest -m live`), use only blank or synthetic material, and write to a new
   directory outside this repository.
@@ -31,7 +31,7 @@ src/examinator/
   core/     definitions (one validation for the package and overrides), store, status rules
             (the model: MODEL.md), runner, batch, workspace, overrides;
             ask (one region, asked of the model: printed fields, names) and reading;
-            split (pure boundary logic) and intake (sources, plans, accepting into pdfs/);
+            split (pure boundary logic) and intake (sources, plans, accepting into made/);
             identity (roster, reading name/ID boxes, pure proposals, the pick)
   pdf/      page rendering, scan layout, orientation, writing submission PDFs
   model/    loopback model client, scripted fake model

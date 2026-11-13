@@ -2,7 +2,8 @@
 
     workspace/
       sources/     scanned PDFs as added, many submissions each (intake: `core.intake`)
-      pdfs/        ID.pdf per submission
+      made/        each submission's PDF as intake wrote it, under the name `made` gives
+      pdfs/        PDFs handed in already split, one per submission: ID.pdf (`sync`)
       exam.sqlite
       cache/       rendered pages
       exports/
@@ -38,7 +39,8 @@ class Workspace:
             if not create:
                 raise FileNotFoundError(f"no pdfs/ folder in {self.root}")
             self.pdfs.mkdir(parents=True, mode=0o700)
-        for d in ('cache', 'exports'):
+        self.made = self.root / 'made'
+        for d in ('cache', 'exports', 'made'):
             (self.root / d).mkdir(exist_ok=True, mode=0o700)
         self.store = Store(self.root / 'exam.sqlite')
         self.renderer = Renderer(self.root / 'cache')
@@ -69,11 +71,12 @@ class Workspace:
         self.store.close()
 
     def sync(self) -> int:
-        """Record every PDF in `pdfs/` as a submission (but not a file an interrupted
-        Accept left: `intake.unsettled`), and name by file name those it can (`identity.by_file`)."""
-        from . import identity, intake
-        stray = intake.unsettled(self)
-        pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink() and p.stem not in stray]
+        """Record every PDF in `pdfs/` as a submission (handed in already split), and name
+        by file name those it can (`identity.by_file`). What intake wrote is in `made/`,
+        recorded already; an id of its is never a file's here."""
+        from . import identity
+        made = self.store.made()
+        pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink() and p.stem not in made]
         self.store.put_submissions([Submission(p.stem, "", "", p.name) for p in pdfs])
         identity.by_file(self)
         return len(pdfs)
@@ -118,11 +121,15 @@ class Workspace:
     # --- pages and crops ---
 
     def pdf_path(self, submission: str) -> Path:
+        """The submission's PDF: the file intake wrote (`made/`, as `made` names it), else
+        the one handed in (`pdfs/`)."""
+        m = self.store.made_of(submission)
         s = self.store.submission(submission)
         if s is None:
             raise KeyError(submission)
-        path = self.pdfs / s.pdf
-        if path.is_symlink() or path.parent != self.pdfs:
+        folder, name = (self.made, m.file) if m is not None else (self.pdfs, s.pdf)
+        path = folder / name
+        if path.is_symlink() or path.parent != folder:
             raise KeyError(submission)
         return path
 

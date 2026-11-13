@@ -65,7 +65,8 @@ create table if not exists source (
   pages integer not null, added_at text not null
 );
 create table if not exists made (
-  submission text primary key, source text not null, pages text not null, orient text, made_at text not null
+  submission text primary key, source text not null, pages text not null, orient text not null,
+  made_at text not null, file text not null
 );
 create table if not exists image (
   submission text not null, name text not null, digest text not null,
@@ -80,6 +81,7 @@ create table if not exists memo (
 
 COLUMNS = 'submission, name, kind, body, origin, author, updated_at, rev'
 OVERRIDE = 'scope, path, value, author, updated_at, rev'
+MADE = 'submission, source, pages, orient, made_at, file'
 WORK = ('value', 'result', 'decision')      # kinds that are grading work (intake will not rewrite over them)
 
 
@@ -144,16 +146,18 @@ class Source:
 
 @dataclass(frozen=True)
 class Made:
-    """A submission PDF written from a source: which sheets, and how they were turned."""
+    """A submission PDF written from a source: which sheets, how they were turned, and
+    the file (under `made/`), which is never changed: a rewrite is another file."""
     submission: str
     source: str
     pages: tuple[int | None, ...]   # its PDF's pages: source sheets (None: a blank placeholder)
     orient: tuple[int, ...]         # each page's quarter turns clockwise, as it was written upright
     made_at: str
+    file: str
 
 
 def _made(r) -> Made:
-    return Made(r[0], r[1], tuple(json.loads(r[2])), tuple(json.loads(r[3]) if r[3] else ()), r[4])
+    return Made(r[0], r[1], tuple(json.loads(r[2])), tuple(json.loads(r[3])), r[4], r[5])
 
 
 def _row(r) -> Row:
@@ -444,20 +448,19 @@ class Store:
 
     def made(self) -> dict[str, Made]:
         with self._lock:
-            rows = self._db.execute('select submission, source, pages, orient, made_at from made').fetchall()
+            rows = self._db.execute(f'select {MADE} from made').fetchall()
         return {r[0]: _made(r) for r in rows}
 
     def made_of(self, submission: str) -> Made | None:
         with self._lock:
-            r = self._db.execute('select submission, source, pages, orient, made_at from made where submission=?',
-                                 (submission,)).fetchone()
+            r = self._db.execute(f'select {MADE} from made where submission=?', (submission,)).fetchone()
         return _made(r) if r else None
 
     def set_made(self, m: Made) -> None:
         with self._lock:
-            self._db.execute('insert or replace into made values (?,?,?,?,?)',
+            self._db.execute(f'insert or replace into made ({MADE}) values (?,?,?,?,?,?)',
                              (m.submission, m.source, json.dumps(list(m.pages)), json.dumps(list(m.orient)),
-                              m.made_at))
+                              m.made_at, m.file))
 
     def delete_made(self, submission: str) -> None:
         with self._lock:

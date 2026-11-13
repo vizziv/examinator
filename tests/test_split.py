@@ -102,14 +102,14 @@ def test_count_not_a_multiple_and_trailing_partial():
 
 
 def test_nothing_readable_falls_back_to_every_n_and_doubts_every_start():
-    plan = split.new_plan(12, L, anchor=ANCHOR, read=lambda i: None)
+    plan = split.guess(split.new_plan(12, L, anchor=ANCHOR), lambda i: None)
     assert first_pages(plan) == [0, 5, 10]
     assert split.doubts(plan, L) == [['start'], ['start'], ['short', 'start']]
 
 
 def test_missing_first_page_is_flagged_not_hidden():
     sheets = missing(stack(5, 5, 5), 1, 1)             # student 1 lost the page with the landmark
-    plan = split.new_plan(len(sheets), L, anchor=ANCHOR, read=title(sheets))
+    plan = split.guess(split.new_plan(len(sheets), L, anchor=ANCHOR), title(sheets))
     assert first_pages(plan) == [0, 5, 9]
     assert split.doubts(plan, L) == [[], ['short', 'start'], []]
 
@@ -236,7 +236,7 @@ def test_the_first_submission_starts_the_pile():
         split.move(plan, 0, -1)
     # a guess finds stray sheets before the first submission and drops them
     sheets = [None] + stack(5, 5)
-    plan = split.new_plan(len(sheets), L, anchor=ANCHOR, read=title(sheets))
+    plan = split.guess(split.new_plan(len(sheets), L, anchor=ANCHOR), title(sheets))
     assert split.dropped(plan) == [0] and split.runs(plan) == [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]
 
 
@@ -272,7 +272,7 @@ def test_landmarks_propose_the_missing_page_and_the_extra_sheet():
     sheets = missing(stack(5, 5, 5, stray_after={(1, 2)}), 0, 2)
     n = len(sheets)
     read, calls = counted(numbers(sheets))
-    plan = split.new_plan(n, L, anchor=ANCHOR, read=read)
+    plan = split.guess(split.new_plan(n, L, anchor=ANCHOR), read)
     assert first_pages(plan) == [0, 4, 10]
     assert split.proposals(plan)[:2] == [{'missing': [2]}, {'extra': [7]}]     # before the sheet that is page 4; the stray
     assert split.doubts(plan, L) == [['missing'], ['extra'], []]
@@ -291,14 +291,14 @@ def test_landmarks_propose_the_missing_page_and_the_extra_sheet():
 
 def test_no_proposal_without_agreeing_readings():
     sheets = missing(stack(5, 5), 0, 2)
-    plan = split.new_plan(len(sheets), L, anchor=ANCHOR, read=title(sheets))     # only page 2 has a landmark
+    plan = split.guess(split.new_plan(len(sheets), L, anchor=ANCHOR), title(sheets))     # only page 2 has a landmark
     assert not any(split.proposals(plan))
 
 
 def test_a_longer_length_does_not_search_every_submission():
     sheets = [x for s in range(3) for x in [(s, p) for p in range(L)] + [(s, None)]]    # one trailing extra each
     read, calls = counted(lambda i: sheets[i][1] if sheets[i][1] is not None and sheets[i][1] >= ANCHOR else None)
-    plan = split.new_plan(len(sheets), L + 1, anchor=ANCHOR, read=read)
+    plan = split.guess(split.new_plan(len(sheets), L + 1, anchor=ANCHOR), read)
     assert first_pages(plan) == [0, 6, 12] and not any(split.proposals(plan))
     assert len(set(calls)) <= 4                         # the boundaries only: no search by halves
 
@@ -317,12 +317,12 @@ def test_step_through_confirm_and_move():
     plan = split.confirm(plan, 0)
     plan = split.move(plan, 1, -1)                   # the guess was one page late: a person's start now
     assert first_pages(plan) == [0, 4, 9, 14, 19]            # later guesses follow the moved one
-    assert split.verified(plan)[:3] == [True, True, False] and split.cursor(plan) == 2
+    assert split.verified(plan)[:3] == [True, False, False] and split.cursor(plan) == 1   # moved, not verified
     plan = split.move(split.move(plan, 2, 1), 2, 1)
     assert first_pages(plan) == [0, 4, 11, 16]
     # going back and moving a start never moves another a person said
     plan = split.move(plan, 1, 1)
-    assert first_pages(plan) == [0, 5, 11, 16] and split.verified(plan)[:3] == [True, True, True]
+    assert first_pages(plan) == [0, 5, 11, 16] and split.verified(plan)[:3] == [True, False, False]
     with pytest.raises(ValueError):
         split.confirm(plan, 4)
 
@@ -333,19 +333,19 @@ def test_guess_never_changes_a_persons_sheets():
     plan = split.new_plan(n, L, anchor=ANCHOR)
     plan = split.cut(plan, 7)                        # a (wrong) start, a person's
     plan = split.guess(plan, numbers(sheets))
-    assert 7 in first_pages(plan) and split.verified(plan)[first_pages(plan).index(7)]
+    assert 7 in first_pages(plan) and not any(split.verified(plan))
     assert first_pages(plan)[:2] == [0, 5]
-    assert plan['checked'] is False and plan['readings']
+    assert plan['readings']
     # a person joined two: a guess does not split them again
     plan = split.join(split.new_plan(n, L), 0)
     assert split.runs(split.guess(plan, numbers(sheets)))[0] == list(range(10))
     # a person put back a sheet a guess dropped: a guess does not drop it again
     strays = [None, None] + stack(5, 5)
-    plan = split.new_plan(len(strays), L, anchor=ANCHOR, read=title(strays))
+    plan = split.guess(split.new_plan(len(strays), L, anchor=ANCHOR), title(strays))
     assert split.dropped(plan) == [0, 1]
     plan = split.restore(plan, 1)
     assert split.dropped(split.guess(plan, title(strays))) == [0]
-    plan = split.move(split.new_plan(len(strays), L, anchor=ANCHOR, read=title(strays)), 0, -1)
+    plan = split.move(split.guess(split.new_plan(len(strays), L, anchor=ANCHOR), title(strays)), 0, -1)
     assert split.dropped(plan) == [0] and split.runs(plan)[0][0] == 1
 
 
@@ -382,3 +382,28 @@ def test_orientation_quarter_turns():
     assert len(seen) == 4
     # a quarter turn is clockwise: the top-left pixel goes to the top-right
     assert turn(im, 1).getpixel((1, 0)) == 0
+
+
+def test_a_sheet_moved_across_a_boundary_and_back_verifies_nothing():
+    plan = split.new_plan(15, L)                        # 0-4, 5-9, 10-14
+    there = split.shift(plan, 4, 1)                     # Shift+D: into the next submission
+    assert split.runs(there)[:2] == [[0, 1, 2, 3], [4, 5, 6, 7, 8]]   # and the guesses after it follow
+    back = split.shift(there, 4, -1)                    # Shift+A: back
+    assert split.runs(back) == split.runs(plan) and not any(split.verified(back))
+    # a verified submission stays verified, as the same sheets, through both
+    plan = split.confirm(plan, 1)
+    back = split.shift(split.shift(plan, 4, 1), 4, -1)
+    assert split.runs(back) == split.runs(plan) and split.verified(back) == [False, True, False]
+
+
+def test_a_correction_cascades_forward_up_to_a_verified_submission():
+    plan = split.confirm(split.new_plan(30, L), 4)      # 0, 5, ..., 25; the fifth verified
+    plan = split.move(plan, 1, -1)                      # the second starts a page early
+    assert first_pages(plan) == [0, 4, 9, 14, 19, 20, 25]       # re-guessed up to the verified one (20-24),
+    assert split.runs(plan)[5] == [20, 21, 22, 23, 24] and split.verified(plan) == [False] * 5 + [True, False]
+    assert split.doubts(plan, L)[4] == ['short']                # which leaves one sheet over: a doubt
+
+
+def test_a_sheet_moved_into_the_next_submission_merges_nothing():
+    plan = split.shift(split.new_plan(15, L), 9, 1)     # the second's last page into the third
+    assert split.runs(plan) == [[0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12, 13], [14]]

@@ -38,6 +38,29 @@ def check(plan, n):
     assert split.guess(plan) == plan                                        # a guess changes nothing of an edit's
 
 
+def whole(plan):
+    """The verified submissions, each as its sheets."""
+    return [tuple(run) for run, v in zip(split.runs(plan), split.verified(plan)) if v]
+
+
+def touched(plan, op, k, sheet):
+    """The sheets an edit names: a verified submission holding none of them must not change."""
+    at = split.starts(plan) + [len(plan['sheets'])]
+    L = plan['sheets']
+
+    def sub(j):
+        return {r['i'] for r in L[at[j]:at[j + 1]]} if 0 <= j < len(at) - 1 else set()
+
+    def owner(i):
+        p = next(p for p, r in enumerate(L) if r['i'] == i)
+        return sum(s <= p for s in at[:-1]) - 1
+    if op in ('confirm', 'move', 'join'):
+        return sub(k) | sub(k - 1 if op == 'move' else k + 1 if op == 'join' else k)
+    if op in ('cut', 'drop', 'restore', 'shift'):
+        return {sheet} | sub(owner(sheet)) | (sub(owner(sheet) - 1) | sub(owner(sheet) + 1) if op == 'shift' else set())
+    return set()
+
+
 def person(plan):
     """What a guess must leave alone: the order, every sheet's own marks, and the start
     and dropped marks of the sheets a person spoke for."""
@@ -51,7 +74,7 @@ class Desk:
         self.rng = rng
         self.sheets, self.read = pile(rng)
         self.n = len(self.sheets)
-        self.plan = split.new_plan(self.n, PAGES, anchor=ANCHOR, read=self.read if rng.random() < 0.5 else None)
+        self.plan = split.guess(split.new_plan(self.n, PAGES, anchor=ANCHOR), self.read if rng.random() < 0.5 else None)
         self.history = [self.plan]
         self.made, self.counter, self.ever = {}, 1, set()
 
@@ -114,6 +137,11 @@ class Desk:
             except ValueError:
                 assert plan == before                                       # refused: nothing changed
                 return op
+            # no edit changes a verified submission other than the ones it names
+            named = touched(plan, op, k, sheet)
+            assert {w for w in whole(plan) if not named & set(w)} <= set(whole(got)), op
+            if op == 'confirm':                                             # verifying the guess changes no run
+                assert split.runs(got) == split.runs(plan)
             self.set(got)
         return op
 
@@ -145,3 +173,18 @@ def test_random_operation_sequences_keep_the_invariants(seed):
     desk.accept()
     assert split.guess(desk.plan, desk.read)['sheets'] == split.guess(desk.plan)['sheets'] == desk.plan['sheets']
     assert desk.accept() == 0 and not any(split.proposals(desk.plan))
+
+
+@pytest.mark.parametrize('seed', range(2000))
+def test_verifying_a_guess_changes_no_run_and_verified_runs_stay(seed):
+    """Verify the guessed submissions in a random order: no step changes any run, so
+    nothing verified moves, and nothing cascades past it (seeds 480, 1898: a student
+    without page 2, a verified run with a stray in it)."""
+    rng = random.Random(seed)
+    sheets, read = pile(rng)
+    plan = split.guess(split.new_plan(len(sheets), PAGES, anchor=ANCHOR), read)
+    runs = split.runs(plan)
+    for k in rng.sample(range(len(runs)), len(runs)):
+        plan = split.confirm(plan, k)
+        assert split.runs(plan) == runs
+    assert all(split.verified(plan)) and split.guess(plan, read) == plan

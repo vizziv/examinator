@@ -167,7 +167,7 @@ exam's code computed it. So the exam package can change under a workspace:
 | A field or check is removed or renamed | Its stored values are ignored, not deleted (restoring the name restores them). A rename loses the work. |
 | Points change | Totals follow at once; they are derived. |
 | How a field is read changes | No value changes. Reading again, when a person asks, replaces what no person verified. |
-| A submission's pages are rewritten (Split's Accept) | Values a reader wrote that no person typed or verified are dropped (not read); the rest stays. |
+| A submission's pages are rewritten (Split's Accept) | Values no person verified are dropped (not read), and so are its own overrides (where things are on its old pages); values a person verified, decisions and the pick stay. |
 
 Two things this asks of the build: a read can fill only the fields that have
 no value yet, and the app can reload the exam package without losing state.
