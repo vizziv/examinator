@@ -256,7 +256,7 @@ create table row (
   primary key (submission, kind, name)
 );
 create table history (...);       -- the same plus replaced_at; a replaced value, decision or plan (not a result)
-create table submission (id text primary key, name text, email text, pdf text, student text);
+create table submission (id text primary key, pdf text);         -- who it is: its pick
 create table setting (key text primary key, value text);        -- roster, counters
 create table override (scope, path, value, author, updated_at, rev,   -- live edits of exam data:
   primary key (scope, path));    -- scope '' (the exam), 'source:<id>', 'submission:<id>'; no history
@@ -720,9 +720,12 @@ submission into `pdfs/`; everything downstream is unchanged.
   A roster is optional. It is stored as a
   setting, `[{'name', 'id', 'email', 'key'}]`, read from a CSV/TSV with a
   header (generic column names only) or from plain lines (name and ID, comma
-  or tab, either order; the ID is the part with no spaces and a digit). An
-  email or ID on two lines is a problem (so is a name, for people with
-  neither); `key` (email, else ID, else name) only addresses a person from
+  or tab, either order; the ID is the part with no spaces and a digit). A
+  roster is valid exactly when every person on it is found as themselves
+  (`Matcher.find`), so a pick of anyone on it links to them: a line whose
+  person cannot be told apart from an earlier one's (the same ID with no
+  email to tell them apart, or for people with neither, the same name) is a
+  problem; `key` (email, else ID, else name) only addresses a person from
   the page. A preview (count, first rows, problems) comes before saving. The Roster tab lists everyone on it
   (sent once with the page, filtered in the browser) with the submission each
   is picked for, a link to it on Names, or "unmatched".
@@ -760,12 +763,16 @@ submission into `pdfs/`; everything downstream is unchanged.
     may mix letters and digits; then IDs within 2 edits for 8+ characters,
     1 for 4-7, none for shorter; names by
     order-insensitive token similarity, accents, case and punctuation folded)
-    with a reason, and gives a doubt (rule 2): each column read supports the
-    people it fits best (an ID or email the nearest within tolerance; a name
-    those within a margin of the best, if close enough); the people every
-    supporting column shares decide: one is `agree` (or `id`, `email`,
-    `name` when one column says anything), several `tie`, none `disagree`;
-    `nobody` when no column fits anyone. With nothing usable: `unread` (still
+    with a reason, and gives who the evidence singles out (`match`) and a
+    doubt (rule 2), all from one computation: each column read (that the
+    roster has) supports the people it fits best (an ID or email the nearest
+    within tolerance; a name those within a margin of the best, if close
+    enough), possibly nobody, which is evidence too; the people every column
+    read supports decide: one is the match, `agree` (or `id`, `email`,
+    `name` when one column was read), several `tie`, none `disagree`, or
+    `nobody` when no column fits anyone. Candidates come in that order: the
+    people every column supports first, then by how many columns support
+    them, then by how alike. With nothing usable: `unread` (still
     to read), `unreadable` (a review marker), `empty` (every box blank). A
     person already picked elsewhere is flagged,
     never dropped or ranked lower: taken-ness never breaks a tie (one
@@ -783,8 +790,9 @@ submission into `pdfs/`; everything downstream is unchanged.
     letters and digits (`identity.by_file`, on `sync` and when the roster is
     saved) becomes the pick (origin `'auto'`) of a submission that never had
     one; it shows on the Names tab as verified and is changed there like any
-    other. The
-    submission row carries the name, email and the student ID (`student`).
+    other. A
+    submission's name, email and student ID (`Submission.name`, `email`,
+    `student`) are read from its pick; the submission table holds only its id and file.
     The Names tab steps through unnamed exams, most doubtful first (V take,
     W/S other proposals, A/D back/skip, E the picker), showing the boxes'
     crops, or without boxes the first page's top (or whole). The picker

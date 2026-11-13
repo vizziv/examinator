@@ -1,4 +1,5 @@
 """Who wrote each submission: rosters, the matcher, readings and picks. Synthetic material only."""
+import random
 from pathlib import Path
 
 import pytest
@@ -47,19 +48,34 @@ def test_lines_that_cannot_be_read_are_reported():
     people, problems = read_roster("Ada Lovelace\nAda, Lovelace\n12, 34\nAlan Turing, 1\nAlan T, 1\n")
     assert [p['name'] for p in people] == ["Alan Turing"]
     assert problems == ["line 1: expected a name and an ID", "line 2: expected a name and an ID",
-                        "line 3: expected a name and an ID", "line 5: ID 1 is already on line 4"]
+                        "line 3: expected a name and an ID", "line 5: Alan T <1> cannot be told apart from line 4"]
     with pytest.raises(ValueError, match="line 1"):
         identity.parse_roster("Ada Lovelace\n")
 
 
-def test_an_id_or_email_two_people_share_is_a_problem():
+def test_a_roster_is_valid_exactly_when_everyone_on_it_is_found_as_themselves():
+    """One rule (`Matcher.find`) instead of duplicate checks: a line whose person could not
+    be told apart from an earlier one's is a problem, so a pick of anyone kept links to them."""
+    people, problems = read_roster("Name,Student ID\nJohn Smith,44444444\nJohn Smith,\n")
+    assert [p['id'] for p in people] == ["44444444"]
+    assert problems == ["line 3: John Smith cannot be told apart from line 2"]
+    people, problems = read_roster("Name,Student ID\nJohn Smith,\nJohn Smith,44444444\n")    # either order
+    assert [p['id'] for p in people] == [''] and len(problems) == 1
     people, problems = read_roster("Name,Email,Student ID\nAda Lovelace,ada@example.invalid,31415926\n"
-                                   "Ada King,ada.king@example.invalid,31415926\n"
-                                   "Alan Turing,ADA@example.invalid,27182818\nKim Park,,\nKim  park,,\n")
-    assert [p['name'] for p in people] == ["Ada Lovelace", "Kim Park"]
-    assert problems == ["line 3: ID 31415926 is already on line 2", "line 4: email ADA@example.invalid is already on line 2",
-                        "line 6: name Kim  park is already on line 5"]
-    # and should a roster hold one anyway, an ID two people have singles out nobody
+                                   "Ada King,,31415926\nKim Park,,\nKim  park,,\n"
+                                   "Ada King,ada.king@example.invalid,31415926\n")
+    assert [p['name'] for p in people] == ["Ada Lovelace", "Kim Park", "Ada King"]     # the email tells her apart
+    assert problems == ["line 3: Ada King <31415926> cannot be told apart from line 2",
+                        "line 5: Kim  park cannot be told apart from line 4"]
+    rng = random.Random(4580)
+    for _ in range(200):
+        lines = [",".join((rng.choice(["Ada Lovelace", "Ada King", "lovelace ada", "Kim Park"]),
+                           rng.choice(["", "a@x.invalid", "b@x.invalid"]), rng.choice(["", "11111111", "22222222"])))
+                 for _ in range(rng.randint(1, 6))]
+        people, problems = read_roster("Name,Email,Student ID\n" + "\n".join(lines) + "\n")
+        m = Matcher(people)
+        assert all(m.find(p) == i for i, p in enumerate(people)) and len(people) + len(problems) == len(lines)
+    # and should a roster hold such people anyway, an ID two people have singles out nobody
     twins = [{'name': "Ada Lovelace", 'id': "31415926", 'key': 'a'}, {'name': "Ada King", 'id': "31415926", 'key': 'b'}]
     assert propose({'id': "31415926"}, twins)['doubt'] == 'tie'
     assert propose({'id': "31415926", 'name': "Ada King"}, twins)['doubt'] == 'agree'
@@ -136,6 +152,28 @@ def test_a_misread_name_with_the_id_unread():
     assert r['doubt'] == 'name' and top(r) == 'grace' and r['candidates'][0]['why'] == "name close"
 
 
+def test_a_proposal_is_one_computation_of_who_and_in_what_order():
+    """Who the evidence singles out (`match`), the doubt and the order come from one place:
+    the people every column read supports first; a column that supports nobody is a conflict."""
+    roster = [{'key': 'ada', 'name': "Ada Lovelace", 'id': "11111111"}, {'key': 'bob', 'name': "Bob Stone", 'id': "22222222"}]
+    r = propose({'name': "Bobby Stane", 'id': "11111199"}, roster)     # the ID, two off, is Ada's; the name nobody's
+    assert r['doubt'] == 'disagree' and r['match'] is None and top(r) == 'ada'
+    r = propose({'name': "Ada Lovelace", 'id': "99999999"}, roster)    # an ID that fits nobody is evidence
+    assert r['doubt'] == 'disagree' and r['match'] is None
+    r = propose({'name': "Bob Ston", 'id': "11111111"}, roster)
+    assert r['doubt'] == 'disagree' and [c['key'] for c in r['candidates']] == ['ada', 'bob']
+    for read in ({'name': "Ada Lovelace", 'id': "11111111"}, {'id': "11111112"}, {'name': "Lovelace Ada"}):
+        r = propose(read, roster)
+        assert roster[r['match']]['key'] == top(r) == 'ada' and r['doubt'] in ('agree', 'id', 'name')
+    rng = random.Random(4580)
+    for _ in range(300):                # whenever there is a match, it is the first candidate
+        read = {'name': rng.choice([None, "Ada Lovelace", "Bob Stone", "Ada Stone", "Bobby Lovelace"]),
+                'id': rng.choice([None, "11111111", "22222222", "11111122", "12121212", "99999999"])}
+        r = propose(read, roster)
+        assert (r['match'] is not None) == (r['doubt'] in ('agree', 'id', 'name'))
+        assert r['match'] is None or roster[r['match']]['key'] == top(r)
+
+
 def test_id_and_name_point_at_different_people():
     r = propose({'name': "Grace Hopper", 'id': "31415926"}, ROSTER)
     assert r['doubt'] == 'disagree'
@@ -146,7 +184,7 @@ def test_id_and_name_point_at_different_people():
 def test_nobody_close_and_nothing_read():
     r = propose({'name': "Finley Dummond", 'id': "95830142"}, ROSTER)
     assert r['doubt'] == 'nobody' and r['candidates'] == []
-    assert propose({'name': None, 'id': ''}, ROSTER) == {'doubt': 'unread', 'candidates': []}
+    assert propose({'name': None, 'id': ''}, ROSTER) == {'doubt': 'unread', 'match': None, 'candidates': []}
 
 
 def test_names_too_alike_are_a_tie_and_all_are_candidates():
@@ -479,3 +517,14 @@ def test_a_box_drawn_in_the_app_is_read_on_synthetic_stacks(tmp_path):
     identity.read(runner, 's0001')
     assert texts(ws, 's0001') == {'name': "Avery Testwell"}
     ws.close()
+
+
+def test_who_a_submission_is_is_read_from_its_pick(written):
+    """No stored copy to keep in step: whatever writes or undoes the pick, the submission's
+    name, email and student ID are the pick's."""
+    ws, runner, model = written
+    ws.store.write('s0001', '', identity.WHO, {'name': "Ada", 'id': "1", 'email': "a@x.invalid"}, origin='manual')
+    s = ws.store.submission('s0001')
+    assert (s.name, s.student, s.email) == ("Ada", "1", "a@x.invalid") and s in ws.store.submissions()
+    ws.store.delete('s0001', '', identity.WHO)
+    assert ws.store.submission('s0001').name == "" and ws.sync() and ws.store.submission('s0001').name == ""

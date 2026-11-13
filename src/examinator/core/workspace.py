@@ -69,15 +69,13 @@ class Workspace:
         self.store.close()
 
     def sync(self) -> int:
-        """Record every PDF in `pdfs/` as a submission, named by its pick (but not a
-        file an interrupted Accept left: `intake.unsettled`)."""
+        """Record every PDF in `pdfs/` as a submission (but not a file an interrupted
+        Accept left: `intake.unsettled`), and name by file name those it can (`identity.by_file`)."""
         from . import identity, intake
         stray = intake.unsettled(self)
         pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink() and p.stem not in stray]
-        known = {s.id for s in self.store.submissions()}
-        self.store.put_submissions([Submission(p.stem, "", "", p.name) for p in pdfs if p.stem not in known])
+        self.store.put_submissions([Submission(p.stem, "", "", p.name) for p in pdfs])
         identity.by_file(self)
-        self.store.put_submissions([identity.submission(self, p.stem, p.name) for p in pdfs])
         return len(pdfs)
 
     # --- what applies to one submission: `overrides.Layers` resolves it ---

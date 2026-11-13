@@ -9,8 +9,9 @@ import pytest
 from starlette.testclient import TestClient
 
 from examinator import load_exam
+from examinator.core import identity
 from examinator.core.runner import Runner
-from examinator.core.store import Made, Submission
+from examinator.core.store import Made
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
 from examinator.pdf.layout import Layout
@@ -681,7 +682,7 @@ def test_an_image_is_served_only_by_the_result_that_shows_it(site):
 
 def test_names_are_escaped_in_the_grid(env):
     exam, ws, runner = env
-    ws.store.put_submissions([Submission('s1', f"Eve {EVIL}", "", 's1.pdf')])
+    identity.pick(ws, 's1', {'name': f"Eve {EVIL}"}, author='t', expect_rev=None)     # who it is: the pick
     site = Site(exam, ws, runner)
     for path in ('/', '/s/s1/a', '/settings'):
         assert '<script>alert' not in site.get(path).text

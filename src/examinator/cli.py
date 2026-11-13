@@ -90,8 +90,8 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
             print(f"names: {view['left']} of {len(view['rows'])} to confirm (Scans page, Names)")
             for row in view['rows']:
                 if row['who'] is None:
-                    top = row['candidates'][0]['label'] if row['candidates'] else "-"
-                    print(f"  {row['sub']}: {identity.DOUBTS[row['doubt']]}: {top}")
+                    match = next((c['label'] for c in row['candidates'] if c['key'] == row['match']), "-")
+                    print(f"  {row['sub']}: {identity.DOUBTS[row['doubt']]}: {match}")
     if not args.accept:
         print(f"review and accept: examinator serve {args.exam} -w {args.workspace}   (Scans page)")
     return 0
