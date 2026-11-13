@@ -66,6 +66,12 @@ SCRIPT = {
 }
 
 
+def first_of(ws, src, k):
+    """Submission `k`'s first sheet in a scan's plan: how an edit names a submission."""
+    from examinator.core import intake, split
+    return split.runs(intake.plan(ws, src).body)[k][0]
+
+
 def workspace(tmp_path, exam, subs=('s1', 's2')):
     root = tmp_path / 'ws'
     (root / 'pdfs').mkdir(parents=True)

@@ -34,14 +34,15 @@ class Renderer:
         self.dpi = dpi
         self._counts: dict[str, int] = {}
 
-    def _key(self, pdf: Path) -> str:
+    def key(self, pdf: Path) -> str:
+        """Names the file as it is now (its path, size and time): the cache key of its pages."""
         st = pdf.stat()
         return hashlib.sha1(f'{pdf.resolve()}|{st.st_size}|{st.st_mtime_ns}'.encode()).hexdigest()[:20]
 
     def page_count(self, pdf: str | Path) -> int:
         """`page_count`, remembered while the file is unchanged."""
         pdf = Path(pdf)
-        key = self._key(pdf)
+        key = self.key(pdf)
         if key not in self._counts:
             self._counts[key] = page_count(pdf)
         return self._counts[key]
@@ -50,7 +51,7 @@ class Renderer:
         """Path of the cached image of one scanned page (0-based), making it if needed."""
         pdf = Path(pdf)
         # 'i' marks the scheme that takes a scan's own image (entries from older schemes differ).
-        out = self.cache_dir / self._key(pdf) / f'p{index:03d}-{self.dpi}i.jpg'
+        out = self.cache_dir / self.key(pdf) / f'p{index:03d}-{self.dpi}i.jpg'
         if out.exists():
             return out
         import pypdfium2
