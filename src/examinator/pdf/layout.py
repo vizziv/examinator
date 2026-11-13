@@ -18,8 +18,8 @@ DEFAULT_PAD = 12   # per-mille of the printed page, added around every crop
 @dataclass(frozen=True)
 class Layout:
     cover_pages: int = 0
-    window: tuple[int, int, int, int] = (0, 0, 1000, 1000)   # left, top, right, bottom of the
-                                                             # printed page, per-mille of the scan
+    print_area: tuple[int, int, int, int] = (0, 0, 1000, 1000)   # left, top, right, bottom of the
+                                                                 # printed page, per-mille of the scan
 
     def scan_index(self, printed_page: int) -> int:
         """0-based index into the scanned PDF of a 1-based printed page."""
@@ -27,7 +27,7 @@ class Layout:
 
     def box(self, region: Region, pad: int = DEFAULT_PAD) -> tuple[float, float, float, float]:
         """The region as fractions (left, top, right, bottom) of the scanned page."""
-        wl, wt, wr, wb = self.window
+        wl, wt, wr, wb = self.print_area
 
         def x(v):
             return min(1.0, max(0.0, (wl + (wr - wl) * v / 1000) / 1000))

@@ -4,15 +4,14 @@
     GET  /filter                    the filter page: facets of every question
     GET  /focus/values              facet values for all submissions (?sub=: one), JSON
     GET  /s/{sub}/{q}               question page
-    POST /s/{sub}/{q}/{action}      save unverify decide clear read check pages region restore
-    POST /s/{sub}/layout            per-submission layout override (cover pages)
-    POST /s/{sub}/print-area        the print area: this submission's, its scan's, or the workspace's
+    POST /s/{sub}/{q}/{action}      save unverify decide clear read check restore
     GET  /page/{sub}/{index}.jpg    cached rendering of one scanned page
     GET  /raw/{sub}/{q}/{check}/{path}   one evidence 'raw' block, sandboxed
     GET  /jobs/{id}                 background job state
     GET  /runs                      batch runs;  POST /runs/preview|start|stop,  GET /runs/status
-    GET  /settings                  workspace defaults;  POST /settings
-    GET  /exam                      exam data (overrides);  POST /exam/set|clear
+    GET  /settings                  this browser's keys and appearance
+    GET  /exam                      exam data (overrides);  POST /exam/set|clear, at a scope:
+                                    every submission, one scan's, one submission's
     GET  /scans                     intake: sources, split plans, accept;  GET /scans/{src}/plan (JSON)
     POST /scans/upload?name=        a scanned PDF as the raw request body (streamed to disk)
     POST /scans/{src}/{action}      edit propose undo accept;  POST /scans/roster, /scans/who
@@ -52,12 +51,14 @@ from starlette.staticfiles import StaticFiles
 
 from ..core import batch, focus, grid, identity, intake, overrides, split, status
 from ..core.context import CheckContext
-from ..core.defs import Bool, Check, Exam, Question, Region, key, split_key
+from ..core.defs import Bool, Check, Exam, Question, key, split_key
+from ..core.as_python import describe_changes
+from ..core.overrides import EXAM, SOURCE, SUBMISSION
 from ..core.printed import Printed
 from ..core.reading import normalize
 from ..core.runner import Runner
 from ..core.store import Conflict
-from ..core.workspace import Workspace
+from ..core.workspace import PRINT_AREA, COVER_PAGES, Workspace
 from ..pdf.layout import Layout
 from ..pdf.orient import Orient
 from .jobs import Batch, Jobs
@@ -160,19 +161,6 @@ def _rev(data: dict) -> int | None:
     if rev is None or rev == '':
         return None
     return _int(rev, "rev", 0, 2**62)
-
-
-def _window(value: Any) -> list[int] | None:
-    if value in (None, '', []):
-        return None
-    if isinstance(value, str):
-        value = value.replace(',', ' ').split()
-    if not isinstance(value, (list, tuple)) or len(value) != 4:
-        raise Bad("print area: expected left, top, right, bottom")
-    l, t, r, b = (_int(v, "print area", 0, 1000) for v in value)
-    if l >= r or t >= b:
-        raise Bad("print area: left < right and top < bottom")
-    return [l, t, r, b]
 
 
 def _strings(value: Any, allowed, what: str) -> tuple[str, ...]:
@@ -288,6 +276,8 @@ def show_value(kind: str, value: Any) -> str:
         return ''
     if kind == 'pages':
         return ', '.join(str(p) for p in value)
+    if kind == 'print_area':
+        return ' '.join(str(v) for v in value)
     if kind == 'map':
         return '\n'.join(f'{k} = {v}' for k, v in value.items())
     if kind == 'choice':
@@ -587,20 +577,17 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
         qids = list(exam.questions)
         i = qids.index(q.id)
-        over = store.get(sub.id, '', 'layout')
-        print_area = print_levels(sub.id)
-        revs = {p: o.rev for p, o in store.overrides().items()}
+        lay = ws.layers(sub.id)
+        stored = store.overrides()
+        revs = {p: o.rev for p, o in stored.items()}
         entries = overrides.editable(exam, q.id)
-        regions = []
-        for e in entries:
-            segs = overrides.split(e.path)
-            if e.kind == 'region':
-                own_row = store.get(sub.id, key(q.id, segs[2]), 'region')
-                regions.append({'path': e.path, 'label': segs[2], 'printed': isinstance(q.reader_of(segs[2]), Printed),
-                                'region': (own_row.body['region'] if own_row else e.current), 'base': e.base,
-                                'stored': e.path in revs, 'rev': revs.get(e.path),
-                                'exam': e.current, 'own': own_row is not None,
-                                'own_rev': own_row.rev if own_row else None})
+        regions = [{'label': overrides.split(e.path)[2], 'printed': isinstance(q.reader_of(overrides.split(e.path)[2]), Printed),
+                    **levels(lay, e.path, e.base, stored)} for e in entries if e.kind == 'region']
+        mine = lay.stored.get(SUBMISSION, {})
+        own = {name: {'path': path, 'rev': mine[path].rev if path in mine else ''}
+               for name, path in (('pages', overrides.join(q.id, 'pages')), ('note', overrides.join(q.id, 'note')),
+                                  ('cover', COVER_PAGES))}
+        own_cover = mine[COVER_PAGES].value if COVER_PAGES in mine else None
         keyed = []
         for c in q.checks:
             picked = picked_key(exam, q, c, sheet.values)
@@ -613,8 +600,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             'question.html', sub=sub, q=q, checks=checks, fields=fields, waiting=waiting, waiting_other=waiting_other,
             scans=scans, history=history[:60], count=count, keyed=keyed,
             can_read=bool(readers_), off=bool(readers_) and not have_model(),
-            pages=pages, note=note, pages_default=q.pages, layout=layout,
-            layout_over=over.body if over else None, regions=regions, print_area=print_area,
+            pages=pages, note=note, pages_default=q.pages, layout=layout, own=own, own_cover=own_cover,
+            regions=regions, print_area=levels(lay, PRINT_AREA, list(exam.base_attrs['print_area']), stored),
+            scopes={'own': overrides.scope(SUBMISSION, sub.id), 'all': '',
+                    'scan': overrides.scope(SOURCE, lay.source) if lay.source else None},
             first_page=(q.pages or (1,))[0], ids=[s.id for s in store.submissions()],
             prev_q=qids[i - 1] if i else None, next_q=qids[i + 1] if i + 1 < len(qids) else None)
 
@@ -703,37 +692,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         params = _params(data.get('params'))
         return {'job': jobs.start(lambda: runner.compute(sub.id, q.id, c.name, params=params))}
 
-    def set_pages(request, data):
-        sub, q = target(request)
-        pages = data.get('pages') or []
-        if isinstance(pages, str):
-            pages = pages.replace(',', ' ').split()
-        if not isinstance(pages, list):
-            raise Bad("pages: expected a list")
-        pages = [_int(p, "page", 1, exam.pages) for p in pages]
-        ws.set_pages(sub.id, q, pages, str(data.get('note') or '')[:2000], author=who(request))
-
-    def set_region(request, data):
-        """A field's region for this submission only (null: back to the exam's). Changes no value."""
-        sub, q = target(request)
-        label = data.get('label')
-        if not isinstance(label, str) or q.field(label) is None:
-            raise Bad("unknown field")
-        value = data.get('value')
-        region = None
-        if value is not None:
-            if not (isinstance(value, list) and len(value) == 5):
-                raise Bad("a region is [page, left, top, right, bottom]")
-            region = Region(*[_int(v, "region", 0, 1000) for v in value])
-        try:
-            ws.set_region(sub.id, q, label, region, author=who(request), expect_rev=_rev(data))
-        except Conflict as e:
-            raise _row_conflict(e, sub.id, key(q.id, label), 'region', 'region') from None
-        row = store.get(sub.id, key(q.id, label), 'region')
-        r = ws.region(sub.id, q, label)
-        return {'value': [r.page, r.left, r.top, r.right, r.bottom] if r else None,
-                'rev': row.rev if row else None, 'own': row is not None}
-
     def restore(request, data):
         """A field's earlier value back, set by this person."""
         sub, q = target(request)
@@ -746,67 +704,21 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                    expect_rev=_rev({'rev': data.get('expect')}))
         return {'job': refresh(sub.id, q.id)}
 
-    def set_layout(request, data):
-        """This submission's cover pages (empty: the default); its print area is kept
-        (that is `set_print_area`'s)."""
-        sub, _ = target(request, need_question=False)
-        cover = data.get('cover_pages')
-        cover = None if cover in (None, '') else _int(cover, "cover pages", 0, 99)
-        kept = store.get(sub.id, '', 'layout')
-        window = (kept.body or {}).get('scan_window') if kept else None
-        ws.set_layout(sub.id, cover_pages=cover, scan_window=window, author=who(request))
+    def levels(lay, path: str, base, stored: dict) -> dict:
+        """One value at each scope, for the scope editor: this submission's own ('own'),
+        its scan's ('scan'), every submission's ('all', the exam's override), each with its
+        revision; the package's ('base'); and the one in force ('value')."""
+        out = {'path': path, 'base': base, 'value': lay.value(path), 'source': lay.source}
+        for name, o in (('own', lay.stored.get(SUBMISSION, {}).get(path)),
+                        ('scan', lay.stored.get(SOURCE, {}).get(path)), ('all', stored.get(path))):
+            out[name], out[name + '_rev'] = (o.value, o.rev) if o else (None, None)
+        return out
 
-    def print_levels(sid: str) -> dict:
-        """The print area at each level, for the region editor: this submission's own,
-        its source scan's, the workspace's (else the package's)."""
-        own = store.get(sid, '', 'layout')
-        source = ws.source_of(sid)
-        row = store.get(source, '', 'print_area') if source else None
-        return {'own': ((own.body or {}).get('scan_window') if own else None) or None,
-                'own_rev': own.rev if own else None,
-                'source': source, 'scan': list(ws.source_window(source) or ()) or None,
-                'scan_rev': row.rev if row else None,
-                'all': list(ws.scan_window), 'package': list(exam.scan_window),
-                'window': list(ws.layout(sid).window)}
-
-    def set_print_area(request, data):
-        """The print area at one level: 'own' (this submission), 'scan' (every submission
-        from its source scan) or 'all' (the workspace). A null value drops that level.
-        Changes no value; the crops beside the fields come back redrawn."""
-        sub, _ = target(request, need_question=False)
-        level = data.get('level')
-        window = _window(data.get('value'))
-        if level == 'own':
-            cur = store.get(sub.id, '', 'layout')
-            cover = (cur.body or {}).get('cover_pages') if cur else None
-            try:
-                ws.set_layout(sub.id, cover_pages=cover, scan_window=window, author=who(request),
-                              expect_rev=_rev(data))
-            except Conflict as e:
-                raise _row_conflict(e, sub.id, '', 'layout', 'scan_window') from None
-        elif level == 'scan':
-            source = ws.source_of(sub.id)
-            if source is None:
-                raise Bad("this submission was not split from a scan")
-            try:
-                ws.set_source_window(source, window, author=who(request), expect_rev=_rev(data))
-            except Conflict as e:
-                raise _row_conflict(e, source, '', 'print_area', 'scan_window') from None
-        elif level == 'all':
-            if window is None:
-                ws.clear_scan_window()
-            else:
-                ws.set_defaults(scan_window=window)
-        else:
-            raise Bad("level: expected own, scan or all")
-        layout = ws.layout(sub.id)
-        boxes = {}
-        for qid, q in exam.questions.items():
-            for f in q.fields:
-                r = ws.region(sub.id, q, f.label)
-                if r is not None:
-                    boxes[overrides.join(qid, 'fields', f.label, 'region')] = box(layout, r)
-        return {'print_area': print_levels(sub.id), 'boxes': boxes}
+    def crop_boxes(sid: str) -> dict:
+        """Where every field's crop is on its scanned page, by region path."""
+        layout = ws.layout(sid)
+        return {overrides.join(qid, 'fields', f.label, 'region'): box(layout, f.region)
+                for qid, q in exam.questions.items() for f in ws.fields(sid, q) if f.region is not None}
 
     # --- pages, raw blocks, jobs ---
 
@@ -899,15 +811,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     # --- settings ---
 
     def settings_page(request: Request) -> Response:
-        subs = store.submissions()
-        return page('settings.html', cover=ws.cover_pages, window=ws.scan_window, subs=subs[:500],
-                    pages=exam.pages)
-
-    def settings_save(request, data):
-        window = _window(data.get('print_area'))
-        if window is None:
-            raise Bad("print area: expected left, top, right, bottom")
-        ws.set_defaults(cover_pages=_int(data.get('cover_pages'), "cover pages", 0, 99), scan_window=window)
+        return page('settings.html')
 
     # --- exam data: overrides of the package's plain data, for every submission ---
 
@@ -916,10 +820,11 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         revs = {p: o.rev for p, o in stored.items()}
         by_q: dict[str, list] = {}
         for e in overrides.editable(exam):
-            by_q.setdefault(overrides.split(e.path)[0], []).append(entry_view(e, revs))
-        lists = {overrides.LIST + identity.LIST: "name and ID boxes"}
-        questions = [{'id': qid, 'title': lists.get(qid) or getattr(exam.questions.get(qid), 'title', ''), 'entries': items}
-                     for qid, items in by_q.items()]
+            root = overrides.split(e.path)[0]
+            by_q.setdefault(overrides.LIST if root[1:] in exam.ATTRS else root, []).append(entry_view(e, revs))
+        titles = {overrides.LIST + identity.LIST: "name and ID boxes", overrides.LIST: "print area and cover pages"}
+        questions = [{'id': qid, 'title': titles.get(qid) or getattr(exam.questions.get(qid), 'title', ''),
+                      'entries': items} for qid, items in by_q.items()]
         skipped = []
         for path, o in stored.items():
             if path not in exam.overrides:
@@ -931,8 +836,26 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
                 skipped.append({'path': path, 'reason': reason})
         active = [{'path': p, 'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')}
                   for p, o in stored.items()]
-        return page('exam.html', questions=questions, active=active, skipped=skipped,
-                    lines=overrides.describe_changes(exam, store))
+        names, first = {s.id: s.name for s in store.sources()}, next(iter(exam.questions), None)
+        scoped = []             # what one scan or one submission has of its own
+        for o in store.all_overrides():
+            if not o.scope:
+                continue
+            level, id_ = overrides.parse_scope(o.scope)
+            try:
+                kind = overrides.kind(exam, o.path)
+            except ValueError:
+                kind = ''
+            root = overrides.split(o.path)[0]
+            scoped.append({'scope': o.scope, 'level': "scan" if level == SOURCE else level,
+                           'where': names.get(id_, id_) if level == SOURCE else id_,
+                           'gone': store.submission(id_) is None if level == SUBMISSION else id_ not in names,
+                           'href': f'/s/{id_}/{root if root in exam.questions else first}'
+                           if level == SUBMISSION and first else None,
+                           'path': o.path, 'text': show_value(kind, o.value), 'rev': o.rev,
+                           'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')})
+        return page('exam.html', questions=questions, active=active, skipped=skipped, scoped=scoped,
+                    lines=describe_changes(exam, store))
 
     def _path(data: dict) -> str:
         path = data.get('path')
@@ -940,57 +863,76 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             raise Bad("path is required")
         return path
 
-    def _changed(path: str, change: overrides.Change, data: dict) -> dict:
+    def _scope(data: dict, setting: bool) -> str:
+        """The scope a request names, as stored: '' (every submission), 'source:<id>'
+        (one scan's) or 'submission:<id>'. To set a value there, it must exist."""
+        scope = data.get('scope') or ''
+        if not isinstance(scope, str):
+            raise Bad("bad scope")
+        level, id_ = overrides.parse_scope(scope)
+        if setting and (store.submission(id_) is None if level == SUBMISSION
+                        else store.source(id_) is None if level == SOURCE else False):
+            raise Bad("no such scan or submission")
+        return scope
+
+    def _changed(path: str, scope: str, change: overrides.Change, data: dict) -> dict:
         """After an edit: recompute in the background what it outdated, the
-        requesting page's submission first; say which fields to offer to read again."""
-        o = store.overrides().get(path)
+        requesting page's submission first; say which fields to offer to read again,
+        and what is now in force at that scope (and, for the page's submission, at each)."""
+        o = store.overrides(scope).get(path)
         subs = [s.id for s in store.submissions()]
         first = data.get('sub')
         if first in subs:
             subs.remove(first)
             subs.insert(0, first)
         job = jobs.start_each([(s,) for s in subs], runner.refresh) if change.checks else None
-        segs = overrides.split(path)
-        entry = next((e for e in overrides.editable(exam, segs[0]) if e.path == path), None)
-        return {'rev': o.rev if o else None, 'value': entry.current if entry else None,
-                'text': show_value(entry.kind, entry.current) if entry else '',
-                'overridden': o is not None, 'checks': [f'{q}.{c}' for q, c in change.checks],
-                'affected': len(change.checks) * len(subs), 'job': job,
-                'reread': [f'{q}/{label}' for q, label in change.fields],
-                'skipped': [{'path': s.path, 'reason': s.reason} for s in change.skipped]}
+        level, id_ = overrides.parse_scope(scope)
+        try:
+            kind = overrides.kind(exam, path)
+        except ValueError:
+            kind = ''
+        if level == EXAM:
+            entry = overrides.entry(exam, path)
+            value = entry.current if entry else None
+        else:
+            value = ws.layers(**{level: id_}).value(path) if kind else None
+        out = {'rev': o.rev if o else None, 'value': value, 'text': show_value(kind, value),
+               'overridden': o is not None, 'checks': [f'{q}.{c}' for q, c in change.checks],
+               'affected': len(change.checks) * len(subs), 'job': job,
+               'reread': [f'{q}/{label}' for q, label in change.fields],
+               'skipped': [{'path': s.path, 'reason': s.reason} for s in change.skipped]}
+        if first in subs and kind in ('region', 'print_area'):
+            lay = ws.layers(first)
+            out['levels'] = levels(lay, path, overrides.entry(exam, path).base, store.overrides())
+            if kind == 'print_area':
+                out['boxes'] = crop_boxes(first)
+        return out
 
-    def _conflict(e: Conflict, path: str) -> Conflict:
-        o = store.overrides().get(path)
+    def _conflict(e: Conflict, path: str, scope: str) -> Conflict:
+        """What is saved now, so that saving again overwrites it knowingly."""
+        o = store.overrides(scope).get(path)
         e.current = {'rev': o.rev if o else None, 'value': o.value if o else None,
                      'who': (o.author or '?') if o else None}
         return e
 
-    def _row_conflict(e: Conflict, owner: str, name: str, kind: str, field: str) -> Conflict:
-        """As `_conflict`, for a row of one submission or scan (a region, a print area):
-        what is saved now, so that saving again overwrites it knowingly."""
-        row = store.get(owner, name, kind)
-        e.current = {'rev': row.rev if row else None, 'value': (row.body or {}).get(field) if row else None,
-                     'who': (row.author or '?') if row else None}
-        return e
-
     def exam_set(request, data):
-        path, rev = _path(data), _rev(data)
+        path, rev, scope = _path(data), _rev(data), _scope(data, True)
         try:
             with lock:
-                change = overrides.set(exam, store, path, data.get('value'), author=who(request),
+                change = overrides.set(exam, store, path, data.get('value'), scope=scope, author=who(request),
                                        expect_rev=rev)
         except Conflict as e:
-            raise _conflict(e, path) from None
-        return _changed(path, change, data)
+            raise _conflict(e, path, scope) from None
+        return _changed(path, scope, change, data)
 
     def exam_clear(request, data):
-        path, rev = _path(data), _rev(data)
+        path, rev, scope = _path(data), _rev(data), _scope(data, False)
         try:
             with lock:
-                change = overrides.clear(exam, store, path, expect_rev=rev)
+                change = overrides.clear(exam, store, path, scope=scope, expect_rev=rev)
         except Conflict as e:
-            raise _conflict(e, path) from None
-        return _changed(path, change, data)
+            raise _conflict(e, path, scope) from None
+        return _changed(path, scope, change, data)
 
     # --- intake: scans in, submissions out ---
 
@@ -1025,7 +967,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def idboxes(source: str | None) -> list[dict]:
         """Where the identity boxes are on a sheet of a source (the plan adds cover sheets)."""
-        layout = Layout(0, ws.window_for_source(source))
+        layout = ws.source_layout(source)
         return [{'name': f.name, 'offset': f.region.page - 1, 'box': box(layout, f.region)}
                 for f in identity.boxes(ws)]
 
@@ -1156,7 +1098,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             row['crops'] = [{'name': f.name, 'index': layout.scan_index(f.region.page), 'box': box(layout, f.region)}
                             for f in fields]
             # for the page itself, and the boxes drawn on it: printed page p is scan index cover + p - 1
-            row['cover'], row['window'] = layout.cover_pages, list(layout.window)
+            row['cover'], row['print_area'] = layout.cover_pages, list(layout.print_area)
         view['nobody'] = [identity.label(p) for p in view['nobody']]
         view['fields'] = [{'name': f.name, 'roster': f.roster} for f in fields]
         view['boxes'] = identity.boxes_state(ws)
@@ -1215,16 +1157,12 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         Route('/filter', filter_page),
         Route('/focus/values', focus_values),
         Route('/s/{sub}/{q}', question_page),
-        post('/s/{sub}/layout', set_layout),
-        post('/s/{sub}/print-area', set_print_area),
         post('/s/{sub}/{q}/save', save),
         post('/s/{sub}/{q}/unverify', unverify),
         post('/s/{sub}/{q}/decide', decide),
         post('/s/{sub}/{q}/clear', clear),
         post('/s/{sub}/{q}/read', read),
         post('/s/{sub}/{q}/check', run_check),
-        post('/s/{sub}/{q}/pages', set_pages),
-        post('/s/{sub}/{q}/region', set_region),
         post('/s/{sub}/{q}/restore', restore),
         Route('/page/{sub}/{index:int}.jpg', page_image),
         Route('/raw/{sub}/{q}/{check}/{path}', raw_block),
@@ -1235,7 +1173,6 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         post('/runs/stop', runs_stop),
         Route('/runs/status', runs_status),
         Route('/settings', settings_page),
-        post('/settings', settings_save),
         Route('/exam', exam_page),
         post('/exam/set', exam_set),
         post('/exam/clear', exam_clear),

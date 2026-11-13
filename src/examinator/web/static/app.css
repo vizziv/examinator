@@ -60,7 +60,7 @@ body.p-grid { --page-max: 100vw; }       /* grid.js sets it to the table's width
   --shadow: none;
 }
 /* Scans in dark mode: gamma, then inversion (filter defined inline in each page). Overlays are siblings, not inverted. */
-:root[data-theme=dark][data-invert-images=on] :is(img.scan, .crop img, #pv-img) {
+:root[data-theme=dark][data-invert-images=on] :is(img.scan, .crop img) {
   filter: url('#image-gamma') invert(1) hue-rotate(180deg) brightness(.9) contrast(.85);
 }
 svg.defs { position: absolute; width: 0; height: 0; overflow: hidden; }
@@ -369,9 +369,6 @@ label { cursor: pointer; }
 progress { width: 20em; vertical-align: middle; accent-color: var(--accent); }
 #msg { color: var(--bad); }
 #msg.ok { color: var(--muted); }
-#pv { position: relative; flex-basis: 100%; width: 420px; max-width: 420px; line-height: 0; border: 1px solid var(--line); }
-#pv-img { width: 100%; height: auto; }
-#pv-rect { position: absolute; border: 2px solid var(--accent2); background: color-mix(in srgb, var(--accent2) 8%, transparent); pointer-events: none; }
 
 /* settings: keyboard */
 #keymap { border-collapse: collapse; flex-basis: 100%; max-width: 34em; }

@@ -5,10 +5,11 @@
 {% block head %}<script src="{{ root }}/static/entries.js" defer></script>{% endblock %}
 {% block body %}
 <main class="narrow" id="exam-data">
-<p class="help">Changes here apply to <b>all submissions</b>. Saving a key or prompt outdates the grades
+<p class="help">Changes here apply to <b>all submissions</b>, but where a scan or a submission has its own
+(listed under “own values”). Saving a key or prompt outdates the grades
 that used it and rechecks them in the background; manual grades are kept and marked outdated.
-A printed field's region, question or readings apply when its parse is run again.
-Regions are easiest to adjust on a question page (scan, “regions”).</p>
+A region, the print area or the cover pages apply when a field is read again.
+Regions and the print area are easiest to adjust on a question page (scan, “regions”, “print area”).</p>
 
 <div id="changes" class="panel" hidden>
 <span id="ch-text"></span> <progress id="ch-bar" hidden></progress>
@@ -26,6 +27,19 @@ Regions are easiest to adjust on a question page (scan, “regions”).</p>
 <div class="bar"><span class="dim">for the exam package</span> <button type="button" data-action="copy-lines">copy</button></div>
 <pre class="code" id="lines">{{ lines|join('\n') }}</pre>
 {% else %}<p class="dim">none: the package's values apply</p>{% endif %}
+</details>
+
+<details id="scoped" class="panel"{% if scoped %} open{% endif %}>
+<summary>own values <span class="dim">{{ scoped|length }}</span></summary>
+{% if scoped %}
+<table class="ev">
+<tr><th>of</th><th>path</th><th>value</th><th>by</th><th>at</th><th></th></tr>
+{% for o in scoped %}<tr><td>{{ o.level }} {% if o.href %}<a href="{{ root }}{{ o.href }}">{{ o.where }}</a>{% else %}{{ o.where }}{% endif %}{% if o.gone %} <span class="tag">gone</span>{% endif %}</td>
+<td><code>{{ o.path }}</code></td><td class="preview">{{ o.text }}</td><td>{{ o.who }}</td><td>{{ o.at }}</td>
+<td><button type="button" data-action="scoped-revert" class="danger" data-scope="{{ o.scope }}" data-path="{{ o.path }}" data-rev="{{ o.rev }}">revert</button> <span class="emsg" role="status"></span></td></tr>
+{% endfor %}
+</table>
+{% else %}<p class="dim">none: no scan or submission has its own</p>{% endif %}
 </details>
 
 {% for q in questions %}

@@ -1,9 +1,10 @@
 'use strict';
 // Region editing on the question page's scanned pages, in one of two modes.
 // 'regions': field regions as rectangles to drag (across pages too) and resize, saved as
-// this submission's own region or as every submission's (an exam-wide override, /exam/set).
+// this submission's own region or as every submission's.
 // 'print': the print area, edited with the same controls (no page), saved for this
-// submission, for every submission from the same scan file, or for all (/s/{sub}/print-area).
+// submission, for every submission from the same scan file, or for all.
+// Both are exam data at a scope (/exam/set, /exam/clear with `scope`).
 // Neither changes a value: read again. What is edited is drawn orange; the other, primary, for context.
 // The rectangles, their coordinates and controls are rects.js's; the region boxes follow the
 // print area's draft.
@@ -13,19 +14,22 @@
   if (!scan || !on) return;
   const $ = id => document.getElementById(id);
   const sub = document.getElementById('question').dataset.sub;
+  // Each region, and the print area: `own`, `scan`, `all` (what each scope has saved, null if
+  // nothing; `<scope>_rev` its revision), `base` (the package's), `value` (the one in force).
   const regions = JSON.parse(scan.dataset.regions);
-  const pa = JSON.parse(scan.dataset.print);   // own, scan, all (each saved level), window: the one in use
-  pa.draft = [...pa.window];
+  const pa = JSON.parse(scan.dataset.print);
+  const scopes = JSON.parse(scan.dataset.scopes);   // own, scan, all: each scope as the server names it
+  pa.draft = [...pa.value];
   const cover = Number(scan.dataset.cover), pad = Number(scan.dataset.pad);
   const first = Number(scan.dataset.first);
   const pick = $('rg-pick'), msg = $('rg-msg');
-  for (const r of regions) r.draft = r.region && [...r.region];
+  for (const r of regions) r.draft = r.value && [...r.value];
   let mode = '', sel = null, drag = null;       // mode: '', 'regions' or 'print'
   const pm = () => mode === 'print';
 
   const {fx, fy, same, back, shift} = Rects;
-  const dirty = r => !same(r.draft, r.region);
-  const paDirty = () => !same(pa.draft, pa.window);
+  const dirty = r => !same(r.draft, r.value);
+  const paDirty = () => !same(pa.draft, pa.value);
   // the rectangle being edited, as [page, left, top, right, bottom]: the selected region, or the print area (page 0)
   const cur = () => pm() ? [0, ...pa.draft] : sel && sel.draft;
   const put = d => { if (pm()) pa.draft = d.slice(1); else sel.draft = d; };
@@ -60,11 +64,12 @@
     fill(cur(), typing);
     pick.hidden = $('rg-p').hidden = $('rg-region-btns').hidden = pm();
     $('rg-pa-btns').hidden = !pm();
-    $('rg-clear-own').hidden = !sel || !sel.own;
-    $('rg-clear-all').hidden = !sel || !sel.stored;
-    $('pa-save-scan').hidden = !pa.source;
-    $('pa-clear-own').hidden = !pa.own;
-    $('pa-clear-scan').hidden = !pa.scan;
+    $('rg-clear-own').hidden = !sel || sel.own == null;
+    $('rg-clear-all').hidden = !sel || sel.all == null;
+    $('pa-save-scan').hidden = !scopes.scan;
+    $('pa-clear-own').hidden = pa.own == null;
+    $('pa-clear-scan').hidden = pa.scan == null;
+    $('pa-clear-all').hidden = pa.all == null;
   }
 
 
@@ -75,7 +80,7 @@
     if (!sel.draft) {
       sel.draft = [first, 100, 100, 900, 200];   // a field without a region: start somewhere visible
       say("new region");
-    } else say(sel.stored ? "edited" : '');
+    } else say(sel.all != null ? "edited" : '');
     inputs();
     draw();
     if (reveal) scan.querySelector('.rbox.sel')?.scrollIntoView({block: 'nearest', behavior: 'smooth'});
@@ -103,8 +108,8 @@
   // The crops on this page show the saved region, with the display padding.
   function recrop(r) {
     for (const crop of document.querySelectorAll('.crop[data-region]')) {
-      if (crop.dataset.region !== r.path || !r.region) continue;
-      const [page, l, t, rt, b] = r.region, w = pa.window;      // the saved print area, as the server crops
+      if (crop.dataset.region !== r.path || !r.value) continue;
+      const [page, l, t, rt, b] = r.value, w = pa.value;      // the saved print area, as the server crops
       const box = [fx(l - pad, w), fy(t - pad, w), fx(rt + pad, w), fy(b + pad, w)].map(v => Math.min(1, Math.max(0, v)));
       const src = `${ROOT}/page/${encodeURIComponent(sub)}/${cover + page - 1}.jpg`;
       if (crop.dataset.src !== src) { crop.dataset.src = src; crop.replaceChildren(); }
@@ -113,74 +118,62 @@
     }
   }
 
-  // `own`: this submission's region, else every submission's. `clear`: drop it.
-  async function save(own, clear) {
-    const r = sel;
-    if (!r) return;
-    if (clear && !confirm(own ? `Drop this submission's own region for ${r.label}?`
-                              : `Back to the package's region for ${r.label}, for all submissions?`)) return;
+  const WHERE = {own: "this submission", scan: "this scan", all: "all submissions"};
+
+  // Save what is edited (`x`: a region, or the print area) at one scope ('own', 'scan', 'all'),
+  // or (`clear`) drop that scope's. A conflict keeps the draft and takes the revision saved now,
+  // so that saving again overwrites knowingly. The answer, or null; x has its new levels.
+  async function saveAt(x, level, clear) {
     say('…');
-    const res = own
-      ? await request(`/s/${encodeURIComponent(sub)}/${encodeURIComponent(document.getElementById('question').dataset.q)}/region`,
-                      {label: r.label, value: clear ? null : r.draft, rev: r.own_rev ?? null})
-      : await request(clear ? '/exam/clear' : '/exam/set', {path: r.path, value: r.draft, rev: r.rev ?? null, sub});
-    if (res.status === 409) {    // keep the draft, take the revision saved now: saving again overwrites knowingly
+    const res = await request(clear ? '/exam/clear' : '/exam/set',
+                              {path: x.path, scope: scopes[level], value: clear ? null : x.draft, rev: x[level + '_rev'] ?? null, sub});
+    if (res.status === 409) {
       const cur = res.body.current || {};
-      if (own) r.own_rev = cur.rev ?? null; else r.rev = cur.rev ?? null;
+      x[level + '_rev'] = cur.rev ?? null;
       say(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}${cur.value ? ': ' + JSON.stringify(cur.value) : ''}; save again to overwrite`, true);
-      return;
+      return null;
     }
-    if (!res.ok) { say(res.body.error || "failed", true); return; }
-    const shadowed = !own && r.own;      // every submission's changed; this one keeps its own
-    if (own) {
-      r.own_rev = res.body.rev;
-      r.own = res.body.own;
-    } else {
-      r.rev = res.body.rev;
-      r.stored = res.body.overridden;
-    }
-    if (!shadowed) {
-      r.region = res.body.value;
-      if (clear || !dirty(r)) r.draft = r.region && [...r.region];
-    }
-    say((clear ? (own ? "own region dropped" : "reverted · all submissions") : own ? "saved · this submission" : "saved · all submissions")
-        + (shadowed ? " · this submission keeps its own" : " · read again to use it"));
-    inputs();
-    draw();
-    if (!shadowed) recrop(r);
-    if (own) res.body.reread = [r.label];
-    document.dispatchEvent(new CustomEvent('entry-saved', {detail: res.body}));
+    if (!res.ok) { say(res.body.error || "failed", true); return null; }
+    Object.assign(x, res.body.levels);
+    return res.body;
   }
 
-  // The print area at one level: 'own', 'scan' (every submission from this scan file) or
-  // 'all' (the workspace). `clear`: drop that level. The crops beside the fields are redrawn.
+  // The selected region at one scope ('own' or 'all'); `clear`: drop it there.
+  async function save(level, clear) {
+    const r = sel;
+    if (!r) return;
+    if (clear && !confirm(level === 'own' ? `Drop this submission's own region for ${r.label}?`
+                                          : `Back to the package's region for ${r.label}, for all submissions?`)) return;
+    const before = r.value, saved = r.draft;
+    const b = await saveAt(r, level, clear);
+    if (!b) return;
+    const moved = !same(before, r.value), shadowed = !clear && !same(r.value, saved);  // a narrower scope still wins here
+    if (moved || !dirty(r)) r.draft = r.value && [...r.value];
+    say((clear ? (level === 'own' ? "own region dropped" : "reverted · all submissions") : `saved · ${WHERE[level]}`)
+        + (shadowed ? " · this submission keeps its own" : moved ? " · read again to use it" : ''));
+    inputs();
+    draw();
+    if (moved) recrop(r);
+    document.dispatchEvent(new CustomEvent('entry-saved', {detail: {...b, reread: moved ? [r.label] : []}}));
+  }
+
+  // The print area at one scope ('own', 'scan': every submission from this scan file, 'all');
+  // `clear`: drop it there. The crops beside the fields are redrawn.
   async function savePrint(level, clear) {
-    const where = {own: "this submission", scan: "this scan", all: "all submissions"}[level];
-    if (clear && !confirm(level === 'own' ? "Drop this submission's own print area?"
-                                          : "Drop this scan's print area, for every submission from it?")) return;
-    // a level below the one saved still wins for this submission
-    const shadowed = !clear && ((level === 'scan' && pa.own) || (level === 'all' && (pa.own || pa.scan)));
-    say('…');
-    const body = {level, value: clear ? null : pa.draft};
-    if (level !== 'all') body.rev = (level === 'own' ? pa.own_rev : pa.scan_rev) ?? null;
-    const res = await request(`/s/${encodeURIComponent(sub)}/print-area`, body);
-    if (res.status === 409) {    // as for a region: take the revision saved now, keep the draft
-      const cur = res.body.current || {};
-      if (level === 'own') pa.own_rev = cur.rev ?? null; else if (level === 'scan') pa.scan_rev = cur.rev ?? null;
-      say(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}; save again to overwrite`, true);
-      return;
-    }
-    if (!res.ok) { say(res.body.error || "failed", true); return; }
-    const before = pa.window;
-    Object.assign(pa, res.body.print_area);
-    pa.draft = [...pa.window];
+    if (clear && !confirm({own: "Drop this submission's own print area?",
+                           scan: "Drop this scan's print area, for every submission from it?",
+                           all: "Back to the package's print area, for all submissions?"}[level])) return;
+    const before = pa.value, saved = pa.draft;
+    const b = await saveAt(pa, level, clear);
+    if (!b) return;
+    pa.draft = [...pa.value];
     for (const crop of document.querySelectorAll('.crop[data-region]')) {
-      const box = res.body.boxes[crop.dataset.region];
+      const box = b.boxes[crop.dataset.region];
       if (box && crop.dataset.box !== box) { crop.dataset.box = box; drawCrop(crop); }
     }
-    const moved = !same(before, pa.window);
-    say(`print area ${clear ? 'dropped' : 'saved'} · ${where}`
-        + (shadowed ? ` · this submission keeps ${pa.own ? 'its own' : "its scan's"}` : '')
+    const moved = !same(before, pa.value), shadowed = !clear && !same(pa.value, saved);
+    say(`print area ${clear ? 'dropped' : 'saved'} · ${WHERE[level]}`
+        + (shadowed ? ` · this submission keeps ${pa.own != null ? 'its own' : "its scan's"}` : '')
         + (moved ? " · read again to use it" : ''));
     inputs();
     draw();
@@ -192,23 +185,24 @@
   pick.addEventListener('change', () => select(pick.value, true));
   const fill = Rects.numbers('rg', cur, put, el => { inputs(el); draw(); });
   Actions.register('print-save-own', {available: pm, run: () => savePrint('own', false)});
-  Actions.register('print-save-scan', {available: () => pm() && !!pa.source, run: () => savePrint('scan', false)});
+  Actions.register('print-save-scan', {available: () => pm() && !!scopes.scan, run: () => savePrint('scan', false)});
   Actions.register('print-save-all', {available: pm, run: () => savePrint('all', false)});
-  Actions.register('print-clear-own', {available: () => pm() && !!pa.own, run: () => savePrint('own', true)});
-  Actions.register('print-clear-scan', {available: () => pm() && !!pa.scan, run: () => savePrint('scan', true)});
+  Actions.register('print-clear-own', {available: () => pm() && pa.own != null, run: () => savePrint('own', true)});
+  Actions.register('print-clear-scan', {available: () => pm() && pa.scan != null, run: () => savePrint('scan', true)});
+  Actions.register('print-clear-all', {available: () => pm() && pa.all != null, run: () => savePrint('all', true)});
   Actions.register('print-undo', {available: pm, run: () => {
-    pa.draft = [...pa.window];
+    pa.draft = [...pa.value];
     say('');
     inputs();
     draw();
   }});
   const regionOn = () => mode === 'regions' && !!sel;
-  Actions.register('region-save-own', {available: () => regionOn() && !!sel.draft, run: () => save(true, false)});
-  Actions.register('region-save-all', {available: () => regionOn() && !!sel.draft, run: () => save(false, false)});
-  Actions.register('region-clear-own', {available: () => regionOn() && !!sel.own, run: () => save(true, true)});
-  Actions.register('region-clear-all', {available: () => regionOn() && !!sel.stored, run: () => save(false, true)});
+  Actions.register('region-save-own', {available: () => regionOn() && !!sel.draft, run: () => save('own', false)});
+  Actions.register('region-save-all', {available: () => regionOn() && !!sel.draft, run: () => save('all', false)});
+  Actions.register('region-clear-own', {available: () => regionOn() && sel.own != null, run: () => save('own', true)});
+  Actions.register('region-clear-all', {available: () => regionOn() && sel.all != null, run: () => save('all', true)});
   Actions.register('region-undo', {available: regionOn, run: () => {
-    sel.draft = sel.region && [...sel.region];
+    sel.draft = sel.value && [...sel.value];
     say('');
     inputs();
     draw();

@@ -163,6 +163,18 @@ def test_how_a_field_is_read_changes_and_no_value_changes(tmp_path):
     before = snapshot(ws, 's1')
     change = overrides.set(runner.exam, ws.store, 'q/fields/a/region', [1, 0, 0, 500, 100], author='ta')
     assert change.fields == (('q', 'a'),) and change.checks == ()
+    # the same below the exam: one submission's region, pages, print area, cover pages
+    own = overrides.scope(overrides.SUBMISSION, 's1')
+    for path, value in (('q/fields/b/region', [1, 0, 100, 500, 200]), ('q/pages', [1]),
+                        ('@print_area', [10, 10, 990, 990]), ('@cover_pages', 0)):
+        change = overrides.set(runner.exam, ws.store, path, value, scope=own, author='ta')
+        assert change.checks == () and change.fields
     assert snapshot(ws, 's1') == before
+    assert [st(runner, 's1', 'q', 'check').state, st(runner, 's2', 'q', 'check').state] == ['graded', 'decided']
+    # a field removed from the package: its own region is ignored, not deleted; restoring the name restores it
+    ws, runner = reopen(ws, runner, build(labels=('a',)))
+    assert ws.fields('s1', runner.exam.questions['q'])[0].region is None
+    ws, runner = reopen(ws, runner, build())
+    assert ws.region('s1', runner.exam.questions['q'], 'b').top == 100
     runner.close()
     ws.close()

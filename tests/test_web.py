@@ -170,7 +170,7 @@ def test_post_needs_token(site):
     body = {'values': {'a/x': {'text': '9', 'rev': rev}}}
     assert site.client.post('/s/s1/a/save', json=body).status_code == 403
     assert site.client.post('/s/s1/a/save', json=body, headers={'X-Token': 'wrong'}).status_code == 403
-    assert site.client.post('/settings', data={'token': site.token, 'cover_pages': '1'}).status_code == 403
+    assert site.client.post('/exam/set', json={'path': '@cover_pages', 'value': 1, 'rev': None}).status_code == 403
     assert site.client.post('/runs/stop').status_code == 403
     assert site.value('s1', 'a/x').text == '1'
     # the token header, then JSON only: no forms, no token in the body
@@ -222,7 +222,8 @@ def test_unknown_targets_are_404(site, tmp_path):
         assert b'secret' not in r.content
     assert site.post('/s/nobody/a/save', {'values': {}}).status_code == 404
     assert site.post('/s/s1/zzz/decide', {'check': 'check', 'value': True, 'rev': None, 'seen': {}}).status_code == 404
-    assert site.post('/s/nobody/layout', {'cover_pages': 1}).status_code == 404
+    assert site.post('/exam/set', {'path': '@cover_pages', 'value': 1, 'rev': None,
+                                  'scope': 'submission:nobody'}).status_code == 400
 
 
 def test_symlinked_pdf_is_not_served(site):
@@ -376,38 +377,51 @@ def test_reading_is_refused_without_a_model(env):
     assert 'data-action="read" disabled' in site.get('/s/s1/a').text
 
 
+OWN = 'submission:s1'
+
+
 def test_a_region_for_this_submission_only(site):
     site.run_all()
-    r = site.post('/s/s1/p/region', {'label': 'c1', 'value': [1, 0, 0, 500, 100], 'rev': None})
-    assert r.status_code == 200 and r.json()['own'] and r.json()['value'] == [1, 0, 0, 500, 100]
+    path = 'p/fields/c1/region'
+    r = site.post('/exam/set', {'path': path, 'value': [1, 0, 0, 500, 100], 'rev': None, 'scope': OWN, 'sub': 's1'})
+    lv = r.json()['levels']
+    assert r.status_code == 200 and lv['own'] == lv['value'] == [1, 0, 0, 500, 100] and lv['own_rev'] == r.json()['rev']
+    assert r.json()['reread'] == ['p/c1'] and r.json()['job'] is None
     assert site.value('s1', 'p/c1').text == 'one'                 # no value changes
     assert site.ws.region('s2', site.exam.questions['p'], 'c1') == site.exam.questions['p'].fields[0].region
     html = site.get('/s/s1/p').text
     layout = site.ws.layout('s1')
     from examinator import Region
-    want = ','.join(f'{v:.4f}' for v in Layout(layout.cover_pages, layout.window).box(Region(1, 0, 0, 500, 100), 12))
+    want = ','.join(f'{v:.4f}' for v in Layout(layout.cover_pages, layout.print_area).box(Region(1, 0, 0, 500, 100), 12))
     assert f'data-box="{want}" data-region="p/fields/c1/region"' in html
-    r = site.post('/s/s1/p/region', {'label': 'c1', 'value': None, 'rev': r.json()['rev']})
-    assert r.status_code == 200 and not r.json()['own']
-    assert site.post('/s/s1/p/region', {'label': 'c1', 'value': [1, 500, 0, 10, 10], 'rev': None}).status_code == 400
-    assert site.post('/s/s1/p/region', {'label': 'zz', 'value': None, 'rev': None}).status_code == 400
+    r = site.post('/exam/clear', {'path': path, 'rev': r.json()['rev'], 'scope': OWN, 'sub': 's1'})
+    assert r.status_code == 200 and r.json()['levels']['own'] is None and r.json()['rev'] is None
+    assert r.json()['levels']['value'] == [1, 0, 0, 1000, 200]
+    bad = {'path': path, 'value': [1, 500, 0, 10, 10], 'rev': None, 'scope': OWN}
+    assert site.post('/exam/set', bad).status_code == 400
+    assert site.post('/exam/set', {**bad, 'value': None}).status_code == 400        # to drop it, clear it
+    assert site.post('/exam/set', {**bad, 'path': 'p/fields/zz/region', 'value': [1, 0, 0, 5, 5]}).status_code == 400
+    assert site.post('/exam/set', {**bad, 'scope': 'source:nope', 'value': [1, 0, 0, 5, 5]}).status_code == 400
+    assert site.post('/exam/set', {**bad, 'scope': 'everyone', 'value': [1, 0, 0, 5, 5]}).status_code == 400
 
 
 def test_a_region_conflict_says_what_is_saved_so_saving_again_overwrites(site):
-    path = '/s/s1/p/region'
-    first = site.post(path, {'label': 'c1', 'value': [1, 0, 0, 500, 100], 'rev': None}).json()
-    site.ws.set_region('s1', site.exam.questions['p'], 'c1', site.exam.questions['p'].fields[1].region,
-                       author='other', expect_rev=first['rev'])            # changed elsewhere
-    r = site.post(path, {'label': 'c1', 'value': [1, 0, 0, 600, 100], 'rev': first['rev']})
+    from examinator.core import overrides
+    path, exam = 'p/fields/c1/region', site.exam
+    set_ = lambda value, rev: site.post('/exam/set', {'path': path, 'value': value, 'rev': rev, 'scope': OWN, 'sub': 's1'})
+    first = set_([1, 0, 0, 500, 100], None).json()
+    overrides.set(exam, site.ws.store, path, [1, 0, 200, 1000, 400], scope=OWN, author='other',
+                  expect_rev=first['rev'])                                       # changed elsewhere
+    r = set_([1, 0, 0, 600, 100], first['rev'])
     assert r.status_code == 409
     cur = r.json()['current']
     assert cur['who'] == 'other' and cur['value'] == [1, 0, 200, 1000, 400] and cur['rev'] != first['rev']
-    r = site.post(path, {'label': 'c1', 'value': [1, 0, 0, 600, 100], 'rev': cur['rev']})     # knowingly
+    r = set_([1, 0, 0, 600, 100], cur['rev'])                                    # knowingly
     assert r.status_code == 200 and r.json()['value'] == [1, 0, 0, 600, 100]
-    site.ws.set_region('s1', site.exam.questions['p'], 'c1', None, author='other')     # dropped elsewhere
-    r = site.post(path, {'label': 'c1', 'value': [1, 0, 0, 700, 100], 'rev': r.json()['rev']})
+    overrides.clear(exam, site.ws.store, path, scope=OWN)                        # dropped elsewhere
+    r = set_([1, 0, 0, 700, 100], r.json()['rev'])
     assert r.status_code == 409 and r.json()['current'] == {'rev': None, 'value': None, 'who': None}
-    assert site.post(path, {'label': 'c1', 'value': [1, 0, 0, 700, 100], 'rev': None}).status_code == 200
+    assert set_([1, 0, 0, 700, 100], None).status_code == 200
 
 
 # --- runs ---
@@ -469,65 +483,86 @@ def test_stale_preview_is_refused(site):
 
 # --- overrides and settings ---
 
-def test_pages_and_layout_overrides(site):
-    r = site.post('/s/s1/a/pages', {'pages': '1, 2', 'note': "continues overleaf"})
-    assert r.status_code == 200
+def test_pages_note_and_cover_pages_of_one_submission(site):
+    own = lambda path, value, rev=None: site.post('/exam/set' if value is not None else '/exam/clear',
+                                                  {'path': path, 'value': value, 'rev': rev, 'scope': OWN})
+    assert own('a/pages', [1, 2]).status_code == 200 and own('a/note', "continues overleaf").status_code == 200
     assert site.ws.selected_pages('s1', site.exam.questions['a']) == ((1, 2), "continues overleaf")
+    assert site.ws.selected_pages('s2', site.exam.questions['a']) == ((1,), "")
     html = site.get('/s/s1/a').text
     assert '/page/s1/1.jpg' in html and 'continues overleaf' in html
-    assert site.post('/s/s1/a/pages', {'pages': '7'}).status_code == 400
-    assert site.post('/s/s1/a/pages', {'pages': ''}).status_code == 200
-    assert site.post('/s/s1/print-area', {'level': 'own', 'value': '100 100 900 900', 'rev': None}).status_code == 200
-    assert site.post('/s/s1/layout', {'cover_pages': 1}).status_code == 200
-    layout = site.ws.layout('s1')
-    assert layout.cover_pages == 1 and layout.window == (100, 100, 900, 900)
-    # cover pages keep the print area, and the print area keeps the cover pages
-    assert site.post('/s/s1/layout', {'cover_pages': 2}).status_code == 200
-    assert site.ws.layout('s1') == Layout(2, (100, 100, 900, 900))
-    rev = site.ws.store.get('s1', '', 'layout').rev
-    assert site.post('/s/s1/print-area', {'level': 'own', 'value': [0, 0, 1000, 1000], 'rev': rev}).status_code == 200
-    assert site.ws.layout('s1') == Layout(2, (0, 0, 1000, 1000))
-    assert site.post('/s/s1/layout', {'cover_pages': 'x'}).status_code == 400
+    assert own('a/pages', [7]).status_code == 400 and own('a/pages', []).status_code == 400
+    assert site.post('/exam/set', {'path': 'a/note', 'value': "for all", 'rev': None}).status_code == 400   # one's only
+    rev = site.ws.store.overrides(OWN)['a/pages'].rev
+    assert own('a/pages', None, rev).status_code == 200
+    assert site.ws.selected_pages('s1', site.exam.questions['a']) == ((1,), "continues overleaf")
+    assert own('@print_area', [100, 100, 900, 900]).status_code == 200
+    assert own('@cover_pages', 1).status_code == 200
+    assert site.ws.layout('s1') == Layout(1, (100, 100, 900, 900)) and site.ws.layout('s2') == Layout(0, (0, 0, 1000, 1000))
+    assert own('@cover_pages', 'x', site.ws.store.overrides(OWN)['@cover_pages'].rev).status_code == 400
+    assert own('@cover_pages', -1, site.ws.store.overrides(OWN)['@cover_pages'].rev).status_code == 400
+    assert 'cover 1' in site.get('/s/s1/a').text
 
 
-def test_print_area_levels(site):
+def test_print_area_at_each_scope(site):
+    from examinator.core.store import Source
+    site.ws.store.add_source(Source('src1', 'x.pdf', 'stack.pdf', 'h', 2, 'now'))
     site.ws.store.set_made(Made('s1', 'src1', (0,), {}, 'now'))
+    SCAN = 'source:src1'
     html = site.get('/s/s1/a').text                 # two editing modes; the region picker lists fields only
     assert 'data-action="regions"' in html and 'data-action="print-area"' in html
-    assert '#print-area' not in html and 'data-action="print-save-scan"' in html
-    pa = lambda level, value, **kw: site.post('/s/s1/print-area', {'level': level, 'value': value, **kw})
-    r = pa('own', [100, 100, 900, 900], rev=None)
-    assert r.status_code == 200 and r.json()['print_area']['own'] == [100, 100, 900, 900]
+    assert '#print-area' not in html and 'data-action="print-save-scan"' in html and SCAN in html
+    pa = lambda scope, value, rev: site.post('/exam/set' if value is not None else '/exam/clear',
+                                             {'path': '@print_area', 'value': value, 'rev': rev, 'scope': scope,
+                                              'sub': 's1'})
+    r = pa(OWN, [100, 100, 900, 900], None)
+    assert r.status_code == 200 and r.json()['levels']['own'] == [100, 100, 900, 900]
     assert all(len(b.split(',')) == 4 for b in r.json()['boxes'].values()) and r.json()['boxes']
-    rev = r.json()['print_area']['own_rev']
-    r = pa('own', [0, 0, 1000, 1000], rev=rev + 99)
+    rev = r.json()['levels']['own_rev']
+    r = pa(OWN, [0, 0, 1000, 1000], rev + 99)
     assert r.status_code == 409 and r.json()['current'] == {'rev': rev, 'value': [100, 100, 900, 900], 'who': 'tester'}
-    r = pa('scan', [20, 20, 980, 980], rev=None)
-    assert r.json()['print_area']['scan'] == [20, 20, 980, 980]
-    assert r.json()['print_area']['window'] == [100, 100, 900, 900]          # its own wins
-    r = pa('own', None, rev=rev)
-    assert r.json()['print_area']['window'] == [20, 20, 980, 980]            # then the scan's
-    scan_rev = r.json()['print_area']['scan_rev']
-    r = pa('scan', [30, 30, 970, 970], rev=None)                             # it exists already
+    r = pa(SCAN, [20, 20, 980, 980], None)
+    assert r.json()['levels']['scan'] == [20, 20, 980, 980]
+    assert r.json()['levels']['value'] == [100, 100, 900, 900]           # its own wins
+    r = pa(OWN, None, rev)
+    assert r.json()['levels']['value'] == [20, 20, 980, 980]             # then the scan's
+    scan_rev = r.json()['levels']['scan_rev']
+    r = pa(SCAN, [30, 30, 970, 970], None)                               # it exists already
     assert r.status_code == 409 and r.json()['current']['rev'] == scan_rev
     assert r.json()['current']['value'] == [20, 20, 980, 980]
-    assert pa('scan', None, rev=scan_rev).status_code == 200
-    assert pa('all', [5, 5, 995, 995]).json()['print_area']['window'] == [5, 5, 995, 995]
-    assert site.ws.scan_window == (5, 5, 995, 995)
-    assert pa('all', None).json()['print_area']['window'] == list(site.exam.scan_window)
-    assert pa('own', [900, 0, 100, 1000], rev=None).status_code == 400
-    assert pa('scan', [0, 0, 1000, 1000]).status_code == 400                 # rev is required
-    assert pa('bogus', [0, 0, 1000, 1000]).status_code == 400
-    assert site.post('/s/s2/print-area', {'level': 'scan', 'value': [0, 0, 1000, 1000],
-                                          'rev': None}).status_code == 400   # handed in split
+    assert pa(SCAN, None, scan_rev).status_code == 200
+    r = pa('', [5, 5, 995, 995], None)
+    assert r.json()['levels']['value'] == [5, 5, 995, 995] and site.exam.print_area == (5, 5, 995, 995)
+    assert site.ws.layout('s2').print_area == (5, 5, 995, 995)
+    assert pa('', None, r.json()['rev']).json()['levels']['value'] == list(site.exam.base_attrs['print_area'])
+    assert pa(OWN, [900, 0, 100, 1000], None).status_code == 400
+    assert pa(OWN, [0, 0, 1000], None).status_code == 400
+    assert site.post('/exam/set', {'path': '@print_area', 'value': [0, 0, 1000, 1000], 'scope': SCAN}).status_code == 400  # rev
+    assert site.get('/s/s2/a').text.count('data-action="print-save-scan"') == 1       # there, but hidden: no scan
+    assert 'id="pa-save-scan" data-action="print-save-scan" title="the print area of every submission split from the same scan file" hidden' \
+        in site.get('/s/s2/a').text
 
 
-def test_settings(site):
-    r = site.post('/settings', {'cover_pages': 1, 'print_area': [50, 40, 950, 900]})
-    assert r.status_code == 200
-    assert site.ws.cover_pages == 1 and site.ws.scan_window == (50, 40, 950, 900)
-    assert 'value="950"' in site.get('/settings').text
-    assert site.post('/settings', {'cover_pages': -1, 'print_area': [0, 0, 1000, 1000]}).status_code == 400
+def test_the_exam_page_lists_every_scope(site):
+    from examinator.core import overrides
+    site.post('/exam/set', {'path': '@print_area', 'value': [5, 5, 995, 995], 'rev': None})
+    site.post('/exam/set', {'path': '@cover_pages', 'value': 1, 'rev': None})
+    site.post('/exam/set', {'path': 'a/pages', 'value': [1], 'rev': None, 'scope': OWN})
+    html = site.get('/exam').text
+    assert '@print_area: [0, 0, 1000, 1000] -&gt; [5, 5, 995, 995]' in html and '@cover_pages: 0 -&gt; 1' in html
+    assert 'data-path="@print_area"' in html and 'data-path="@cover_pages"' in html     # editable here
+    assert 'data-action="scoped-revert" class="danger" data-scope="submission:s1" data-path="a/pages"' in html
+    rev = site.ws.store.overrides(OWN)['a/pages'].rev
+    assert site.post('/exam/clear', {'path': 'a/pages', 'rev': rev + 1, 'scope': OWN}).status_code == 409
+    assert site.post('/exam/clear', {'path': 'a/pages', 'rev': rev, 'scope': OWN}).status_code == 200
+    assert 'data-scope="submission:s1"' not in site.get('/exam').text
+    assert overrides.validate(site.exam, '@cover_pages', 2) == 2
+
+
+def test_settings_page_has_no_exam_data(site):
+    html = site.get('/settings').text
+    assert 'print area' not in html and 'id="keymap"' in html
+    assert site.post('/settings', {'cover_pages': 1}).status_code == 405
 
 
 # --- untrusted content ---

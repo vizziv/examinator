@@ -9,12 +9,13 @@ import pytest
 from PIL import Image, ImageDraw
 
 from examinator import Exam, Landmark, Region, load_exam, synth
-from examinator.core import identity, intake, split
+from examinator.core import identity, intake, overrides, split
 from examinator.core.store import Conflict, Made
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
 from examinator.pdf import pages as pdf_pages, render
 from examinator.pdf.orient import HALF, QUARTER, Orient
+from examinator.pdf.layout import Layout
 from examinator.pdf.render import Renderer
 
 TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
@@ -227,9 +228,10 @@ def test_accept_copies_pages_untouched_and_the_fast_path_applies(stacked, monkey
     assert [s.id for s in ws.store.submissions()] == report['new']
     assert ws.sync() == 6
     assert intake.state(ws, one.id) == ['made'] * 6
-    # no cover sheets in a raw stack: each written submission says so, whatever the workspace default
-    ws.set_defaults(cover_pages=1)
+    # no cover sheets in a raw stack: the scan says so, whatever every submission's
+    overrides.set(ws.exam, ws.store, '@cover_pages', 1, author='t')
     assert ws.layout('s0002').cover_pages == 0 and intake.cover(ws, intake.plan(ws, one.id).body) == 0
+    assert ws.store.overrides(overrides.scope(overrides.SOURCE, one.id))['@cover_pages'].value == 0
 
 
 def test_a_longer_plan_means_cover_sheets(stacked):
@@ -422,7 +424,8 @@ def test_a_page_selection_does_not_hold_a_submission(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    ws.set_pages('s0003', ws.exam.questions['parity'], [1, 2], "", author='t')
+    overrides.set(ws.exam, ws.store, 'parity/pages', [1, 2], scope=overrides.scope(overrides.SUBMISSION, 's0003'),
+                  author='t')
     intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
     assert intake.accept(ws, one.id)['rewritten'] == ['s0003']        # not Busy: settings are not work
 
@@ -460,34 +463,37 @@ def test_undo_steps_back_one_edit_at_a_time(stacked):
         undo()
 
 
-# --- the print area: submission, then its scan, then the workspace, then the package ---
+# --- the print area: submission, then its scan, then the exam, then the package ---
 
-def test_print_area_resolves_submission_scan_workspace_package(tmp_path):
-    exam = Exam('pa', pages=1, scan_window=(10, 20, 990, 980))
+def test_print_area_resolves_submission_scan_exam_package(tmp_path):
+    exam = Exam('pa', pages=1, print_area=(10, 20, 990, 980))
     ws = Workspace(tmp_path / 'ws', exam, create=True)
     try:
         ws.store.set_made(Made('s1', 'src1', (0,), {}, 'now'))
         ws.store.set_made(Made('s2', 'src1', (1,), {}, 'now'))
-        win = lambda sid: ws.layout(sid).window
+        win = lambda sid: ws.layout(sid).print_area
+        at = lambda level, id='': overrides.scope(level, id)
+        put = lambda value, scope, **kw: overrides.set(exam, ws.store, '@print_area', value, scope=scope, author=None, **kw)
         assert ws.source_of('s1') == 'src1' and ws.source_of('handed') is None
         assert win('s1') == win('handed') == (10, 20, 990, 980)              # the package's
-        ws.set_defaults(scan_window=(0, 0, 1000, 1000))
-        assert win('s1') == win('handed') == (0, 0, 1000, 1000)              # the workspace's
-        ws.set_source_window('src1', (30, 30, 900, 900), author=None, expect_rev=None)
+        put((0, 0, 1000, 1000), '')
+        assert win('s1') == win('handed') == (0, 0, 1000, 1000)              # every submission's
+        assert ws.source_layout('src1').print_area == (0, 0, 1000, 1000)
+        put((30, 30, 900, 900), at('source', 'src1'), expect_rev=None)
         assert win('s1') == win('s2') == (30, 30, 900, 900)                  # the scan's, for all from it
+        assert ws.source_layout('src1') == Layout(0, (30, 30, 900, 900))     # and its sheets, for intake
         assert win('handed') == (0, 0, 1000, 1000)                           # no scan: no such level
-        ws.set_layout('s1', cover_pages=1, scan_window=(40, 40, 800, 800), author=None)
+        put((40, 40, 800, 800), at('submission', 's1'))
         assert win('s1') == (40, 40, 800, 800) and win('s2') == (30, 30, 900, 900)
-        assert ws.layout('s1').cover_pages == 1
         # clearing each level falls back to the next
-        ws.set_layout('s1', cover_pages=1, scan_window=None, author=None)
-        assert win('s1') == (30, 30, 900, 900) and ws.layout('s1').cover_pages == 1
-        rev = ws.store.get('src1', '', 'print_area').rev
+        overrides.clear(exam, ws.store, '@print_area', scope=at('submission', 's1'))
+        assert win('s1') == (30, 30, 900, 900)
+        rev = ws.store.overrides(at('source', 'src1'))['@print_area'].rev
         with pytest.raises(Conflict):
-            ws.set_source_window('src1', None, author=None, expect_rev=rev + 99)
-        ws.set_source_window('src1', None, author=None, expect_rev=rev)
-        assert ws.source_window('src1') is None and win('s1') == (0, 0, 1000, 1000)
-        ws.clear_scan_window()
+            overrides.clear(exam, ws.store, '@print_area', scope=at('source', 'src1'), expect_rev=rev + 99)
+        overrides.clear(exam, ws.store, '@print_area', scope=at('source', 'src1'), expect_rev=rev)
+        assert win('s1') == (0, 0, 1000, 1000)
+        overrides.clear(exam, ws.store, '@print_area')
         assert win('s1') == (10, 20, 990, 980)
     finally:
         ws.close()

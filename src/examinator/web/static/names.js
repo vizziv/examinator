@@ -219,12 +219,12 @@
     const p = curBox() ? curBox().region[0] : 1;
     const img = sheet.querySelector('img'), src = page(r.sub, r.cover + p - 1);
     if (img.getAttribute('src') !== src) img.src = src;
-    sheet.append(Rects.area(r.window));          // context: where the printed page is on this scan
+    sheet.append(Rects.area(r.print_area));          // context: where the printed page is on this scan
     bx.drafts.forEach((x, i) => {
       if (x.region[0] !== p) return;
       const el = Rects.box(x.name, {sel: i === bx.sel, dirty: boxDirty(x)});
       el.dataset.i = i;
-      Rects.place(el, x.region, r.window, view.pad);
+      Rects.place(el, x.region, r.print_area, view.pad);
       sheet.append(el);
     });
     $('wb-save').classList.toggle('dirty', bxDirty());
@@ -312,7 +312,7 @@
     if (e.button !== 0 || !el || !bx.edit) return;
     const i = Number(el.dataset.i);
     if (i !== bx.sel) { select(i); return; }
-    const q = sheetEl.getBoundingClientRect(), [wl, wt, wr, wb] = row().window;
+    const q = sheetEl.getBoundingClientRect(), [wl, wt, wr, wb] = row().print_area;
     drag = {h: e.target.dataset.h || '', x: e.clientX, y: e.clientY, d: [...cur()],
             kx: 1e6 / (q.width * (wr - wl)), ky: 1e6 / (q.height * (wb - wt))};     // pixels -> per-mille of the printed page
     sheetEl.setPointerCapture(e.pointerId);
@@ -323,7 +323,7 @@
     const dx = (e.clientX - drag.x) * drag.kx, dy = (e.clientY - drag.y) * drag.ky;
     put(drag.h ? Rects.resize(drag.d, drag.h, dx, dy) : Rects.shift(drag.d, dx, dy));
     const el = sheetEl.querySelector('.rbox.sel');
-    if (el) Rects.place(el, cur(), row().window, view.pad);
+    if (el) Rects.place(el, cur(), row().print_area, view.pad);
     fill(cur());
   });
   const drop = () => { if (drag) { drag = null; drawBoxes(); } };

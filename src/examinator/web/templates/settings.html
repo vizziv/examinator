@@ -33,23 +33,6 @@
 <label><input type="checkbox" id="invert-scans"> invert scans in dark mode</label>
 <label>crop scale <input type="range" id="crop-size" min="0.4" max="3" step="0.05"> <span id="crop-n" class="dim"></span></label>
 </fieldset>
-<fieldset><legend>print area <span class="dim">(workspace default)</span></legend>
-<label>cover pages <input type="number" id="cover" min="0" max="99" value="{{ cover }}"></label>
-<label>left <input type="number" class="win" min="0" max="1000" value="{{ window[0] }}"></label>
-<label>top <input type="number" class="win" min="0" max="1000" value="{{ window[1] }}"></label>
-<label>right <input type="number" class="win" min="0" max="1000" value="{{ window[2] }}"></label>
-<label>bottom <input type="number" class="win" min="0" max="1000" value="{{ window[3] }}"></label>
-<button type="button" data-action="save-defaults" class="primary">Save</button> <span id="msg" role="status"></span>
-<p class="help">Cover pages are scanned pages before printed page 1. The print area is where the printed page
-sits on the scanned page, in per-mille of the scan. Changing either moves every crop; it does not rerun anything.
-A scan file or a submission that differs gets its own print area on a question page, in regions mode
-(cover pages: under “pages”).</p>
-<div class="bar row">
-<label>preview <select id="pv-sub" aria-label="submission">{% for s in subs %}<option>{{ s.id }}</option>{% endfor %}</select></label>
-<label>printed page <input type="number" id="pv-page" min="1" max="{{ pages }}" value="1"></label>
-</div>
-<div id="pv"><img id="pv-img" alt="scanned page"><div id="pv-rect"></div></div>
-</fieldset>
 </form>
 </main>
 {% endblock %}

@@ -14,8 +14,8 @@
       const parts = text.split(/[\s,]+/).filter(Boolean);
       return parts.every(p => /^-?\d+$/.test(p)) ? parts.map(Number) : text;   // else the server explains
     };
-    if (kind === 'region' || kind === 'pages') return nums();
-    if (kind === 'int') return /^\s*-?\d+\s*$/.test(text) ? Number(text) : text;
+    if (kind === 'region' || kind === 'pages' || kind === 'print_area') return nums();
+    if (kind === 'int' || kind === 'cover_pages') return /^\s*-?\d+\s*$/.test(text) ? Number(text) : text;
     if (kind === 'number') return text.trim() !== '' && !isNaN(Number(text)) ? Number(text) : text;
     if (kind === 'choice') return text.split('\n').map(s => s.trim()).filter(Boolean);
     if (kind === 'item') { try { return JSON.parse(text); } catch (e) { return text; } }   // else the server explains
@@ -116,11 +116,28 @@
     panel.hidden = false;
     $('ch-fail').textContent = '';
     for (const s of b.skipped || []) $('ch-fail').textContent += `not applied: ${s.path} (${s.reason}) `;
-    const reread = (b.reread || []).length ? ` · how ${b.reread.join(', ')} is read changed: read again on its question page` : '';
+    const n = (b.reread || []).length;
+    const reread = !n ? '' : ` · how ${n > 6 ? `${n} fields are` : b.reread.join(', ') + ' is'} read changed: read again on the question pages`;
     if (!b.job) { $('ch-text').textContent = "no grades affected" + reread; return; }
     $('ch-text').textContent = `${b.checks.join(', ')} outdated; recomputing` + reread;
     await follow(b.job, `${b.checks.join(', ')} recomputed`);
   });
+  // A scan's or a submission's own value: back to what applies to the others.
+  Actions.register('scoped-revert', {run: async ({el}) => {
+    if (!confirm("Drop this own value?")) return;
+    const m = el.parentElement.querySelector('.emsg');
+    const r = await request('/exam/clear', {path: el.dataset.path, scope: el.dataset.scope,
+                                            rev: el.dataset.rev === '' ? null : Number(el.dataset.rev)});
+    if (r.status === 409) {
+      const cur = r.body.current || {};
+      el.dataset.rev = cur.rev ?? '';
+      m.textContent = cur.rev == null ? "gone already" : `changed by ${cur.who}: ${short(cur.value)}; revert again to drop it`;
+      return;
+    }
+    if (!r.ok) { m.textContent = r.body.error || "failed"; return; }
+    el.closest('tr').remove();
+    document.dispatchEvent(new CustomEvent('entry-saved', {detail: r.body}));
+  }});
   Actions.register('copy-lines', {available: () => !!$('lines'), run: async () => {
     try { await navigator.clipboard.writeText($('lines').textContent); flash("copied", 'ok'); }
     catch (err) { getSelection().selectAllChildren($('lines')); }

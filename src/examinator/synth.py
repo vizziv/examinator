@@ -220,7 +220,7 @@ def _draw_answers(exam: Exam, case: Case, pages: list[Image.Image]) -> None:
 def _scan(exam: Exam, printed: list[Image.Image]) -> list[Image.Image]:
     """Inset each printed page in the print area and prepend cover pages."""
     w, h = PAGE
-    l, t, r, b = exam.scan_window
+    l, t, r, b = exam.print_area
     box = (l * w // 1000, t * h // 1000, r * w // 1000, b * h // 1000)
     out = []
     for _ in range(exam.cover_pages):

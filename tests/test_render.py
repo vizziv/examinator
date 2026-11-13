@@ -163,7 +163,7 @@ def test_a_skewed_image_is_rasterized(tmp_path, taken):
 
 def test_crops_land_in_the_same_place_on_both_paths(tmp_path, monkeypatch):
     pdf = make_pdf(tmp_path / 's.pdf', [(jpeg(scan(300)), FULL)])
-    layout = Layout(window=(20, 30, 980, 970))
+    layout = Layout(print_area=(20, 30, 980, 970))
     box = Region(1, round(180 / 0.96), round(270 / 0.94), round(380 / 0.96), round(420 / 0.94))   # the dark box
     fast = Renderer(tmp_path / 'fast', dpi=160).page(pdf, 0)
     monkeypatch.setattr(render, 'scan_image', lambda page: None)

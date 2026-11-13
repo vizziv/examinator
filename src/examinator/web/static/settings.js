@@ -1,33 +1,5 @@
 'use strict';
 (() => {
-  const wins = [...document.querySelectorAll('.win')], cover = $('cover');
-  const img = $('pv-img'), rect = $('pv-rect');
-  const sub = $('pv-sub'), page = $('pv-page');
-  const msg = $('msg');
-
-  // --- workspace defaults: scan layout and its preview ---
-  function preview() {
-    const [l, t, r, b] = wins.map(w => Number(w.value) / 10);
-    rect.style.left = l + '%';
-    rect.style.top = t + '%';
-    rect.style.width = Math.max(r - l, 0) + '%';
-    rect.style.height = Math.max(b - t, 0) + '%';
-  }
-  function load() {
-    if (!sub.value) return;
-    const index = Number(cover.value) + Number(page.value) - 1;
-    img.src = `${ROOT}/page/${encodeURIComponent(sub.value)}/${index}.jpg`;
-  }
-  for (const w of wins) w.addEventListener('input', preview);
-  for (const el of [sub, page, cover]) el.addEventListener('input', load);
-  Actions.register('save-defaults', {run: async () => {
-    const r = await request('/settings', {cover_pages: Number(cover.value), print_area: wins.map(w => Number(w.value))});
-    msg.textContent = r.ok ? "saved" : r.body.error || "failed";
-    msg.className = r.ok ? 'ok' : '';
-  }});
-  preview();
-  load();
-
   // --- appearance (this browser): theme and the two accents, applied at once ---
   const theme = $('theme');
   theme.value = pref('theme', 'system');

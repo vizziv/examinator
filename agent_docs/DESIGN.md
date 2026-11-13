@@ -206,8 +206,8 @@ a change in the app, when the app starts, and before a batch run from the CLI.
 
 ```sql
 create table row (
-  submission text not null,      -- or a source id, for its split plan and print area
-  kind       text not null,      -- 'value' 'result' 'decision' 'pages' 'region' 'layout' 'identity' 'who' 'split' 'print_area'
+  submission text not null,      -- or a source id, for its split plan
+  kind       text not null,      -- 'value' 'result' 'decision' 'identity' 'who' 'split'
   name       text not null,      -- 'question/label', 'question/check', a question id, or ''
   body       text,               -- JSON
   origin     text not null,      -- 'auto' | 'manual'
@@ -218,8 +218,9 @@ create table row (
 );
 create table history (...);       -- the same plus replaced_at; written on every change
 create table submission (id text primary key, name text, email text, pdf text, student text);
-create table setting (key text primary key, value text);        -- defaults, roster, counters
-create table override (path, value, author, updated_at, rev);   -- live edits of exam data
+create table setting (key text primary key, value text);        -- roster, counters
+create table override (scope, path, value, author, updated_at, rev,   -- live edits of exam data:
+  primary key (scope, path));    -- scope '' (the exam), 'source:<id>', 'submission:<id>'
 create table override_history (...);
 create table source (...);  create table made (...);             -- intake
 create table memo (submission, key, value);                      -- model readings (printed fields, landmarks, boxes)
@@ -285,30 +286,39 @@ the PDF's identity, the page and the resolution.
 
 ## 11. Pages, regions and scan layout
 
-- Page numbers in an exam definition are **printed exam pages**. A workspace has
-  a default number of prepended cover pages (scanning services add them), and
-  each submission can override it. The exam definition may supply the initial
-  defaults for cover pages and the print area; the workspace's saved settings
-  take precedence once they exist.
+- **One mechanism for "this value, but more specifically here"**: an override
+  (`core/overrides.py`) is a value at a path and a **scope**: the exam (every
+  submission), a source scan (every submission intake split from that file) or
+  one submission. The value in force for a submission is its own, else its
+  scan's, else the exam's, else the package's (`overrides.Layers`, behind
+  `Workspace.layout`, `fields`, `region`, `selected_pages`). Which scopes a kind
+  of value may be set at is one table (`overrides.SCOPES`): a region and pages
+  for the exam or a submission, a reader's note for a submission, the print
+  area and cover pages at all three; everything else, `@identity` included,
+  for the exam only. One validator (`overrides.validate`) serves every scope;
+  every scope has revisions, history and conflicts alike; the app sets and
+  clears them all through `/exam/set` and `/exam/clear` with a `scope`.
+- Page numbers in an exam definition are **printed exam pages**. A scan may
+  start with cover pages (scanning services add them): `Exam(cover_pages=)`,
+  an override `@cover_pages`. Intake writes each scan's own (`cover(plan)`:
+  its PDFs start with that many cover sheets, whatever the exam's).
 - A question names the `pages` that hold its answer (what its reader sees).
 - The printed page may be reduced and inset within the scanned page. The
-  **print area** (`scan_window` in code: left, top, right, bottom, per-mille of
-  the scanned page) maps printed-page coordinates onto the scan. Most specific
-  wins: the submission's own, its source scan's (every submission intake split
-  from that file; none for PDFs handed in split), the workspace's, the
-  package's (default: the whole sheet). All regions in an exam definition are in
-  printed-page coordinates; the library applies the print area and adds padding.
-  The question page's regions mode draws it on every sheet, to drag and save at
-  any of the first three levels.
-- Each question's selected pages can be overridden per submission, with a note,
-  for answers that continue onto extra-space pages. The note is passed to the
-  model.
+  **print area** (`print_area`: left, top, right, bottom, per-mille of the
+  scanned page; `Exam(print_area=)`, an override `@print_area`; default the
+  whole sheet) maps printed-page coordinates onto the scan. All regions in an
+  exam definition are in printed-page coordinates; the library applies the
+  print area and adds padding. The question page's print-area mode draws it on
+  every sheet, to drag and save for this submission, its scan, or all.
+- Each question's selected pages can be overridden per submission, with a note
+  (`<question>/note`, a submission's only), for answers that continue onto
+  extra-space pages. The note is passed to the model.
 - Render with PDFium at about 160 DPI. PDFium must not be used from several
   threads at once; confine it to a worker. Cache rendered pages, and cut crops
   from the cache.
-- A field's region may be replaced for one submission (`Workspace.set_region`),
-  as the page selection can. Changing where a field is read changes no value:
-  the app offers to read again.
+- A field's region may be replaced for one submission, as the page selection
+  can. Changing where a field is read (region, print area, cover pages, pages)
+  changes no value: the app offers to read again.
 - The same regions serve three purposes: crops shown beside the grader's input,
   crops sent to the model for printed fields, and (optionally) cropped reading
   (`readers.answers(crops=True)`). Whole pages is the proven default.
@@ -375,8 +385,9 @@ Screens for the first version:
   (save edits and verify everything here), **save** (a person who sets a value
   verifies it), **Verify, next** (V).
 - **Read:** scope, options, preview, progress, stop.
-- **Settings:** per-browser keys and appearance first, then workspace defaults (cover pages, print area)
-  last.
+- **Settings:** per-browser keys and appearance. Exam data (the print area and
+  cover pages for all, too) is on the Exam data page, which also lists what a
+  scan or a submission has of its own, each revertible.
 
 Details that graders relied on and should survive: keyboard navigation between
 students that keeps the current question; keys for verify, edit and save; a
@@ -393,7 +404,7 @@ docs). Internal names (`needs_review`, `core/focus.py`) may differ.
 - **decided**: a grade a person gave (never "by hand", "manual"); one plain look everywhere ("decided · who"). **to decide**: a person must give the grade.
 - **undecided**: no grade yet, the glyph `?` (never "not determined", "needs review", "unresolved", "open").
 - **filter**: the narrowed set of submissions (never "focus", "like this").
-- **print area**: where the printed page sits on the scanned page (Settings, a question page's regions mode).
+- **print area**: where the printed page sits on the scanned page (a question page's print-area mode, Exam data).
 - **read pages** / **read names**: what the model does on Scans; **pages read** after; **N failed** when a call fails.
 - **not read yet** (nothing asked), **empty** (asked, the box had nothing), **N lines unclear** (a roster).
 - **put back** (a dropped page), **unverify**, **guess again**, **join with next**, **type name**.

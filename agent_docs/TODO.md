@@ -11,6 +11,9 @@ Resolved by it: reading is one phase (no stored transcript); a field's region
 for one submission; a decision is outdated when any field on its page changes;
 how a field is read changes no value (the app offers to read again); a printed
 field's region may be unset in code; one grade per check, any number of checks.
+Overrides have one mechanism at three scopes (exam, source scan, submission;
+`overrides.SCOPES`, `overrides.Layers`): a region, pages and note, the print
+area and the cover pages all live there, with revisions and history.
 
 ## Open after the rewrite
 
@@ -35,6 +38,11 @@ field's region may be unset in code; one grade per check, any number of checks.
 - **Non-rectangular regions:** click points for a polygon around the actual
   answer, so the model sees the answer and not the surrounding work. Pairs
   with the per-submission region override.
+- **Identity boxes as ordinary fields**: they live in the scoped override store
+  already (`@identity/...`, exam scope only); a box per submission would be one
+  line in `overrides.SCOPES` once the boxes are fields.
+- **Own values of a removed submission** stay in the store (the Exam data page
+  marks them "gone", revertible); intake does not clear them.
 - **No full page load between submissions:** today "next submission" loads a
   new page (actions within a page already swap parts in place). Getting there
   means the question page's scripts start from a function that can run again
@@ -71,3 +79,29 @@ field's region may be unset in code; one grade per check, any number of checks.
 - The web app split into route groups.
 - An "ok as is" acknowledgement for flagged submissions.
 - A redesign of the Exam data page.
+
+## Feature candidates to cut (inventory of 2026-11-12; nothing decided)
+
+Proposed cuts: the accent colour pickers and the key-rebinding editor on
+Settings; the raw HTML evidence block and its route; the `audience` tag on
+evidence blocks (until a student view exists); the crop-scale slider on
+Settings (the header has one); the `status` CLI command.
+
+The owner's call: the `compare` command (never run live; the largest single
+cut); the "reasoning" option on reads; `--public-url` and the proxy user
+header; mirroring a whole scan; the `intake` CLI command; the "filter:" chips
+on the question page; preview-before-read on the Read page; the note that
+goes with a submission's pages.
+
+Library options no example exam uses (`Bool(worth=)`, `Printed(verify=True)`,
+`Field(multiline=)`, `Exam(crop_pad=)`, `math.Approx`, a custom
+`Question(facets=)`): keep the code, leave the unused ones out of the
+authoring guide.
+
+## Very tentative
+
+- **Model-assisted name matching:** give the model the crop and the roster's
+  fuzzy matches and let it say which is plausible. Opens onto the model using
+  tools interactively, a much larger topic. The matching heuristic is internal
+  and can change with testing; the candidate rule is "the read identity fields,
+  fuzzy-searched together, turn up exactly one person not already taken".

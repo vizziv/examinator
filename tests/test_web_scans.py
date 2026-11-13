@@ -221,7 +221,7 @@ def test_roster_on_the_page_and_who_is_matched(site):
     assert rows['s0005']['who']['key'] == rows['s0003']['who']['key'] == people[4]['key']
     assert rows['s0005']['who']['twice'] and rows['s0003']['who']['twice']
     # what the page needs to show the first page without boxes: cover pages and print area
-    assert rows['s0001']['cover'] == ws.layout('s0001').cover_pages and len(rows['s0001']['window']) == 4
+    assert rows['s0001']['cover'] == ws.layout('s0001').cover_pages and len(rows['s0001']['print_area']) == 4
 
 
 def test_drawing_the_name_boxes_for_every_submission(site):

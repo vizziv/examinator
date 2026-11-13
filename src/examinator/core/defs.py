@@ -310,18 +310,23 @@ class Exam:
 
     `LISTS` are the exam-level lists of named items (frozen dataclasses with a
     `name`) that overrides may edit, add to and take from (`core.overrides`,
-    paths '@<list>/...'); `base_lists` keeps them as the package built them."""
+    paths '@<list>/...'); `base_lists` keeps them as the package built them.
+    `ATTRS` are the exam's own values overrides may replace (paths '@<attr>'):
+    the print area (where the printed page sits on a scanned sheet: left, top,
+    right, bottom, per-mille of the sheet) and the cover pages (scanned pages
+    before printed page 1); `base_attrs` keeps them as the package built them."""
 
     LISTS: Mapping[str, type] = {'identity': Identity}
+    ATTRS: tuple[str, ...] = ('print_area', 'cover_pages')
 
     def __init__(self, id: str, *, title: str = "", pages: int,
-                 scan_window: Sequence[int] = (0, 0, 1000, 1000), cover_pages: int = 0,
+                 print_area: Sequence[int] = (0, 0, 1000, 1000), cover_pages: int = 0,
                  crop_pad: int = 12, landmarks: Sequence[Landmark] = (),
                  identity: Sequence[Identity] = ()):
         self.id = id
         self.title = title or id
         self.pages = pages
-        self.scan_window = tuple(scan_window)   # initial default; the workspace may override
+        self.print_area = tuple(print_area)     # live: the package's, or an exam-wide override
         self.cover_pages = cover_pages          # likewise
         self.crop_pad = crop_pad                # per-mille of the printed page around every crop
         self.landmarks = tuple(landmarks)       # how to tell which printed page a scanned sheet is (intake)
@@ -338,6 +343,7 @@ class Exam:
         self.base: dict[str, Question] = {}        # as built by the package
         self.overrides: dict[str, Any] = {}        # applied overrides {path: JSON value}; see `overrides`
         self.base_lists: dict[str, tuple] = {name: getattr(self, name) for name in self.LISTS}
+        self.base_attrs: dict[str, Any] = {name: getattr(self, name) for name in self.ATTRS}
         self.path: Path | None = None           # set by `load_exam`
         self.code_hash: str = ''
         self._hashes: dict = {}

@@ -147,6 +147,23 @@
     return true;
   }
 
+  // Set this submission's own value of the exam data at `el.dataset.path` (null: drop it).
+  // A conflict takes the revision saved now: setting again overwrites knowingly.
+  async function own(el, value) {
+    flash('');
+    const scope = JSON.parse($('scan').dataset.scopes).own, rev = revOf(el);
+    const r = await request(value === null ? '/exam/clear' : '/exam/set', {path: el.dataset.path, scope, value, rev, sub});
+    if (r.status === 409) {
+      const cur = r.body.current || {};
+      el.dataset.rev = cur.rev ?? '';
+      flash(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}; set again to overwrite`);
+      return false;
+    }
+    if (!r.ok) { flash(r.body.error || "failed"); return false; }
+    el.dataset.rev = r.body.rev ?? '';
+    return true;
+  }
+
   // Save the values changed here (a person who sets a value verifies it); with `all`,
   // verify this question's other values too (`list`: 'waitingOther' for those read from other questions). False when something could not be saved or verified
   // (a conflict, a review marker), so V stays on this submission.
@@ -302,11 +319,17 @@
       return act('read', {include_protected: all, reasoning: !!$('run-reasoning')?.checked});
     }},
     check: {run: ({el}) => act('check', {check: el.dataset.check, params: $('run-params')?.value || ''})},
-    pages: {run: async () => { if (await act('pages', {pages: $('pg-list').value, note: $('pg-note').value})) location.reload(); }},
+    // This submission's own pages (none, or the question's: drop them), note and cover pages.
+    pages: {run: async () => {
+      const list = $('pg-list'), note = $('pg-note');
+      const parts = list.value.split(/[\s,]+/).filter(Boolean);
+      const pages = parts.every(p => /^\d+$/.test(p)) ? parts.map(Number) : list.value;    // else the server explains
+      const drop = !parts.length || String(pages) === list.dataset.default;
+      if (await own(list, drop ? null : pages) && await own(note, note.value.trim() ? note.value : null)) location.reload();
+    }},
     layout: {run: async () => {
-      const r = await request(`/s/${encodeURIComponent(sub)}/layout`,
-                              {cover_pages: $('lo-cover').value});
-      if (r.ok) location.reload(); else flash(r.body.error || "failed");
+      const el = $('lo-cover'), v = el.value.trim();
+      if (await own(el, v === '' ? null : /^\d+$/.test(v) ? Number(v) : v)) location.reload();
     }},
     restore: {run: ({el}) => {
       const field = inputs().find(i => i.dataset.key === el.dataset.key);

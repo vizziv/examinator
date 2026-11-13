@@ -7,12 +7,11 @@ addressed (as `get`, `write` and `delete` take it) by `(submission, name, kind)`
     'question/label'    'value'     a field's value: {'text', 'settled', 'by'}   (`core.status`)
     'question/check'    'result'    a check's result: grade, evidence, what it read
     'question/check'    'decision'  a person's grade for a check, and what they saw
-    'question'          'pages'     the question's pages for this submission, and a note
-    'question/label'    'region'    a field's region for this submission
-    ''                  'layout'    this submission's cover pages and print area
     ''                  'identity', 'who'   intake: who wrote it (`core.identity`)
     ''                  'split'     intake: a source's split plan (`submission` is the source id)
-    ''                  'print_area'   a source's print area, for every submission from it (`submission`: the source id)
+
+Overrides of exam data (`core.overrides`) are their own table, keyed by
+`(scope, path)`: the scope is '' (the exam), 'source:<id>' or 'submission:<id>'.
 
 Every normal read is a keyed lookup. Every write may carry the `rev` the
 writer last saw; a mismatch raises `Conflict` and nothing changes. Revisions
@@ -54,11 +53,12 @@ create index if not exists history_key on history (submission, kind, name, rev);
 create table if not exists submission (id text primary key, name text, email text, pdf text, student text);
 create table if not exists setting (key text primary key, value text not null);
 create table if not exists override (
-  path text primary key, value text, author text, updated_at text not null, rev integer not null
+  scope text not null, path text not null, value text, author text, updated_at text not null,
+  rev integer not null, primary key (scope, path)
 );
 create table if not exists override_history (
-  path text not null, value text, author text, updated_at text not null, rev integer not null,
-  replaced_at text not null
+  scope text not null, path text not null, value text, author text, updated_at text not null,
+  rev integer not null, replaced_at text not null
 );
 create table if not exists source (
   id text primary key, file text not null, name text, sha256 text not null unique,
@@ -74,6 +74,7 @@ create table if not exists memo (
 """
 
 COLUMNS = 'submission, name, kind, body, origin, author, updated_at, rev'
+OVERRIDE = 'scope, path, value, author, updated_at, rev'
 WORK = ('value', 'result', 'decision')      # kinds that are grading work (intake will not rewrite over them)
 
 
@@ -112,7 +113,8 @@ class Submission:
 
 @dataclass(frozen=True)
 class Override:
-    """A value replacing one piece of an exam definition (see `core.overrides`)."""
+    """A value replacing one piece of an exam definition at a scope (see `core.overrides`)."""
+    scope: str                  # '' (the exam), 'source:<id>', 'submission:<id>'
     path: str
     value: Any                  # JSON
     author: str | None
@@ -144,6 +146,10 @@ class Made:
 
 def _row(r) -> Row:
     return Row(r[0], r[1], r[2], json.loads(r[3]) if r[3] is not None else None, r[4], r[5], r[6], r[7])
+
+
+def _override(r) -> Override:
+    return Override(r[0], r[1], json.loads(r[2]), *r[3:])
 
 
 def _now() -> str:
@@ -304,47 +310,59 @@ class Store:
 
     # --- definition overrides ---
 
-    def overrides(self) -> dict[str, Override]:
+    def overrides(self, scope: str = '') -> dict[str, Override]:
+        """One scope's overrides, by path ('': the exam's)."""
+        with self._lock:
+            rows = self._db.execute(f'select {OVERRIDE} from override where scope=? order by path',
+                                    (scope,)).fetchall()
+        return {r[1]: _override(r) for r in rows}
+
+    def all_overrides(self) -> list[Override]:
+        """Every scope's overrides, by scope and path."""
+        with self._lock:
+            rows = self._db.execute(f'select {OVERRIDE} from override order by scope, path').fetchall()
+        return [_override(r) for r in rows]
+
+    def override_history(self, path: str, scope: str = '') -> list[Override]:
+        """Replaced and cleared values of one path at one scope, newest first."""
         with self._lock:
             rows = self._db.execute(
-                'select path, value, author, updated_at, rev from override order by path').fetchall()
-        return {r[0]: Override(r[0], json.loads(r[1]), *r[2:]) for r in rows}
+                f'select {OVERRIDE}, replaced_at from override_history '
+                'where scope=? and path=? order by rev desc', (scope, path)).fetchall()
+        return [_override(r) for r in rows]
 
-    def override_history(self, path: str) -> list[Override]:
-        """Replaced and cleared values of one path, newest first."""
-        with self._lock:
-            rows = self._db.execute(
-                'select path, value, author, updated_at, rev, replaced_at from override_history '
-                'where path=? order by rev desc', (path,)).fetchall()
-        return [Override(r[0], json.loads(r[1]), *r[2:]) for r in rows]
-
-    def _check_override(self, path: str, expect_rev) -> Override | None:
-        cur = self.overrides().get(path)
+    def _check_override(self, scope: str, path: str, expect_rev) -> Override | None:
+        cur = self.overrides(scope).get(path)
         if expect_rev is not ANY and (cur.rev if cur else None) != expect_rev:
             raise Conflict(f"{path} changed")
-        if cur is not None:
-            self._db.execute(
-                'insert into override_history select path, value, author, updated_at, rev, ? '
-                'from override where path=?', (_now(), path))
         return cur
 
-    def set_override(self, path: str, value: Any, *, author: str | None,
+    def _archive_override(self, scope: str, path: str) -> None:
+        self._db.execute(f'insert into override_history select {OVERRIDE}, ? from override '
+                         'where scope=? and path=?', (_now(), scope, path))
+
+    def set_override(self, path: str, value: Any, *, scope: str = '', author: str | None,
                      expect_rev: int | None | _Any = ANY) -> Override:
         """Create or replace one override (`expect_rev=None`: must not exist yet);
-        the replaced row goes to history."""
+        the replaced row goes to history. Setting the value it has is a no-op."""
         text = json.dumps(value, ensure_ascii=False)
         with self._lock, self._tx():
-            self._check_override(path, expect_rev)
-            self._db.execute('insert or replace into override values (?,?,?,?,?)',
-                             (path, text, author, _now(), self._next_rev()))
+            cur = self._check_override(scope, path, expect_rev)
+            if cur is not None and json.dumps(cur.value, ensure_ascii=False) == text:
+                return cur
+            if cur is not None:
+                self._archive_override(scope, path)
+            self._db.execute(f'insert or replace into override ({OVERRIDE}) values (?,?,?,?,?,?)',
+                             (scope, path, text, author, _now(), self._next_rev()))
             self._changed()
-            return self.overrides()[path]
+            return self.overrides(scope)[path]
 
-    def clear_override(self, path: str, *, expect_rev: int | _Any = ANY) -> None:
-        """Remove one override (back to the package's value); the row goes to history."""
+    def clear_override(self, path: str, *, scope: str = '', expect_rev: int | _Any = ANY) -> None:
+        """Remove one override (back to the next scope's value); the row goes to history."""
         with self._lock, self._tx():
-            if self._check_override(path, expect_rev) is not None:
-                self._db.execute('delete from override where path=?', (path,))
+            if self._check_override(scope, path, expect_rev) is not None:
+                self._archive_override(scope, path)
+                self._db.execute('delete from override where scope=? and path=?', (scope, path))
                 self._changed()
 
     # --- submissions, settings, memo ---
@@ -429,11 +447,6 @@ class Store:
         with self._lock:
             r = self._db.execute('select value from setting where key=?', (key,)).fetchone()
         return json.loads(r[0]) if r else default
-
-    def delete_setting(self, key: str) -> None:
-        assert key not in ('rev', 'changes')
-        with self._lock:
-            self._db.execute('delete from setting where key=?', (key,))
 
     def set_setting(self, key: str, value: Any) -> None:
         assert key not in ('rev', 'changes')

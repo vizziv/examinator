@@ -39,9 +39,8 @@ from typing import Any, Callable, Mapping
 from PIL import Image
 
 from ..pdf import pages as pdf_pages, render
-from ..pdf.layout import Layout
 from ..pdf.orient import ALL, IDENTITY, MIRROR, QUARTER, Orient
-from . import identity, reading, split
+from . import identity, overrides, reading, split
 from .defs import Landmark, digest
 from .reading import normalize
 from .printed import PRINTED_PROMPT
@@ -191,12 +190,12 @@ def page_of(lm: Landmark, text: str | None) -> int | None:
 class LandmarkReader:
     """Reads one sheet's position from the exam's landmarks (first that answers
     wins), through the model, memoised per source, sheet, landmark, orientation
-    and print area (the source's, else the workspace's). A failed call is no reading and is not remembered: the
+    and print area (the source's, else the exam's). A failed call is no reading and is not remembered: the
     sheets it left unread are `failed`; `calls` counts the calls made."""
 
     def __init__(self, ws, src: Source, body: Mapping, model):
         self.ws, self.src, self.body, self.model = ws, src, body, model
-        self.layout = Layout(0, ws.window_for_source(src.id))
+        self.layout = ws.source_layout(src.id)
         self.lead = cover(ws, body)
         self.calls = 0                  # model calls made (memoised answers aside)
         self.failures = 0               # calls that failed
@@ -528,10 +527,10 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
                 ws.store.put_submissions([identity.submission(ws, sid, f'{sid}.pdf')])
                 ws.store.clear_memo(sid)        # readings of the old pages
                 ws.store.delete(sid, '', identity.READ)     # and what the model read on them
-                # The written PDF starts with as many cover sheets as the plan has, whatever the workspace's default.
-                kept = ws.store.get(sid, '', 'layout')
-                ws.set_layout(sid, cover_pages=cover(ws, body), author=author,
-                              scan_window=(kept.body or {}).get('scan_window') if kept else None)
+            # Every PDF written from this scan starts with as many cover sheets as the plan has,
+            # whatever the exam's default: the scan's own cover pages.
+            overrides.set(ws.exam, ws.store, '@cover_pages', cover(ws, body),
+                          scope=overrides.scope(overrides.SOURCE, id), author=author)
             for sid in gone:
                 ws.store.delete_made(sid)
                 ws.store.delete_submission(sid)

@@ -23,11 +23,21 @@ to those.
 | **Question** | A group: some fields and any number of checks. The page a grader sees; each check is a grid column. |
 
 An **override** replaces one of these values from the app without editing the
-code (a region, pages, a printed field's expected readings, an answer key),
-exam-wide or for one submission. It is stored in the workspace and wins while
-it exists; clearing it brings the code's value back. A value may also be left
-unset in code and given only as an override. A field that cannot be read yet
-is simply not read.
+code (a region, pages, the print area, a printed field's expected readings, an
+answer key) at a **scope**. It is stored in the workspace and wins while it
+exists; clearing it brings the next scope's value back. A value may also be
+left unset in code and given only as an override. A field that cannot be read
+yet is simply not read.
+
+| Scope | Applies to | May set (`overrides.SCOPES`) |
+| --- | --- | --- |
+| submission | one submission | a region, pages and their note, print area, cover pages |
+| source scan | every submission split from one scanned file | print area, cover pages |
+| exam | every submission | anything editable (not a note) |
+| (package) | what the code says | |
+
+The value in force is the most specific one: the submission's, its scan's,
+the exam's, the package's.
 
 ## Stored per submission
 
@@ -122,7 +132,7 @@ Everything the app or a batch run does is one or more of these.
 | Field value | **unverify**: back to unsettled, value kept. | person |
 | Result | **compute**: run the check on the current values. | automatic |
 | Decision | **decide**, **clear**. | person |
-| Override | **set**, **clear**, exam-wide or for one submission. | person |
+| Override | **set**, **clear**, at a scope. | person |
 
 Changing how a field is read changes no value. The app then offers to read
 again the values no person settled.
@@ -186,7 +196,7 @@ no value yet, and the app can reload the exam package without losing state.
 | Stored value, result, decision; the status table; totals | `core/status.py` |
 | The small changes (read, set, verify, compute, decide, clear) | `core/runner.py` |
 | Printed reader; handwriting readers | `core/printed.py`; `std/readers.py` |
-| Overrides (exam-wide); a field's region for one submission | `core/overrides.py`; `Workspace.set_region` |
+| Overrides at every scope; what applies to one submission (`Layers`) | `core/overrides.py`; `Workspace.layout`, `fields` |
 | Batch: reads, then computes | `core/batch.py` |
 | One row table, addressed `(submission, name, kind)` | `core/store.py` |
 

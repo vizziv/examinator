@@ -69,4 +69,4 @@ def region_key(kind: str, name: str, defn: str, layout: Any, *where: Any) -> str
     """The memo key of reading one region under a scan layout (`pdf.layout.Layout`):
     its print area and cover pages say which scanned page is cropped, and where;
     `where` adds anything else the crop depends on (a sheet's orientation, its index)."""
-    return memo_key(kind, name, defn, list(layout.window), layout.cover_pages, *where)
+    return memo_key(kind, name, defn, list(layout.print_area), layout.cover_pages, *where)

@@ -20,8 +20,11 @@ from PIL import Image
 
 from ..pdf.layout import Layout
 from ..pdf.render import Renderer
-from .defs import Exam, Field, Question, Region, check_region, key
-from .store import ANY, Store, Submission
+from . import overrides
+from .defs import Exam, Field, Question, Region
+from .store import Store, Submission
+
+PRINT_AREA, COVER_PAGES = '@print_area', '@cover_pages'     # their override paths
 
 
 class Workspace:
@@ -51,121 +54,46 @@ class Workspace:
         self.store.put_submissions([identity.submission(self, p.stem, p.name) for p in pdfs])
         return len(pdfs)
 
-    # --- settings: exam defaults until the workspace saves its own ---
+    # --- what applies to one submission: `overrides.Layers` resolves it ---
     #
-    # The print area (`scan_window`: where the printed page sits on a scanned sheet,
-    # [l, t, r, b] per-mille of the sheet) resolves, most specific first: the
-    # submission's own, its source scan's (every submission intake made from that
-    # file), the workspace's, the exam package's. Cover pages: the submission's own,
-    # else the workspace's, else the package's.
+    # Each value is the submission's own override, else its source scan's (every
+    # submission intake made from that file), else the exam's, else the package's.
 
-    @property
-    def cover_pages(self) -> int:
-        return self.store.setting('cover_pages', self.exam.cover_pages)
-
-    @property
-    def scan_window(self) -> tuple[int, int, int, int]:
-        """The workspace's print area (else the package's)."""
-        return tuple(self.store.setting('scan_window', list(self.exam.scan_window)))
-
-    def set_defaults(self, *, cover_pages: int | None = None, scan_window=None) -> None:
-        if cover_pages is not None:
-            self.store.set_setting('cover_pages', int(cover_pages))
-        if scan_window is not None:
-            self.store.set_setting('scan_window', [int(v) for v in scan_window])
-
-    def clear_scan_window(self) -> None:
-        """The workspace's print area back to the package's."""
-        self.store.delete_setting('scan_window')
+    def layers(self, submission: str | None = None, *, source: str | None = None) -> overrides.Layers:
+        return overrides.Layers(self.exam, self.store, submission=submission, source=source)
 
     def source_of(self, submission: str) -> str | None:
         """The source scan intake made this submission from; None if it was handed in split."""
         m = self.store.made_of(submission)
         return m.source if m else None
 
-    def source_window(self, source: str | None) -> tuple[int, int, int, int] | None:
-        """A source scan's own print area, for every submission from it.
-        The row (source id, '', 'print_area'): `{'scan_window': [l, t, r, b]}`."""
-        o = self.store.get(source, '', 'print_area') if source else None
-        w = (o.body or {}).get('scan_window') if o else None
-        return tuple(w) if w else None
-
-    def set_source_window(self, source: str, scan_window, *, author: str | None, expect_rev=ANY) -> None:
-        """Set (or, with None, clear) a source scan's print area."""
-        if not scan_window:
-            self.store.delete(source, '', 'print_area', expect_rev=expect_rev)
-        else:
-            self.store.write(source, '', 'print_area', {'scan_window': [int(v) for v in scan_window]},
-                             origin='manual', author=author, expect_rev=expect_rev)
-
-    def window_for_source(self, source: str | None) -> tuple[int, int, int, int]:
-        """The print area of a source's sheets: the source's own, else the workspace's."""
-        return self.source_window(source) or self.scan_window
-
     def layout(self, submission: str) -> Layout:
-        """The defaults, with this submission's override on top.
-        The override is the row (submission, '', 'layout'):
-        `{'cover_pages': int | None, 'scan_window': [l, t, r, b] | None}`."""
-        o = self.store.get(submission, '', 'layout')
-        body = o.body if o else {}
-        cover = body.get('cover_pages')
-        window = body.get('scan_window')
-        return Layout(self.cover_pages if cover is None else cover,
-                      tuple(window) if window else self.window_for_source(self.source_of(submission)))
+        """This submission's cover pages and print area."""
+        lay = self.layers(submission)
+        return Layout(lay.value(COVER_PAGES), tuple(lay.value(PRINT_AREA)))
 
-    def set_layout(self, submission: str, *, cover_pages: int | None, scan_window, author: str | None,
-                   expect_rev=ANY) -> None:
-        if cover_pages is None and not scan_window:
-            self.store.delete(submission, '', 'layout', expect_rev=expect_rev)
-        else:
-            self.store.write(submission, '', 'layout',
-                             {'cover_pages': cover_pages, 'scan_window': list(scan_window) if scan_window else None},
-                             origin='manual', author=author, expect_rev=expect_rev)
+    def source_layout(self, source: str | None) -> Layout:
+        """A source scan's sheets as they come (no cover pages), with its print area."""
+        return Layout(0, tuple(self.layers(source=source).value(PRINT_AREA)))
 
     def selected_pages(self, submission: str, question: Question) -> tuple[tuple[int, ...], str]:
-        """The question's printed pages for this submission, and the grader's note.
-        The override is the row (submission, question, 'pages'): `{'pages': [...], 'note': str}`."""
-        o = self.store.get(submission, question.id, 'pages')
-        if o and o.body.get('pages'):
-            return tuple(o.body['pages']), o.body.get('note') or ""
-        return question.pages, ""
-
-    def set_pages(self, submission: str, question: Question, pages, note: str, *, author: str | None) -> None:
-        pages = [int(p) for p in pages or ()]
-        if not pages or tuple(pages) == question.pages:
-            self.store.delete(submission, question.id, 'pages')
-        else:
-            if any(not 1 <= p <= self.exam.pages for p in pages):
-                raise ValueError("page out of range")
-            self.store.write(submission, question.id, 'pages', {'pages': pages, 'note': note},
-                             origin='manual', author=author)
-
-    def region(self, submission: str, question: Question, label: str) -> Region | None:
-        """A field's region for this submission: its own override, else the exam's
-        (which may itself be an exam-wide override, or unset).
-        The override is the row (submission, 'question/label', 'region'): `{'region': [p, l, t, r, b]}`."""
-        o = self.store.get(submission, key(question.id, label), 'region')
-        if o and o.body.get('region'):
-            return Region(*o.body['region'])
-        f = question.field(label)
-        return f.region if f is not None else None
-
-    def set_region(self, submission: str, question: Question, label: str, region: Region | None, *,
-                   author: str | None, expect_rev=ANY) -> None:
-        """Set (or, with None, clear) a field's region for this submission. Changes no value."""
-        k = key(question.id, label)
-        if region is None:
-            self.store.delete(submission, k, 'region', expect_rev=expect_rev)
-        else:
-            check_region(region, self.exam.pages, f"{question.id}: field {label!r}")
-            self.store.write(submission, k, 'region', {'region': [region.page, region.left, region.top,
-                                                                  region.right, region.bottom]},
-                             origin='manual', author=author, expect_rev=expect_rev)
+        """The question's printed pages for this submission, and the grader's note."""
+        lay = self.layers(submission)
+        pages = lay.own(overrides.join(question.id, 'pages'))
+        return (tuple(pages) if pages else question.pages), lay.own(overrides.join(question.id, 'note')) or ""
 
     def fields(self, submission: str, question: Question) -> tuple[Field, ...]:
         """The question's fields with this submission's regions."""
-        return tuple(dataclasses.replace(f, region=self.region(submission, question, f.label))
-                     for f in question.fields)
+        lay = self.layers(submission)
+        out = []
+        for f in question.fields:
+            own = lay.own(overrides.join(question.id, 'fields', f.label, 'region'))
+            out.append(f if own is None else dataclasses.replace(f, region=Region(*own)))
+        return tuple(out)
+
+    def region(self, submission: str, question: Question, label: str) -> Region | None:
+        """A field's region for this submission (None: unset, not read)."""
+        return next((f.region for f in self.fields(submission, question) if f.label == label), None)
 
     # --- pages and crops ---
 

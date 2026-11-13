@@ -2,7 +2,8 @@
 Everything here is synthetic."""
 import pytest
 
-from examinator import Check, Exam, Field, Printed, Region
+from examinator import Check, Exam, Field, Printed
+from examinator.core import overrides
 from examinator.core.runner import Runner
 from examinator.core.store import Conflict
 from examinator.model.fake import FakeModel
@@ -81,7 +82,8 @@ def test_a_field_without_a_region_is_not_read_until_it_has_one(tmp_path):
     runner = Runner(exam, ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
     outs = runner.read('s1', 'info')
     assert [(o.status, o.detail) for o in outs] == [('blocked', "no region: c")] and value(ws, 's1', 'info/c') is None
-    ws.set_region('s1', exam.questions['info'], 'c', Region(1, 0, 0, 500, 100), author='ta')    # this submission only
+    overrides.set(exam, ws.store, 'info/fields/c/region', [1, 0, 0, 500, 100], scope='submission:s1',
+                  author='ta')                                                  # this submission only
     assert [o.status for o in runner.read('s1', 'info')] == ['done'] and value(ws, 's1', 'info/c').text == 'one'
     runner.close()
     ws.close()
@@ -98,12 +100,15 @@ def test_a_printed_reading_is_remembered_per_crop_and_a_new_print_area_reads_aga
     assert calls() == 2 and value(ws, 's1', 'p/c1').text == 'one'
     assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 2        # the same crops: remembered
     replies.update({'read:c1': '{"value": "2"}', 'read:c2': '{"value": "ii"}'})
-    ws.set_layout('s1', cover_pages=None, scan_window=(50, 50, 950, 950), author='ta')    # another crop
+    own = lambda path, value: (overrides.set(exam, ws.store, path, value, scope='submission:s1', author='ta')
+                               if value is not None else overrides.clear(exam, ws.store, path, scope='submission:s1'))
+    own('@print_area', [50, 50, 950, 950])                                       # another crop
     assert all(o.ok for o in runner.read('s1', 'p'))
     assert calls() == 4 and value(ws, 's1', 'p/c1').text == 'two'
-    ws.set_layout('s1', cover_pages=1, scan_window=(50, 50, 950, 950), author='ta')       # another page
+    own('@cover_pages', 1)                                                       # another page
     assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 6
-    ws.set_layout('s1', cover_pages=None, scan_window=None, author='ta')         # the first crop again
+    own('@cover_pages', None)
+    own('@print_area', None)                                                     # the first crop again
     assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 6
     assert value(ws, 's1', 'p/c1').text == 'one'
 
@@ -295,7 +300,8 @@ def test_a_batch_plan_is_stale_once_its_items_would_change(tmp_path):
     sel = batch.Selection(('s1',), ('info',))
     plan = batch.plan(exam, ws.store, sel, model_available=True, regions=ws.fields)
     assert [(i.question, i.action) for i in plan.items] == [('info', 'blocked')]
-    ws.set_region('s1', exam.questions['info'], 'c', Region(1, 0, 0, 500, 100), author='ta')    # no value changed
+    overrides.set(exam, ws.store, 'info/fields/c/region', [1, 0, 0, 500, 100], scope='submission:s1',
+                  author='ta')                                                  # no value changed
     run = batch.BatchRun(runner, plan)
     with pytest.raises(batch.StalePlan):
         run.check()

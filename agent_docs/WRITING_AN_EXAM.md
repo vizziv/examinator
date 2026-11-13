@@ -92,7 +92,7 @@ from examinator.core.runner import try_check                       # in your tes
 ## 3. Declaring the exam
 
 ```python
-exam = Exam('toy', title="Toy exam", pages=4, scan_window=[50, 40, 950, 900], cover_pages=1,
+exam = Exam('toy', title="Toy exam", pages=4, print_area=[50, 40, 950, 900], cover_pages=1,
             landmarks=[...], identity=[...])
 exam.question('areas', title="Areas", pages=[2], fields=[...], read=..., check=... or checks={...})
 ```
@@ -100,7 +100,7 @@ exam.question('areas', title="Areas", pages=[2], fields=[...], read=..., check=.
 | Argument | Meaning |
 | --- | --- |
 | `Exam(pages=)` | printed pages in one copy of the exam |
-| `scan_window`, `cover_pages` | the print area (where the printed page sits in a scan, per-mille; default the whole sheet), and the sheets a scanning service adds before page 1. Initial defaults: the workspace's settings win, and a scan file or a submission can have its own print area (regions mode on a question page) |
+| `print_area`, `cover_pages` | the print area (where the printed page sits in a scan: left, top, right, bottom, per-mille; default the whole sheet), and the sheets a scanning service adds before page 1. Exam data: the app can override them for all submissions, a scan file or one submission (a question page's print-area mode, the Exam data page) |
 | `crop_pad` | per-mille padding around every crop (default 12) |
 | `question(pages=)` | the printed pages holding the answer: what the reader sees. A grader can change them per submission (an extra-space page, with a note that reaches the prompts) |
 | `fields=` | the question's fields (§4) |
