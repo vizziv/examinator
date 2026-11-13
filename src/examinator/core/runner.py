@@ -227,7 +227,7 @@ class Runner:
                 out('blocked', "model unavailable")
                 continue
             try:
-                src = sources(self.ws, submission, q, targets)
+                src = sources(self.ws, submission, resolved, targets)
                 got = read_group(self.ws, submission, resolved, reader, targets, self._services, fresh=fresh)
             except Exception as e:
                 out('failed', structural(e))

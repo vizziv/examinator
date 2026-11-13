@@ -414,19 +414,19 @@ def test_a_value_records_what_it_was_read_from(written):
     identity.read(runner, 's0001')
     a = runner.values('s0001')['@identity/name']
     assert a.source == source_of(ws, 's0001', 'name') and 's0001' not in identity.unread(ws)
-    overrides.set(ws.exam, ws.store, path, [1, 100, 400, 800, 480], scope=scope, author='t')
+    overrides.set(ws, path, [1, 100, 400, 800, 480], scope=scope, author='t')
     assert 's0001' in identity.unread(ws)
     identity.read(runner, 's0001')
     b = runner.values('s0001')['@identity/name']
     assert b.source != a.source and 's0001' not in identity.unread(ws)
-    overrides.clear(ws.exam, ws.store, path, scope=scope, expect_rev=ws.store.overrides(scope)[path].rev)
+    overrides.clear(ws, path, scope=scope, expect_rev=ws.store.overrides(scope)[path].rev)
     row = identity.overview(ws, ['s0001'])['rows'][0]
     assert row['stale'] == ['name'] and 's0001' in identity.unread(ws)
     assert 'name' not in row['read'] and row['doubt'] == 'id'                # B's reading is no evidence under A
     identity.read(runner, 's0001')
     assert runner.values('s0001')['@identity/name'].source == a.source and 's0001' not in identity.unread(ws)
     # a value a person verified or typed is never stale
-    overrides.set(ws.exam, ws.store, path, [1, 100, 400, 800, 480], scope=scope, author='t')
+    overrides.set(ws, path, [1, 100, 400, 800, 480], scope=scope, author='t')
     runner.verify('s0001', IDENTITY, 'name', author='t', expect_rev=runner.values('s0001')['@identity/name'].rev)
     runner.set('s0001', IDENTITY, 'id', "90412873", author='t')
     assert 's0001' not in identity.unread(ws)

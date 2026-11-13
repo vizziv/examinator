@@ -294,6 +294,17 @@ class Store:
                                  (submission, kind, name))
                 self._changed()
 
+    def restore(self, submission: str, name: str, kind: str, rev: int, *,
+                expect_rev: int | None | _Any = ANY) -> Row:
+        """Undo: bring a replaced version back as it was (same origin and author),
+        under a new revision."""
+        with self._lock, self._tx():
+            old = next((a for a in self.history(submission, name, kind) if a.rev == rev), None)
+            if old is None:
+                raise KeyError(rev)
+            return self.write(submission, name, kind, old.body, origin=old.origin, author=old.author,
+                              expect_rev=expect_rev)
+
     def purge_history(self) -> None:
         with self._lock:
             self._db.execute('delete from history')
