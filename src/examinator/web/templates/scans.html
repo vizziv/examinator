@@ -62,7 +62,7 @@ each submission becomes its own PDF when you accept the split.
 <button type="button" data-action="split-turn-source" title="every page of this scan, a quarter turn clockwise">turn scan ↻</button>
 <span class="sep"></span>
 <label>pages per submission <input type="number" id="s-length" min="1" max="999"></label>
-<button type="button" data-action="split-guess" title="guess the unverified first pages again">guess again</button>
+<button type="button" data-action="split-guess" title="guess again every page nobody has spoken for">guess again</button>
 {% if exam.landmarks %}<button type="button" data-action="split-read" title="{{ 'read page landmarks with the model where needed' if model else 'no model' }}">read pages</button>{% endif %}
 <button type="button" data-action="split-undo" class="quiet">undo</button>
 <span class="grow"></span>
@@ -72,7 +72,7 @@ each submission becomes its own PDF when you accept the split.
 
 <section id="step" class="panel">
 <div class="bar"><b id="st-k"></b> <span id="st-tags"></span><span class="grow"></span><span id="st-prev" class="dim"></span></div>
-<div id="st-done" hidden><p>Every first page is verified. <span id="st-done-sum" class="dim"></span></p></div>
+<div id="st-done" hidden><p>Every submission is verified. <span id="st-done-sum" class="dim"></span></p></div>
 <div id="st-pages">
 <figure class="ctx" id="st-a"><img alt="page before"><figcaption></figcaption></figure>
 <figure class="main" id="st-b"><img alt="first page?"><figcaption></figcaption></figure>
@@ -80,7 +80,7 @@ each submission becomes its own PDF when you accept the split.
 </div>
 <div class="bar">
 <button type="button" data-action="split-earlier">◀ earlier</button>
-<button type="button" data-action="split-verify" class="primary">Verify first page</button>
+<button type="button" data-action="split-verify" class="primary" title="this submission is these pages">Verify</button>
 <button type="button" data-action="split-later">later ▶</button>
 <span class="sep"></span>
 <button type="button" data-action="split-back" class="quiet">prev</button>

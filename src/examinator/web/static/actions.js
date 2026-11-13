@@ -40,7 +40,7 @@ const Actions = (() => {
     ['cell-up', "grid: cell up", 'grid'], ['cell-down', "grid: cell down", 'grid'],
     ['cell-open', "grid: open cell", 'grid'],
     // Split (the scans page): first pages are a horizontal strip, submissions go up and down.
-    ['split-verify', "split: verify first page, next", 'split'], ['split-earlier', "split: a page earlier", 'split'],
+    ['split-verify', "split: verify the submission, next", 'split'], ['split-earlier', "split: a page earlier", 'split'],
     ['split-later', "split: a page later", 'split'], ['split-back', "split: previous submission", 'split'],
     ['split-next', "split: next submission", 'split'], ['split-drop', "split: drop this page", 'split'],
     ['split-cut', "split: new submission here", 'split'],
