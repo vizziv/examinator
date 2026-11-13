@@ -229,3 +229,15 @@ def test_the_page_scripts_post_only_through_the_one_path():
             assert posts == 0, js.name
         # `request` only reads: a body handed to it would be dropped, so none is written
         assert not re.search(r'\brequest\([^()]*(\([^()]*\))?[^()]*,', text), js.name
+
+
+def test_a_change_that_does_not_go_through_is_said_once_by_changes():
+    """When a change does not go through, `Changes.send` says so once, at the caller's line
+    (else the header), and owns the pending marker: no page sets '…' for a change or flashes a
+    refusal of its own."""
+    for js in STATIC.glob('*.js'):
+        if js.name == 'common.js':
+            continue
+        text = js.read_text()
+        assert not re.search(r"""say\([^)]*'…'""", text) and "textContent = '…'" not in text, js.name
+        assert 'changed since it was shown' not in text and 'save again to overwrite' not in text, js.name

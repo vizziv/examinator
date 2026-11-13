@@ -79,17 +79,20 @@
     want = null;
     if (j >= 0) go(j);
   }
-  function go(j) { k = Math.max(0, Math.min(j, order.length)); ci = 0; pick.value = ''; hi = 0; render(); }
+  function go(j) { k = Math.max(0, Math.min(j, order.length)); ci = 0; pick.value = ''; hi = 0; valueLine.say(''); render(); }
 
   // Naming is said about what is shown, when the key is pressed (or the item clicked): the
   // submission, its pick's revision as seen, and one of {key} (a roster person), {text}
-  // (someone typed in), {restore} (undo) or nothing (unname). A statement about a revision
-  // that has since changed (Enter twice, a double click) does nothing.
+  // (someone typed in), {restore} (undo) or nothing (unname). A naming that moves on to the
+  // next submission ends its subject: a second press made before it was answered (Enter
+  // twice, V twice) is dropped, never sent again on the new revision. An undo stays.
+  // How it went is said on the step's line (`w-said`), with an undo.
+  const step = Line('w-said');
   const about = what => { const r = row(); return r ? {sub: r.sub, rev: r.rev, ...what} : null; };
   function name(said, next = true) {
     const r = view.byId[said.sub], before = r && r.who ? r.who.name : '', was = said.rev;
     if (!r) return;
-    return Changes.send(`who:${said.sub}`, '/scans/who', said, {redraw: () => load(), done: async b => {
+    return Changes.send(`who:${said.sub}`, '/scans/who', said, {line: step, ends: next, redraw: () => load(), done: async b => {
       const now = b.who, here = row() && row().sub === said.sub;
       report(said.sub, now.name, before, was == null ? {sub: said.sub, rev: now.rev} : {sub: said.sub, rev: now.rev, restore: was});
       await load();
@@ -100,11 +103,9 @@
   function report(sub, who, before, undoing) {
     const undo = make('button', {type: 'button', className: 'quiet', textContent: 'undo', title: before ? `back to ${before}` : 'unname it'});
     undo.addEventListener('click', () => {
-      if (!live()) return;
-      $('w-said').replaceChildren();
-      name(undoing, false)?.then(b => { if (b) go(order.indexOf(sub)); });
+      if (live()) name(undoing, false)?.then(b => { if (b) go(order.indexOf(sub)); });
     });
-    $('w-said').replaceChildren(`${sub} → ${who || 'nobody'} · `, undo);
+    step.say([`${sub} → ${who || 'nobody'} · `, undo]);
   }
 
   const S = {register: (name, spec) => Actions.register(name, {...spec,
@@ -116,17 +117,25 @@
   S.register('names-skip', {available: () => k < order.length, run: () => go(k + 1)});
   S.register('names-back', {available: () => k > 0, run: () => go(k - 1)});
   S.register('names-type', {available: () => !!row(), run: () => { pick.focus(); pick.select(); }});
-  S.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, run: () =>
-    Changes.send('names-read', '/scans/names/read', {rev: view.run, again: $('w-again').checked}, {long: true, redraw: () => load(), done: async b => {
-      $('msg').hidden = !b.n;
-      $('msg').textContent = b.n ? `reading ${b.n}…` : '';
+  // Reading the boxes, said on the line under the strip: what it reads, then how it went.
+  S.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, run: () => {
+    const again = $('w-again').checked, line = Line('msg');
+    return Changes.send('names-read', '/scans/names/read', {rev: view.run, again}, {line, long: true, redraw: () => load(), done: async b => {
+      if (!b.job) {
+        line.say(!view.left ? "nothing to read: every submission is named"
+          : again ? "nothing to read: the unnamed submissions' boxes are verified"
+          : "nothing to read: the unnamed submissions' boxes are read (again: read the unverified ones again)");
+        return;
+      }
+      line.say(`reading ${b.n} unnamed…`);
       const job = await waitJob(b.job);
       const failed = (job.outcomes || []).length;
-      $('msg').textContent = job.state !== 'done' ? `read names ${job.state}` : failed ? `${failed} failed` : '';
-      $('msg').hidden = !$('msg').textContent;
       order = [];         // new readings: doubtful ones first again
       await load();
-    }})});
+      line.say(job.state !== 'done' ? `read names ${job.state}` : failed ? `read ${b.n} unnamed · ${failed} failed` : `read ${b.n} unnamed`,
+               job.state !== 'done' || failed ? 'bad' : '');
+    }});
+  }});
 
   // --- the picker: the proposals while empty, else the roster people matching what is typed ---
   const pick = $('w-pick'), list = $('w-list');
@@ -211,7 +220,7 @@
   const placed = () => view.columns.filter(c => bx.drafts[c.name]).map(c => c.name);
   const cur = () => (bx.edit && bx.drafts[bx.sel] ? bx.drafts[bx.sel] : null);
   const put = d => { bx.drafts[bx.sel] = d; bx.touched = true; };
-  const say = (text, bad) => { $('wb-msg').textContent = text || ''; $('wb-msg').classList.toggle('notice', !!bad); };
+  const boxLine = Line('wb-msg'), say = text => boxLine.say(text);
   // The drafts follow the submission shown until something is edited.
   function syncBoxes() {
     if (!bx.touched || !row()) bx.drafts = Object.fromEntries(Object.entries(savedAll(row())).map(([k, v]) => [k, v && [...v]]));
@@ -298,21 +307,21 @@
     return out.filter(x => !x.clear || x.rev != null);
   }
   const WHERE = {own: 'this submission', all: 'all submissions'};
-  // One override per box; a refusal keeps the drafts and takes what is saved now, so saving
-  // again overwrites knowingly. After the last, the saved boxes are taken.
-  function saveBoxes(list, what) {
-    say('…');
+  // One override per box; a refusal keeps the drafts and takes what is saved now (the view
+  // loaded again), so saving again overwrites knowingly. When every one is saved, the saved
+  // boxes are taken.
+  async function saveBoxes(list, what) {
     const sub = row().sub, drafts = bx.drafts;
-    const redraw = () => { load(); say('save again to overwrite', true); };
-    const after = async () => {
-      await load(false, true);
-      const shadowed = list.length && !list[0].scope && view.columns.some(c => view.byId[sub].own[c.name] && drafts[c.name]
-        && !Rects.same(drafts[c.name], view.byId[sub].own[c.name].value));
-      say(`${what}${shadowed ? ' · this submission keeps its own' : ''}`);
-    };
-    return Promise.all(list.map((c, j) => Changes.send(`override:${c.scope}:${c.path}`, c.clear ? '/exam/clear' : '/exam/set',
+    const redraw = c => async cur => { await load(); return Changes.kept(`${brief(cur.value)} (${view.columns.find(x => x.path === c.path)?.name})`); };
+    const answers = await Promise.all(list.map(c => Changes.send(`override:${c.scope}:${c.path}`, c.clear ? '/exam/clear' : '/exam/set',
       c.clear ? {path: c.path, scope: c.scope, rev: c.rev} : {path: c.path, scope: c.scope, value: c.value, rev: c.rev},
-      {redraw, done: j === list.length - 1 ? after : null})));
+      {line: boxLine, redraw: redraw(c)})));
+    if (answers.some(b => !b)) return null;
+    await load(false, true);
+    const shadowed = list.length && !list[0].scope && view.columns.some(c => view.byId[sub].own[c.name] && drafts[c.name]
+      && !Rects.same(drafts[c.name], view.byId[sub].own[c.name].value));
+    say(`${what}${shadowed ? ' · this submission keeps its own' : ''}`);
+    return answers;
   }
   S.register('names-box-save-own', {available: () => bx.edit && changes('own').length > 0,
     run: () => saveBoxes(changes('own'), `saved · ${WHERE.own}`)});
@@ -354,20 +363,32 @@
   addEventListener('beforeunload', e => { if (bx.edit && bxDirty()) e.preventDefault(); });
 
   // --- an identity field's value: corrected or verified like any field's ---
-  function saveValue(r, name, body) {
+  // Said on the line under the values (about the submission shown). A refusal keeps what was
+  // typed (`typed`), over the value saved since, so Enter again overwrites knowingly.
+  const typed = {};       // `${sub}/${name}` -> text kept over a value that changed
+  const valueLine = Line('w-vmsg');
+  function saveValue(r, name, body, text) {
     if ($('w-crops').contains(document.activeElement)) document.activeElement.blur();
-    return Changes.send(`values:${r.sub}`, `/s/${encodeURIComponent(r.sub)}/@identity/save`, body, {redraw: () => load(), done: () => load()});
+    const k = `${r.sub}/${name}`;
+    return Changes.send(`values:${r.sub}`, `/s/${encodeURIComponent(r.sub)}/@identity/save`, body, {line: valueLine,
+      redraw: async () => {
+        if (text !== undefined) typed[k] = text;
+        await load();
+        const v = view.byId[r.sub]?.values[name];
+        return text === undefined ? null : Changes.kept(`${brief(v ? v.text : '')} (${name})`);
+      },
+      done: () => { delete typed[k]; return load(); }});
   }
   function valueBox(r, name) {
-    const v = r.values[name];
-    const input = make('input', {type: 'text', className: 'mono', value: v ? v.text : '', spellcheck: false,
+    const v = r.values[name], mine = typed[`${r.sub}/${name}`];
+    const input = make('input', {type: 'text', className: 'mono', value: mine ?? (v ? v.text : ''), spellcheck: false,
       placeholder: !v && main.dataset.model ? 'not read yet' : '', title: 'Enter: save (verified by you)'});
     input.setAttribute('aria-label', name);
     input.addEventListener('keydown', e => {
       if (e.key !== 'Enter' || e.isComposing) return;
       e.preventDefault();
       if ((v && input.value === v.text) || !live()) return;
-      saveValue(r, name, {values: {[`@identity/${name}`]: {text: input.value, rev: v ? v.rev : null}}});
+      saveValue(r, name, {values: {[`@identity/${name}`]: {text: input.value, rev: v ? v.rev : null}}}, input.value);
     });
     const out = [make('span', {className: 'dim', textContent: name + ' '}), input];
     if (v && !v.verified && !v.marker) {
@@ -455,7 +476,7 @@
 
   function render() {
     const left = view.left, n = view.rows.length, fields = view.boxed;
-    const counts = {}, unread = view.rows.filter(r => r.unread.length).length;
+    const counts = {}, unread = view.unread;
     for (const r of view.rows) if (!verified(r)) counts[r.doubt] = (counts[r.doubt] || 0) + 1;
     $('w-sum').replaceChildren(!n ? tag('', 'no submissions yet') : left ? tag('unv', `${left} unverified`) : tag('', `all ${n} verified`),
       ...['disagree', 'tie', 'nobody', 'unreadable', 'empty'].filter(d => counts[d]).map(d => tag(DOUBT[d], `${counts[d]} ${view.doubts[d]}`)),

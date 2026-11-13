@@ -6,20 +6,55 @@ const ROOT = meta('root');
 // Reading: a GET, answered as {status, ok, body}.
 const request = path => Changes.get(path);
 
+// A line where a person works (an entry's message, an editor's panel line, a step's status):
+// one message at a time, about one state of what is shown there. A change sent with this
+// line owns it from the moment it goes: it clears what was there (about the state it is
+// replacing), shows '…' while the answer is slow, and leaves its outcome: nothing when
+// accepted (its `done` may say more), else why not. Pages say messages about their own
+// state here too; the next change made here replaces them.
+//   Line(element or id)               the same line for the same place
+//   line.say(text or [nodes], tone)   tone 'bad': a problem (red); else plain
+function Line(where) {
+  if (Line.all.has(where)) return Line.all.get(where);
+  const el = () => (typeof where === 'string' ? document.getElementById(where) : where);
+  let owner = null;
+  function say(what, tone, by = null) {
+    const e = el();
+    owner = by;
+    if (!e) return;
+    e.classList.add('line');
+    e.replaceChildren(...[].concat(what ?? '').filter(x => x !== ''));
+    e.classList.toggle('bad', tone === 'bad' && e.childNodes.length > 0);
+    e.hidden = !e.childNodes.length;
+  }
+  const line = {say, mine: by => owner === by};
+  Line.all.set(where, line);
+  return line;
+}
+Line.all = new Map();
+
 // Changes: the one way a page changes anything (DESIGN.md, Changes). A change is a finished
 // statement, a route and a body naming the revision the page drew (`rev`, or each item's),
 // copied when it is sent so that nothing computed later can reach it. Changes to one subject
 // go one at a time, in press order, and each expects the revision the one before it left:
 // one made on a revision this run of changes already passed through (pressed before the last
-// answer was drawn) is sent on the newest. A refusal (409) is said in one line, the page is
-// redrawn from what the server says is there now, and what was queued behind it on that
-// subject is dropped, as after any other failure.
-//   Changes.send(subject, path, body, {done(answer), redraw(current), long})
+// answer was drawn) is sent on the newest, as successive edits of one thing. A change that
+// `ends` its subject (naming a submission, verify-and-next: the page moves on) drops what
+// was pressed behind it on that subject: those presses were about a state the person never
+// saw answered. A change that does not go through drops what was queued behind it and says,
+// in one message at its `line` (else in the header), why, what the page shows now and
+// whether what was typed was kept:
+//   refused as stale (409)     the page is redrawn from `current`, what is there now; the
+//                              redraw keeps the person's draft and returns the message
+//                              (`Changes.kept(now)`), else "changed elsewhere: shown as it is now"
+//   refused as invalid (400)   the server's reason; nothing is redrawn, the draft stays
+//   no connection              "no connection: not saved"
+//   Changes.send(subject, path, body, {done(answer), redraw(current), line, ends, long})
 //   Changes.query(path, body)      a POST that changes nothing (a preview)
 //   Changes.redraw = fn            the page's redraw, for changes that name none (default: reload)
 //   Changes.busy()                 a long change (a model run, Accept) is under way
 const Changes = (() => {
-  const chains = new Map();     // subject -> {tail, n, revs: what this run passed through, now, broken}
+  const chains = new Map();     // subject -> {tail, n, revs: what this run passed through, now, over}
   let long = 0;
   async function call(path, data) {
     const init = data === undefined ? {} : {
@@ -32,45 +67,64 @@ const Changes = (() => {
     } catch (e) { /* network error or a non-JSON reply */ }
     return {status: res ? res.status : 0, ok: !!res && res.ok, body: body || {}};
   }
-  function refused(r, redraw) {
+  // Why a change did not go through, in one message; a stale one redraws first.
+  async function refused(r, redraw) {
     const cur = r.body.current || {};
-    if (r.status === 409) {
-      flash(cur.running ? 'already running' : `changed since it was shown${cur.who ? ' (' + cur.who + ')' : ''}: shown as it is now`);
-      (redraw || api.redraw || (() => location.reload()))(cur);
-    } else flash(r.status ? r.body.error || 'failed' : 'no connection: not saved');
+    if (r.status !== 409) return r.status ? r.body.error || "failed" : "no connection: not saved";
+    const said = await (redraw || api.redraw || (() => location.reload()))(cur);
+    if (cur.running) return "already running";
+    return typeof said === 'string' && said ? said
+      : `changed elsewhere${cur.who ? ' (' + cur.who + ')' : ''}: shown as it is now`;
   }
   function busy(d) {
     long += d;
     if (typeof Actions !== 'undefined') Actions.enable(document);     // a top-level const, not on window
   }
-  function send(subject, path, body, {done, redraw, long: isLong} = {}) {
+  function send(subject, path, body, {done, redraw, line, ends, long: isLong} = {}) {
     body = JSON.parse(JSON.stringify(body));
-    const c = chains.get(subject) || {tail: Promise.resolve(), n: 0, revs: new Set(), broken: false};
+    const c = chains.get(subject) || {tail: Promise.resolve(), n: 0, revs: new Set(), over: false};
     chains.set(subject, c);
     c.n++;
     if (isLong) busy(1);
+    const me = {};
+    const tell = text => (line ? line.say(text, 'bad', me) : flash(text));
     const mine = c.tail.then(async () => {
-      if (c.broken) return null;
+      if (c.over) return null;
       const one = 'rev' in body;
       if (one && c.revs.has(body.rev) && 'now' in c) body.rev = c.now;
       if (one) c.revs.add(body.rev);
+      let slow = 0;
+      if (line) {
+        line.say('', '', me);
+        slow = setTimeout(() => { if (line.mine(me)) line.say('…', '', me); }, 250);
+      }
       const r = await call(path, body);
-      if (!r.ok) { c.broken = true; refused(r, redraw); return null; }
+      clearTimeout(slow);
+      if (!r.ok) { c.over = true; tell(await refused(r, redraw)); return null; }
+      if (line && line.mine(me)) line.say('');
       if (one && 'rev' in r.body) { c.now = r.body.rev; c.revs.add(c.now); }
+      if (ends) c.over = true;
       if (done) await done(r.body);
       return r.body;
-    }).catch(err => { c.broken = true; console.error(err); flash(`failed: ${(err && err.message) || err}`); return null; })
+    }).catch(err => { c.over = true; console.error(err); tell(`failed: ${(err && err.message) || err}`); return null; })
       .finally(() => {
         if (isLong) busy(-1);
-        if (--c.n === 0) { c.revs.clear(); delete c.now; c.broken = false; }
+        if (--c.n === 0) { c.revs.clear(); delete c.now; c.over = false; }
       });
     c.tail = mine;
     return mine;
   }
   const query = (path, body) => call(path, body || {});
-  const api = {send, query, get: path => call(path), redraw: null, busy: () => long > 0};
+  // A stale refusal over a draft: what is there now, and that the draft stays.
+  const kept = now => `changed elsewhere to ${now} · yours kept: save again to overwrite`;
+  const api = {send, query, kept, get: path => call(path), redraw: null, busy: () => long > 0};
   return api;
 })();
+// A value in a message: short.
+const brief = v => {
+  const s = typeof v === 'string' ? v : JSON.stringify(v) ?? '';
+  return s === '' || s === 'null' ? 'none' : s.length > 60 ? s.slice(0, 60) + '…' : s;
+};
 
 async function waitJob(id) {
   for (;;) {

@@ -438,14 +438,24 @@ a time in place) send every change the same way:
   slot: its revision is the last run's id, and a second while one runs is
   refused. The roster's revision is a digest of it. Only the scan upload (a
   file, kept once by its digest) is neither.
-- **Browser.** `Changes.send(subject, path, body, {done, redraw})` in
+- **Browser.** `Changes.send(subject, path, body, {done, redraw, line, ends})` in
   `common.js` is the only way to POST a change (`request` only reads; a test
   scans the scripts). The body is finished when it is sent: built by the
   press, from what is drawn, and copied. *Changes to one subject go one at a
   time in press order, each expecting the revision the one before it left;
-  a refusal is said in one line, redraws from `current`, and drops what was
-  queued behind it.* So a quick A A D on Split is three edits in order, and a
-  second V about a submission already named is a harmless repeat or a 409.
+  a refusal redraws from `current` and drops what was queued behind it.* So a
+  quick A A D on Split is three edits in order. A change that `ends` its
+  subject (naming, verify-and-next: the page moves on) drops the presses queued
+  behind it, which were about a state the person never saw answered: V V names
+  once.
+- **When a change does not go through, the person gets one message, where they
+  were working, that is true:** why, what the page now shows, and whether what
+  they typed was kept. It goes to the caller's `line` (`Line` in `common.js`),
+  else the header; a line belongs to the last change sent there ('…' while slow,
+  then its outcome), so a message goes when the state it was about does. A
+  refusal never throws a draft away: the draft stays, takes the revision now
+  saved, and the line says "changed elsewhere to X · yours kept: save again to
+  overwrite" (`Changes.kept`).
 - **One press, one change.** In `actions.js`, for every control: a key's
   auto-repeat never triggers an action, a held Enter or Space never clicks a
   button or takes a picker's choice again, and the second click of a double
@@ -719,7 +729,10 @@ submission into `pdfs/`; everything downstream is unchanged.
   - **Reading**: `identity.read(runner, sub)` is `Runner.read` of the group's
     placed fields with no value (`again`: also those no person verified;
     `intake --names`, the Scans page's background job). `identity.unread`
-    lists submissions with a placed field with no value. The model memo is
+    lists what "read names" reads, and the page counts as "to read": the
+    submissions nobody has named with such a field. A named submission is never
+    read (its pick stands; the boxes only propose who). With nothing to read no
+    run starts, and the page says why. The model memo is
     keyed by the region and print area, so reading a moved box asks the
     model again. "Are there boxes" is one
     predicate, `identity.boxed` (any submission's, its own included). No

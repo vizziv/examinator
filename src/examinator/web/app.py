@@ -1162,6 +1162,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         stored = store.overrides()
         view['nobody'] = [identity.label(p) for p in view['nobody']]
         view['boxed'] = any(a.fields for a in ats.values())
+        view['unread'] = len(identity.unread(ws, ats=ats))      # what "read names" reads
         view['columns'] = []
         for c, path in paths.items():           # the regions for every submission, for the box editor
             e = overrides.entry(exam, path)
@@ -1181,7 +1182,10 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         if not identity.boxed(ws):
             raise Bad("no name or ID boxes: draw them first")
         again = bool(data.get('again'))       # also read again what no person verified
-        subs = [s.id for s in store.submissions()] if again else identity.unread(ws)
+        subs = identity.unread(ws, again=again)
+        if not subs:                          # nothing to read: no run, the slot unchanged
+            jobs.expect('names-read', seen)
+            return {'job': None, 'rev': seen, 'n': 0}
         job_ = jobs.start_each([(s,) for s in subs], lambda sid: identity.read(runner, sid, again=again),
                                slot='names-read', seen=seen)
         return {'job': job_, 'rev': job_, 'n': len(subs)}

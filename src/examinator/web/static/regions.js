@@ -35,7 +35,7 @@
   const put = d => { if (pm()) pa.draft = d.slice(1); else sel.draft = d; };
   const least = () => (pm() ? 50 : 5);           // the smallest rectangle
   const resize = (d, h, dx, dy) => Rects.resize(d, h, dx, dy, least());
-  const say = (text, bad) => { msg.textContent = text; msg.classList.toggle('notice', !!bad); };
+  const line = Line(msg), say = (text, tone) => line.say(text, tone);
 
   const sheet = page => scan.querySelector(`.sheet[data-index="${page - 1}"]`);
   const place = (box, d) => Rects.place(box, d, pa.draft, pad);
@@ -84,7 +84,7 @@
     inputs();
     draw();
     if (reveal) scan.querySelector('.rbox.sel')?.scrollIntoView({block: 'nearest', behavior: 'smooth'});
-    if (!sheet(sel.draft[0])) say(`page ${sel.draft[0]} not scanned`, true);
+    if (!sheet(sel.draft[0])) say(`page ${sel.draft[0]} not scanned`, 'bad');
   }
 
   // Editing mode `m` on, or off when it is on already.
@@ -125,13 +125,15 @@
   // or (`clear`) drop that scope's; then `done(answer)`, x having its new levels. A refusal
   // keeps the draft and takes the revision saved now, so that saving again overwrites knowingly.
   function saveAt(x, level, clear, done) {
-    say('…');
     const scope = scopes[level];
     return Changes.send(`override:${scope}:${x.path}`, clear ? '/exam/clear' : '/exam/set',
       {path: x.path, scope, value: clear ? null : x.draft, rev: x[level + '_rev'] ?? null, sub}, {
+        line,
         redraw: cur => {
           x[level + '_rev'] = cur.rev ?? null;
-          say(`now ${cur.value ? JSON.stringify(cur.value) : 'none'}; save again to overwrite`, true);
+          x[level] = cur.value ?? null;
+          inputs();
+          return Changes.kept(`${brief(cur.value)} (${WHERE[level]})`);
         },
         done: b => { Object.assign(x, b.levels); done(b); }});
   }

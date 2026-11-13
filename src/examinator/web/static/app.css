@@ -315,6 +315,9 @@ details.others > .fields { margin-top: 4px; }
 form.draft > .bar { margin-top: 5px; }
 form.draft.dirty .bar button[data-action=save] { border-color: var(--warn); color: var(--warn); }
 .notice { color: var(--bad); }
+/* a line where a person works (Line in common.js): how the last change there went */
+.line { color: var(--muted); }
+.line.bad { color: var(--bad); }
 .crops { display: flex; flex-direction: column; gap: 4px; }
 .crop { display: block; overflow: hidden; border: 1px solid var(--line); border-radius: 3px; background: var(--panel-2); min-height: 18px; line-height: 0; }
 .crop img { display: block; max-width: none; }
@@ -348,8 +351,6 @@ label { cursor: pointer; }
 #counts span { margin-right: 14px; }
 #groups td.n, #groups th.n { text-align: right; }
 progress { width: 20em; vertical-align: middle; accent-color: var(--accent); }
-#msg { color: var(--bad); }
-#msg.ok { color: var(--muted); }
 
 /* settings: keyboard */
 #keymap { border-collapse: collapse; flex-basis: 100%; max-width: 34em; }
@@ -393,8 +394,6 @@ form.entry.k-text textarea { white-space: pre-wrap; }
 form.entry.over .elabel { color: var(--link); font-weight: 600; }
 form.entry.dirty button[data-action=entry-save] { border-color: var(--warn); color: var(--warn); }
 .eact { display: inline-flex; gap: 4px; align-items: center; }
-.emsg { color: var(--muted); }
-.emsg.notice { color: var(--bad); }
 .ebase { flex-basis: 100%; color: var(--muted); padding-left: 14.5em; font-size: 12px; white-space: pre-wrap; }
 details.key form.entry .elabel { min-width: 6em; }
 details.key form.entry .ebase { padding-left: 0; }
@@ -416,8 +415,6 @@ form.entry.k-region input[type=text], form.entry.k-pages input[type=text] { flex
 .nl > input { width: 4.9em; border: 0; border-radius: 0; }
 #rg-on[aria-pressed=true], #pa-on[aria-pressed=true], #scan-toggle[aria-pressed=true] { border-color: var(--accent2); color: var(--accent2-text); background: var(--accent2-soft); }
 #rg-save.dirty, #pa-save.dirty, #wb-save.dirty { box-shadow: 0 0 0 2px var(--warn-bg), 0 0 0 3px var(--warn); }
-#rg-msg, #wb-msg { color: var(--muted); }
-#rg-msg.notice, #wb-msg.notice { color: var(--bad); }
 #scan.editing { overflow-x: hidden; }
 .sheet { position: relative; line-height: 0; }
 /* What is edited is orange (--accent2); what is shown for context is primary and inert:
@@ -487,7 +484,7 @@ label.btn.primary { background: var(--accent); border-color: var(--accent); colo
 .flow button.off { opacity: .5; }
 .flow a { font-size: var(--fs-head); font-weight: 600; padding: 3px 6px; }
 #scans #next { margin: 2px 0 0; }
-#scans #msg { color: var(--muted); margin: 0; }
+#scans #msg { margin: 0; }
 #srcbar { position: sticky; top: calc(var(--head) + 2px); z-index: 4; }
 #s-length { width: 4.5em; }
 #s-sum { display: inline-flex; gap: 4px; flex-wrap: wrap; }

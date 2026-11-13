@@ -43,13 +43,21 @@ class Jobs:
         run (`seen`) and that run has finished. Called with the lock held."""
         if slot is None:
             return
+        self._expect(slot, seen)
+        self._slots[slot] = id
+
+    def _expect(self, slot: str, seen: Any) -> None:
         last = self._slots.get(slot)
         running = last is not None and self._jobs.get(last, {}).get('state') == 'running'
         if last != seen or running:
             e = Conflict("already running" if running else "another run started")
             e.current = {'rev': last, 'running': running}
             raise e
-        self._slots[slot] = id
+
+    def expect(self, slot: str, seen: Any) -> None:
+        """Refuse as a run would be refused, without starting one (a run with nothing to do)."""
+        with self._lock:
+            self._expect(slot, seen)
 
     def start(self, fn: Callable[[], Any], slot: str | None = None, seen: Any = None) -> str:
         id = secrets.token_hex(8)

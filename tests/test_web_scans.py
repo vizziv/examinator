@@ -258,6 +258,29 @@ def test_names_read_confirm_cycle_skip(site):
     assert "93681724" in client.get('/s/s0004/parity').text
 
 
+def test_read_names_reads_only_the_unnamed_and_says_what(site):
+    """"read names" reads what could change a proposal: unnamed submissions' boxes with no
+    value (again: or one no person verified). A named submission's pick stands, so it is never
+    read. The count is what is read, the same number the page shows as "to read"; with nothing
+    to read no run starts and the run's revision stays, stale or not."""
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    check_and_accept(client, token, src)
+    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text(), 'rev': None})
+    assert client.get('/scans/names').json()['unread'] == 6
+    wait(client, read_names(client, token).json()['job'])
+    view = client.get('/scans/names').json()
+    assert view['unread'] == 0
+    nothing = read_names(client, token)
+    assert nothing.json() == {'ok': True, 'job': None, 'rev': view['run'], 'n': 0}
+    assert post(client, token, '/scans/names/read', {'rev': 'stale'}).status_code == 409
+    rows = {r['sub']: r for r in view['rows']}
+    post(client, token, '/scans/who', {'sub': 's0001', 'key': rows['s0001']['candidates'][0]['key'], 'rev': None})
+    r = read_names(client, token, again=True)
+    assert r.json()['n'] == 5 and wait(client, r.json()['job'])['state'] == 'done'      # s0001 is named
+    assert identity.unread(ws, again=True) == ['s0002', 's0003', 's0004', 's0005', 's0006']
+
+
 def test_roster_on_the_page_and_who_is_matched(site):
     client, token, ws, paths = site
     src = upload(client, token, paths[0]).json()['id']
