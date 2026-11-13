@@ -21,8 +21,10 @@ def open_model(args, root: Path):
     if getattr(args, 'fake', False):
         from . import synth
         return synth.fake_model(root)
-    from .model.client import Client, probe
-    if probe(args.model_url, args.model) is None:
+    from .model.client import Client, unavailable
+    why = unavailable(args.model_url, args.model)
+    if why is not None:
+        print(f"model unavailable: {why}", file=sys.stderr)
         return None
     return Client(args.model_url, args.model)
 

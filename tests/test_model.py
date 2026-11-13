@@ -1,6 +1,7 @@
 """The loopback model client and the scripted fake. Offline: HTTP goes to a
 local test server on 127.0.0.1. Everything here is synthetic."""
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -8,7 +9,7 @@ import pytest
 from PIL import Image
 
 from examinator.model import client as client_module
-from examinator.model.client import Client, ModelError, probe, strip_fence
+from examinator.model.client import Client, ModelError, probe, strip_fence, unavailable
 from examinator.model.fake import Call, FakeModel
 from examinator.std.prompts import PREAMBLE
 
@@ -16,8 +17,8 @@ SENTINEL_PROMPT = "ZEBRA-PROMPT-SENTINEL-7391"
 SENTINEL_REPLY = "QUOKKA-REPLY-SENTINEL-2846"
 
 
-def reply(content="OK", finish='stop', tokens=3):
-    return 200, {'choices': [{'finish_reason': finish,
+def reply(content="OK", finish='stop', tokens=3, model='test-model'):
+    return 200, {'model': model, 'choices': [{'finish_reason': finish,
                               'message': {'role': 'assistant', 'content': content}}],
                  'usage': {'completion_tokens': tokens}}
 
@@ -161,7 +162,7 @@ def test_retry_recovers_and_waits(serve, monkeypatch):
     slept = []
     monkeypatch.setattr(client_module.time, 'sleep', slept.append)
     server = serve((503, {}), (500, {}), reply("third time"))
-    c = Client(server.url, 'm')
+    c = Client(server.url, 'test-model')
     assert c.complete("p") == "third time"
     assert slept == [10, 20]
     assert len(server.requests) == 3
@@ -238,6 +239,37 @@ def test_proxy_environment_ignored(serve, monkeypatch):
     server = serve(reply("direct"))
     assert make(server).complete("p") == "direct"
     assert len(server.requests) == 1
+
+
+@pytest.mark.parametrize('answered', ['other-model', None, 7, SENTINEL_REPLY + " x"])
+def test_reply_from_another_model_refused(serve, answered):
+    """A server that answers with whatever model it has loaded is refused: the
+    reply must name the model asked for. The error is structural."""
+    server = serve(reply(SENTINEL_REPLY, model=answered))
+    with pytest.raises(ModelError, match="another model") as e:
+        make(server).complete(SENTINEL_PROMPT)
+    assert SENTINEL_PROMPT not in str(e.value) and SENTINEL_REPLY not in str(e.value)
+    assert ("'other-model'" in str(e.value)) == (answered == 'other-model')
+
+
+def test_unavailable_says_why(serve):
+    server = serve((200, {'data': [{'id': 'alpha'}]}))
+    assert unavailable(server.url, 'alpha') is None
+    assert "not listed" in unavailable(server.url, 'beta')
+    url = server.url
+    server.close()
+    assert "model request failed" in unavailable(url, 'alpha')
+    assert "localhost" in unavailable('http://example.com/v1', 'alpha')
+
+
+def test_cli_says_why_the_model_is_unavailable(serve, capsys, tmp_path):
+    import argparse
+    from examinator.cli import open_model
+    server = serve(reply())
+    url = server.url
+    server.close()
+    assert open_model(argparse.Namespace(fake=False, model_url=url, model='m'), tmp_path) is None
+    assert "model unavailable: model request failed" in capsys.readouterr().err
 
 
 # --- strip_fence --------------------------------------------------------------
@@ -342,26 +374,16 @@ LIVE_URL = 'http://localhost:8241/v1'
 
 @pytest.mark.live
 def test_live_tiny_prompt(request):
-    """Opt-in: a tiny synthetic text-only prompt to the real loopback server.
-    Sends no exam material and writes nothing."""
+    """Opt-in: a tiny synthetic text-only prompt to the real loopback server, to
+    the one model named by EXAMINATOR_LIVE_MODEL (never any other the server
+    lists). Sends no exam material and writes nothing."""
     if 'live' not in (request.config.getoption('markexpr') or ''):
         pytest.skip("live test: run with -m live")
-    ids = probe(LIVE_URL)
-    if not ids:
-        pytest.skip("no model server on localhost:8241")
-    print("model ids:", ids)
-    chat = [i for i in ids if not any(w in i.lower() for w in ('embed', 'rerank', 'bge', 'e5-'))]
-    if not chat:
-        pytest.skip("only embedding models listed")
-    failures = []
-    for model in chat:
-        try:
-            out = Client(LIVE_URL, model, max_tokens=64, timeout=120,
-                         retry_delays=()).complete("Reply with the single word OK.")
-        except ModelError as e:
-            failures.append(f"{model}: {e}")
-            continue
-        print("answered:", model, f"({len(out)} chars)")
-        assert out.strip()
-        return
-    pytest.fail("no listed model answered: " + "; ".join(failures))
+    model = os.environ.get('EXAMINATOR_LIVE_MODEL')
+    if not model:
+        pytest.skip("live test: name the model in EXAMINATOR_LIVE_MODEL")
+    why = unavailable(LIVE_URL, model)
+    if why is not None:
+        pytest.skip(f"model unavailable: {why}")
+    out = Client(LIVE_URL, model, max_tokens=64, timeout=120, retry_delays=()).complete("Reply with the single word OK.")
+    assert out.strip()

@@ -2,7 +2,8 @@
 
 Talks to an OpenAI-compatible chat-completions server on this machine and
 nowhere else: the URL must name a loopback host, proxies are ignored and
-redirects are refused. Failures are `ModelError`s whose text is structural
+redirects are refused. A reply must name the model asked for: a server that
+answers with whatever model it has loaded is refused. Failures are `ModelError`s whose text is structural
 only (status, finish reason, lengths, token counts); prompt and response text
 are never logged or put in an error.
 """
@@ -40,6 +41,7 @@ REASONING_OFF = {'reasoning_effort': 'none', 'chat_template_kwargs': {'enable_th
 _FENCE_OPEN = re.compile(r'```[^\s`]*[ \t]*')
 _THINK = re.compile(r'\A\s*<think>.*?</think>\s*', re.DOTALL)
 _PLAIN = re.compile(r'[a-z_]{1,32}')
+_MODEL_ID = re.compile(r'[\w.:/@+-]{1,100}')
 
 
 class ModelError(Exception):
@@ -203,6 +205,11 @@ class Client:
             finish, content = choice.get('finish_reason'), choice['message'].get('content')
         except (KeyError, IndexError, TypeError, AttributeError):
             raise ModelError("model response has no choices") from None
+        # A server may answer an unknown model id with whatever model it has loaded.
+        answered = reply.get('model')
+        if answered != self.model:
+            shown = f"'{answered}'" if isinstance(answered, str) and _MODEL_ID.fullmatch(answered) else 'not named'
+            raise ModelError(f"model response is from another model ({shown}, not '{self.model}')")
         usage = reply.get('usage') if isinstance(reply, dict) else None
         tokens = usage.get('completion_tokens') if isinstance(usage, dict) else None
         if content is not None and not isinstance(content, str):
@@ -234,18 +241,38 @@ class Client:
                 raise ModelError(f"model server returned HTTP {e.code}{note}") from None
 
 
+def _listed(base_url: str, timeout: float) -> list[str] | str:
+    """The model ids the endpoint lists, or why there are none (structural)."""
+    try:
+        reply = _request(check_url(base_url) + '/models', None, timeout)
+    except (ValueError, ModelError) as e:
+        return str(e)
+    except _Status as e:
+        return f"model server returned HTTP {e.code}"
+    try:
+        ids = [entry['id'] for entry in reply['data']]
+    except (KeyError, TypeError):
+        ids = None
+    if ids is None or not all(isinstance(i, str) for i in ids):
+        return "model server did not list its models"
+    return ids
+
+
+def unavailable(base_url: str, model: str, timeout: float = 2.0) -> str | None:
+    """Why the endpoint cannot serve `model` (structural: nothing listening, an
+    error status, not listed), or None when it can. Never raises for network errors."""
+    ids = _listed(base_url, timeout)
+    if isinstance(ids, str):
+        return ids
+    return None if model in ids else "the model asked for is not listed by the server"
+
+
 def probe(base_url: str, model: str | None = None, timeout: float = 2.0) -> list[str] | None:
     """The model ids the endpoint lists, or None when there is no usable
     endpoint: a URL that is not loopback, nothing listening, an error status,
     or a reply that is not a model list. With `model`, None also when that
     model is not listed. Never raises for network errors."""
-    try:
-        reply = _request(check_url(base_url) + '/models', None, timeout)
-        ids = [entry['id'] for entry in reply['data']]
-    except (ValueError, ModelError, _Status, KeyError, TypeError):
-        return None
-    if not all(isinstance(i, str) for i in ids):
-        return None
-    if model is not None and model not in ids:
+    ids = _listed(base_url, timeout)
+    if isinstance(ids, str) or (model is not None and model not in ids):
         return None
     return ids
