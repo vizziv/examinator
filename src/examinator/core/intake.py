@@ -5,15 +5,10 @@
 
 A source's split plan (`core.split`) is the row `(source id, '', 'split')`,
 so edits keep history and carry revisions like everything else a grader edits.
-The plan also says how the sheets are turned, at three levels, each a number
-of quarter turns clockwise added to the one above it (mod 4): the whole source
-(`orient`), a submission (`core.split` entries' `orient`) and one sheet
-(`sheet_orient`, by sheet). A sheet is shown as `sheet_orient(body, i)` adds
-them; nothing else resolves it. A
-split edit that moves a sheet into another submission keeps how it looks (its
-own turn makes up the difference). Pages are written upright, and what intake
-made records each sheet's orientation (`Made.orient`); nothing downstream
-turns a page again.
+The plan is one ordered list of the source's sheets with their marks; a
+sheet's turn (quarter turns clockwise) is its own and nothing else's. Pages are
+written upright, and what intake made records each sheet's turn
+(`Made.orient`); nothing downstream turns a page again.
 
 Accepting a plan writes the PDFs whose sheets (or orientation) changed and
 records, per submission, which sheets of which source it holds (`Made.pages`).
@@ -150,23 +145,9 @@ def plan(ws, id: str) -> Row | None:
     return ws.store.get(id, '', PLAN)
 
 
-SHEET_ORIENT = 'sheet_orient'      # in a plan: {'sheet': quarter turns} added to a sheet's submission's
-
-
-def sheet_orient(body: Mapping, sheet: int) -> int:
-    """The quarter turns of one sheet: the source's, its submission's own and the
-    sheet's own, added (a level without its own adds nothing)."""
-    entry = None
-    for e in body.get('entries') or ():
-        if e['start'] <= sheet:
-            entry = e
-    own = (body.get(SHEET_ORIENT) or {}).get(str(sheet))
-    return (int(body.get('orient') or 0) + int((entry or {}).get('orient') or 0) + int(own or 0)) % 4
-
-
-def page(ws, src: Source, sheet: int, body: Mapping | None = None) -> Image.Image:
-    """One sheet as the plan says it should be turned."""
-    return turn(ws.renderer.page(source_path(ws, src), sheet), sheet_orient(body or {}, sheet))
+def page(ws, src: Source, sheet: int, turns: int = 0) -> Image.Image:
+    """One sheet, turned."""
+    return turn(ws.renderer.page(source_path(ws, src), sheet), turns)
 
 
 def page_of(lm: Landmark, text: str | None) -> int | None:
@@ -195,13 +176,14 @@ class LandmarkReader:
     def __init__(self, ws, src: Source, body: Mapping, model):
         self.ws, self.src, self.body, self.model = ws, src, body, model
         self.layout = ws.source_layout(src.id)
+        self.turns = split.turns(body)
         self.calls = 0                  # model calls made (memoised answers aside)
         self.failures = 0               # calls that failed
         self.failed: set[int] = set()   # sheets left unread by a failed call
 
     def __call__(self, i: int) -> int | None:
         ws, exam = self.ws, self.ws.exam
-        o = sheet_orient(self.body, i)
+        o = self.turns.get(i, 0)
         image = None
         failed = False
         for lm in exam.landmarks:
@@ -209,7 +191,7 @@ class LandmarkReader:
             hit = ws.store.memo(self.src.id, key)
             if hit is None:
                 if image is None:
-                    image = page(ws, self.src, i, self.body)
+                    image = page(ws, self.src, i, o)
                 self.calls += 1
                 complete = functools.partial(self.model.complete, tag=(self.src.id, f'{i}@{o}', 'landmark'))
                 try:
@@ -239,21 +221,17 @@ def reader(ws, src: Source, body: Mapping, model) -> LandmarkReader | None:
     return LandmarkReader(ws, src, body, model)
 
 
-def reguess(ws, id: str, *, model=None, length: int | None = None, fresh: bool = False,
+def reguess(ws, id: str, *, model=None, length: int | None = None,
             author: str | None = None, expect_rev: Any = ANY) -> Row:
-    """Guess the plan again and write it: every unconfirmed start (all of them with
-    `fresh`), checked with the landmarks when there is a model. A person's
-    confirmed starts and dropped sheets stay. `length` changes the expected length.
+    """Guess the plan again and write it: every unconfirmed start, checked with the
+    landmarks when there is a model. A person's confirmed starts, the order and
+    every sheet's own marks stay. `length` changes the expected length.
     `failed` in the plan counts the sheets a failed model call left unread; a
     check where every call failed does not count as checked."""
     src = source(ws, id)
     cur = plan(ws, id)
-    if cur is None or fresh or not cur.body:
+    if cur is None or not cur.body:
         body = split.new_plan(src.pages, length or expected_length(ws), pages=ws.exam.pages, anchor=anchor(ws))
-        if cur is not None:         # a fresh guess keeps how the sheets are turned
-            body['orient'] = (cur.body or {}).get('orient', body['orient'])
-            if (cur.body or {}).get(SHEET_ORIENT):
-                body[SHEET_ORIENT] = cur.body[SHEET_ORIENT]
     else:
         body = dict(cur.body)
     resized = bool(length) and int(length) != body['length']
@@ -265,7 +243,7 @@ def reguess(ws, id: str, *, model=None, length: int | None = None, fresh: bool =
     # and a check reads every sheet again (cheaply: the model's answers are memoised).
     if resized or read is not None:
         body['readings'] = {}
-    body = split.refill(body, src.pages, read)
+    body = split.refill(body, read)
     body.pop('failed', None)
     if read is not None:
         for i in read.failed:       # unread, not read as nothing
@@ -278,20 +256,23 @@ def reguess(ws, id: str, *, model=None, length: int | None = None, fresh: bool =
                           expect_rev=expect_rev)
 
 
-# The plain split edits: (plan, n, k, sheet, delta) -> new plan.
-_SPLIT_EDITS: dict[str, Callable[..., dict]] = {
-    'confirm': lambda body, n, k, sheet, delta: split.confirm(body, k, n),
-    'move': lambda body, n, k, sheet, delta: split.move(body, k, _step(delta), n),
-    'cut': lambda body, n, k, sheet, delta: split.cut(body, sheet, n),
-    'join': lambda body, n, k, sheet, delta: split.join(body, k),
-    'drop': lambda body, n, k, sheet, delta: split.drop(body, sheet, n),
-    'restore': lambda body, n, k, sheet, delta: split.restore(body, sheet, n),
-    'extra': lambda body, n, k, sheet, delta: split.toggle_extra(body, sheet, n),
-    'missing': lambda body, n, k, sheet, delta: split.add_missing(body, sheet, n),
-    'unmissing': lambda body, n, k, sheet, delta: split.remove_missing(body, sheet, n),
-    'shift': lambda body, n, k, sheet, delta: split.shift(body, sheet, _step(delta), n),
+# A person's edits: (plan, k, sheet, delta) -> new plan.
+_EDITS: dict[str, Callable[..., dict]] = {
+    'confirm': lambda body, k, sheet, delta: split.confirm(body, k),
+    'move': lambda body, k, sheet, delta: split.move(body, k, _step(delta)),
+    'cut': lambda body, k, sheet, delta: split.cut(body, sheet),
+    'join': lambda body, k, sheet, delta: split.join(body, k),
+    'drop': lambda body, k, sheet, delta: split.drop(body, sheet),
+    'restore': lambda body, k, sheet, delta: split.restore(body, sheet),
+    'extra': lambda body, k, sheet, delta: split.toggle_extra(body, sheet),
+    'missing': lambda body, k, sheet, delta: split.add_missing(body, sheet),
+    'unmissing': lambda body, k, sheet, delta: split.remove_missing(body, sheet),
+    'shift': lambda body, k, sheet, delta: split.shift(body, sheet, _step(delta)),
+    'turn_page': lambda body, k, sheet, delta: split.turn(body, [sheet]),
+    'turn': lambda body, k, sheet, delta: split.turn(body, split.span(body, k)),
+    'turn_source': lambda body, k, sheet, delta: split.turn(body, split.turns(body)),
 }
-EDITS = (*_SPLIT_EDITS, 'turn_source', 'turn', 'upright', 'turn_page')
+EDITS = tuple(_EDITS)
 
 
 def _step(delta: Any) -> int:
@@ -300,100 +281,23 @@ def _step(delta: Any) -> int:
     return delta
 
 
-def _clear_readings(body: dict, sheets) -> None:
-    sheets = {str(i) for i in sheets}
-    body['readings'] = {k: v for k, v in (body.get('readings') or {}).items() if k not in sheets}
-
-
-def _turn_source(body: Mapping, n: int) -> dict:
-    """The whole source a quarter turn more; every reading is stale."""
-    body = copy.deepcopy(dict(body))
-    body['orient'] = (int(body.get('orient') or 0) + 1) % 4
-    _clear_readings(body, range(n))
-    return body
-
-
-def _turn_entry(body: Mapping, n: int, k: Any, upright: bool) -> dict:
-    """Submission `k` a quarter turn more, or back to the source's orientation (`upright`)."""
-    body = copy.deepcopy(dict(body))
-    e = body['entries'][split.entry_index(body, k)]
-    new = 0 if upright else (int(e.get('orient') or 0) + 1) % 4
-    if new:
-        e['orient'] = new
-    else:
-        e.pop('orient', None)
-    _clear_readings(body, split.pages(body, n)[k])
-    return body
-
-
-def _turn_sheet(body: Mapping, n: int, sheet: Any) -> dict:
-    """One sheet a quarter turn more than its submission."""
-    if isinstance(sheet, bool) or not isinstance(sheet, int) or not 0 <= sheet < n:
-        raise ValueError("no such page")
-    body = copy.deepcopy(dict(body))
-    own = body.setdefault(SHEET_ORIENT, {})
-    new = (int(own.get(str(sheet)) or 0) + 1) % 4
-    if new:
-        own[str(sheet)] = new
-    else:
-        own.pop(str(sheet), None)
-    if not own:
-        body.pop(SHEET_ORIENT)
-    _clear_readings(body, [sheet])
-    return body
-
-
-def _keep_appearance(old: Mapping, new: Mapping, n: int) -> dict:
-    """`new` (a split edit of `old`) with every sheet turned as it was: a sheet that
-    lands in another submission would take that submission's turn, so its own
-    turn makes up the difference (and is dropped where none is needed)."""
-    new = dict(new)
-    own = dict(new.get(SHEET_ORIENT) or {})
-    bare = {**new, SHEET_ORIENT: {}}
-    for i in range(n):
-        was = sheet_orient(old, i)
-        if sheet_orient(new, i) == was:
-            continue
-        fix = (was - sheet_orient(bare, i)) % 4
-        if fix:
-            own[str(i)] = fix
-        else:
-            own.pop(str(i), None)
-    if own:
-        new[SHEET_ORIENT] = own
-    else:
-        new.pop(SHEET_ORIENT, None)
-    return new
-
-
 def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None, k: int | None = None,
          sheet: int | None = None, delta: int | None = None) -> Row:
-    """One person's edit of a plan (see `core.split`), against the revision they saw.
-    The split edits: `confirm`, `move` (submission `k`'s start, `delta`), `cut`, `join`,
-    `drop`, `restore`, and of one `sheet` in its submission: `extra` (toggle),
-    `missing` (a missing page before it), `unmissing`, `shift` (`delta` places).
-    A split edit leaves every sheet looking as it did, even
-    one that changes submission (`_keep_appearance`). Orientation, each a quarter
-    turn clockwise more: `turn_source` (the whole source), `turn` (submission `k`;
-    `upright` drops its own), `turn_page` (one `sheet`)."""
-    src = source(ws, id)
+    """One person's edit of a plan (see `core.split`), against the revision they saw:
+    `confirm`, `move` (submission `k`'s first page, `delta`), `cut`, `join`, `drop`,
+    `restore`, and of one `sheet`: `extra` (toggle), `missing` (a missing page
+    before it), `unmissing`, `shift` (`delta` places in the list). Turning, a
+    quarter turn clockwise more for each sheet: `turn_page` (one `sheet`), `turn`
+    (every sheet of submission `k`), `turn_source` (every sheet)."""
+    source(ws, id)
     cur = plan(ws, id)
     if cur is None:
         raise KeyError(id)
     if expect_rev is not ANY and cur.rev != expect_rev:
         raise Conflict("the plan changed")
-    n = src.pages
-    if op in _SPLIT_EDITS:
-        old = {**cur.body, 'pages': ws.exam.pages}
-        body = _keep_appearance(old, _SPLIT_EDITS[op](old, n, k, sheet, delta), n)
-    elif op == 'turn_source':
-        body = _turn_source(cur.body, n)
-    elif op in ('turn', 'upright'):
-        body = _turn_entry(cur.body, n, k, op == 'upright')
-    elif op == 'turn_page':
-        body = _turn_sheet(cur.body, n, sheet)
-    else:
+    if op not in _EDITS:
         raise ValueError("unknown edit")
+    body = _EDITS[op]({**cur.body, 'pages': ws.exam.pages}, k, sheet, delta)
     body.pop(UNDONE, None)
     return ws.store.write(id, '', PLAN, body, origin='manual', author=author, expect_rev=cur.rev)
 
@@ -424,22 +328,21 @@ def undo(ws, id: str, *, expect_rev: Any) -> Row:
 
 # --- accepting: writing submissions ---------------------------------------------------
 
-def _sheets_of(body: Mapping, n: int) -> list[tuple[list[int | None], list[int]]]:
-    """Per entry, its PDF's pages (`split.written`: None, a missing page) and their turns."""
-    out = []
-    for lay in split.layouts(body, n):
+def _sheets_of(body: Mapping) -> list[tuple[list[int | None], list[int]]]:
+    """Per submission, its PDF's pages (`split.written`: None, a missing page) and their turns."""
+    out, turns = [], split.turns(body)
+    for lay in split.layouts(body):
         pages = split.written(lay)
-        out.append((pages, [0 if i is None else sheet_orient(body, i) for i in pages]))
+        out.append((pages, [0 if i is None else turns[i] for i in pages]))
     return out
 
 
 def state(ws, id: str) -> list[str]:
     """Per entry: 'new' (not written yet), 'made' (written as planned), 'changed'."""
-    src = source(ws, id)
     art = plan(ws, id)
     made = ws.store.made()
     out = []
-    for e, (sheets, orients) in zip(art.body['entries'], _sheets_of(art.body, src.pages)):
+    for e, (sheets, orients) in zip(split.entries(art.body), _sheets_of(art.body)):
         m = made.get(e.get('id') or '')
         if m is None or m.source != id:
             out.append('new')
@@ -452,8 +355,7 @@ def removed(ws, id: str) -> list[str]:
     """Submissions written from this source that the plan no longer has: no
     entry carries their id, or the entry that does has no pages left."""
     art = plan(ws, id)
-    src = source(ws, id)
-    ids = {e.get('id') for e, sheets in zip(art.body['entries'], split.pages(art.body, src.pages)) if sheets}
+    ids = {e.get('id') for e, sheets in zip(split.entries(art.body), split.runs(art.body)) if sheets}
     return sorted(s for s, m in ws.store.made().items() if m.source == id and s not in ids)
 
 
@@ -487,11 +389,11 @@ def accept(ws, id: str, *, force: bool = False,
     made = ws.store.made()
     states = state(ws, id)
     gone = removed(ws, id)
-    entries = body['entries']
-    sheets = _sheets_of(body, src.pages)
+    entries = split.entries(body)
+    sheets = _sheets_of(body)
     def work(sid):
         return ws.store.has_work(sid, besides=identity.IDENTITY + '/')
-    kept = split.pages(body, src.pages)
+    kept = split.runs(body)
     busy = [e['id'] for e, st, mine in zip(entries, states, kept)
             if st == 'changed' and mine and work(e['id'])]
     busy += [s for s in gone if work(s)]

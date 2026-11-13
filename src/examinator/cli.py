@@ -57,8 +57,8 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
     targets = added or ws.store.sources()
     for src in targets:
         art = intake.reguess(ws, src.id, model=model, length=args.length)
-        doubts = split.doubts(art.body, src.pages)
-        parts = split.pages(art.body, src.pages)
+        doubts = split.doubts(art.body)
+        parts = split.runs(art.body)
         flagged = [(k, p, d) for k, (p, d) in enumerate(zip(parts, doubts)) if d]
         print(f"{src.id} {src.name}: {len(parts)} submissions of {art.body['length']} pages"
               f"{', checked' if art.body['checked'] else ''}; {len(flagged)} to look at")

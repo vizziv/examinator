@@ -469,22 +469,33 @@ submission into `pdfs/`; everything downstream is unchanged.
   start of its SHA-256 (so adding it twice is noticed); a `source` table lists
   them. CLI `examinator intake`, or a streamed upload on the Scans page.
 - **Split plan.** One row per source, `(source id, '', 'split')`, so it has
-  revisions and history like any grader edit. It is a list of *starts* (the
-  sheet where each submission begins; its pages run to the next start, less
-  dropped sheets), each marked confirmed or a guess, plus dropped sheets,
-  landmark readings, the expected length and orientation (`core/split.py`).
+  revisions and history like any grader edit (`core/split.py`). It is the
+  pile sorted: one ordered list of the source's sheets (`sheets`), each a
+  record with its marks, plus landmark readings and the expected length. A
+  submission is the run from one start mark up to the next, less dropped
+  sheets; the first record always starts one. Every edit is an edit of that
+  list, and undo steps back through its history.
+
+  | mark | on a sheet |
+  | --- | --- |
+  | `start` | it begins a submission; carries what the submission has before it is accepted: `confirmed` (a person said so), `id` (the submission it was written as), `proposed` marks |
+  | `extra` | kept with its submission, not a printed page |
+  | `dropped` | in no submission (blank, stray, a leading junk sheet) |
+  | `missing` | how many printed pages not scanned come before it |
+  | `turn` | its own quarter turns clockwise, 1-3 |
+
 - **A submission maps the exam's printed pages to sheets** (`split.lay_out`):
-  its sheets in order (`order`, a permutation, only when a person moved a
-  sheet within its submission), less those marked `extra` (kept, not a printed
-  page), with a page *missing* wherever `missing` names the sheet it comes
-  before, are printed pages 1, 2, .... Sheets beyond the exam's pages are extra
+  its sheets in list order, less extra ones, with the missing pages, are
+  printed pages 1, 2, .... Sheets beyond the exam's pages are extra
   by default; pages after the last sheet are missing by default (still
   flagged "too few pages"). `length` (sheets per submission, default the
   exam's pages) is only the splitter's grouping size: more means trailing
   extras are expected. A leading junk sheet is simply dropped.
   Boundary logic is pure: `split.propose(n, length, read)` takes a reader
   `sheet -> position | None` and is tested with plain dicts.
-  `intake.reguess` guesses a source's plan again and writes it.
+  `intake.reguess` guesses a source's plan again and writes it: only start
+  marks move (and stray sheets found before the first submission are
+  dropped); confirmed starts, the order and every sheet's own marks stay.
 - **Landmarks** (`Exam(landmarks=[Landmark(name, region, ask, reads)])`): like
   a printed field, a region and a question for the model about printed text, reading
   normalised; `reads` maps a reading to a printed page (a title on page 1),
@@ -502,23 +513,27 @@ submission into `pdfs/`; everything downstream is unchanged.
 - **Proposed marks.** For an unconfirmed submission one sheet short (or long)
   whose sheets carry none of a person's marks, the page missing (or the sheet
   extra) is searched by halves (log N readings, memoised) and proposed
-  (entries' `proposed`) when the readings either side agree; at the end it is
+  (a start's `proposed`) when the readings either side agree; at the end it is
   the default already. Confirming the submission, a person's mark on it, or
   accepting makes proposals a person's (`split.settle`).
 - **People decide.** The Scans page steps through boundaries (V confirm, A/D
-  move a page, W/S back/forward). On the page shown: E extra or counted, G a
-  missing page before it, Shift+G not missing, Shift+A/Shift+D move it within
-  its submission; the overview labels each sheet with its printed page
-  ("p3", "extra") and shows "missing p3" placeholders. A confirmed start is never moved by a guess;
-  guesses after it are recomputed from it (every N kept sheets, adjusted by
-  stored readings). A length mismatch after confirmation is a flag, not a block.
+  move a first page, W/S back/forward). The first submission always starts the
+  list: its first page moves later by dropping it, earlier by putting back the
+  dropped sheet before it. On the page shown: E extra or counted, G a missing
+  page before it, Shift+G not missing, Shift+A/Shift+D move it one place in
+  the list. Start marks stay where they are, so within a submission it swaps
+  with its neighbour (a first page swapped later leaves the boundary where it
+  was); at a boundary it crosses into the neighbouring submission instead, and
+  a move that would empty a submission is refused. The overview labels each
+  sheet with its printed page ("p3", "extra") and shows "missing p3"
+  placeholders. A confirmed start is never moved by a guess; guesses after it
+  are recomputed from it (every N kept sheets, adjusted by stored readings). A length mismatch after confirmation is a flag, not a block.
 - **Orientation**: quarter turns clockwise, 0-3 (`pdf/orient.py`: `turn`
-  transposes exactly). The plan holds three levels, each added to the one
-  above (mod 4): the source's (`orient`), a submission's own (entries'
-  `orient`) and a sheet's own (`sheet_orient`); `intake.sheet_orient` is the
-  one place that adds them. Every turn is a quarter turn clockwise per press
-  (four return to the start): R the sheet shown, Shift+R its submission, the
-  whole scan by button only. The page shows sheets turned in the web layer
+  transposes exactly), a sheet's own `turn` and nothing else. Every press is a
+  quarter turn clockwise more (four return to the start): R the sheet shown;
+  Shift+R and the whole-scan button are shortcuts that turn each sheet of the
+  submission's run, or of the source. A sheet later moved into a turned
+  submission keeps its own turn. The page shows sheets turned in the web layer
   (`/sheet/...?o=`), landmark crops are cut from the turned sheet, and
   accepting writes pages upright (so name-box crops and question pages are).
 - **Accepting** writes changed submissions (pages or orientation) with
@@ -529,7 +544,7 @@ submission into `pdfs/`; everything downstream is unchanged.
   ("missing page" in small grey letters) where one is missing, then its extra
   sheets (`split.written`). A `made` table records each submission's source
   sheets in that order (None for a placeholder) and their orientation. Ids are opaque (`s0001`), allocated once, never reused.
-  Accepting marks every start confirmed. An entry left with no pages removes
+  Accepting marks every start confirmed. A submission left with no pages removes
   its submission. A submission that would change or disappear while it has
   grading work (a value, a result or a decision; identity fields' values are
   not grading work) is refused with the

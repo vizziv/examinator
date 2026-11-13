@@ -110,7 +110,7 @@ def test_check_turn_and_accept(site):
     plan, r = check_and_accept(client, token, src)
     assert plan['checked'] and plan['failed'] == 0 and [e['start'] for e in plan['entries']] == [0, 4, 7, 12, 16, 20]
     assert plan['readings']['4'] == 'p.1'
-    assert plan['sheet_o'][17] == 2 and plan['entries'][4]['own']
+    assert plan['turn'][17] == 2 and plan['order'] == list(range(24))
     assert r.status_code == 200 and len(r.json()['report']['new']) == 6
     assert len(list(ws.pdfs.glob('*.pdf'))) == 6
     assert client.get('/').status_code == 200 and 's0005' in client.get('/').text

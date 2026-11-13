@@ -48,7 +48,8 @@ def images(pdf):
 
 
 def starts(art):
-    return [e['start'] for e in art.body['entries']]
+    """The sheet at each start mark."""
+    return [art.body['sheets'][p]['i'] for p in split.starts(art.body)]
 
 
 # --- sources ---
@@ -79,54 +80,49 @@ def test_check_with_landmarks_flags_the_awkward_cases(stacked):
     art = intake.reguess(ws, one.id, model=model)
     assert starts(art) == [0, 4, 7, 12, 16, 20]
     # student 1 lost page 3, student 2 has a stray sheet after page 2: both found and proposed
-    assert split.doubts(art.body, one.pages) == [[], ['missing'], ['extra'], [], ['start'], []]
-    assert art.body['entries'][1]['proposed'] == {'missing': [6]} and art.body['entries'][2]['proposed'] == {'extra': [9]}
+    assert split.doubts(art.body) == [[], ['missing'], ['extra'], [], ['start'], []]
+    assert [e.get('proposed') for e in split.entries(art.body)][1:3] == [{'missing': [6]}, {'extra': [9]}]
     calls = len(model.calls)
     intake.reguess(ws, one.id, model=model)
     assert len(model.calls) == calls                 # memoised: a re-run reads nothing again
 
 
-def test_orientation_source_and_submission(stacked):
+def test_turning_the_scan_and_a_submission(stacked):
     ws, paths, model = stacked
     two, _ = intake.add_source(ws, paths[1])
     art = intake.reguess(ws, two.id, model=model)
-    assert all('start' in d for d in split.doubts(art.body, two.pages))   # upside down: nothing reads
+    assert all('start' in d for d in split.doubts(art.body))   # upside down: nothing reads
     for _ in range(2):
         art = intake.edit(ws, two.id, 'turn_source', expect_rev=art.rev, author='t')
-    assert art.body['orient'] == 2 and art.body['readings'] == {}
+    assert set(split.turns(art.body).values()) == {2} and art.body['readings'] == {}
     art = intake.reguess(ws, two.id, model=model)
     assert starts(art) == [0, 4, 8, 12]
-    assert split.doubts(art.body, two.pages) == [[], [], [], ['short']]
+    assert split.doubts(art.body) == [[], [], [], ['short']]
 
     one, _ = intake.add_source(ws, paths[0])
     art = intake.reguess(ws, one.id, model=model)
     art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')   # one exam upside down
-    assert intake.sheet_orient(art.body, 17) == 1
+    assert split.turns(art.body)[17] == 1
     art = intake.edit(ws, one.id, 'turn', k=4, expect_rev=art.rev, author='t')   # a quarter turn a press
-    assert intake.sheet_orient(art.body, 17) == 2 and intake.sheet_orient(art.body, 21) == 0
+    assert split.turns(art.body)[17] == 2 and split.turns(art.body)[21] == 0
     art = intake.reguess(ws, one.id, model=model)
-    assert split.doubts(art.body, one.pages)[4] == []
-    # the submission's own turn adds to the source's
-    art = intake.edit(ws, one.id, 'turn_source', expect_rev=art.rev, author='t')
-    assert intake.sheet_orient(art.body, 17) == 3 and intake.sheet_orient(art.body, 21) == 1
-    art = intake.edit(ws, one.id, 'upright', k=4, expect_rev=art.rev, author='t')
-    assert intake.sheet_orient(art.body, 17) == 1
+    assert split.doubts(art.body)[4] == []
 
 
-def test_orientation_resolves_source_then_submission_then_sheet(stacked):
+def test_turns_are_shortcuts_for_each_sheets_own(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     step = lambda op, **kw: intake.edit(ws, one.id, op, expect_rev=intake.plan(ws, one.id).rev, author='t', **kw)
-    at = lambda i: intake.sheet_orient(intake.plan(ws, one.id).body, i)
+    at = lambda i: split.turns(intake.plan(ws, one.id).body)[i]
     step('turn_page', sheet=9)                      # one sheet: only it
     assert at(9) == 1 and at(8) == at(10) == 0
-    step('turn', k=2)                               # its submission (sheets 8..11): adds to the sheet's
+    step('turn', k=2)                               # its submission (sheets 8..11): each a quarter turn more
     assert at(9) == 2 and at(8) == at(11) == 1 and at(12) == 0
-    step('turn_source')                             # the whole scan: adds to everything
+    step('turn_source')                             # the whole scan: every sheet
     assert at(9) == 3 and at(8) == 2 and at(0) == at(12) == 1
-    for _ in range(3):                              # four presses on a sheet come back to the start
-        step('turn_page', sheet=9)
-    assert at(9) == 2 and 'sheet_orient' not in intake.plan(ws, one.id).body
+    # a sheet moved into the turned submission keeps its own turn
+    step('move', k=3, delta=1)                      # sheet 12 joins submission 2
+    assert at(12) == 1 and at(11) == 2
     # a turned sheet's reading is stale; others are kept
     art = intake.plan(ws, one.id)
     ws.store.write(one.id, '', intake.PLAN, {**art.body, 'readings': {'3': 2, '5': 1}}, origin='auto',
@@ -138,33 +134,10 @@ def test_orientation_resolves_source_then_submission_then_sheet(stacked):
     # undo takes back one turn at a time
     intake.undo(ws, one.id, expect_rev=intake.plan(ws, one.id).rev)
     assert at(3) == at(0)
-    # a fresh guess keeps the sheets' own turns
+    # guessing again keeps every sheet's turn
     step('turn_page', sheet=5)
-    intake.reguess(ws, one.id, fresh=True)
+    intake.reguess(ws, one.id)
     assert at(5) == (at(0) + 1) % 4
-
-
-def test_a_sheet_that_changes_submission_keeps_how_it_looks(stacked):
-    ws, paths, _ = stacked
-    one, _ = intake.add_source(ws, paths[0])
-    step = lambda op, **kw: intake.edit(ws, one.id, op, expect_rev=intake.plan(ws, one.id).rev, author='t', **kw)
-    body = lambda: intake.plan(ws, one.id).body
-    looks = lambda: [intake.sheet_orient(body(), i) for i in range(one.pages)]
-    step('turn', k=2)                               # submission 2: sheets 8..11, upside down
-    step('turn', k=2)
-    step('turn_page', sheet=13)                     # and one sheet of submission 3
-    before = looks()
-    assert before[8] == before[11] == 2 and before[12] == 0 and before[13] == 1
-    step('move', k=3, delta=-1)                     # sheet 11 now starts submission 3
-    assert starts(intake.plan(ws, one.id))[3] == 11 and looks() == before
-    step('move', k=3, delta=1)                      # and back: no sheet needs a turn of its own
-    assert looks() == before and body()['sheet_orient'] == {'13': 1}
-    step('cut', sheet=10)                           # a new submission inside the turned one
-    assert looks() == before
-    step('join', k=1)                               # submissions 1 and 2 become one
-    assert looks() == before
-    step('turn', k=1)                               # turning a submission still turns all of it
-    assert all(intake.sheet_orient(body(), i) == (before[i] + 1) % 4 for i in range(4, 10))
 
 
 def test_a_turned_page_is_written_upright(stacked):
@@ -234,7 +207,7 @@ def test_a_longer_plan_means_trailing_extra_sheets(stacked):
     one, _ = intake.add_source(ws, paths[0])
     art = intake.reguess(ws, one.id, length=ws.exam.pages + 1)
     assert art.body['anchor'] == 0 and starts(art) == [0, 5, 10, 15, 20]
-    assert split.doubts(art.body, one.pages)[0] == []          # one extra sheet each is expected
+    assert split.doubts(art.body)[0] == []          # one extra sheet each is expected
     intake.accept(ws, one.id)
     assert ws.store.made()['s0001'].pages == (0, 1, 2, 3, 4) and ws.extras('s0001') == 1
 
@@ -244,7 +217,7 @@ def test_the_written_pdf_is_the_printed_pages_then_the_extras(stacked):
     one, _ = intake.add_source(ws, paths[0])
     intake.reguess(ws, one.id, model=model)
     report = intake.accept(ws, one.id)           # the proposals are taken as they stand
-    assert 'proposed' not in str(intake.plan(ws, one.id).body['entries'])
+    assert 'proposed' not in str(intake.plan(ws, one.id).body['sheets'])
     short, stray = report['new'][1], report['new'][2]
     # student 1 lost page 3: a placeholder there, the rest in place
     assert ws.store.made()[short].pages == (4, 5, None, 6)
@@ -262,21 +235,21 @@ def test_marks_and_moves_are_edits_with_undo(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     step = lambda op, **kw: intake.edit(ws, one.id, op, expect_rev=intake.plan(ws, one.id).rev, author='t', **kw)
-    lay = lambda k: split.layouts(intake.plan(ws, one.id).body, one.pages)[k]
+    lay = lambda k: split.layouts(intake.plan(ws, one.id).body)[k]
     step('extra', sheet=5)
     assert lay(1) == [(4, 1), (5, None), (6, 2), (7, 3), (None, 4)]
     step('missing', sheet=6)
     assert lay(1) == [(4, 1), (5, None), (None, 2), (6, 3), (7, 4)]
     step('shift', sheet=7, delta=-1)
-    assert split.pages(intake.plan(ws, one.id).body, one.pages)[1] == [4, 5, 7, 6]
+    assert split.runs(intake.plan(ws, one.id).body)[1] == [4, 5, 7, 6]
     with pytest.raises(ValueError):
         step('shift', sheet=7, delta=2)
     step('unmissing', sheet=6)
     for want in ([4, 5, 7, 6], [4, 5, 6, 7]):          # undo: one step back at a time
         intake.undo(ws, one.id, expect_rev=intake.plan(ws, one.id).rev)
-        assert split.pages(intake.plan(ws, one.id).body, one.pages)[1] == want
+        assert split.runs(intake.plan(ws, one.id).body)[1] == want
     intake.undo(ws, one.id, expect_rev=intake.plan(ws, one.id).rev)
-    assert intake.plan(ws, one.id).body['extra'] == [5] and not intake.plan(ws, one.id).body.get('missing')
+    assert split.marks(intake.plan(ws, one.id).body) == ({5}, [])
 
 
 def test_baked_pages_are_upright_plain_scans(tmp_path):
@@ -411,7 +384,7 @@ def test_failed_landmark_calls_are_counted_not_read_as_nothing(stacked):
     art = intake.reguess(ws, one.id, model=FakeModel(lambda call: None))     # every call fails
     assert art.body['failed'] > 0 and not art.body['checked']
     assert art.body['readings'] == {}                       # failed sheets are unread, not read as None
-    assert split.doubts(art.body, one.pages) == [[]] * 6
+    assert split.doubts(art.body) == [[]] * 6
     assert intake.reguess(ws, one.id).body.get('failed') is None
 
 
@@ -422,7 +395,7 @@ def test_a_submission_whose_pages_are_all_dropped_is_removed(stacked):
     art = intake.plan(ws, one.id)
     for sheet in range(20, 24):                             # every sheet of the last submission
         art = intake.edit(ws, one.id, 'drop', sheet=sheet, expect_rev=art.rev, author='t')
-    assert art.body['entries'][-1]['id'] == 's0006' and intake.removed(ws, one.id) == ['s0006']
+    assert split.entries(art.body)[-1]['id'] == 's0006' and intake.removed(ws, one.id) == ['s0006']
     ws.store.write('s0006', 'parity/B', 'value', {'text': 'odd'}, origin='manual', author='t')
     with pytest.raises(intake.Busy) as e:
         intake.accept(ws, one.id)
@@ -431,7 +404,7 @@ def test_a_submission_whose_pages_are_all_dropped_is_removed(stacked):
     report = intake.accept(ws, one.id)
     assert report['removed'] == ['s0006'] and not (ws.pdfs / 's0006.pdf').exists()
     assert 's0006' not in ws.store.made() and intake.removed(ws, one.id) == []
-    assert intake.plan(ws, one.id).body['entries'][-1]['id'] is None
+    assert split.entries(intake.plan(ws, one.id).body)[-1].get('id') is None
     assert intake.state(ws, one.id)[:5] == ['made'] * 5
 
 
@@ -470,7 +443,7 @@ def test_a_page_selection_does_not_hold_a_submission(stacked):
 def test_undo_steps_back_one_edit_at_a_time(stacked):
     ws, paths, _ = stacked
     src, _ = intake.add_source(ws, paths[0])
-    starts = lambda: [e['start'] for e in intake.plan(ws, src.id).body['entries']]
+    starts = lambda: split.starts(intake.plan(ws, src.id).body)
     step = lambda op, **kw: intake.edit(ws, src.id, op, expect_rev=intake.plan(ws, src.id).rev, author='t', **kw)
     undo = lambda: intake.undo(ws, src.id, expect_rev=intake.plan(ws, src.id).rev)
     first = starts()

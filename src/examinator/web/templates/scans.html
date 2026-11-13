@@ -59,7 +59,6 @@ each submission becomes its own PDF when you accept the split.
 <select id="src" aria-label="scan">{% for s in sources %}<option value="{{ s.id }}">{{ s.name }} · {{ s.pages }} pages</option>{% endfor %}</select>
 <span id="s-info" class="dim"></span>
 <span class="sep"></span>
-<span id="s-orient" class="tag"></span>
 <button type="button" data-action="split-turn-source" title="every page of this scan, a quarter turn clockwise">turn scan ↻</button>
 <span class="sep"></span>
 <label>pages per submission <input type="number" id="s-length" min="1" max="999"></label>
@@ -93,8 +92,8 @@ each submission becomes its own PDF when you accept the split.
 <button type="button" data-action="split-extra" title="this page is extra: kept with the submission, not a printed page (again: counted)">extra</button>
 <button type="button" data-action="split-missing" title="a printed page that was not scanned comes before this one">missing before</button>
 <button type="button" data-action="split-unmissing" title="remove the missing page marked before this one">not missing</button>
-<button type="button" data-action="split-shift-earlier" title="move this page one place earlier in its submission">◀ move</button>
-<button type="button" data-action="split-shift-later" title="move this page one place later in its submission">move ▶</button>
+<button type="button" data-action="split-shift-earlier" title="move this page one place earlier (past a first page: into the submission before)">◀ move</button>
+<button type="button" data-action="split-shift-later" title="move this page one place later (past a last page: into the submission after)">move ▶</button>
 <span class="sep"></span>
 <button type="button" data-action="split-turn-page" title="this page, a quarter turn clockwise">turn page ↻</button>
 <button type="button" data-action="split-turn" title="every page of this submission, a quarter turn clockwise">turn submission ↻</button>
@@ -104,7 +103,7 @@ each submission becomes its own PDF when you accept the split.
 <section id="over" class="panel">
 <div class="bar"><h2>Submissions</h2> <span class="dim">to look at first</span></div>
 <div id="rows"></div>
-<div id="loose" hidden><h2>In no submission</h2><div class="sheets" id="loose-sheets"></div></div>
+<div id="loose" hidden><h2>Dropped</h2><div class="sheets" id="loose-sheets"></div></div>
 </section>
 </div>
 {% endif %}

@@ -37,10 +37,10 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
   extra on a question page (synthetic Exam 3 stacks). Never in a browser yet: the restore button, the
   Exam data page's "read again" message, Stop on a run slow enough to stop.
 
-- **Split marks, what is left:** a sheet moved within its submission keeps
-  its place in `order` if a boundary later moves across it (it then sorts
-  into the neighbouring submission by that order, which may look odd);
-  proposed marks cover a submission one sheet short or long only, from page
+- **Split marks, what is left:** a sheet moves one place per press (no drag
+  to a far place in the pile); a guess that drops stray sheets before the
+  first submission is not told apart from a person's drop, so guessing again
+  keeps it; proposed marks cover a submission one sheet short or long only, from page
   readings; a placeholder page is shown on the question page as is (its crop
   is withheld, nothing is read from it).
 

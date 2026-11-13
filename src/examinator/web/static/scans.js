@@ -7,7 +7,8 @@
 // a page earlier (A) or later (D). Clicking any small page shows it large the same way;
 // on a page that is not a first page, A and D look around and Shift+V starts a submission
 // there. The page shown can be marked extra (kept, not a printed page) or have a missing
-// page marked before it, and moved within its submission. The overview below shows every
+// page marked before it, and moved one place in the pile (the plan is one ordered list of
+// the scan's pages; neighbours are neighbours in it). The overview below shows every
 // submission, doubtful ones first, each page with the printed page it is.
 (() => {
   const main = $('scans');
@@ -24,7 +25,8 @@
 
   const msg = $('msg');
   const say = text => { msg.textContent = text || ''; msg.hidden = !text; };
-  const sheet = (i, w) => `${ROOT}/sheet/${encodeURIComponent(plan.id)}/${i}.jpg?o=${plan.sheet_o[i]}&w=${w}`;
+  const sheet = (i, w) => `${ROOT}/sheet/${encodeURIComponent(plan.id)}/${i}.jpg?o=${plan.turn[i]}&w=${w}`;
+  const near = (i, d) => plan.order[plan.order.indexOf(i) + d] ?? -1;     // a neighbour in the pile, else -1
   const reading = i => plan.readings[i] || '';
   const done = () => peek === null && k >= plan.entries.length;
   const firstOf = e => (e.pages.length ? e.pages[0] : e.start);
@@ -203,10 +205,10 @@
     const r = await edit('confirm', {k});
     if (r && r.ok) { k = nextOpen(plan.entries, k, open); render(); }
   }});
-  S.register('split-earlier', {available: () => !done() && (peek === null || peek > 0),
-    run: () => (peek === null ? edit('move', {k, delta: -1}) : show(peek - 1))});
-  S.register('split-later', {available: () => !done() && (peek === null || peek < plan.n - 1),
-    run: () => (peek === null ? edit('move', {k, delta: 1}) : show(peek + 1))});
+  S.register('split-earlier', {available: () => !done() && (peek === null || near(peek, -1) >= 0),
+    run: () => (peek === null ? edit('move', {k, delta: -1}) : show(near(peek, -1)))});
+  S.register('split-later', {available: () => !done() && (peek === null || near(peek, 1) >= 0),
+    run: () => (peek === null ? edit('move', {k, delta: 1}) : show(near(peek, 1)))});
   S.register('split-back', {available: () => (peek !== null ? owner(peek) >= 0 : k > 0), run: () => {
     if (peek !== null) peek = null; else k = Math.min(k, plan.entries.length) - 1;
     render();
@@ -217,10 +219,10 @@
     run: () => edit('cut', {sheet: peek})});
   S.register('split-drop', {available: () => !done() && !plan.dropped.includes(focus()),
     run: () => edit('drop', {sheet: focus()})});
-  // The page shown, in its submission: extra or counted, a missing page before it, its place.
+  // The page shown, in its submission: extra or counted, a missing page before it, its place in the pile.
   const inSub = () => !done() && owner(focus()) >= 0;
   const marked = i => plan.missing.includes(i) || (plan.entries[owner(i)].proposed.missing || []).includes(i);
-  const place = d => { const p = plan.entries[owner(focus())].pages, j = p.indexOf(focus()) + d; return j >= 0 && j < p.length; };
+  const place = d => near(focus(), d) >= 0;
   S.register('split-extra', {available: inSub, run: () => edit('extra', {sheet: focus()})});
   S.register('split-missing', {available: inSub, run: () => edit('missing', {sheet: focus()})});
   S.register('split-unmissing', {available: () => inSub() && marked(focus()), run: () => edit('unmissing', {sheet: focus()})});
@@ -230,7 +232,7 @@
   }});
   S.register('split-shift-earlier', shift(-1));
   S.register('split-shift-later', shift(1));
-  // Turning, a quarter turn clockwise each time: the page shown, its submission, or (a button only) the whole scan.
+  // Turning, a quarter turn clockwise more for each page: the page shown, its submission's, or (a button only) the scan's.
   const turned = r => { if (r && r.ok) say(LANDMARKS && MODEL ? 'turned: read pages again' : 'turned'); };
   S.register('split-turn-page', {available: () => !done(), run: async () => turned(await edit('turn_page', {sheet: focus()}))});
   S.register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: async () => turned(await edit('turn', {k}))});
@@ -284,17 +286,16 @@
     el.hidden = i < 0 || i >= plan.n;
     if (el.hidden) return;
     img.src = sheet(i, w);
-    const gone = plan.loose.includes(i);
     cap.replaceChildren(make('span', {textContent: `${what} · page ${i + 1}`}), ...slotTags(i),
       reading(i) ? tag('', reading(i), 'what the page says it is') : '',
-      gone ? tag('', plan.dropped.includes(i) ? 'dropped' : 'in no submission') : '');
+      plan.dropped.includes(i) ? tag('', 'dropped') : '');
   }
   function preload(j) {
     const e = plan.entries[j];
     if (!e) return;
     const s = firstOf(e);
-    for (const [i, w] of [[s, LARGE], [s - 1, MID], [s + 1, MID]]) {
-      if (i >= 0 && i < plan.n) { const im = new Image(); im.src = sheet(i, w); }
+    for (const [i, w] of [[s, LARGE], [near(s, -1), MID], [near(s, 1), MID]]) {
+      if (i >= 0) { const im = new Image(); im.src = sheet(i, w); }
     }
   }
   // One submission's badges, the same wherever it is shown.
@@ -305,11 +306,11 @@
     const [cls, text, title] = STATE[e.state];
     return [e.verified ? tag('', 'verified', 'its first page is verified') : tag('unv', 'unverified', 'its first page is a guess'),
             tag(cls, text, title), ...e.doubts.map(d => tag('bad', d)),
-            e.own || e.pages.some(i => plan.turned.includes(i)) ? tag('', 'turned', 'turned apart from the whole scan') : ''];
+            e.pages.some(i => plan.turn[i]) ? tag('', 'turned', 'some of its pages are turned') : ''];
   }
   // The neighbours in the step view: a click looks at that page.
   for (const [id, d] of [['st-a', -1], ['st-c', 1]]) {
-    $(id).addEventListener('click', () => { if (plan && !done()) show(focus() + d); });
+    $(id).addEventListener('click', () => { if (plan && !done()) show(near(focus(), d)); });
   }
   function renderStep() {
     const E = plan.entries, finished = done();
@@ -325,9 +326,9 @@
       const s = focus();
       if (peek === null) tags.push(...badges(E[k]));
       else tags.push(tag('', 'not a first page'));
-      figure($('st-a'), s - 1, MID, 'before');
+      figure($('st-a'), near(s, -1), MID, 'before');
       figure($('st-b'), s, LARGE, peek === null ? 'first page?' : 'this page');
-      figure($('st-c'), s + 1, MID, 'after');
+      figure($('st-c'), near(s, 1), MID, 'after');
       $('st-b').querySelector('figcaption').append(make('a', {href: sheet(s, 0), target: '_blank', rel: 'noopener', textContent: 'full size'}));
       if (peek === null) preload(k + 1);
     }
@@ -420,10 +421,9 @@
       return make('div', {className: 'srow' + (fine(j) ? '' : ' look') + (j === here ? ' here' : '')}, head, sheets);
     });
     $('rows').replaceChildren(...rows);
-    $('loose').hidden = !plan.loose.length;
-    $('loose-sheets').replaceChildren(...plan.loose.map(i => thumb(i, SMALL, [
-      plan.dropped.includes(i) ? button('put back', 'put the page back', () => edit('restore', {sheet: i}))
-        : button('✂', 'new submission here', () => edit('cut', {sheet: i}))])));
+    $('loose').hidden = !plan.dropped.length;
+    $('loose-sheets').replaceChildren(...plan.dropped.map(i => thumb(i, SMALL, [
+      button('put back', 'put the page back', () => edit('restore', {sheet: i}))])));
   }
 
   function render() {
@@ -441,7 +441,6 @@
     if (plan.checked) info.push('pages read');
     $('s-info').replaceChildren(info.join(' · '), ' ',
       plan.failed ? tag('bad', `${plural(plan.failed, 'page')} not read: model failed`) : '');
-    $('s-orient').textContent = plan.orient;
     if (document.activeElement !== $('s-length')) $('s-length').value = plan.length;
     const flagged = E.filter(e => e.doubts.length).length, unverified = E.filter(open).length;
     const towrite = counts[plan.id].write;

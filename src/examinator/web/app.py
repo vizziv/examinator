@@ -942,24 +942,20 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
 
     def plan_view(src) -> dict:
         art = intake.plan(ws, src.id)
-        body, n = {**art.body, 'pages': exam.pages}, src.pages
-        pages, doubts, states = split.pages(body, n), split.doubts(body, n), intake.state(ws, src.id)
-        lays = split.layouts(body, n)
-        made = store.made()
+        body = {**art.body, 'pages': exam.pages}
+        runs, doubts, lays, states = split.runs(body), split.doubts(body), split.layouts(body), intake.state(ws, src.id)
+        made, turns, L = store.made(), split.turns(body), body['sheets']
         entries = []
-        for k, e in enumerate(body['entries']):
+        for k, (e, p) in enumerate(zip(split.entries(body), split.starts(body))):
             sid = e.get('id')
-            entries.append({'start': e['start'], 'verified': bool(e.get('confirmed')), 'id': sid,
-                            'pages': pages[k], 'lay': lays[k], 'proposed': e.get('proposed') or {},
-                            'doubts': [split.DOUBTS[d] for d in doubts[k]],
-                            'state': states[k], 'own': e.get('orient') is not None,
+            entries.append({'start': L[p]['i'], 'verified': bool(e.get('confirmed')), 'id': sid,
+                            'pages': runs[k], 'lay': lays[k], 'proposed': e.get('proposed') or {},
+                            'doubts': [split.DOUBTS[d] for d in doubts[k]], 'state': states[k],
                             'name': identity.who(ws, sid)['name'] if sid in made else ''})
-        return {'id': src.id, 'name': src.name, 'n': n, 'rev': art.rev, 'length': body['length'],
-                'checked': bool(body.get('checked')) and bool(body.get('readings')), 'failed': body.get('failed', 0), 'orient': orient.label(int(body.get('orient') or 0)),
-                'sheet_o': [intake.sheet_orient(body, i) for i in range(n)],
-                'turned': sorted(int(i) for i in body.get(intake.SHEET_ORIENT) or {}),
-                'entries': entries, 'loose': split.loose(body, n), 'dropped': body.get('dropped') or [],
-                'extra': body.get('extra') or [], 'missing': body.get('missing') or [],
+        return {'id': src.id, 'name': src.name, 'n': src.pages, 'rev': art.rev, 'length': body['length'],
+                'checked': bool(body.get('checked')) and bool(body.get('readings')), 'failed': body.get('failed', 0),
+                'order': [r['i'] for r in L], 'turn': [turns[i] for i in range(src.pages)],
+                'entries': entries, 'dropped': split.dropped(body), 'missing': [r['i'] for r in L if r.get('missing')],
                 'readings': {i: None if r is None else f'p.{r + 1}' for i, r in split.readings(body).items()},
                 'removed': intake.removed(ws, src.id), 'cursor': split.cursor(body),
                 'undo': intake.can_undo(ws, src.id), 'idboxes': idboxes(src.id)}
@@ -979,7 +975,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         for src in sources:
             body = intake.plan(ws, src.id).body
             states = intake.state(ws, src.id)
-            counts[src.id] = {'open': sum(not e.get('confirmed') for e in body['entries']),
+            counts[src.id] = {'open': sum(not e.get('confirmed') for e in split.entries(body)),
                               'write': sum(st != 'made' for st in states) + len(intake.removed(ws, src.id))}
         roster = [{k: p[k] for k in ('name', 'id', 'email', 'key')} for p in identity.people(ws)]
         return page('scans.html', sources=sources, counts=json.dumps(counts), people=roster,
@@ -1037,7 +1033,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         src = the_source(request)
         length = data.get('length')
         length = None if length in (None, '') else _int(length, "pages per submission", 1, 999)
-        kw = dict(length=length, fresh=bool(data.get('fresh')), author=who(request), expect_rev=_rev(data))
+        kw = dict(length=length, author=who(request), expect_rev=_rev(data))
         if data.get('check'):
             if not have_model():
                 raise Bad("model unavailable")

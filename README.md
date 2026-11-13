@@ -60,15 +60,17 @@ large, between its neighbours.
 | `X` | drop this page (blank or stray: a leading junk sheet, say) |
 | `E` | this page is extra (kept with the submission, not a printed page); again: counted |
 | `G` / `Shift+G` | a printed page that was not scanned comes before this one / not missing after all |
-| `Shift+A` / `Shift+D` | move this page one place earlier / later in its submission (double-sided mix-ups) |
+| `Shift+A` / `Shift+D` | move this page one place earlier / later (double-sided mix-ups; past a submission's end, into the next) |
 | `R` | turn the page shown 90° clockwise (twice: 180°) |
-| `Shift+R` | turn its whole submission 90° clockwise |
+| `Shift+R` | turn each page of its submission 90° clockwise |
 | `⌘Z` / `Ctrl+Z` | undo |
 
 Clicking any small page shows it large in the same view. On a page that is
 not a first page, `A` / `D` look at its neighbours and `Shift+V` starts a
-submission there. The whole scan turns with a button only; each
-turn adds to what the levels above it give (scan, then submission, then page). The scan image itself opens from "full size" under the large page.
+submission there. The whole scan turns with a button only. Every turn is a
+page's own: turning a submission or the scan turns each of its pages, and a
+page moved into a turned submission keeps how it was. The scan image itself
+opens from "full size" under the large page.
 
 A verified first page is your decision: it outranks the every-N guess and any
 landmark reading, and later guesses follow from it. Turn a stack fed in
