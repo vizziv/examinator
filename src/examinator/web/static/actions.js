@@ -172,8 +172,13 @@ const Actions = (() => {
   }
 
   // A key: listened for on window, after the page's own handlers (a handler that
-  // takes the key, like arrows while editing regions, calls preventDefault).
+  // takes the key, like arrows while editing regions, calls preventDefault). A key pressed
+  // before this page is first on screen is dropped: a page rendered ahead takes keys as
+  // soon as it is shown, a frame before it is drawn, and a key acts on what is drawn.
+  let drawn = false;
+  whenShown(() => requestAnimationFrame(() => setTimeout(() => { drawn = true; })));
   addEventListener('keydown', e => {
+    if (!drawn) return e.preventDefault();
     if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || e.repeat) return;
     const combo = comboOf(e);
     if (!combo) return;

@@ -88,7 +88,7 @@
 </div>
 {% endif %}
 {% for s in scans %}
-<div class="sheet{% if s.on %} on{% endif %}" data-index="{{ s.index }}"><span class="pno">{{ s.label }}</span><img class="scan" src="{{ root }}/page/{{ sub.id|urlencode }}/{{ s.index }}.jpg" alt="page {{ s.label }}" loading="lazy"></div>
+<div class="sheet{% if s.on %} on{% endif %}" data-index="{{ s.index }}"><span class="pno">{{ s.label }}</span><img class="scan" src="{{ root }}/page/{{ sub.id|urlencode }}/{{ s.index }}.jpg" alt="page {{ s.label }}"{% if not s.on %} loading="lazy"{% endif %}></div>
 {% else %}
 <p class="dim">no scan pages</p>
 {% endfor %}

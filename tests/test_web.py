@@ -145,6 +145,36 @@ def test_security_headers(site):
     assert '<script>' not in html and ' style="' not in html and not re.search(r'\son\w+="', html)
 
 
+def test_pages_rendered_ahead_are_safe(site):
+    """The question page lists the pages a key reaches for the browser to render ahead: the
+    CSP admits inline speculation rules (JSON) and still no inline code; a page's HTML is never
+    stored (Back without the back/forward cache fetches what is there now); and loading any
+    page changes nothing, since a page rendered ahead may never be shown."""
+    site.run_all()
+    csp = site.get('/s/s1/a').headers['content-security-policy']
+    script_src = next(d for d in csp.split(';') if d.strip().startswith('script-src')).split()
+    assert script_src == ['script-src', "'self'", "'inline-speculation-rules'"]
+    before = (site.ws.store.version(), {k: o.rev for k, o in site.ws.store.overrides().items()})
+    for path in ('/', '/s/s1/a', '/s/s2/a', '/s/s1/p', '/s/s1/b', '/filter', '/focus/values',
+                 '/focus/values?sub=s1', '/read', '/read/status', '/exam', '/settings', '/scans'):
+        r = site.get(path)
+        assert r.status_code == 200, path
+        if r.headers['content-type'].startswith('text/html'):
+            assert r.headers['cache-control'] == 'no-store', path
+    assert site.get('/page/s1/0.jpg').status_code == 200
+    assert (site.ws.store.version(), {k: o.rev for k, o in site.ws.store.overrides().items()}) == before
+
+
+def test_the_question_pages_load_eagerly(site):
+    """What the grader sees first loads at once (a page rendered ahead loads nothing lazily
+    until shown): this question's scanned pages; the others lazily."""
+    html = site.get('/s/s1/b').text
+    sheets = re.findall(r'<div class="sheet( on)?"[^>]*>.*?<img class="scan"[^>]*>', html)
+    assert sheets and any(sheets) and not all(sheets)
+    for m in re.finditer(r'<div class="sheet( on)?"[^>]*>.*?(<img class="scan"[^>]*>)', html):
+        assert ('loading="lazy"' in m.group(2)) == (m.group(1) is None)
+
+
 def test_theme_and_actions_are_static_and_controls_declare_actions(site):
     for path in ('/', '/s/s1/a', '/filter', '/read', '/exam', '/settings'):
         html = site.get(path).text

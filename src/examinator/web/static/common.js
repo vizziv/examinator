@@ -100,6 +100,28 @@ function flash(text, tone) {
   if (text) flash.timer = setTimeout(() => { el.textContent = ''; }, 8000);
 }
 
+// Pages rendered ahead. A key that moves to another page loads it again (one subject per
+// page), so the pages a key can reach from here are prerendered where the browser can
+// (Chromium's speculation rules; elsewhere nothing happens): `urls` at once, `hover` (a
+// selector of links) on hovering. A new list replaces the last one.
+function ahead(urls, hover) {
+  if (!HTMLScriptElement.supports?.('speculationrules')) return;
+  const rules = [{source: 'list', urls: [...new Set(urls.filter(Boolean))], eagerness: 'immediate'}];
+  if (hover) rules.push({where: {selector_matches: hover}, eagerness: 'moderate'});
+  document.getElementById('ahead')?.remove();
+  const s = document.createElement('script');
+  s.type = 'speculationrules';
+  s.id = 'ahead';
+  s.textContent = JSON.stringify({prerender: rules});
+  document.head.append(s);
+}
+// A prerendered page runs before it is shown, and may never be: what it writes to state
+// shared with other pages (sessionStorage, a draft, the grid's cursor) waits until it is.
+function whenShown(fn) {
+  if (document.prerendering) document.addEventListener('prerenderingchange', fn, {once: true});
+  else fn();
+}
+
 const $ = id => document.getElementById(id);
 function make(tag, props, ...children) {
   const el = document.createElement(tag);
@@ -141,19 +163,22 @@ function drawCrop(crop) {
     img.src = crop.dataset.src;
     crop.append(img);
   }
-  if (!img.naturalWidth || r <= l || b <= t) return;
+  if (r <= l || b <= t) return;
   let width = Number(crop.dataset.width);
   if (!width) {
     width = (r - l) * 1000 * cropScale();
     const room = crop.closest('.fields');
     if (room) width = Math.min(width, Math.max(160, (room.clientWidth - 4) * (crop.closest('.field.multiline') ? 0.5 : 1)));
   }
-  const k = width / ((r - l) * img.naturalWidth);
-  img.style.width = img.naturalWidth * k + 'px';
-  img.style.marginLeft = -l * img.naturalWidth * k + 'px';
-  img.style.marginTop = -t * img.naturalHeight * k + 'px';
+  // Until the image is here, its box takes a letter page's proportions, so the page is
+  // laid out once and the picture fills in (drawn again when it loads).
+  const w = img.naturalWidth || 17, h = img.naturalWidth ? img.naturalHeight : 22;
+  const k = width / ((r - l) * w);
+  img.style.width = w * k + 'px';
+  img.style.marginLeft = -l * w * k + 'px';
+  img.style.marginTop = -t * h * k + 'px';
   crop.style.width = width + 'px';
-  crop.style.height = (b - t) * img.naturalHeight * k + 'px';
+  crop.style.height = (b - t) * h * k + 'px';
 }
 function drawCrops(root) {
   for (const crop of (root || document).querySelectorAll('.crop')) drawCrop(crop);

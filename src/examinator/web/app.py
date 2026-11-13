@@ -76,7 +76,8 @@ SHEET_WIDTHS = (140, 360, 1000)   # pixel widths a sheet is served at (0: as ren
 MAX_ROSTER = 2_000_000      # characters of roster text
 ROSTER_PROBLEMS = 20        # problems a roster preview lists
 ROSTER_SAMPLE = 5           # people a roster preview shows
-CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+# 'inline-speculation-rules' lets a page's script list pages to render ahead (JSON, never code).
+CSP = ("default-src 'none'; script-src 'self' 'inline-speculation-rules'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; frame-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
 IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 # What a person sees of a status: one word per idea (DESIGN.md, Words on screen).
