@@ -1,0 +1,10 @@
+{# The number boxes of a rectangle being edited (rects.js `Rects.numbers`): page, left, top, right, bottom, width, height. #}
+{% macro numbers(prefix, pages) -%}
+<label class="nl" id="{{ prefix }}-p" title="page"><i>p</i><input type="number" class="{{ prefix }}-n" min="1" max="{{ pages }}" aria-label="page"></label>
+<label class="nl" title="left"><i>l</i><input type="number" class="{{ prefix }}-n" min="0" max="1000" aria-label="left"></label>
+<label class="nl" title="top"><i>t</i><input type="number" class="{{ prefix }}-n" min="0" max="1000" aria-label="top"></label>
+<label class="nl" title="right"><i>r</i><input type="number" class="{{ prefix }}-n" min="0" max="1000" aria-label="right"></label>
+<label class="nl" title="bottom"><i>b</i><input type="number" class="{{ prefix }}-n" min="0" max="1000" aria-label="bottom"></label>
+<label class="nl" title="width (right − left)"><i>w</i><input type="number" id="{{ prefix }}-w" min="5" max="1000" aria-label="width"></label>
+<label class="nl" title="height (bottom − top)"><i>h</i><input type="number" id="{{ prefix }}-h" min="5" max="1000" aria-label="height"></label>
+{%- endmacro %}

@@ -54,9 +54,14 @@ field's region may be unset in code; one grade per check, any number of checks.
 - Filter page shows raw state names (`needs_review`).
 - A narrow (~900 px) question page can scroll sideways with a wide crop.
 - Never exercised in a browser: uploading scans, a roster from a file,
-  Accept's confirmation dialog, "read names", the Names tab for PDFs handed in
-  already split.
-- Exam 3 declares no landmarks or identity boxes.
+  Accept's confirmation dialog, the Names tab for PDFs handed in already split.
+- Exam 3 declares no landmarks or identity boxes (boxes can now be drawn on
+  the Names tab; the scripted fake model has no answers for drawn boxes, so
+  "read names" fails there with `--fake`).
+- Drawn name boxes are not on the Exam page's list of changes
+  (`describe_changes`), and have no undo beyond "revert".
+- Picking a person already named for another submission names both (flagged
+  "name twice"); it does not offer to move them.
 - No live-model run yet (`compare` untested live).
 
 ## Declined so far, larger than a cleanup

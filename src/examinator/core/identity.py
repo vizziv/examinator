@@ -2,10 +2,13 @@
 students write who they are, ranked proposals, and the person a grader picks.
 
     setting 'people'                  the roster: [{'name', 'id', 'email', 'key'}]
+    setting 'identity'                the workspace's own boxes, drawn in the app (else the exam's):
+                                      {'boxes': [{'name', 'region', 'ask', 'roster'}], 'rev'}
     row (sub, '', 'identity')    what the model read: {'fields': {box: text | None}, 'basis': {box: digest}}
     row (sub, '', 'who')         the pick: a person's, or from an ID in the file name: {'name', 'id', 'email', 'key'?}
 
-The boxes are the exam's `Identity` declarations. Reading is memoised per
+The boxes are the exam's `Identity` declarations, or the workspace's own
+(`boxes`, `set_boxes`): drawn by a grader for every submission. Reading is memoised per
 submission, box and scan layout, so reading again is free. Proposals are
 computed, never stored: `propose(readings, roster)` is a pure function from
 what was read (by roster field) to ranked candidates with a reason and a
@@ -24,9 +27,9 @@ import unicodedata
 from typing import Any, Iterable, Mapping, Sequence
 
 from ..pdf.orient import Orient
-from .defs import Identity, digest
+from .defs import ROSTER_FIELDS, Identity, Region, digest
 from .reading import ask, basis, memo_key
-from .store import ANY, Row, Submission
+from .store import ANY, Conflict, Row, Submission
 
 WHO = 'who'
 READ = 'identity'
@@ -203,6 +206,86 @@ def by_file(ws) -> int:
     return n
 
 
+# --- the boxes ------------------------------------------------------------------------
+
+BOXES = 'identity'      # the setting holding the workspace's own boxes
+MAX_BOXES = 8
+# What to ask about a box drawn in the app, by the roster field it is compared with.
+ASKS = {'name': "the student's full name", 'id': "the student ID number",
+        'email': "the student's email address"}
+
+
+def boxes(ws) -> tuple[Identity, ...]:
+    """The identity boxes in use: the workspace's own, else the exam's."""
+    own = ws.store.setting(BOXES)
+    if own is None:
+        return tuple(ws.exam.identity)
+    return tuple(Identity(b['name'], Region(*b['region']), b['ask'], b.get('roster')) for b in own['boxes'])
+
+
+def box_json(f: Identity) -> dict:
+    r = f.region
+    return {'name': f.name, 'region': [r.page, r.left, r.top, r.right, r.bottom], 'ask': f.ask, 'roster': f.roster}
+
+
+def boxes_state(ws) -> dict:
+    """The boxes in use as JSON, whether they are the workspace's own, and its revision
+    (None: the exam's are in use)."""
+    own = ws.store.setting(BOXES)
+    return {'boxes': [box_json(f) for f in boxes(ws)], 'own': own is not None,
+            'rev': own['rev'] if own is not None else None, 'declared': len(ws.exam.identity)}
+
+
+def _box(ws, item: Any) -> dict:
+    """One box from the page, checked: {'name', 'region', 'roster', 'ask'?}. A box
+    without `ask` keeps the exam's box of that name's, else asks by its roster field."""
+    if not isinstance(item, Mapping):
+        raise ValueError("a box is {name, region, roster}")
+    name = item.get('name')
+    if not isinstance(name, str) or not name.strip() or len(name) > 40:
+        raise ValueError("a box needs a short name")
+    roster = item.get('roster')
+    if roster is not None and roster not in ROSTER_FIELDS:
+        raise ValueError(f"roster must be one of {ROSTER_FIELDS} or null")
+    region = item.get('region')
+    ok = isinstance(region, (list, tuple)) and len(region) == 5 and all(
+        isinstance(v, int) and not isinstance(v, bool) for v in region)
+    if not ok:
+        raise ValueError("a region is [page, left, top, right, bottom]")
+    page, left, top, right, bottom = region
+    if not 1 <= page <= ws.exam.pages:
+        raise ValueError(f"page {page} is not in 1..{ws.exam.pages}")
+    if not (0 <= left < right <= 1000 and 0 <= top < bottom <= 1000):
+        raise ValueError("a region needs 0 <= left < right <= 1000 and 0 <= top < bottom <= 1000")
+    ask = item.get('ask')
+    if ask is None:
+        declared = next((f for f in ws.exam.identity if f.name == name.strip()), None)
+        ask = declared.ask if declared else ASKS.get(roster)
+    if not isinstance(ask, str) or not ask.strip() or len(ask) > 300:
+        raise ValueError("a box needs what to ask about it")
+    return {'name': name.strip(), 'region': list(region), 'ask': ask, 'roster': roster}
+
+
+def set_boxes(ws, items: Sequence | None, *, expect_rev: Any = ANY) -> dict:
+    """The workspace's own identity boxes, for every submission (None: back to the
+    exam's). Readings under the old boxes no longer apply (`readings`), so the
+    boxes are read again. `expect_rev`: the revision the page saw (None: the
+    exam's boxes were in use). Raises `ValueError` or `Conflict`."""
+    own = ws.store.setting(BOXES)
+    if expect_rev is not ANY and expect_rev != (own['rev'] if own is not None else None):
+        raise Conflict("the name boxes were changed elsewhere")
+    if items is None:
+        ws.store.delete_setting(BOXES)
+        return boxes_state(ws)
+    if not isinstance(items, (list, tuple)) or len(items) > MAX_BOXES:
+        raise ValueError(f"expected a list of at most {MAX_BOXES} boxes")
+    out = [_box(ws, x) for x in items]
+    if len({b['name'] for b in out}) != len(out):
+        raise ValueError("two boxes have the same name")
+    ws.store.set_setting(BOXES, {'boxes': out, 'rev': (own['rev'] + 1) if own is not None else 1})
+    return boxes_state(ws)
+
+
 # --- reading the boxes ----------------------------------------------------------------
 
 IDENTITY_PROMPT = """\
@@ -228,7 +311,7 @@ def read(ws, sid: str, model, *, fresh: bool = False, prompt: str = IDENTITY_PRO
     """Ask the model what is written in each of the exam's identity boxes on one
     submission, and store the readings (unchanged readings are not rewritten).
     A failed call is no reading and is not remembered. `fresh` asks again."""
-    fields = ws.exam.identity
+    fields = boxes(ws)
     if not fields or model is None:
         return None
     layout = ws.layout(sid)
@@ -267,7 +350,7 @@ def readings(fields: Sequence[Identity], body: Mapping | None) -> dict[str, str 
 def unread(ws) -> list[str]:
     """Submissions whose boxes still need reading: some box has no reading
     under its current declaration, or a call failed last time."""
-    fields = ws.exam.identity
+    fields = boxes(ws)
     reads = {a.submission: a.body for a in ws.store.all(kinds=[READ])}
     return [s.id for s in ws.store.submissions()
             if len(readings(fields, reads.get(s.id))) < len(fields) or (reads.get(s.id) or {}).get('failed')]
@@ -481,9 +564,9 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
     the pick, most doubtful unconfirmed first, then the confirmed ones; and the
     roster entries nobody is picked for. `cache`, a dict the caller keeps,
     remembers proposals by reading revision and roster."""
-    fields = ws.exam.identity
+    fields = boxes(ws)
     roster = people(ws)
-    rkey = digest(roster)
+    rkey = digest([roster, [box_json(f) for f in fields]])
     matcher = None
     cache = {} if cache is None else cache
     if len(cache) > CACHE_LIMIT:

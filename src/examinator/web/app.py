@@ -998,7 +998,8 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     def idboxes(source: str | None) -> list[dict]:
         """Where the identity boxes are on a sheet of a source (the plan adds cover sheets)."""
         layout = Layout(0, ws.window_for_source(source))
-        return [{'name': f.name, 'offset': f.region.page - 1, 'box': box(layout, f.region)} for f in exam.identity]
+        return [{'name': f.name, 'offset': f.region.page - 1, 'box': box(layout, f.region)}
+                for f in identity.boxes(ws)]
 
     def scans_page(request: Request) -> Response:
         boxes = idboxes(None)
@@ -1011,9 +1012,9 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
             states = intake.state(ws, src.id)
             counts[src.id] = {'open': sum(not e.get('confirmed') for e in body['entries']),
                               'write': sum(st != 'made' for st in states) + len(intake.removed(ws, src.id))}
-        return page('scans.html', sources=sources, counts=json.dumps(counts),
-                    people=[identity.label(p) for p in identity.people(ws)],
-                    expected=intake.expected_length(ws), idboxes=json.dumps(boxes), fields=exam.identity,
+        roster = [{k: p[k] for k in ('name', 'id', 'email', 'key')} for p in identity.people(ws)]
+        return page('scans.html', sources=sources, counts=json.dumps(counts), people=roster,
+                    expected=intake.expected_length(ws), idboxes=json.dumps(boxes), fields=identity.boxes(ws),
                     widths=json.dumps(SHEET_WIDTHS), made=len(store.submissions()),
                     handed=sum(1 for s in store.submissions() if s.id not in made))
 
@@ -1122,21 +1123,37 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
     def scans_names(request: Request) -> Response:
         with lock:
             view = identity.overview(ws, cache=proposals)
+        fields = identity.boxes(ws)
         for row in view['rows']:
             layout = ws.layout(row['sub'])
             row['crops'] = [{'name': f.name, 'index': layout.scan_index(f.region.page), 'box': box(layout, f.region)}
-                            for f in exam.identity]
+                            for f in fields]
+            # for the page itself, and the boxes drawn on it: printed page p is scan index cover + p - 1
+            row['cover'], row['window'] = layout.cover_pages, list(layout.window)
         view['nobody'] = [identity.label(p) for p in view['nobody']]
-        view['fields'] = [{'name': f.name, 'roster': f.roster} for f in exam.identity]
+        view['fields'] = [{'name': f.name, 'roster': f.roster} for f in fields]
+        view['boxes'] = identity.boxes_state(ws)
+        view['pad'] = exam.crop_pad
         view['doubts'] = identity.DOUBTS
         view['roster'] = len(identity.people(ws))
         return JSONResponse(view)
 
+    def scans_boxes(request, data):
+        """The name and ID boxes for every submission: `boxes` [{name, region, roster}],
+        or null to go back to the exam's."""
+        rev = _rev(data)
+        try:
+            with lock:
+                return identity.set_boxes(ws, data.get('boxes'), expect_rev=rev)
+        except Conflict as e:
+            e.current = identity.boxes_state(ws)
+            raise
+
     def scans_names_read(request, data):
         if not have_model():
             raise Bad("model unavailable")
-        if not exam.identity:
-            raise Bad("the exam declares no identity boxes")
+        if not identity.boxes(ws):
+            raise Bad("no name or ID boxes: draw them first")
         fresh = bool(data.get('fresh'))
         subs = [s.id for s in store.submissions()] if fresh else identity.unread(ws)
 
@@ -1212,6 +1229,7 @@ def create_app(exam: Exam, ws: Workspace, runner: Runner, *, author: str | None 
         post('/scans/who', scans_who),
         Route('/scans/names', scans_names),
         post('/scans/names/read', scans_names_read),
+        post('/scans/boxes', scans_boxes),
         Route('/scans/{src}/plan', scans_plan),
         post('/scans/{src}/edit', scans_edit),
         post('/scans/{src}/propose', scans_propose),

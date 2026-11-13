@@ -1,12 +1,15 @@
 {% extends 'base.html' %}
 {% set nav = 'scans' %}
+{% import 'rects.html' as rects %}
 {% block title %}Scans · {{ exam.title }}{% endblock %}
 {% block head %}<script src="{{ root }}/static/scans.js" defer></script>
+<script src="{{ root }}/static/rects.js" defer></script>
 <script src="{{ root }}/static/names.js" defer></script>{% endblock %}
 {% block body %}
 <main class="narrow" id="scans" data-idboxes="{{ idboxes }}" data-widths="{{ widths }}" data-counts="{{ counts }}"
  data-made="{{ made }}" data-people="{{ people|length }}" data-model="{{ 1 if model else '' }}"
- data-landmarks="{{ 1 if exam.landmarks else '' }}" data-fields="{{ 1 if fields else '' }}">
+ data-landmarks="{{ 1 if exam.landmarks else '' }}" data-fields="{{ 1 if fields else '' }}"
+ data-roster='{{ people|tojson }}'>
 <nav class="flow" role="tablist" aria-label="steps">
 <button type="button" role="tab" data-tab="add" title="add the scanned PDFs">1 Scans <span class="n">({{ sources|length }})</span></button>
 <button type="button" role="tab" data-tab="split" title="{{ 'cut the scans into submissions' if sources else 'add scans first' }}"{% if not sources %} class="off"{% endif %}>2 Split <span class="n" id="n-split"></span></button>
@@ -33,7 +36,10 @@ each submission becomes its own PDF when you accept the split.
 </section>
 
 <section id="roster-box" class="panel" hidden>
-<div class="bar"><h2>Roster</h2> <span class="dim">{{ people|length }} people</span></div>
+<div class="bar"><h2>Roster</h2> <span id="ro-sum"><span class="dim">{{ people|length }} people</span></span>
+{% if people %}<span class="grow"></span><input type="search" id="ro-filter" placeholder="filter: name, ID, email" aria-label="filter the roster" autocomplete="off" spellcheck="false">{% endif %}</div>
+{% if people %}<div id="ro-wrap"><table id="ro-rows" class="wrows"><thead><tr><th>name</th><th>ID</th><th>email</th><th>submission</th></tr></thead><tbody></tbody></table></div>{% endif %}
+<details id="ro-add"{% if not people %} open{% endif %}><summary>{{ 'replace the roster' if people else 'add the roster' }}</summary>
 <textarea id="roster-text" rows="6" spellcheck="false" aria-label="roster"
  placeholder="one per line: name and ID, comma or tab between, either order&#10;Ada Lovelace, 31415926&#10;or a CSV with a header: Name (or First Name, Last Name), Student ID, Email"></textarea>
 <div class="bar">
@@ -44,6 +50,7 @@ each submission becomes its own PDF when you accept the split.
 </div>
 <table id="roster-sample" class="dim" hidden></table>
 <ul id="roster-problems" hidden></ul>
+</details>
 </section>
 
 {% if sources %}
@@ -98,8 +105,9 @@ each submission becomes its own PDF when you accept the split.
 <div id="names" hidden>
 <section id="w-bar" class="panel bar">
 <h2>Names</h2> <span id="w-sum"></span>
-{% if fields %}<button type="button" data-action="names-read" title="{{ 'read the name and ID boxes with the model (only those not read yet)' if model else 'no model' }}">read names</button>
-{% else %}<span class="dim" title="Exam(identity=[...])">no name or ID boxes declared: type names</span>{% endif %}
+<button type="button" data-action="names-read" title="{{ 'read the name and ID boxes with the model (only those not read yet)' if model else 'no model' }}"{% if not fields %} hidden{% endif %}>read names</button>
+<span id="w-noboxes" class="dim"{% if fields %} hidden{% endif %}>no name or ID boxes</span>
+<button type="button" id="w-boxes-on" data-action="names-boxes" aria-pressed="false" title="draw the name and ID boxes, for every submission">boxes</button>
 <span class="grow"></span>
 <span id="w-roster" class="dim"></span>
 </section>
@@ -108,13 +116,39 @@ each submission becomes its own PDF when you accept the split.
 <div class="bar"><b id="w-sub"></b> <span id="w-tags"></span><span class="grow"></span><span id="w-pos" class="dim"></span></div>
 <div id="w-done" hidden><p>Every submission is verified. <a href="{{ root }}/runs">next: Read</a></p></div>
 <div id="w-main">
+<div id="w-look">
 <div id="w-crops"></div>
+<div id="w-page" hidden><div class="sheet"><img alt="first page"></div></div>
+<button type="button" id="w-whole" class="quiet" hidden>whole page</button>
+</div>
+<div id="w-edit" hidden>
+<div id="wb" class="bar">
+<select id="wb-pick" aria-label="box"></select>
+<span class="rg-group">{{ rects.numbers('wb', exam.pages) }}</span>
+<span class="rg-group">
+<button type="button" data-action="names-box-add-name" title="a box where the name is written">+ name</button>
+<button type="button" data-action="names-box-add-id" title="a box where the ID is written">+ ID</button>
+<button type="button" data-action="names-box-remove" class="danger" title="remove this box">remove</button>
+</span>
+<span class="rg-group">
+<button type="button" id="wb-save" data-action="names-box-save" class="primary" title="these boxes, for every submission">save for all</button>
+<button type="button" data-action="names-box-undo" title="back to the saved boxes">undo</button>
+<button type="button" data-action="names-box-revert" class="danger" title="back to the boxes the exam declares">revert</button>
+</span>
+<span id="wb-msg" role="status"></span>
+</div>
+<div id="wb-sheet" class="sheet"><img alt="page"></div>
+</div>
 <div id="w-prop">
 <div id="w-name"></div>
 <div id="w-id" class="mono"></div>
 <div id="w-why" class="dim"></div>
 <div id="w-other"></div>
-<input type="text" id="w-pick" list="people" placeholder="name or ID, ↵" autocomplete="off" spellcheck="false" aria-label="type name">
+<div id="w-picker">
+<input type="text" id="w-pick" role="combobox" aria-expanded="false" aria-controls="w-list" aria-autocomplete="list"
+ placeholder="name or ID, ↵" autocomplete="off" spellcheck="false" aria-label="type name">
+<ul id="w-list" role="listbox" hidden></ul>
+</div>
 </div>
 </div>
 <div class="bar">
@@ -136,6 +170,5 @@ each submission becomes its own PDF when you accept the split.
 <div id="w-nobody" hidden><h2>Not named</h2> <span class="dim">on the roster, named for no submission</span><p id="w-nobody-list"></p></div>
 </section>
 </div>
-<datalist id="people">{% for p in people %}<option value="{{ p }}">{% endfor %}</datalist>
 </main>
 {% endblock %}

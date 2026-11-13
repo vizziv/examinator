@@ -12,7 +12,7 @@
   if (!main) return;
   const [SMALL, MID, LARGE] = JSON.parse(main.dataset.widths);
   const counts = JSON.parse(main.dataset.counts);     // per scan {open, write}; the one shown is kept live
-  const MODEL = !!main.dataset.model, LANDMARKS = !!main.dataset.landmarks, FIELDS = !!main.dataset.fields;
+  const MODEL = !!main.dataset.model, LANDMARKS = !!main.dataset.landmarks;
   const PEOPLE = Number(main.dataset.people);
   let made = Number(main.dataset.made);
   let plan = null, k = 0;
@@ -41,7 +41,7 @@
     if (name === 'split' && plan) history.replaceState(null, '', '#src=' + plan.id);
     say('');
     main.dispatchEvent(new CustomEvent('tab', {detail: name}));
-    if (name === 'roster') text.focus();
+    if (name === 'roster') ($('ro-filter') || text).focus();
     strip();
     Actions.hints();
     Actions.enable(main);
@@ -82,9 +82,10 @@
     if (!made) return 'no submissions yet: accept a split first';
     if (!names) return '';
     if (!names.left) return 'every submission is verified; next: Read';
-    if (names.unread && FIELDS && MODEL) return 'next: read the name boxes';
+    const fields = names.fields > 0;
+    if (names.unread && fields && MODEL) return 'next: read the name boxes';
     if (!PEOPLE) return 'next: add a roster';
-    if (!names.proposal) return MODEL || !FIELDS ? 'type the name, or go to the next' : 'no model: type names';
+    if (!names.proposal) return MODEL || !fields ? 'type the name or ID' : 'no model: type names';
     return 'is this who wrote it?';
   }
 

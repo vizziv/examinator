@@ -487,12 +487,23 @@ submission into `pdfs/`; everything downstream is unchanged.
   setting, `[{'name', 'id', 'email', 'key'}]`, read from a CSV/TSV with a
   header or from plain lines (name and ID, comma or tab, either order; the ID
   is the part with no spaces and a digit). A preview (count, first rows,
-  unreadable lines) comes before saving.
+  unreadable lines) comes before saving. The Roster tab lists everyone on it
+  (sent once with the page, filtered in the browser) with the submission each
+  is picked for, a link to it on Names, or "unmatched".
   - **Declared boxes**: `Exam(identity=[Identity(name, region, ask, roster)])`,
     shaped like a printed field, but about handwriting (`IDENTITY_PROMPT`); `roster`
     is the roster field the reading is compared with (`'name'`, `'id'`,
     `'email'`, or None to show only); boxes sharing a field are joined (first
     and last name). The library names no field beyond those three.
+  - **Drawn boxes**: the Names tab's "boxes" (B) draws them on a submission's
+    page, inside its print area, with the question page's rectangle editor
+    (`static/rects.js`, shared with `regions.js`). Saved for every submission as
+    the workspace setting `'identity'` (`identity.set_boxes`, with a revision),
+    which replaces the exam's boxes until reverted; `identity.boxes(ws)` is what
+    reading, proposals and the pages use. A drawn box keeps the declared box's
+    `ask` of the same name, else asks by its roster field (`identity.ASKS`).
+    A setting, not a definition override: overrides address question values,
+    and the boxes are the exam's.
   - **Reading**: per written submission and box, through the model, memoised
     per box (region and question), scan window and cover pages. Stored as the
     row `(submission, 'identity', '')`, `{'fields', 'basis'}` (history like
@@ -520,8 +531,13 @@ submission into `pdfs/`; everything downstream is unchanged.
     other. The
     submission row carries the name, email and the student ID (`student`).
     The Names tab steps through unnamed exams, most doubtful first (V take,
-    A/D other proposals, W/S back/skip, E type), and lists roster entries
-    with no exam.
+    W/S other proposals, A/D back/skip, E the picker), showing the boxes'
+    crops, or without boxes the first page's top (or whole). The picker
+    filters the roster as you type (a word starting a name part, ID or email
+    first, then anywhere); Enter picks the highlighted person and moves on;
+    while empty it lists the proposals. A person picked elsewhere is shown
+    dimmed with that submission and may still be picked (both are then
+    flagged "name twice"). It also lists roster entries with no exam.
 - A pre-split PDF that came in sideways could be fixed by adding it as a
   source of one submission (`length` = its pages), at the cost of a new id.
 

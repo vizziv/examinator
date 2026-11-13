@@ -203,6 +203,69 @@ def test_names_read_confirm_cycle_skip(site):
     assert "93681724" in client.get('/s/s0004/parity').text
 
 
+def test_roster_on_the_page_and_who_is_matched(site):
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    check_and_accept(client, token, src)
+    post(client, token, '/scans/roster', {'text': (ws.root / 'roster.csv').read_text()})
+    html = client.get('/scans').text
+    people = identity.people(ws)
+    assert 'id="ro-rows"' in html and 'id="ro-filter"' in html
+    # the roster goes to the page once, as data: the picker and the table filter it in the browser
+    assert all(p['name'] in html and p['id'] in html for p in people)
+    post(client, token, '/scans/who', {'sub': 's0005', 'text': people[4]['key']})
+    post(client, token, '/scans/who', {'sub': 's0003', 'text': people[4]['key']})
+    rows = {r['sub']: r for r in client.get('/scans/names').json()['rows']}
+    # a person picked twice: both submissions carry the key, and are flagged
+    assert rows['s0005']['who']['key'] == rows['s0003']['who']['key'] == people[4]['key']
+    assert rows['s0005']['who']['twice'] and rows['s0003']['who']['twice']
+    # what the page needs to show the first page without boxes: cover pages and print area
+    assert rows['s0001']['cover'] == ws.layout('s0001').cover_pages and len(rows['s0001']['window']) == 4
+
+
+def test_drawing_the_name_boxes_for_every_submission(site):
+    client, token, ws, paths = site
+    src = upload(client, token, paths[0]).json()['id']
+    check_and_accept(client, token, src)
+    view = client.get('/scans/names').json()
+    assert view['boxes'] == {'boxes': [identity.box_json(f) for f in ws.exam.identity], 'own': False,
+                             'rev': None, 'declared': 2}
+    wait(client, post(client, token, '/scans/names/read', {}).json()['job'])
+    assert identity.unread(ws) == []
+    before = {r['sub']: r['crops'] for r in view['rows']}
+    # move the name box: the workspace's own boxes, for every submission; readings under the old box no longer apply
+    moved = [{'name': 'name', 'region': [1, 100, 190, 820, 290], 'roster': 'name'},
+             {'name': 'id', 'region': [1, 100, 330, 600, 410], 'roster': 'id'}]
+    assert client.post('/scans/boxes', json={'boxes': moved, 'rev': None}).status_code == 403
+    r = post(client, token, '/scans/boxes', {'boxes': moved, 'rev': None})
+    assert r.status_code == 200 and r.json()['own'] and r.json()['rev'] == 1
+    assert [b['ask'] for b in r.json()['boxes']] == [f.ask for f in ws.exam.identity]     # kept from the exam's
+    assert post(client, token, '/scans/boxes', {'boxes': moved, 'rev': None}).status_code == 409   # stale
+    view = client.get('/scans/names').json()
+    assert all(r['crops'][0]['box'] != before[r['sub']][0]['box'] for r in view['rows'])
+    assert all(r['crops'][1]['box'] == before[r['sub']][1]['box'] for r in view['rows'])
+    assert sorted(identity.unread(ws)) == sorted(before)                 # read again ...
+    r = post(client, token, '/scans/names/read', {})
+    assert r.json()['n'] == 6 and wait(client, r.json()['job'])['state'] == 'done'   # ... with the new box
+    # checked: regions, names, the roster field, how many
+    for bad in ([{'name': 'name', 'region': [1, 500, 100, 400, 200], 'roster': 'name'}],
+                [{'name': 'name', 'region': [9, 1, 1, 2, 2], 'roster': 'name'}],
+                [{'name': 'x', 'region': [1, 1, 1, 2, 2], 'roster': 'phone'}],
+                [{'name': 'x', 'region': [1, 1, 1, 2, 2], 'roster': None}],          # nothing to ask
+                [moved[0], moved[0]], 'name'):
+        assert post(client, token, '/scans/boxes', {'boxes': bad, 'rev': 1}).status_code == 400
+    # a box the exam does not declare asks by its roster field
+    r = post(client, token, '/scans/boxes', {'boxes': [{'name': 'netid', 'region': [1, 10, 10, 300, 60], 'roster': 'email'}],
+                                             'rev': 1}).json()
+    assert r['boxes'][0]['ask'] == identity.ASKS['email'] and [f.name for f in identity.boxes(ws)] == ['netid']
+    assert 'data-action="names-read"' in client.get('/scans').text
+    # none at all, then back to the exam's
+    assert post(client, token, '/scans/boxes', {'boxes': [], 'rev': 2}).json()['boxes'] == []
+    assert post(client, token, '/scans/names/read', {}).status_code == 400
+    r = post(client, token, '/scans/boxes', {'boxes': None, 'rev': 3}).json()
+    assert not r['own'] and r['rev'] is None and identity.boxes(ws) == ws.exam.identity
+
+
 def test_reading_names_needs_a_model(make_site):
     client, token, ws, paths = make_site(model=False)
     html = client.get('/scans').text

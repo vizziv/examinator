@@ -216,13 +216,11 @@ details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var
 #grid th[data-dir=desc]::after { content: ' ▼'; font-size: 9px; color: var(--link); }
 #grid td { padding: 0; border-bottom: 1px solid var(--line); height: 21px; line-height: 20px; white-space: nowrap;
   vertical-align: baseline; font-variant-numeric: tabular-nums; }   /* one text baseline per row */
-#grid td.id, #grid td.name, #grid td.total, #grid tfoot td { padding: 0 7px; }
-#grid td.id { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+#grid td.id, #grid td.name, #grid td.total, #grid td.id { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 /* id and name stay in view when the grid scrolls sideways (grid.js sets --name-left) */
-#grid td.id, #grid td.name, #grid th:nth-child(-n+2), #grid tfoot td:first-child { position: sticky; left: 0; z-index: 1; background-color: var(--panel); }
+#grid td.id, #grid td.name, #grid th:nth-child(-n+2) { position: sticky; left: 0; z-index: 1; background-color: var(--panel); }
 #grid td.name, #grid th:nth-child(2) { left: var(--name-left, 0); box-shadow: inset -1px 0 0 var(--line); }
 #grid thead th:nth-child(-n+2) { z-index: 3; background-color: var(--panel-2); }
-#grid tfoot td:first-child { background-color: var(--panel-2); }
 #grid td.name { max-width: 16em; overflow: hidden; text-overflow: ellipsis; }
 #grid td.c { text-align: center; min-width: 30px; }
 #grid td.c a { display: block; padding: 0 6px; line-height: 20px; font-size: 13.5px; font-weight: 600; text-decoration: none; }
@@ -232,7 +230,6 @@ details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var
 #grid td.c { border-left: 1px solid var(--panel); }     /* a hairline between tinted squares */
 #grid td.total { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 #grid tbody tr:hover > td:not(.cell) { background-color: color-mix(in oklch, var(--accent) 6%, var(--panel)); }
-#grid tfoot td { text-align: center; color: var(--muted); font-size: 11px; border: 0; background: var(--panel-2); }
 #f-text { width: 12em; }
 
 /* the grid's legend, on demand */
@@ -436,9 +433,9 @@ form.entry.k-region input[type=text], form.entry.k-pages input[type=text] { flex
 .nl > i { font: 11px/1 var(--mono); font-style: normal; color: var(--muted); padding: 0 4px; display: inline-flex; align-items: center; }
 .nl > input { width: 4.9em; border: 0; border-radius: 0; }
 #rg-on[aria-pressed=true], #pa-on[aria-pressed=true], #scan-toggle[aria-pressed=true] { border-color: var(--accent2); color: var(--accent2-text); background: var(--accent2-soft); }
-#rg-save.dirty, #pa-save.dirty { box-shadow: 0 0 0 2px var(--warn-bg), 0 0 0 3px var(--warn); }
-#rg-msg { color: var(--muted); }
-#rg-msg.notice { color: var(--bad); }
+#rg-save.dirty, #pa-save.dirty, #wb-save.dirty { box-shadow: 0 0 0 2px var(--warn-bg), 0 0 0 3px var(--warn); }
+#rg-msg, #wb-msg { color: var(--muted); }
+#rg-msg.notice, #wb-msg.notice { color: var(--bad); }
 #scan.editing { overflow-x: hidden; }
 .sheet { position: relative; line-height: 0; }
 /* What is edited is orange (--accent2); what is shown for context is primary and inert:
@@ -548,6 +545,10 @@ figure.sh .acts button { background: var(--panel); border: 1px solid var(--line-
 #roster-problems { margin: 2px 0; padding-left: 1.4em; font-size: 12.5px; }
 #roster-sample { font-size: 12.5px; border-collapse: collapse; }
 #roster-sample td { padding: 0 10px 0 0; }
+#ro-filter { width: 16em; }
+#ro-wrap { max-height: 60vh; overflow: auto; margin: 4px 0; }
+#ro-rows thead th { position: sticky; top: 0; background: var(--panel); }
+#ro-add > summary { color: var(--muted); font-size: var(--fs-small); margin: 4px 0; }
 /* names: one submission at a time */
 #w-main { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-start; margin: 6px 0; }
 #w-crops { display: flex; flex-direction: column; gap: 6px; max-width: 100%; min-width: 0; }
@@ -559,13 +560,30 @@ figure.sh .acts button { background: var(--panel); border: 1px solid var(--line-
 #w-name { font-size: 1.6rem; font-weight: 650; line-height: 1.2; }
 #w-id { font-size: 1.15rem; }
 #w-other { padding-top: 4px; }
-#w-pick { margin-top: 8px; max-width: 24em; }
+/* the first page: its top, or whole; the boxes drawn on it (rects.js) */
+#w-look { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; min-width: 0; max-width: 100%; }
+#w-page { width: min(760px, 100%); max-height: 360px; overflow: hidden; border: 2px solid var(--accent2); background: #fff; }
+#w-page.whole { max-height: none; }
+#w-page img, #wb-sheet img { display: block; width: 100%; height: auto; }
+#w-edit { flex: 1 1 36em; min-width: 0; max-width: 820px; display: flex; flex-direction: column; gap: 4px; }
+#wb-sheet { width: 100%; border: 1px solid var(--line-strong); background: #fff; overflow: hidden; }
+#w-boxes-on[aria-pressed=true] { border-color: var(--accent2); color: var(--accent2-text); background: var(--accent2-soft); }
+/* the picker: a box over the roster, its matches under it */
+#w-picker { position: relative; margin-top: 8px; max-width: 26em; }
+#w-pick { width: 100%; }
+#w-list { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; margin: 2px 0 0; padding: 2px 0; list-style: none;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 4px; box-shadow: var(--shadow); }
+#w-list li { display: flex; gap: 8px; align-items: baseline; padding: 1px 8px; cursor: pointer; white-space: nowrap; overflow: hidden; }
+#w-list li .mono { font-size: 12.5px; }
+#w-list li.on { background: var(--accent2-soft); }
+#w-list li.taken { opacity: .55; }
+#w-list li:hover { background: var(--accent-soft); }
 .wrows { border-collapse: collapse; width: 100%; font-size: 13px; }
 .wrows td { padding: 1px 6px; border-top: 1px solid var(--line); }
 .wrows th { padding: 1px 6px; text-align: left; font-weight: 600; font-size: var(--fs-small); color: var(--muted); }
 .wrows tr.here { background: var(--accent2-soft); }
 #w-nobody-list { margin: 2px 0; }
-:root[data-theme=dark][data-invert-images=on] :is(#st-pages img, figure.sh img) {
+:root[data-theme=dark][data-invert-images=on] :is(#st-pages img, figure.sh img, #w-page img, #wb-sheet img) {
   filter: url('#image-gamma') invert(1) hue-rotate(180deg) brightness(.9) contrast(.85);
 }
 #grid td.cur { outline: 2px solid var(--accent2); outline-offset: -2px; }

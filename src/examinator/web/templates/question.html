@@ -2,6 +2,7 @@
 {% set nav = 'question' %}
 {% import 'blocks.html' as blocks %}
 {% import 'entries.html' as ed %}
+{% import 'rects.html' as rects %}
 {% macro field_block(f) %}
 <div class="field{% if f.marker %} marked{% endif %}{% if not f.own %} elsewhere{% endif %}{% if f.code %} code{% endif %}" data-key="{{ f.key }}">
 <span class="fhead">
@@ -30,6 +31,7 @@
 <script src="{{ root }}/static/plot.js" defer></script>
 <script src="{{ root }}/static/question.js" defer></script>
 <script src="{{ root }}/static/entries.js" defer></script>
+<script src="{{ root }}/static/rects.js" defer></script>
 <script src="{{ root }}/static/regions.js" defer></script>
 {% endblock %}
 {% block nav %}
@@ -61,13 +63,7 @@
 <span id="rg-panel" class="bar" hidden>
 <select id="rg-pick" aria-label="region">{% for r in regions %}<option value="{{ r.path }}">{{ r.label }}{% if r.printed %} (printed){% endif %}</option>{% endfor %}</select>
 <span class="rg-group">
-<label class="nl" id="rg-p" title="page"><i>p</i><input type="number" class="rg-n" min="1" max="{{ exam.pages }}" aria-label="page"></label>
-<label class="nl" title="left"><i>l</i><input type="number" class="rg-n" min="0" max="1000" aria-label="left"></label>
-<label class="nl" title="top"><i>t</i><input type="number" class="rg-n" min="0" max="1000" aria-label="top"></label>
-<label class="nl" title="right"><i>r</i><input type="number" class="rg-n" min="0" max="1000" aria-label="right"></label>
-<label class="nl" title="bottom"><i>b</i><input type="number" class="rg-n" min="0" max="1000" aria-label="bottom"></label>
-<label class="nl" title="width (right − left)"><i>w</i><input type="number" id="rg-w" min="5" max="1000" aria-label="width"></label>
-<label class="nl" title="height (bottom − top)"><i>h</i><input type="number" id="rg-h" min="5" max="1000" aria-label="height"></label>
+{{ rects.numbers('rg', exam.pages) }}
 </span>
 <span id="rg-region-btns" class="rg-group">
 <button type="button" id="rg-save" data-action="region-save-own" class="primary" title="this submission's own region">save for this submission</button>

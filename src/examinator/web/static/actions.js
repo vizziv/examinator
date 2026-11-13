@@ -45,7 +45,7 @@ const Actions = (() => {
     ['names-verify', "names: verify, next", 'names'], ['names-back', "names: previous submission", 'names'],
     ['names-skip', "names: next submission", 'names'], ['names-up', "names: previous proposal", 'names'],
     ['names-down', "names: next proposal", 'names'], ['names-type', "names: type name", 'names'],
-    ['names-read', "names: read name boxes", 'names'],
+    ['names-read', "names: read name boxes", 'names'], ['names-boxes', "names: draw the name boxes", 'names'],
   ];
   const KEYS = {
     'prev-student': ['a', 'ArrowLeft'], 'next-student': ['d', 'ArrowRight'],
@@ -60,6 +60,7 @@ const Actions = (() => {
     'split-cut': ['Shift+v'], 'split-turn': ['r'], 'split-turn-source': ['Shift+r'], 'split-undo': ['Mod+z'],
     'names-verify': ['v'], 'names-back': ['a', 'ArrowLeft'], 'names-skip': ['d', 'ArrowRight'],
     'names-up': ['w', 'ArrowUp'], 'names-down': ['s', 'ArrowDown'], 'names-type': ['e'],
+    'names-boxes': ['b'],
   };
   const group = name => (CATALOG.find(c => c[0] === name) || [])[2] || '';
 
