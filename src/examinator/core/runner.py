@@ -209,8 +209,8 @@ class Runner:
             for f in targets:
                 if f.label in why:
                     blocked.setdefault(why[f.label], []).append(f.label)
-            for reason, labels in blocked.items():
-                out('blocked', f"{reason}: {', '.join(labels)}")
+            for reason, which in blocked.items():
+                out('blocked', f"{reason}: {', '.join(which)}")
             targets = [f for f in targets if f.label not in why]
             if not targets:
                 continue
