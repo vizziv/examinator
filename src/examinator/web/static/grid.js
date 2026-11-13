@@ -67,10 +67,6 @@
       body.append(...visible);
     }
     document.getElementById('shown').textContent = `${visible.length} / ${rows.length}`;
-    for (const cell of document.querySelectorAll('#grid tfoot td.tally')) {
-      const n = visible.filter(r => r.querySelector(`td.c[data-col="${CSS.escape(cell.dataset.col)}"][data-c]`)).length;
-      cell.textContent = n;
-    }
     summary();
     measure();
     try {
