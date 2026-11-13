@@ -110,5 +110,5 @@ const Rects = (() => {
     });
   }
 
-  return {fx, fy, back, clamp, same, shift, resize, grips, box, place, area, numbers, arrows};
+  return {back, clamp, same, shift, resize, grips, box, place, area, numbers, arrows};
 })();

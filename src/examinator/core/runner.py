@@ -153,8 +153,7 @@ class Runner:
         """Read a question's fields (or those of `labels`) and write what was read.
         Values a person verified are skipped unless `include_protected`; with
         `missing_only`, only fields with no value are read. One outcome per reader run."""
-        q = self.exam.questions[qid]
-        resolved = replace(q, fields=self.ws.fields(submission, q))
+        resolved = self.ws.question(submission, qid)
         have = self.values(submission)
         gone = self.ws.missing(submission)
         outs = []
@@ -199,7 +198,7 @@ class Runner:
             for f in targets:
                 if f.label not in got:
                     continue
-                text = got[f.label] if q.multiline(f.label) else one_line(got[f.label])
+                text = got[f.label] if resolved.multiline(f.label) else one_line(got[f.label])
                 vouched = bool(callable(vouches) and vouches(f, text))
                 if not self._put_read(submission, qid, f.label, text, vouched, include_protected):
                     lost.append(f.label)

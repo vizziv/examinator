@@ -19,6 +19,7 @@ come from one workspace-wide counter, so a row that is deleted and recreated
 never reuses one. A write may keep the row's revision (`keep_rev`) when what
 changes is not its content (a value verified: same text, same revision).
 Replaced rows go to history, except results (computed, so recomputable).
+Overrides keep none: the Exam data page shows each, who set it and when.
 """
 from __future__ import annotations
 
@@ -55,10 +56,6 @@ create table if not exists setting (key text primary key, value text not null);
 create table if not exists override (
   scope text not null, path text not null, value text, author text, updated_at text not null,
   rev integer not null, primary key (scope, path)
-);
-create table if not exists override_history (
-  scope text not null, path text not null, value text, author text, updated_at text not null,
-  rev integer not null, replaced_at text not null
 );
 create table if not exists source (
   id text primary key, file text not null, name text, sha256 text not null unique,
@@ -113,14 +110,15 @@ class Submission:
 
 @dataclass(frozen=True)
 class Override:
-    """A value replacing one piece of an exam definition at a scope (see `core.overrides`)."""
+    """A value replacing one piece of an exam definition at a scope (see `core.overrides`).
+    It keeps no history: what replaced the package's value, and who, is what the
+    Exam data page shows."""
     scope: str                  # '' (the exam), 'source:<id>', 'submission:<id>'
     path: str
     value: Any                  # JSON
     author: str | None
     updated_at: str
     rev: int
-    replaced_at: str | None = None   # set on history rows
 
 
 @dataclass(frozen=True)
@@ -296,17 +294,6 @@ class Store:
                                  (submission, kind, name))
                 self._changed()
 
-    def restore(self, submission: str, name: str, kind: str, rev: int, *,
-                expect_rev: int | None | _Any = ANY) -> Row:
-        """Undo: bring a replaced version back as it was (same origin and author),
-        under a new revision."""
-        with self._lock, self._tx():
-            old = next((a for a in self.history(submission, name, kind) if a.rev == rev), None)
-            if old is None:
-                raise KeyError(rev)
-            return self.write(submission, name, kind, old.body, origin=old.origin, author=old.author,
-                              expect_rev=expect_rev)
-
     def purge_history(self) -> None:
         with self._lock:
             self._db.execute('delete from history')
@@ -329,45 +316,30 @@ class Store:
             rows = self._db.execute(f'select {OVERRIDE} from override order by scope, path').fetchall()
         return [_override(r) for r in rows]
 
-    def override_history(self, path: str, scope: str = '') -> list[Override]:
-        """Replaced and cleared values of one path at one scope, newest first."""
-        with self._lock:
-            rows = self._db.execute(
-                f'select {OVERRIDE}, replaced_at from override_history '
-                'where scope=? and path=? order by rev desc', (scope, path)).fetchall()
-        return [_override(r) for r in rows]
-
     def _check_override(self, scope: str, path: str, expect_rev) -> Override | None:
         cur = self.overrides(scope).get(path)
         if expect_rev is not ANY and (cur.rev if cur else None) != expect_rev:
             raise Conflict(f"{path} changed")
         return cur
 
-    def _archive_override(self, scope: str, path: str) -> None:
-        self._db.execute(f'insert into override_history select {OVERRIDE}, ? from override '
-                         'where scope=? and path=?', (_now(), scope, path))
-
     def set_override(self, path: str, value: Any, *, scope: str = '', author: str | None,
                      expect_rev: int | None | _Any = ANY) -> Override:
-        """Create or replace one override (`expect_rev=None`: must not exist yet);
-        the replaced row goes to history. Setting the value it has is a no-op."""
+        """Create or replace one override (`expect_rev=None`: must not exist yet).
+        Setting the value it has is a no-op."""
         text = json.dumps(value, ensure_ascii=False)
         with self._lock, self._tx():
             cur = self._check_override(scope, path, expect_rev)
             if cur is not None and json.dumps(cur.value, ensure_ascii=False) == text:
                 return cur
-            if cur is not None:
-                self._archive_override(scope, path)
             self._db.execute(f'insert or replace into override ({OVERRIDE}) values (?,?,?,?,?,?)',
                              (scope, path, text, author, _now(), self._next_rev()))
             self._changed()
             return self.overrides(scope)[path]
 
     def clear_override(self, path: str, *, scope: str = '', expect_rev: int | _Any = ANY) -> None:
-        """Remove one override (back to the next scope's value); the row goes to history."""
+        """Remove one override (back to the next scope's value)."""
         with self._lock, self._tx():
             if self._check_override(scope, path, expect_rev) is not None:
-                self._archive_override(scope, path)
                 self._db.execute('delete from override where scope=? and path=?', (scope, path))
                 self._changed()
 

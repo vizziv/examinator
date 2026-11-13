@@ -118,8 +118,9 @@ def test_validation():
     ok = overrides.validate
     assert ok(exam, 'areas/fields/A.1/region', (2, 1, 2, 3, 4)) == [2, 1, 2, 3, 4]
     assert ok(exam, 'areas/fields/side/region', None) is None
-    assert ok(exam, 'areas/fields/side/read/reads', {'2': 'purple'}) == {'2': 'purple'}
-    bad = [('areas/fields/A.1/region', [2, 500, 0, 400, 100]), ('areas/fields/A.1/region', [9, 0, 0, 10, 10]),
+    assert ok(exam, 'areas/fields/side/read/reads', {'2': 'red', '3': 'green', '5': 'blue', 'II': 'red'})
+    bad = [('areas/fields/side/read/reads', {'2': 'purple'}),     # the key is one per colour: none for purple
+('areas/fields/A.1/region', [2, 500, 0, 400, 100]), ('areas/fields/A.1/region', [9, 0, 0, 10, 10]),
            ('areas/fields/A.1/region', [2, 0, 0, 10]), ('areas/pages', []), ('areas/pages', [5]),
            ('areas/pages', [2, 2]), ('areas/fields/side/read/ask', 3), ('areas/read/notes', 3),
            ('areas/read/crops', 'yes'), ('areas/fields/side/read/reads', {'2': 3}),
@@ -172,14 +173,14 @@ def test_identity_field_changes_described_as_python(tmp_path):
     exam = load_exam(TOY)
     ws = Workspace(tmp_path / 'ws', exam, create=True)
     try:
-        overrides.set(exam, ws.store, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='ta')
-        change = overrides.set(exam, ws.store, '@identity/fields/email/region', [1, 10, 10, 300, 60], author='ta')
+        overrides.set(ws, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='ta')
+        change = overrides.set(ws, '@identity/fields/email/region', [1, 10, 10, 300, 60], author='ta')
         assert change.checks == () and change.fields == (('@identity', 'email'),)     # offered to read again
         lines = describe_changes(exam, ws.store)
         assert any(x.startswith('@identity/fields/id/region: Region(') and '-> Region(1, 100, 330, 600, 420)' in x
                    for x in lines)
         assert any(x.startswith('@identity/fields/email/region: None -> Region(1, 10, 10, 300, 60)') for x in lines)
-        overrides.clear(exam, ws.store, '@identity/fields/email/region')
+        overrides.clear(ws, '@identity/fields/email/region')
         assert exam.identity.field('email').region is None
     finally:
         ws.close()
@@ -187,7 +188,7 @@ def test_identity_field_changes_described_as_python(tmp_path):
 
 # --- the store ----------------------------------------------------------------------
 
-def test_store_conflicts_and_history(env):
+def test_store_conflicts(env):
     exam, ws, _ = env
     store = ws.store
     a = store.set_override('a/pages', [1], author='ta', expect_rev=None)
@@ -205,24 +206,23 @@ def test_store_conflicts_and_history(env):
         store.clear_override('a/pages', scope='submission:s1', expect_rev=b.rev)
     store.clear_override('a/pages', expect_rev=b.rev)
     assert store.overrides() == {} and [o.scope for o in store.all_overrides()] == ['submission:s1']
-    assert [(h.value, h.author) for h in store.override_history('a/pages')] == [([2], 'tb'), ([1], 'ta')]
-    assert store.override_history('a/pages', 'submission:s1') == []
 
 
 def test_set_and_describe_changes(env):
     exam, ws, _ = env
     with pytest.raises(ValueError):
-        overrides.set(exam, ws.store, 'a/fields/x/region', [1, 9, 9, 1, 1], author='ta')
-    change = overrides.set(exam, ws.store, 'a/fields/x/region', [1, 400, 310, 900, 430], author='ta')
+        overrides.set(ws, 'a/fields/x/region', [1, 9, 9, 1, 1], author='ta')
+    change = overrides.set(ws, 'a/fields/x/region', [1, 400, 310, 900, 430], author='ta')
     assert change.checks == () and change.fields == (('a', 'x'),)     # how it is read, not what checks see
-    change = overrides.set(exam, ws.store, 'p/fields/c1/read/reads', {'1': 'one'}, author='ta')
+    change = overrides.set(ws, 'p/fields/c1/read/reads', {'1': 'one'}, author='ta')
     assert change.checks == () and change.fields == (('p', 'c1'),)
     lines = describe_changes(exam, ws.store)
     assert lines[0].startswith('a/fields/x/region: None -> Region(1, 400, 310, 900, 430)  (ta, ')
-    fresh = make_exam()                 # a fresh session sees the same exam once it refreshes from the store
-    assert overrides.refresh(fresh, ws.store) == []
-    assert fresh.questions['p'].fields[0].read.reads == {'1': 'one'}
-    overrides.clear(exam, ws.store, 'p/fields/c1/read/reads')
+    fresh = make_exam()                 # a fresh session sees the same exam: opening the workspace applies it
+    other = Workspace(ws.root, fresh)
+    assert other.skipped == [] and fresh.questions['p'].fields[0].read.reads == {'1': 'one'}
+    other.close()
+    overrides.clear(ws, 'p/fields/c1/read/reads')
     assert exam.questions['p'].fields[0].read.reads == {'1': 'one', '2': 'two'}
 
 
@@ -230,7 +230,7 @@ def test_choice_described_as_python(tmp_path):
     exam = load_exam(TOY)
     ws = Workspace(tmp_path / 'ws', exam, create=True)
     try:
-        overrides.set(exam, ws.store, 'parity/checks/check/key/B', ['odd', 'O'], author='ta')
+        overrides.set(ws, 'parity/checks/check/key/B', ['odd', 'O'], author='ta')
         assert describe_changes(exam, ws.store)[0].startswith(
             "parity/checks/check/key/B: Choice('even', 'E', 'option 1') -> Choice('odd', 'O')  (ta, ")
     finally:
@@ -242,7 +242,7 @@ def test_choice_described_as_python(tmp_path):
 def test_a_key_override_outdates_only_the_check_that_uses_it(kenv):
     exam, ws, runner = kenv
     assert status(runner, 's1', 'a', 'x') == ('graded', True)
-    change = overrides.set(exam, ws.store, 'a/checks/x/key/one/x', '5', author='ta')
+    change = overrides.set(ws, 'a/checks/x/key/one/x', '5', author='ta')
     assert change.checks == (('a', 'x'),) and change.questions == ('a',)
     for sid in ('s1', 's2'):
         assert status(runner, sid, 'a', 'x')[0] == 'outdated'
@@ -250,14 +250,14 @@ def test_a_key_override_outdates_only_the_check_that_uses_it(kenv):
         assert status(runner, sid, 'b') == ('graded', True)
         assert [o.step for o in runner.refresh(sid)] == ['x']
     assert status(runner, 's1', 'a', 'x') == ('graded', False)
-    overrides.clear(exam, ws.store, 'a/checks/x/key/one/x')
+    overrides.clear(ws, 'a/checks/x/key/one/x')
     runner.refresh('s1')
     assert status(runner, 's1', 'a', 'x') == ('graded', True)
 
 
 def test_a_choice_key_override_regrades(kenv):
     exam, ws, runner = kenv
-    overrides.set(exam, ws.store, 'b/checks/check/key/x', ['no'], author='ta')
+    overrides.set(ws, 'b/checks/check/key/x', ['no'], author='ta')
     assert status(runner, 's1', 'b')[0] == 'outdated'
     runner.refresh('s1')
     assert status(runner, 's1', 'b') == ('graded', False)
@@ -268,7 +268,7 @@ def test_changing_how_a_printed_field_is_read_changes_no_value_until_it_is_read_
     before = runner.values('s1')
     for i, f in enumerate(('c1', 'c2')):
         flipped = {k: ('two' if v == 'one' else 'one') for k, v in exam.questions['p'].fields[i].read.reads.items()}
-        assert overrides.set(exam, ws.store, f'p/fields/{f}/read/reads', flipped, author='ta').checks == ()
+        assert overrides.set(ws, f'p/fields/{f}/read/reads', flipped, author='ta').checks == ()
     assert runner.values('s1') == before and status(runner, 's1', 'a', 'x') == ('graded', True)
     runner.read('s1', 'p')                    # a person verified them: skipped
     assert runner.values('s1') == before
@@ -307,11 +307,11 @@ def test_isolated_worker_sees_overrides(tmp_path):
         assert runner.compute('s', 'k', 'check').ok
         assert status(runner, 's', 'k') == ('graded', True)
         pids = [p.pid for p in runner.pool._idle]
-        overrides.set(exam, ws.store, 'k/checks/check/key/x', '3', author='ta')
+        overrides.set(ws, 'k/checks/check/key/x', '3', author='ta')
         assert status(runner, 's', 'k')[0] == 'outdated'
         runner.refresh('s')
         assert status(runner, 's', 'k') == ('graded', False)
-        overrides.clear(exam, ws.store, 'k/checks/check/key/x')
+        overrides.clear(ws, 'k/checks/check/key/x')
         runner.refresh('s')
         assert status(runner, 's', 'k') == ('graded', True)
         assert [p.pid for p in runner.pool._idle] == pids        # same warm worker throughout
@@ -353,7 +353,7 @@ def test_scopes_are_stored_as_text():
 
 def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
     exam, ws = scoped
-    put = lambda path, value, scope: overrides.set(exam, ws.store, path, value, scope=scope, author='ta')
+    put = lambda path, value, scope: overrides.set(ws, path, value, scope=scope, author='ta')
     region = lambda sid: ws.region(sid, exam.questions['a'], 'x')
     base = exam.questions['a'].field('x').region
     # a region: the submission's, else the exam's, else the package's (no scan scope)
@@ -382,32 +382,33 @@ def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
     assert layout('s1') == (20, 20, 980, 980) and layout('s2') == (30, 30, 970, 970)
     # dropping each level falls back to the next
     for scope, want in ((S1, (10, 10, 990, 990)), (SRC, (5, 5, 995, 995)), ('', (0, 0, 1000, 1000))):
-        overrides.clear(exam, ws.store, '@print_area', scope=scope)
+        overrides.clear(ws, '@print_area', scope=scope)
         assert layout('s1') == want
     for scope, want in ((S1, Region(1, 1, 1, 9, 9)), ('', base)):
-        overrides.clear(exam, ws.store, 'a/fields/x/region', scope=scope)
+        overrides.clear(ws, 'a/fields/x/region', scope=scope)
         assert region('s1') == want
-    overrides.clear(exam, ws.store, 'a/pages', scope=S1)
+    overrides.clear(ws, 'a/pages', scope=S1)
     assert pages('s1') == (1, 2)
-    overrides.clear(exam, ws.store, 'a/pages')
+    overrides.clear(ws, 'a/pages')
     assert pages('s1') == (1,)
     # an identity field's region, for one submission too (a student who wrote their name elsewhere)
-    assert overrides.validate(load_exam(TOY), '@identity/fields/name/region', [1, 1, 1, 5, 5], S1) == [1, 1, 1, 5, 5]
-    with pytest.raises(ValueError):
-        overrides.validate(load_exam(TOY), '@identity/fields/name/read/ask', "x", S1)
+    put('@identity/fields/name/region', [1, 1, 1, 5, 5], S1)
+    assert ws.region('s1', exam.identity, 'name') == Region(1, 1, 1, 5, 5) and ws.region('s2', exam.identity, 'name') is None
+    with pytest.raises(ValueError, match="not set for one submission"):
+        put('@identity/fields/name/read/ask', "x", S1)
 
 
 def test_conflicts_at_each_scope(scoped):
     exam, ws = scoped
     for scope in ('', SRC, S1):
-        o = overrides.set(exam, ws.store, '@print_area', [5, 5, 995, 995], scope=scope, author='ta', expect_rev=None)
+        o = overrides.set(ws, '@print_area', [5, 5, 995, 995], scope=scope, author='ta', expect_rev=None)
         with pytest.raises(Conflict):
-            overrides.set(exam, ws.store, '@print_area', [6, 6, 994, 994], scope=scope, author='tb', expect_rev=None)
+            overrides.set(ws, '@print_area', [6, 6, 994, 994], scope=scope, author='tb', expect_rev=None)
         rev = ws.store.overrides(scope)['@print_area'].rev
         with pytest.raises(Conflict):
-            overrides.clear(exam, ws.store, '@print_area', scope=scope, expect_rev=rev + 1)
-        overrides.set(exam, ws.store, '@print_area', [6, 6, 994, 994], scope=scope, author='tb', expect_rev=rev)
-        assert [h.author for h in ws.store.override_history('@print_area', scope)] == ['ta'] and o is not None
+            overrides.clear(ws, '@print_area', scope=scope, expect_rev=rev + 1)
+        overrides.set(ws, '@print_area', [6, 6, 994, 994], scope=scope, author='tb', expect_rev=rev)
+        assert ws.store.overrides(scope)['@print_area'].author == 'tb' and o is not None
 
 
 def test_one_validator_for_every_scope(scoped):
@@ -419,12 +420,12 @@ def test_one_validator_for_every_scope(scoped):
     for path, value in bad:
         for scope in ('', SRC, S1):
             with pytest.raises(ValueError):
-                overrides.set(exam, ws.store, path, value, scope=scope, author='ta')
+                overrides.set(ws, path, value, scope=scope, author='ta')
     assert ws.store.all_overrides() == []
     for path, value, scope in [('a/pages', [1], SRC), ('a/checks/check/key', 'x', S1),
                                ('@print_area', None, S1), ('a/fields/x/region', [1, 0, 0, 5, 5], 'nobody:x')]:
         with pytest.raises(ValueError):
-            overrides.set(exam, ws.store, path, value, scope=scope, author='ta')
+            overrides.set(ws, path, value, scope=scope, author='ta')
     # a value stored below the exam that no longer fits is not applied, like one for the exam
     ws.store.set_override('a/fields/x/region', [9, 0, 0, 5, 5], scope=S1, author='ta')
     assert ws.region('s1', exam.questions['a'], 'x') == exam.questions['a'].field('x').region
@@ -434,23 +435,25 @@ def test_changes_below_the_exam_outdate_no_check(scoped):
     exam, ws = scoped
     before = {qc: exam.check_hash(exam.questions[qc[0]], exam.questions[qc[0]].check(qc[1])) for qc in
               [(qid, c.name) for qid, q in exam.grading.items() for c in q.checks]}
-    change = overrides.set(exam, ws.store, 'a/fields/x/region', [1, 0, 0, 5, 5], scope=S1, author='ta')
+    change = overrides.set(ws, 'a/fields/x/region', [1, 0, 0, 5, 5], scope=S1, author='ta')
     assert change.checks == () and change.fields == (('a', 'x'),)
-    change = overrides.set(exam, ws.store, '@print_area', [5, 5, 995, 995], scope=SRC, author='ta')
+    change = overrides.set(ws, '@print_area', [5, 5, 995, 995], scope=SRC, author='ta')
     assert change.checks == () and ('a', 'x') in change.fields and ('p', 'c1') in change.fields
-    change = overrides.set(exam, ws.store, '@print_area', [9, 9, 991, 991], author='ta')     # every crop moves
+    change = overrides.set(ws, '@print_area', [9, 9, 991, 991], author='ta')     # every crop moves
     assert change.checks == () and ('a', 'x') in change.fields
     assert {qc: exam.check_hash(exam.questions[qc[0]], exam.questions[qc[0]].check(qc[1])) for qc in before} == before
 
 
 def test_the_change_list_has_the_print_area(scoped):
     exam, ws = scoped
-    overrides.set(exam, ws.store, '@print_area', [5, 5, 995, 995], author='ta')
-    overrides.set(exam, ws.store, 'a/pages', [2], scope=S1, author='ta')         # one submission's: not for the package
+    overrides.set(ws, '@print_area', [5, 5, 995, 995], author='ta')
+    overrides.set(ws, 'a/pages', [2], scope=S1, author='ta')         # one submission's: not for the package
     lines = describe_changes(exam, ws.store)
-    assert [x.split('  (')[0] for x in lines] == ['@print_area: [0, 0, 1000, 1000] -> [5, 5, 995, 995]']
+    assert [x.split('  (')[0] for x in lines] == ['@print_area: (0, 0, 1000, 1000) -> (5, 5, 995, 995)']
     entries = {e.path: e for e in overrides.editable(exam)}
     assert entries['@print_area'].current == [5, 5, 995, 995] and entries['@print_area'].overridden
     fresh = make_exam()
-    assert overrides.refresh(fresh, ws.store) == [] and fresh.print_area == (5, 5, 995, 995)
-    assert fresh.base_attrs == {'print_area': (0, 0, 1000, 1000)}
+    other = Workspace(ws.root, fresh)
+    assert other.skipped == [] and fresh.print_area == (5, 5, 995, 995)
+    assert fresh.base['@print_area'] == (0, 0, 1000, 1000)
+    other.close()

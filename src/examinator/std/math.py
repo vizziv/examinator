@@ -61,6 +61,9 @@ class Choice:
     def __init__(self, *accepted: str):
         object.__setattr__(self, 'accepted', tuple(accepted))
 
+    def __repr__(self) -> str:        # as an exam package writes it
+        return f"Choice({', '.join(map(repr, self.accepted))})"
+
     def matches(self, answer: str) -> bool:
         return normalize_text(answer) in {normalize_text(a) for a in self.accepted}
 
@@ -626,6 +629,16 @@ class Keyed:
                    if question.field(label) is None]
         if unknown:
             raise ValueError(f"{question.id}: the key names {sorted(set(unknown))}, which are not its fields")
+        for k in (self.key.values() if per_value else [self.key]):
+            for labels, entry in k.items():
+                if isinstance(entry, str):
+                    try:
+                        parse_expr(entry, symbols=self.symbols, functions=self.functions)
+                    except Unsupported as e:
+                        raise ValueError(f"{question.id}: the key for {labels} does not parse: {e}") from None
+                elif isinstance(entry, Choice) and not (entry.accepted and all(
+                        isinstance(a, str) and a.strip() for a in entry.accepted)):
+                    raise ValueError(f"{question.id}: the key for {labels} is a choice of one or more texts")
         if self.by is None:
             return
         can = fields_.possible(exam, question, self.by, question.id)

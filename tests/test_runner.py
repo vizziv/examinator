@@ -82,7 +82,7 @@ def test_a_field_without_a_region_is_not_read_until_it_has_one(tmp_path):
     runner = Runner(exam, ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
     outs = runner.read('s1', 'info')
     assert [(o.status, o.detail) for o in outs] == [('blocked', "no region: c")] and value(ws, 's1', 'info/c') is None
-    overrides.set(exam, ws.store, 'info/fields/c/region', [1, 0, 0, 500, 100], scope='submission:s1',
+    overrides.set(ws, 'info/fields/c/region', [1, 0, 0, 500, 100], scope='submission:s1',
                   author='ta')                                                  # this submission only
     assert [o.status for o in runner.read('s1', 'info')] == ['done'] and value(ws, 's1', 'info/c').text == 'one'
     runner.close()
@@ -100,8 +100,8 @@ def test_a_printed_reading_is_remembered_per_crop_and_a_new_print_area_reads_aga
     assert calls() == 2 and value(ws, 's1', 'p/c1').text == 'one'
     assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 2        # the same crops: remembered
     replies.update({'read:c1': '{"value": "2"}', 'read:c2': '{"value": "ii"}'})
-    own = lambda path, value: (overrides.set(exam, ws.store, path, value, scope='submission:s1', author='ta')
-                               if value is not None else overrides.clear(exam, ws.store, path, scope='submission:s1'))
+    own = lambda path, value: (overrides.set(ws, path, value, scope='submission:s1', author='ta')
+                               if value is not None else overrides.clear(ws, path, scope='submission:s1'))
     own('@print_area', [50, 50, 950, 950])                                       # another crop
     assert all(o.ok for o in runner.read('s1', 'p'))
     assert calls() == 4 and value(ws, 's1', 'p/c1').text == 'two'
@@ -319,7 +319,7 @@ def test_a_batch_reads_what_it_plans_and_never_what_a_person_set_meanwhile(tmp_p
     sel = batch.Selection(('s1', 's2'), ('info',))
     plan = lambda: batch.plan(exam, ws.store, sel, model_available=True, regions=ws.fields)
     assert [(i.question, i.action) for i in plan().items] == [('info', 'blocked')] * 2
-    overrides.set(exam, ws.store, 'info/fields/c/region', [1, 0, 0, 500, 100], author='ta')   # no value changed
+    overrides.set(ws, 'info/fields/c/region', [1, 0, 0, 500, 100], author='ta')   # no value changed
     planned = plan()
     assert planned.count('read') == 2
     runner.set('s2', 'info', 'c', "two", author='ta')            # after the plan, before the run

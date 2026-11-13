@@ -435,7 +435,7 @@ def test_a_region_conflict_says_what_is_saved_so_saving_again_overwrites(site):
     path, exam = 'p/fields/c1/region', site.exam
     set_ = lambda value, rev: site.post('/exam/set', {'path': path, 'value': value, 'rev': rev, 'scope': OWN, 'sub': 's1'})
     first = set_([1, 0, 0, 500, 100], None).json()
-    overrides.set(exam, site.ws.store, path, [1, 0, 200, 1000, 400], scope=OWN, author='other',
+    overrides.set(site.ws, path, [1, 0, 200, 1000, 400], scope=OWN, author='other',
                   expect_rev=first['rev'])                                       # changed elsewhere
     r = set_([1, 0, 0, 600, 100], first['rev'])
     assert r.status_code == 409
@@ -443,7 +443,7 @@ def test_a_region_conflict_says_what_is_saved_so_saving_again_overwrites(site):
     assert cur['who'] == 'other' and cur['value'] == [1, 0, 200, 1000, 400] and cur['rev'] != first['rev']
     r = set_([1, 0, 0, 600, 100], cur['rev'])                                    # knowingly
     assert r.status_code == 200 and r.json()['value'] == [1, 0, 0, 600, 100]
-    overrides.clear(exam, site.ws.store, path, scope=OWN)                        # dropped elsewhere
+    overrides.clear(site.ws, path, scope=OWN)                        # dropped elsewhere
     r = set_([1, 0, 0, 700, 100], r.json()['rev'])
     assert r.status_code == 409 and r.json()['current'] == {'rev': None, 'value': None, 'who': None}
     assert set_([1, 0, 0, 700, 100], None).status_code == 200
@@ -526,7 +526,7 @@ def test_print_area_at_each_scope(site):
                                               'sub': 's1'})
     r = pa(OWN, [100, 100, 900, 900], None)
     assert r.status_code == 200 and r.json()['levels']['own'] == [100, 100, 900, 900]
-    assert all(len(b.split(',')) == 4 for b in r.json()['boxes'].values()) and r.json()['boxes']
+    assert all(len(b['box'].split(',')) == 4 and b['index'] == 0 for b in r.json()['boxes'].values()) and r.json()['boxes']
     rev = r.json()['levels']['own_rev']
     r = pa(OWN, [0, 0, 1000, 1000], rev + 99)
     assert r.status_code == 409 and r.json()['current'] == {'rev': rev, 'value': [100, 100, 900, 900], 'who': 'tester'}
@@ -543,7 +543,7 @@ def test_print_area_at_each_scope(site):
     r = pa('', [5, 5, 995, 995], None)
     assert r.json()['levels']['value'] == [5, 5, 995, 995] and site.exam.print_area == (5, 5, 995, 995)
     assert site.ws.layout('s2').print_area == (5, 5, 995, 995)
-    assert pa('', None, r.json()['rev']).json()['levels']['value'] == list(site.exam.base_attrs['print_area'])
+    assert pa('', None, r.json()['rev']).json()['levels']['value'] == list(site.exam.base['@print_area'])
     assert pa(OWN, [900, 0, 100, 1000], None).status_code == 400
     assert pa(OWN, [0, 0, 1000], None).status_code == 400
     assert site.post('/exam/set', {'path': '@print_area', 'value': [0, 0, 1000, 1000], 'scope': SCAN}).status_code == 400  # rev
@@ -557,7 +557,7 @@ def test_the_exam_page_lists_every_scope(site):
     site.post('/exam/set', {'path': '@print_area', 'value': [5, 5, 995, 995], 'rev': None})
     site.post('/exam/set', {'path': 'a/pages', 'value': [1], 'rev': None, 'scope': OWN})
     html = site.get('/exam').text
-    assert '@print_area: [0, 0, 1000, 1000] -&gt; [5, 5, 995, 995]' in html
+    assert '@print_area: (0, 0, 1000, 1000) -&gt; (5, 5, 995, 995)' in html
     assert 'data-path="@print_area"' in html and 'cover' not in html                   # editable here
     assert 'data-action="scoped-revert" class="danger" data-scope="submission:s1" data-path="a/pages"' in html
     rev = site.ws.store.overrides(OWN)['a/pages'].rev

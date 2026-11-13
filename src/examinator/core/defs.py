@@ -55,14 +55,30 @@ class Region:
     right: int
     bottom: int
 
+    def __repr__(self) -> str:        # as an exam package writes it
+        return f'Region({self.page}, {self.left}, {self.top}, {self.right}, {self.bottom})'
 
-def check_region(region: Region, pages: int, what: str) -> None:
-    """`ValueError` unless `region` lies on a printed page 1..pages, inside 0..1000."""
+
+def _no_page(page: int, printed: int, pages: int) -> str:
+    extra = f" or an extra sheet ({printed + 1}..{pages})" if pages > printed else ""
+    return f"page {page} is not a printed page (1..{printed}){extra}"
+
+
+def check_region(region: Region, pages: int, what: str, printed: int | None = None) -> None:
+    """`ValueError` unless `region` lies on a page 1..pages, inside 0..1000
+    (`printed`: how many of those pages are printed, when there are extra sheets)."""
     if not 1 <= region.page <= pages:
-        raise ValueError(f"{what}: page {region.page} is not a printed page (1..{pages})")
+        raise ValueError(f"{what}: {_no_page(region.page, printed or pages, pages)}")
     if not (0 <= region.left < region.right <= 1000 and 0 <= region.top < region.bottom <= 1000):
         raise ValueError(f"{what}: a region is per-mille of the printed page and needs "
                          f"0 <= left < right <= 1000 and 0 <= top < bottom <= 1000, got {region}")
+
+
+def check_print_area(area: Sequence[int]) -> None:
+    """`ValueError` unless `area` is left, top, right, bottom, per-mille of the scanned sheet."""
+    if len(area) != 4 or not (0 <= area[0] < area[2] <= 1000 and 0 <= area[1] < area[3] <= 1000):
+        raise ValueError("print area: left, top, right, bottom, per-mille of the scanned sheet, needs "
+                         f"0 <= left < right <= 1000 and 0 <= top < bottom <= 1000, got {tuple(area)}")
 
 
 @dataclass(frozen=True)
@@ -217,8 +233,9 @@ class Check:
     `points` is the grade's spec (`Bool()`, `Number(...)`) and what it is worth.
     A check runs in a worker process with a wall-clock limit (`timeout`
     seconds, default 60) unless `isolate` is False. If `fn` has a method
-    `validate(question, exam)`, `Exam.question` calls it, and it raises
-    `ValueError` for a configuration that does not fit.
+    `validate(question, exam)`, `Exam.validate` calls it (when the package adds
+    the question, and for every override), and it raises `ValueError` for a
+    configuration that does not fit. A reader's `validate(what)` likewise.
     """
     fn: Callable[[Any], Any] | None = None
     points: Points = Bool()
@@ -300,17 +317,19 @@ def split_key(k: str) -> tuple[str, str]:
 
 
 IDENTITY = '@identity'      # the built-in group of identity fields (question ids never start with '@')
+PRINT_AREA = '@print_area'  # the print area, as a root of the definition (`Exam.roots`)
 ROSTER_FIELDS = ('name', 'id', 'email')     # what a roster row may hold (`core.identity`)
 # What to ask about a roster column's field, when the exam does not say.
 ASKS = {'name': "the student's full name", 'id': "the student ID number",
         'email': "the student's email address"}
 
 
-def identity_group(pages: int, identity: Mapping[str, Field] | None) -> Question:
+def identity_group(identity: Mapping[str, Field] | None) -> Question:
     """The built-in group of identity fields: one field per roster column, labelled
     by it. A column the exam maps is its field as declared (asked about the
     handwriting, `core.ask.Ask`, unless it has a reader); any other column is a
-    field with no region yet (drawn in the app: then it is read)."""
+    field with no region yet (drawn in the app: then it is read). The exam
+    validates it as it does any question (`Exam.validate`)."""
     from .ask import Ask
     identity = dict(identity or {})
     for col, f in identity.items():
@@ -318,12 +337,8 @@ def identity_group(pages: int, identity: Mapping[str, Field] | None) -> Question
             raise ValueError(f"identity: {col!r} is not a roster column {ROSTER_FIELDS}")
         if not isinstance(f, Field) or f.label != col:
             raise ValueError(f"identity: {col!r} maps to a Field labelled {col!r}")
-        if f.region is not None:
-            check_region(f.region, pages, f"identity {col!r}")
     fields = [identity.get(col) or Field(col) for col in [*identity, *(c for c in ROSTER_FIELDS if c not in identity)]]
     fields = [f if f.read is not None else dataclasses.replace(f, read=Ask(ASKS[f.label])) for f in fields]
-    for f in fields:
-        f.read.validate(f"identity {f.label!r}")
     return Question(IDENTITY, "Names", (1,), tuple(fields), apart=True)
 
 
@@ -333,12 +348,14 @@ class Exam:
     `identity` maps roster columns ('name', 'id', 'email') to the fields where
     students write them: ordinary fields of the built-in group `IDENTITY`
     (`identity_group`), read on the scans page's Names step, never graded.
-    `ATTRS` are the exam's own values overrides may replace (paths '@<attr>'):
-    the print area (where the printed page sits on a scanned sheet: left, top,
-    right, bottom, per-mille of the sheet); `base_attrs` keeps it as the package
-    built it."""
+    `print_area` is where the printed page sits on a scanned sheet: left, top,
+    right, bottom, per-mille of the sheet.
 
-    ATTRS: tuple[str, ...] = ('print_area',)
+    The definition is a set of **roots** (`roots`): each question by id, and the
+    print area under `PRINT_AREA`. `base` keeps them as the package built them;
+    `questions` and `print_area` are live (the package's, with the exam-wide
+    overrides a workspace applies: `core.overrides`). `validate` is the one
+    validation of a definition, for the package and for every override."""
 
     def __init__(self, id: str, *, title: str = "", pages: int,
                  print_area: Sequence[int] = (0, 0, 1000, 1000),
@@ -347,7 +364,8 @@ class Exam:
         self.id = id
         self.title = title or id
         self.pages = pages
-        self.print_area = tuple(print_area)     # live: the package's, or an exam-wide override
+        self.print_area = tuple(print_area)
+        check_print_area(self.print_area)
         self.crop_pad = crop_pad                # per-mille of the printed page around every crop
         self.landmarks = tuple(landmarks)       # how to tell which printed page a scanned sheet is (intake)
         names = [x.name for x in self.landmarks]
@@ -355,11 +373,11 @@ class Exam:
             raise ValueError(f"duplicate landmark names {names}")
         for x in self.landmarks:
             check_region(x.region, pages, f"landmark {x.name!r}")
-        group = identity_group(pages, identity)
-        self.questions: dict[str, Question] = {IDENTITY: group}   # live: base definitions plus overrides
-        self.base: dict[str, Question] = {IDENTITY: group}        # as built by the package
+        group = identity_group(identity)
+        self._question(group, self.pages)
+        self.questions: dict[str, Question] = {IDENTITY: group}
+        self.base: dict[str, Any] = {PRINT_AREA: self.print_area, IDENTITY: group}
         self.overrides: dict[str, Any] = {}        # applied overrides {path: JSON value}; see `overrides`
-        self.base_attrs: dict[str, Any] = {name: getattr(self, name) for name in self.ATTRS}
         self.path: Path | None = None           # set by `load_exam`
         self.code_hash: str = ''
         self._hashes: dict = {}
@@ -402,39 +420,75 @@ class Exam:
             built.append(dataclasses.replace(c, name=name))
         q = Question(id=id, title=title or id, pages=tuple(pages), fields=tuple(fields), read=read,
                      checks=tuple(built), facets=tuple(facets))
-        self._check(q)
-        self.questions[id] = self.base[id] = q
-        for c in q.checks:              # a check may check its configuration against the question
-            validate = getattr(c.fn, 'validate', None)
-            if callable(validate):
-                try:
-                    validate(q, self)
-                except ValueError:
-                    del self.questions[id], self.base[id]
-                    raise
-        from .focus import facets as all_facets
-        all_facets(q)                    # checks names: built-in, reader, check and question facets together
+        self.questions[id] = q          # a check validates against the exam it is in
+        try:
+            self._question(q, self.pages)
+        except Exception:
+            del self.questions[id]
+            raise
+        self.base[id] = q
         return q
 
-    def _check(self, q: Question) -> None:
-        """Mistakes in a question's data that are mistakes whatever the exam: `ValueError`."""
+    # --- the definition as roots, and its one validation ---
+
+    def roots(self) -> dict[str, Any]:
+        """The live definition: each question by id, and the print area under `PRINT_AREA`."""
+        return {PRINT_AREA: self.print_area, **self.questions}
+
+    def with_roots(self, roots: Mapping[str, Any]) -> 'Exam':
+        """A copy of this exam with these roots (for validating a changed definition);
+        this exam is untouched."""
+        other = object.__new__(Exam)
+        other.__dict__.update(self.__dict__)
+        other.questions = {k: v for k, v in roots.items() if k != PRINT_AREA}
+        other.print_area = roots[PRINT_AREA]
+        return other
+
+    def install(self, roots: Mapping[str, Any]) -> None:
+        """Make these roots live (in place: whoever holds `questions` sees them)."""
+        self.print_area = roots[PRINT_AREA]
+        for qid, q in roots.items():
+            if qid != PRINT_AREA and self.questions.get(qid) is not q:
+                self.questions[qid] = q
+
+    def validate(self, *, pages: int | None = None) -> None:
+        """The one validation of the definition as it stands, which the package's
+        questions and every override go through: `ValueError` with the mistake.
+        `pages`: the pages a question or a region may name (default: the printed
+        pages; one submission's extra sheets add to them)."""
+        check_print_area(self.print_area)
+        for q in self.questions.values():
+            self._question(q, pages or self.pages)
+
+    def _question(self, q: Question, pages: int) -> None:
         dupes = sorted({n for n in q.labels if q.labels.count(n) > 1})
         if dupes:
             raise ValueError(f"{q.id}: duplicate field labels {dupes}")
         if any('/' in label or not label for label in q.labels):
             raise ValueError(f"{q.id}: a field label is not empty and has no '/'")
+        if not q.pages or len(set(q.pages)) != len(q.pages):
+            raise ValueError(f"{q.id}: pages are one or more page numbers, none repeated")
         for p in q.pages:
-            if not 1 <= p <= self.pages:
-                raise ValueError(f"{q.id}: page {p} is not a printed page (1..{self.pages})")
+            if not 1 <= p <= pages:
+                raise ValueError(f"{q.id}: {_no_page(p, self.pages, pages)}")
         for f in q.fields:
             if f.region is not None:
-                check_region(f.region, self.pages, f"{q.id}: field {f.label!r}")
+                check_region(f.region, pages, f"{q.id}: field {f.label!r}", self.pages)
             if f.default is not None and (not isinstance(f.default, str) or (not q.multiline(f.label)
                                                                               and one_line(f.default) != f.default)):
                 raise ValueError(f"{q.id}: field {f.label!r}: a default is text (one line unless multiline)")
             validate = getattr(f.read, 'validate', None)
             if callable(validate):
                 validate(f"{q.id}: field {f.label!r}")
+        validate = getattr(q.read, 'validate', None)
+        if callable(validate):
+            validate(q.id)
+        for c in q.checks:              # a check may check its configuration against the question
+            validate = getattr(c.fn, 'validate', None)
+            if callable(validate):
+                validate(q, self)
+        from .focus import facets
+        facets(q)                       # names: built-in, reader, check and question facets together
 
     def check_hash(self, q: Question, c: Check) -> str:
         """Digest of a check's definition as it computes: its function and that

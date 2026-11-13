@@ -2,7 +2,7 @@
 so the package can change under a workspace. One test per row of the table.
 Everything here is synthetic."""
 
-from examinator import Bool, Check, Exam, Field
+from examinator import Bool, Check, Exam, Field, Region
 from examinator.core import overrides
 from examinator.core.runner import Runner
 from examinator.core.workspace import Workspace
@@ -62,7 +62,7 @@ def test_a_check_whose_key_changes_is_recomputed_and_nothing_else_moves(tmp_path
     ws, runner = graded(tmp_path, build())
     before = snapshot(ws, 's1')
     assert st(runner, 's1', 'q', 'check').value is True
-    overrides.set(runner.exam, ws.store, 'q/checks/check/key/a', '2', author='ta')
+    overrides.set(ws, 'q/checks/check/key/a', '2', author='ta')
     assert st(runner, 's1', 'q', 'check').state == 'outdated'
     assert st(runner, 's2', 'q', 'check').state == 'decided'              # decisions untouched
     assert [o.step for o in runner.refresh('s1')] == ['check']
@@ -160,19 +160,20 @@ def test_points_change_totals_follow_at_once(tmp_path):
 def test_how_a_field_is_read_changes_and_no_value_changes(tmp_path):
     ws, runner = graded(tmp_path, build())
     before = snapshot(ws, 's1')
-    change = overrides.set(runner.exam, ws.store, 'q/fields/a/region', [1, 0, 0, 500, 100], author='ta')
+    change = overrides.set(ws, 'q/fields/a/region', [1, 0, 0, 500, 100], author='ta')
     assert change.fields == (('q', 'a'),) and change.checks == ()
     # the same below the exam: one submission's region, pages, print area
     own = overrides.scope(overrides.SUBMISSION, 's1')
     for path, value in (('q/fields/b/region', [1, 0, 100, 500, 200]), ('q/pages', [1]),
                         ('@print_area', [10, 10, 990, 990])):
-        change = overrides.set(runner.exam, ws.store, path, value, scope=own, author='ta')
+        change = overrides.set(ws, path, value, scope=own, author='ta')
         assert change.checks == () and change.fields
     assert snapshot(ws, 's1') == before
     assert [st(runner, 's1', 'q', 'check').state, st(runner, 's2', 'q', 'check').state] == ['graded', 'decided']
     # a field removed from the package: its own region is ignored, not deleted; restoring the name restores it
     ws, runner = reopen(ws, runner, build(labels=('a',)))
-    assert ws.fields('s1', runner.exam.questions['q'])[0].region is None
+    fields = ws.fields('s1', runner.exam.questions['q'])         # opening applies the exam's override of 'a'
+    assert [(f.label, f.region) for f in fields] == [('a', Region(1, 0, 0, 500, 100))]
     ws, runner = reopen(ws, runner, build())
     assert ws.region('s1', runner.exam.questions['q'], 'b').top == 100
     runner.close()

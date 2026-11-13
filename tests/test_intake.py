@@ -433,7 +433,7 @@ def test_a_page_selection_does_not_hold_a_submission(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    overrides.set(ws.exam, ws.store, 'parity/pages', [1, 2], scope=overrides.scope(overrides.SUBMISSION, 's0003'),
+    overrides.set(ws, 'parity/pages', [1, 2], scope=overrides.scope(overrides.SUBMISSION, 's0003'),
                   author='t')
     intake.edit(ws, one.id, 'drop', sheet=9, expect_rev=intake.plan(ws, one.id).rev, author='t')
     assert intake.accept(ws, one.id)['rewritten'] == ['s0003']        # not Busy: settings are not work
@@ -474,8 +474,8 @@ def test_print_area_resolves_submission_scan_exam_package(tmp_path):
         ws.store.set_made(Made('s2', 'src1', (1,), {}, 'now'))
         win = lambda sid: ws.layout(sid).print_area
         at = lambda level, id='': overrides.scope(level, id)
-        put = lambda value, scope, **kw: overrides.set(exam, ws.store, '@print_area', value, scope=scope, author=None, **kw)
-        assert ws.source_of('s1') == 'src1' and ws.source_of('handed') is None
+        put = lambda value, scope, **kw: overrides.set(ws, '@print_area', value, scope=scope, author=None, **kw)
+        assert ws.layers('s1').source == 'src1' and ws.layers('handed').source is None
         assert win('s1') == win('handed') == (10, 20, 990, 980)              # the package's
         put((0, 0, 1000, 1000), '')
         assert win('s1') == win('handed') == (0, 0, 1000, 1000)              # every submission's
@@ -487,14 +487,14 @@ def test_print_area_resolves_submission_scan_exam_package(tmp_path):
         put((40, 40, 800, 800), at('submission', 's1'))
         assert win('s1') == (40, 40, 800, 800) and win('s2') == (30, 30, 900, 900)
         # clearing each level falls back to the next
-        overrides.clear(exam, ws.store, '@print_area', scope=at('submission', 's1'))
+        overrides.clear(ws, '@print_area', scope=at('submission', 's1'))
         assert win('s1') == (30, 30, 900, 900)
         rev = ws.store.overrides(at('source', 'src1'))['@print_area'].rev
         with pytest.raises(Conflict):
-            overrides.clear(exam, ws.store, '@print_area', scope=at('source', 'src1'), expect_rev=rev + 99)
-        overrides.clear(exam, ws.store, '@print_area', scope=at('source', 'src1'), expect_rev=rev)
+            overrides.clear(ws, '@print_area', scope=at('source', 'src1'), expect_rev=rev + 99)
+        overrides.clear(ws, '@print_area', scope=at('source', 'src1'), expect_rev=rev)
         assert win('s1') == (0, 0, 1000, 1000)
-        overrides.clear(exam, ws.store, '@print_area')
+        overrides.clear(ws, '@print_area')
         assert win('s1') == (10, 20, 990, 980)
     finally:
         ws.close()

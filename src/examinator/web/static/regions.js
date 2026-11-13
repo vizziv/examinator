@@ -27,7 +27,7 @@
   let mode = '', sel = null, drag = null;       // mode: '', 'regions' or 'print'
   const pm = () => mode === 'print';
 
-  const {fx, fy, same, back, shift} = Rects;
+  const {same, back, shift} = Rects;
   const dirty = r => !same(r.draft, r.value);
   const paDirty = () => !same(pa.draft, pa.value);
   // the rectangle being edited, as [page, left, top, right, bottom]: the selected region, or the print area (page 0)
@@ -105,15 +105,16 @@
     Actions.enable($('rg'));
   }
 
-  // The crops on this page show the saved region, with the display padding.
-  function recrop(r) {
+  // The crops on this page where the server now crops them (`boxes`: by region path, the
+  // scanned page and the box on it).
+  function recrop(boxes) {
     for (const crop of document.querySelectorAll('.crop[data-region]')) {
-      if (crop.dataset.region !== r.path || !r.value) continue;
-      const [page, l, t, rt, b] = r.value, w = pa.value;      // the saved print area, as the server crops
-      const box = [fx(l - pad, w), fy(t - pad, w), fx(rt + pad, w), fy(b + pad, w)].map(v => Math.min(1, Math.max(0, v)));
-      const src = `${ROOT}/page/${encodeURIComponent(sub)}/${page - 1}.jpg`;
+      const b = boxes[crop.dataset.region];
+      if (!b) continue;
+      const src = `${ROOT}/page/${encodeURIComponent(sub)}/${b.index}.jpg`;
+      if (crop.dataset.src === src && crop.dataset.box === b.box) continue;
       if (crop.dataset.src !== src) { crop.dataset.src = src; crop.replaceChildren(); }
-      crop.dataset.box = box.map(v => v.toFixed(4)).join(',');
+      crop.dataset.box = b.box;
       drawCrop(crop);
     }
   }
@@ -153,7 +154,7 @@
         + (shadowed ? " · this submission keeps its own" : moved ? " · read again to use it" : ''));
     inputs();
     draw();
-    if (moved) recrop(r);
+    recrop(b.boxes || {});
     document.dispatchEvent(new CustomEvent('entry-saved', {detail: {...b, reread: moved ? [r.label] : []}}));
   }
 
@@ -167,10 +168,7 @@
     const b = await saveAt(pa, level, clear);
     if (!b) return;
     pa.draft = [...pa.value];
-    for (const crop of document.querySelectorAll('.crop[data-region]')) {
-      const box = b.boxes[crop.dataset.region];
-      if (box && crop.dataset.box !== box) { crop.dataset.box = box; drawCrop(crop); }
-    }
+    recrop(b.boxes || {});
     const moved = !same(before, pa.value), shadowed = !clear && !same(pa.value, saved);
     say(`print area ${clear ? 'dropped' : 'saved'} · ${WHERE[level]}`
         + (shadowed ? ` · this submission keeps ${pa.own != null ? 'its own' : "its scan's"}` : '')

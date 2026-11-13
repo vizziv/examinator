@@ -7,7 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .core import batch, focus, grid, overrides
+from .core import batch, focus, grid
 from .core.defs import Exam, load_exam
 from .core.runner import Runner
 from .core.workspace import Workspace
@@ -98,12 +98,17 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
 
 
 def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
-    """The commands that work on an open workspace."""
+    """The commands that work on an open workspace (it has its overrides applied)."""
+    for s in ws.skipped:
+        print(f"override not applied: {s.path}: {s.reason}", file=sys.stderr)
     if args.cmd == 'intake':
         return intake_cmd(args, exam, ws)
     ws.sync()
-    for s in overrides.refresh(exam, ws.store):
-        print(f"override not applied: {s.path}: {s.reason}", file=sys.stderr)
+    unknown = [q for q in args.question or () if q not in exam.grading] if args.cmd == 'run' else []
+    if unknown:
+        print(f"examinator run: no question {', '.join(unknown)} (questions: {', '.join(exam.grading)})",
+              file=sys.stderr)
+        return 2
     model = open_model(args, ws.root)
 
     if args.cmd == 'serve':

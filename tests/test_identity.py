@@ -230,7 +230,7 @@ def test_a_region_for_one_submission_moves_its_crop_and_reads_again(written):
     assert 's0001' not in identity.unread(ws)
     g = ws.exam.identity
     path, scope = '@identity/fields/name/region', overrides.scope(overrides.SUBMISSION, 's0001')
-    change = overrides.set(ws.exam, ws.store, path, [1, 100, 120, 800, 200], scope=scope, author='t')
+    change = overrides.set(ws, path, [1, 100, 120, 800, 200], scope=scope, author='t')
     assert change.fields == (('@identity', 'name'),)
     assert ws.region('s0001', g, 'name').top == 120 and ws.region('s0002', g, 'name') == g.field('name').region
     assert identity.unread(ws)[:1] == ['s0001'] and 's0002' not in identity.unread(ws)
@@ -240,7 +240,7 @@ def test_a_region_for_one_submission_moves_its_crop_and_reads_again(written):
     assert len(model.calls) == calls + 1 and 's0001' not in identity.unread(ws)     # only the moved one
     # every submission's region moved: all read again, but what a person verified
     runner.verify('s0002', IDENTITY, 'name', author='t', expect_rev=runner.values('s0002')['@identity/name'].rev)
-    overrides.set(ws.exam, ws.store, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='t')
+    overrides.set(ws, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='t')
     assert identity.overview(ws, ['s0002'])['rows'][0]['stale'] == ['id']
 
 
@@ -359,7 +359,7 @@ def test_a_box_drawn_in_the_app_is_read_on_synthetic_stacks(tmp_path):
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
     assert identity.placed(ws) == () and identity.unread(ws) == []
-    overrides.set(bare, ws.store, '@identity/fields/name/region', [1, 100, 100, 800, 200], author='t')
+    overrides.set(ws, '@identity/fields/name/region', [1, 100, 100, 800, 200], author='t')
     assert [f.label for f in identity.placed(ws)] == ['name'] and identity.unread(ws)[0] == 's0001'
     runner = Runner(bare, ws, model=synth.fake_model(root))
     identity.read(runner, 's0001')

@@ -1,43 +1,48 @@
-"""Live edits of exam data: overrides layered on the definitions a package builds.
+"""Live edits of exam data: overrides layered on the definition a package builds.
 
-An override replaces one plain-data value at a scope, addressed by a path:
+An override replaces one plain-data value of the definition (`Exam.roots`: each
+question by id, and the print area), addressed by a path:
 
-    <question>/pages                           printed pages holding the answer
+    @print_area                                where the printed page sits on a scanned sheet
+    <question>/pages                           pages holding the answer
     <question>/fields/<label>/region           where a field is (may be unset: then it is not read)
     <question>/fields/<label>/read/<field>     a field's own reader (a printed field: ask, reads, verify)
     <question>/read/<field>[/<key>...]         the question's reader (notes, prompts)
     <question>/checks/<name>/<field>[/<key>...]    a check's configuration: a field of its
                                                function's dataclass, then mapping keys (a key)
 
-and the exam's own values (`Exam.ATTRS`), under '@':
-
-    @print_area                                where the printed page sits on a scanned sheet
-
-The built-in group of identity fields (`defs.IDENTITY`, '@identity') is a
-question like any other here: '@identity/fields/name/region' is where the name
-is written.
-
+The built-in group of identity fields ('@identity') is a question like any
+other here: '@identity/fields/name/region' is where the name is written.
 Segments are separated by '/'; inside a segment '%' is written '%25' and '/'
 is written '%2F'. Labels with dots ('4.1.a') need no escaping.
 
 A scope is the exam (every submission; stored as ''), a source scan (every
 submission split from it: 'source:<id>') or one submission ('submission:<id>').
-Which scopes a value may be set at goes with its kind (`SCOPES`). The value in force for a submission is its own, else
-its source scan's, else the exam's, else the package's (`Layers`). `validate`
-checks a value for every scope alike.
+Which scopes a value may be set at goes with its kind (`SCOPES`). The value in
+force for a submission is its own, else its source scan's, else the exam's,
+else the package's.
+
+- **An override is a change to the definition**, valid exactly when the
+  definition with it applied is valid: `Exam.validate`, the validation the
+  package goes through, runs on a copy with the change, in the context of its
+  scope (one submission's extra sheets are pages it may name). Here a JSON value
+  is only decoded into the kind of object it replaces. A stored override that no
+  longer validates is skipped and reported.
+- **An open workspace has its overrides applied**: opening one applies the
+  exam's (`Workspace.refresh`, which every exam-wide edit repeats), and what
+  holds for one submission is `Layers` (`Workspace.layers`), the one resolver.
 
 What can be edited is what is plain data: text, numbers, booleans, a `Region`,
 page lists, a printed field's `reads` map, and key entries that are text or a
 choice (an object with an `accepted` tuple of texts). Functions are never
-editable, and neither are names used as addresses or result specs. A configuration field can opt out with
-`dataclasses.field(metadata={'override': False})`.
+editable, and neither are names used as addresses or result specs. A
+configuration field can opt out with `dataclasses.field(metadata={'override': False})`.
 
-The `Exam` keeps the questions as built (`exam.base`); `apply` recomputes
-each live question from its base plus the exam's overrides, replacing frozen
-objects along the path, never mutating them. Because a check's hash describes
-the live check, an edited key outdates exactly the checks that used it.
-Changing how a field is read changes no value; `Change.fields` lists the fields
-to offer to read again.
+`Exam.base` keeps the roots as built; `apply` makes the live ones the base plus
+the exam's overrides, replacing frozen objects along each path, never mutating
+them. Because a check's hash describes the live check, an edited key outdates
+exactly the checks that used it. Changing how a field is read changes no value;
+`Change.fields` lists the fields to offer to read again.
 """
 from __future__ import annotations
 
@@ -45,17 +50,16 @@ import copy
 import dataclasses
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
-from .defs import Check, Exam, Field, Question, Region, digest
-from .store import ANY, Store
+from .defs import PRINT_AREA, Check, Exam, Field, Region, digest
+from .store import ANY
 
-KINDS = ('region', 'text', 'int', 'number', 'bool', 'pages', 'map', 'choice', 'print_area')
-AT = '@'            # starts the path of one of the exam's own values: '@print_area'
+if TYPE_CHECKING:
+    from .workspace import Workspace
 
 EXAM, SOURCE, SUBMISSION = 'exam', 'source', 'submission'
 # Where each kind of value may be set (any other kind: the exam only).
-# Adding a scope to a kind is one line here.
 SCOPES = {
     'region': (EXAM, SUBMISSION),
     'pages': (EXAM, SUBMISSION),
@@ -185,9 +189,11 @@ def _map_leaves(prefix: tuple[str, ...], m: Mapping):
             yield (*prefix, k), kind, False
 
 
-def _leaves(q: Question) -> dict[tuple[str, ...], tuple[str, bool]]:
-    """Every editable value of a question: {segments after the id: (kind, nullable)}."""
-    out: dict[tuple[str, ...], tuple[str, bool]] = {} if q.apart else {   # a group apart has no page to show
+def _leaves(root: str, node: Any) -> dict[tuple[str, ...], tuple[str, bool]]:
+    """Every editable value under one root: {segments after the root: (kind, nullable)}."""
+    if root == PRINT_AREA:
+        return {(): ('print_area', False)}
+    out: dict[tuple[str, ...], tuple[str, bool]] = {} if node.apart else {   # a group apart has no page to show
         ('pages',): ('pages', False)}
 
     def config(prefix, obj):
@@ -195,12 +201,12 @@ def _leaves(q: Question) -> dict[tuple[str, ...], tuple[str, bool]]:
             for segs, kind, nullable in _config_leaves(obj):
                 out[(*prefix, *segs)] = (kind, nullable)
 
-    for f in q.fields:
+    for f in node.fields:
         if f.default is None:           # a field with a default is a setting: nowhere on paper
             out[('fields', f.label, 'region')] = ('region', True)
         config(('fields', f.label, 'read'), f.read)
-    config(('read',), q.read)
-    for c in q.checks:
+    config(('read',), node.read)
+    for c in node.checks:
         config(('checks', c.name), c.fn)
     return out
 
@@ -240,9 +246,56 @@ def _set(node: Any, segs: tuple[str, ...], value: Any) -> Any:
     return rebuild(_set(child, segs[1:], value))
 
 
-# --- values -----------------------------------------------------------------------
+# --- values: JSON to the definition's objects and back -------------------------------
 
-def _to_json(kind: str, x: Any) -> Any:
+def _int(x: Any) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def _ints(x: Any, n: int | None = None) -> bool:
+    return isinstance(x, (list, tuple)) and (n is None or len(x) == n) and all(_int(v) for v in x)
+
+
+# The shape of each kind's JSON value: (test, what it should be). Whether a value of the
+# right shape is valid is the definition's to say (`Exam.validate`).
+_SHAPES = {
+    'region': (lambda v: _ints(v, 5), "a region is [page, left, top, right, bottom]"),
+    'print_area': (lambda v: _ints(v, 4), "a print area is [left, top, right, bottom]"),
+    'pages': (_ints, "pages are a list of page numbers"),
+    'int': (_int, "expected an integer"),
+    'number': (lambda v: _int(v) or isinstance(v, float), "expected a number"),
+    'bool': (lambda v: isinstance(v, bool), "expected true or false"),
+    'text': (lambda v: isinstance(v, str), "expected text"),
+    'map': (lambda v: isinstance(v, Mapping), "expected a map of readings to values"),
+    'choice': (lambda v: isinstance(v, (list, tuple)) and all(isinstance(a, str) for a in v),
+               "a choice is a list of accepted texts"),
+}
+
+
+def _decode(kind: str, value: Any, base: Any) -> Any:
+    """The definition's object for a JSON value of `kind` (`base`: what it replaces);
+    `ValueError` if the value has another shape."""
+    if value is None:
+        return None
+    test, want = _SHAPES[kind]
+    if not test(value):
+        raise ValueError(want)
+    if kind == 'region':
+        return Region(*value)
+    if kind in ('pages', 'print_area'):
+        return tuple(value)
+    if kind == 'map':
+        return dict(value)
+    if kind == 'number':
+        return float(value)
+    if kind == 'choice':        # the base entry with other texts: the core does not import std
+        new = copy.copy(base)
+        object.__setattr__(new, 'accepted', tuple(value))
+        return new
+    return value
+
+
+def _encode(kind: str, x: Any) -> Any:
     if x is None:
         return None
     if kind == 'region':
@@ -256,141 +309,52 @@ def _to_json(kind: str, x: Any) -> Any:
     return x
 
 
-def _from_json(kind: str, value: Any, base: Any) -> Any:
-    if value is None:
-        return None
-    if kind == 'region':
-        return Region(*value)
-    if kind in ('pages', 'print_area'):
-        return tuple(value)
-    if kind == 'choice':        # a fresh copy of the base entry with other texts; core does not import std
-        new = copy.copy(base)
-        object.__setattr__(new, 'accepted', tuple(value))
-        return new
-    return value
-
-
-def _int(x: Any) -> bool:
-    return isinstance(x, int) and not isinstance(x, bool)
-
-
-def _check(exam: Exam, q: Question, segs: tuple[str, ...], kind: str, nullable: bool, value: Any,
-           level: str = EXAM) -> Any:
-    """The value in normal JSON form, or `ValueError`. One submission's pages may go
-    beyond the exam's: its extra sheets (`Workspace.selected_pages` keeps those it has)."""
-    if value is None:
-        if not nullable:
-            raise ValueError("a value is required")
-        return None
-    if kind == 'region':
-        if not (isinstance(value, (list, tuple)) and len(value) == 5 and all(_int(v) for v in value)):
-            raise ValueError("a region is [page, left, top, right, bottom]")
-        page, left, top, right, bottom = value
-        if not 1 <= page <= exam.pages:
-            raise ValueError(f"page {page} is not in 1..{exam.pages}")
-        if not (0 <= left < right <= 1000 and 0 <= top < bottom <= 1000):
-            raise ValueError("a region needs 0 <= left < right <= 1000 and 0 <= top < bottom <= 1000")
-        return list(value)
-    if kind == 'pages':
-        if not (isinstance(value, (list, tuple)) and value and all(_int(v) for v in value)):
-            raise ValueError("pages are a non-empty list of page numbers")
-        last = exam.pages if level != SUBMISSION else 999
-        if any(not 1 <= p <= last for p in value):
-            raise ValueError(f"pages must be in 1..{last}")
-        if len({*value}) != len(value):
-            raise ValueError("repeated page")
-        return list(value)
-    if kind == 'print_area':
-        if not (isinstance(value, (list, tuple)) and len(value) == 4 and all(_int(v) for v in value)):
-            raise ValueError("a print area is [left, top, right, bottom]")
-        left, top, right, bottom = value
-        if not (0 <= left < right <= 1000 and 0 <= top < bottom <= 1000):
-            raise ValueError("a print area needs 0 <= left < right <= 1000 and 0 <= top < bottom <= 1000")
-        return list(value)
-    if kind == 'int':
-        if not _int(value):
-            raise ValueError("expected an integer")
-        return value
-    if kind == 'number':
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("expected a number")
-        return float(value)
-    if kind == 'bool':
-        if not isinstance(value, bool):
-            raise ValueError("expected true or false")
-        return value
-    if kind == 'text':
-        if not isinstance(value, str):
-            raise ValueError("expected text")
-        return value
-    if kind == 'map':
-        if not (isinstance(value, Mapping) and all(isinstance(k, str) and k.strip() and isinstance(v, str)
-                                                   for k, v in value.items())):
-            raise ValueError("expected a map of readings to values")
-        return dict(value)
-    if kind == 'choice':
-        if not (isinstance(value, (list, tuple)) and value
-                and all(isinstance(v, str) and v.strip() for v in value)):
-            raise ValueError("a choice is a non-empty list of accepted texts")
-        return list(value)
-    raise ValueError(f"unknown kind {kind!r}")
-
+# --- one change to the definition ---------------------------------------------------------
 
 @dataclass(frozen=True)
 class _Loc:
-    """Where a path points: `root` (a question id or '@<attr>'), its object as the
-    package built it (`base`: a question, the attribute's value), the segments under
-    it, what kind of value is there and the scopes it may be set at."""
+    """Where a path points: its root, the segments under it, what kind of value is
+    there and the scopes it may be set at."""
     root: str
-    base: Any
     segs: tuple[str, ...]
     kind: str
     nullable: bool
-    scopes: tuple[str, ...] = (EXAM,)
-
-
-def _attr(exam: Exam, root: str) -> str | None:
-    """The exam attribute a path's first segment names ('@print_area'), or None."""
-    return root[len(AT):] if root.startswith(AT) and root[len(AT):] in exam.ATTRS else None
+    scopes: tuple[str, ...]
 
 
 def _locate(exam: Exam, path: str) -> _Loc:
     segs = split(path)
-    name = _attr(exam, segs[0])
-    if name is not None:
-        if len(segs) != 1:
-            raise ValueError(f"{path} is not an editable value")
-        return _Loc(segs[0], exam.base_attrs[name], (), name, False, scopes=SCOPES[name])
-    q = exam.base.get(segs[0])
-    if q is None:
+    base = exam.base.get(segs[0])
+    if base is None:
         raise ValueError(f"no question {segs[0]!r}")
-    info = _leaves(q).get(segs[1:])
+    info = _leaves(segs[0], base).get(segs[1:])
     if info is None:
         raise ValueError(f"{path} is not an editable value")
     kind, nullable = info
-    return _Loc(segs[0], q, segs[1:], kind, nullable, scopes=SCOPES.get(kind, (EXAM,)))
+    return _Loc(segs[0], segs[1:], kind, nullable, SCOPES.get(kind, (EXAM,)))
 
 
-def _value(exam: Exam, loc: _Loc, value: Any, level: str = EXAM) -> Any:
-    """`value` checked for where `loc` points, in normal JSON form; `ValueError` if it does not fit."""
-    return _check(exam, loc.base, loc.segs, loc.kind, loc.nullable, value, level)
-
-
-def _at(loc: _Loc, level: str, path: str) -> None:
+def _change(exam: Exam, roots: Mapping[str, Any], path: str, value: Any, level: str,
+            pages: int | None = None) -> tuple[Any, Any]:
+    """The root `path` is under, in `roots`, with `value` (JSON) put there, and the value
+    in normal JSON form; `ValueError` unless the definition with it is valid (`Exam.validate`,
+    with `pages` the pages that may be named at this scope)."""
+    loc = _locate(exam, path)
     if level not in loc.scopes:
         where = {EXAM: "every submission", SOURCE: "one scan", SUBMISSION: "one submission"}[level]
         raise ValueError(f"{path}: not set for {where}")
+    if value is None and (level != EXAM or not loc.nullable):
+        raise ValueError("a value is required" + (" (to drop it, clear it)" if level != EXAM else ""))
+    obj = _decode(loc.kind, value, _get(exam.base[loc.root], loc.segs))
+    node = _set(roots[loc.root], loc.segs, obj)
+    exam.with_roots({**roots, loc.root: node}).validate(pages=pages)
+    return node, _encode(loc.kind, obj)
 
 
-def validate(exam: Exam, path: str, value: Any, scope: str = '') -> Any:
-    """The value in normal JSON form if `path` is editable at `scope` and `value`
-    fits it; else `ValueError`. The one check of a value, for every scope."""
-    level, _ = parse_scope(scope)
-    loc = _locate(exam, path)
-    _at(loc, level, path)
-    if value is None and level != EXAM:
-        raise ValueError("a value is required (to drop it, clear it)")
-    return _value(exam, loc, value, level)
+def validate(exam: Exam, path: str, value: Any) -> Any:
+    """The value in normal JSON form if the live definition with it at `path`, for
+    every submission, is valid; else `ValueError`."""
+    return _change(exam, exam.roots(), path, value, EXAM)[1]
 
 
 def kind(exam: Exam, path: str) -> str:
@@ -398,52 +362,27 @@ def kind(exam: Exam, path: str) -> str:
     return _locate(exam, path).kind
 
 
-def _live(exam: Exam, loc: _Loc) -> Any:
-    """The value at `loc` in the live exam (an exam-wide override, else the package's), as JSON;
-    None for a value that is never set for every submission."""
-    if EXAM not in loc.scopes:
-        return None
-    if _attr(exam, loc.root) is not None:
-        live = getattr(exam, loc.root[len(AT):])
-    else:
-        live = exam.questions.get(loc.root, loc.base)
-    try:
-        return _to_json(loc.kind, _get(live, loc.segs))
-    except KeyError:
-        return _to_json(loc.kind, _get(loc.base, loc.segs))
+def package_value(exam: Exam, path: str, value: Any) -> tuple[Any, Any]:
+    """(the package's object at `path`, the object `value` (JSON) stands for); `ValueError`
+    if nothing editable is there or the value has another shape."""
+    loc = _locate(exam, path)
+    base = _get(exam.base[loc.root], loc.segs)
+    return base, _decode(loc.kind, value, base)
 
 
 # --- listing and applying ------------------------------------------------------------
 
-def _base_of(exam: Exam) -> dict[str, Question]:
-    for qid, q in exam.questions.items():       # questions added without `Exam.question`
-        exam.base.setdefault(qid, q)
-    return exam.base
-
-
-def editable(exam: Exam, question: str | None = None) -> list[Entry]:
-    """Every value editable for every submission (of one question or exam value
-    ('@<attr>'), or of all), with base and current values."""
-    out = []
-    for qid, base in _base_of(exam).items():
-        if question is not None and qid != question:
+def editable(exam: Exam, root: str | None = None) -> list[Entry]:
+    """Every value editable for every submission (of one root: a question, '@print_area';
+    or of all), with base and current values."""
+    out, live = [], exam.roots()
+    for name, base in exam.base.items():
+        if root is not None and name != root:
             continue
-        live = exam.questions.get(qid, base)
-        for segs, (kind, nullable) in _leaves(base).items():
-            if EXAM not in SCOPES.get(kind, (EXAM,)):
-                continue
-            path = join(qid, *segs)
-            try:
-                current = _get(live, segs)
-            except KeyError:
-                current = _get(base, segs)
-            out.append(Entry(path, kind, _to_json(kind, _get(base, segs)), _to_json(kind, current),
+        for segs, (kind, nullable) in _leaves(name, base).items():
+            path = join(name, *segs)
+            out.append(Entry(path, kind, _encode(kind, _get(base, segs)), _encode(kind, _get(live[name], segs)),
                              path in exam.overrides, nullable))
-    for name in exam.ATTRS:
-        path = AT + name
-        if question is None or path == question:
-            out.append(Entry(path, name, _to_json(name, exam.base_attrs[name]), _to_json(name, getattr(exam, name)),
-                             path in exam.overrides))
     return out
 
 
@@ -453,74 +392,74 @@ def entry(exam: Exam, path: str) -> Entry | None:
 
 
 def apply(exam: Exam, mapping: Mapping[str, Any]) -> list[Skipped]:
-    """Make the live exam its base definitions plus `mapping` ({path: JSON value},
-    the exam's own overrides).
+    """Make the live exam its base definition plus `mapping` ({path: JSON value},
+    the exam's own overrides), each applied if the definition with it validates.
 
-    Questions without overrides go back to their base objects. An override whose
-    path no longer exists or whose value no longer fits is skipped and reported."""
-    base = _base_of(exam)
-    skipped, applied = [], {}
-    live: dict[str, Any] = dict(base)
-    live.update({AT + name: exam.base_attrs[name] for name in exam.ATTRS})
+    Roots without overrides go back to their base objects. An override whose path
+    no longer exists or whose value no longer fits is skipped and reported."""
+    roots, applied, skipped = dict(exam.base), {}, []
     for path in sorted(mapping):
         try:
-            loc = _locate(exam, path)
-            _at(loc, EXAM, path)
-            value = _value(exam, loc, mapping[path])
-            live[loc.root] = _set(live[loc.root], loc.segs, _from_json(loc.kind, value, _get(loc.base, loc.segs)))
-            applied[path] = value
+            root = split(path)[0]
+            roots[root], applied[path] = _change(exam, roots, path, mapping[path], EXAM)
         except (ValueError, KeyError, TypeError) as e:
             skipped.append(Skipped(path, str(e)))
     exam.overrides = applied     # first: a worker never runs older data than a result's recorded hash
-    for qid, q in live.items():
-        if _attr(exam, qid) is not None:
-            setattr(exam, qid[len(AT):], q)
-        elif exam.questions.get(qid) is not q:
-            exam.questions[qid] = q
+    exam.install(roots)
     return skipped
-
-
-def refresh(exam: Exam, store: Store) -> list[Skipped]:
-    """Apply every exam-wide override stored in the workspace. Call on opening a workspace."""
-    return apply(exam, {path: o.value for path, o in store.overrides().items()})
 
 
 # --- what applies to one submission ------------------------------------------------------
 
 class Layers:
-    """The overrides over the live exam for one submission, or for the sheets of one
-    source scan: the value in force is the submission's own, else its source scan's
-    (when it was split from one), else the exam's, else the package's. The one
-    resolver: every per-submission value is looked up here."""
+    """The definition as it is for one submission, or for the sheets of one source
+    scan: each value is the submission's own, else its source scan's (when it was
+    split from one), else the exam's, else the package's. The one resolver: every
+    per-submission value is looked up here (`Workspace.layers`)."""
 
-    def __init__(self, exam: Exam, store: Store, *, submission: str | None = None,
-                 source: str | None = None):
+    def __init__(self, ws: 'Workspace', *, submission: str | None = None, source: str | None = None):
         if submission is not None and source is None:
-            made = store.made_of(submission)
+            made = ws.store.made_of(submission)
             source = made.source if made else None
-        self.exam, self.submission, self.source = exam, submission, source
-        self.stored = {level: store.overrides(scope(level, id))
+        self.ws, self.exam, self.submission, self.source = ws, ws.exam, submission, source
+        self.stored = {level: ws.store.overrides(scope(level, id))
                        for level, id in ((SUBMISSION, submission), (SOURCE, source)) if id}
+        self._roots: dict[str, Any] = {}
+        self._pages: int | None = None
 
-    def own(self, path: str) -> Any:
-        """The value at `path` from the most specific scope below the exam that has one
-        that fits (JSON), or None."""
-        for level in (SUBMISSION, SOURCE):
-            o = self.stored.get(level, {}).get(path)
-            if o is None:
-                continue
-            try:
-                loc = _locate(self.exam, path)
-                if level in loc.scopes and o.value is not None:
-                    return _value(self.exam, loc, o.value, level)
-            except (ValueError, KeyError, TypeError):
-                pass            # no longer fits the package: not applied, as at the exam's scope
-        return None
+    def pages(self) -> int:
+        """The pages a value may name here: the printed pages, and a submission's extra sheets."""
+        if self._pages is None:
+            self._pages = self.exam.pages + (self.ws.extras(self.submission) if self.submission else 0)
+        return self._pages
+
+    def root(self, name: str) -> Any:
+        """A root of the definition here (a question, the print area): the live one with
+        the scan's, then the submission's overrides under it, each applied if the
+        definition with it validates (as at the exam's scope)."""
+        if name not in self._roots:
+            roots = self.exam.roots()
+            for level in (SOURCE, SUBMISSION):
+                for path, o in self.stored.get(level, {}).items():
+                    if split(path)[0] != name:
+                        continue
+                    try:
+                        roots[name], _ = _change(self.exam, roots, path, o.value, level, self.pages())
+                    except (ValueError, KeyError, TypeError):
+                        pass            # no longer fits the package: not applied
+            self._roots[name] = roots[name]
+        return self._roots[name]
 
     def value(self, path: str) -> Any:
         """The value in force at `path` (JSON)."""
-        v = self.own(path)
-        return v if v is not None else _live(self.exam, _locate(self.exam, path))
+        loc = _locate(self.exam, path)
+        return _encode(loc.kind, _get(self.root(loc.root), loc.segs))
+
+    def candidate(self, path: str, value: Any, level: str) -> Any:
+        """`value` (JSON) at `path` for this submission or scan, in normal form, if the
+        definition with it here validates; else `ValueError`."""
+        roots = {**self.exam.roots(), split(path)[0]: self.root(split(path)[0])}
+        return _change(self.exam, roots, path, value, level, self.pages())[1]
 
 
 @dataclass(frozen=True)
@@ -546,35 +485,39 @@ def _hashes(exam: Exam) -> tuple[dict, dict]:
     return checks, fields
 
 
-def _changed(exam: Exam, store: Store, path: str, scope: str) -> Change:
+def _changed(ws: 'Workspace', path: str, scope: str) -> Change:
+    exam = ws.exam
     if scope == '':
-        (c0, f0), skipped = _hashes(exam), refresh(exam, store)
+        (c0, f0), skipped = _hashes(exam), ws.refresh()
         c1, f1 = _hashes(exam)
         return Change(tuple(k for k in c1 if c1[k] != c0.get(k)), tuple(k for k in f1 if f1[k] != f0.get(k)),
                       tuple(skipped))
     # below the exam: only how fields are read, for some submissions (no check reads these values)
-    try:
-        loc = _locate(exam, path)
-    except ValueError:
-        return Change(())
-    if _attr(exam, loc.root) is not None:       # the print area: every crop
+    segs = split(path)
+    q = exam.questions.get(segs[0])
+    if q is not None:
+        labels = [segs[2]] if len(segs) > 2 and segs[1] == 'fields' else q.labels
+        return Change((), tuple((q.id, label) for label in labels))
+    if segs[0] == PRINT_AREA:       # every crop
         return Change((), tuple((qid, f.label) for qid, q in exam.questions.items() for f in q.fields))
-    q = exam.questions[loc.root]
-    labels = [loc.segs[1]] if loc.segs[0] == 'fields' else q.labels
-    return Change((), tuple((q.id, label) for label in labels))
+    return Change(())
 
 
-def set(exam: Exam, store: Store, path: str, value: Any, *, scope: str = '', author: str | None,
+def set(ws: 'Workspace', path: str, value: Any, *, scope: str = '', author: str | None,
         expect_rev: Any = ANY) -> Change:
     """Validate, store and apply one override at a scope ('': the exam's).
     Raises `ValueError` or `store.Conflict`."""
-    value = validate(exam, path, value, scope)
-    store.set_override(path, value, scope=scope, author=author, expect_rev=expect_rev)
-    return _changed(exam, store, path, scope)
+    level, id = parse_scope(scope)
+    if level == EXAM:
+        value = validate(ws.exam, path, value)
+    else:
+        value = ws.layers(**{level: id}).candidate(path, value, level)
+    ws.store.set_override(path, value, scope=scope, author=author, expect_rev=expect_rev)
+    return _changed(ws, path, scope)
 
 
-def clear(exam: Exam, store: Store, path: str, *, scope: str = '', expect_rev: Any = ANY) -> Change:
+def clear(ws: 'Workspace', path: str, *, scope: str = '', expect_rev: Any = ANY) -> Change:
     """Remove one override: back to the next scope's value."""
     parse_scope(scope)
-    store.clear_override(path, scope=scope, expect_rev=expect_rev)
-    return _changed(exam, store, path, scope)
+    ws.store.clear_override(path, scope=scope, expect_rev=expect_rev)
+    return _changed(ws, path, scope)

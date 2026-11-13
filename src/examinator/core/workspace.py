@@ -13,7 +13,6 @@ name that carries a roster ID (`identity.by_file`).
 """
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 
 from PIL import Image
@@ -21,10 +20,8 @@ from PIL import Image
 from ..pdf.layout import Layout
 from ..pdf.render import Renderer
 from . import overrides
-from .defs import Exam, Field, Question, Region
+from .defs import PRINT_AREA, Exam, Field, Question, Region
 from .store import Store, Submission
-
-PRINT_AREA = '@print_area'      # its override path
 
 
 class Workspace:
@@ -40,6 +37,14 @@ class Workspace:
             (self.root / d).mkdir(exist_ok=True, mode=0o700)
         self.store = Store(self.root / 'exam.sqlite')
         self.renderer = Renderer(self.root / 'cache')
+        self.skipped: list[overrides.Skipped] = self.refresh()
+
+    def refresh(self) -> list[overrides.Skipped]:
+        """Apply the exam-wide overrides stored here to the exam: part of opening a
+        workspace, and of every exam-wide edit. Those that no longer validate are
+        skipped (`skipped`)."""
+        self.skipped = overrides.apply(self.exam, {path: o.value for path, o in self.store.overrides().items()})
+        return self.skipped
 
     def close(self) -> None:
         self.store.close()
@@ -60,29 +65,24 @@ class Workspace:
     # submission intake made from that file), else the exam's, else the package's.
 
     def layers(self, submission: str | None = None, *, source: str | None = None) -> overrides.Layers:
-        return overrides.Layers(self.exam, self.store, submission=submission, source=source)
+        return overrides.Layers(self, submission=submission, source=source)
 
-    def source_of(self, submission: str) -> str | None:
-        """The source scan intake made this submission from; None if it was handed in split."""
-        m = self.store.made_of(submission)
-        return m.source if m else None
+    def question(self, submission: str, qid: str) -> Question:
+        """A question as it is for one submission (its regions, its pages)."""
+        return self.layers(submission).root(qid)
 
     def layout(self, submission: str) -> Layout:
         """This submission's print area."""
-        return Layout(tuple(self.layers(submission).value(PRINT_AREA)))
+        return Layout(self.layers(submission).root(PRINT_AREA))
 
     def source_layout(self, source: str | None) -> Layout:
         """A source scan's sheets, with its print area."""
-        return Layout(tuple(self.layers(source=source).value(PRINT_AREA)))
+        return Layout(self.layers(source=source).root(PRINT_AREA))
 
     def selected_pages(self, submission: str, question: Question) -> tuple[int, ...]:
-        """The question's pages for this submission: printed pages, and (its own
-        choice only) its extra sheets, numbered on from the exam's last page."""
-        pages = self.layers(submission).own(overrides.join(question.id, 'pages'))
-        if not pages:
-            return question.pages
-        last = self.exam.pages + self.extras(submission)
-        return tuple(p for p in pages if p <= last) or question.pages
+        """The question's pages for this submission: printed pages, and (one
+        submission's own choice) its extra sheets, numbered on from the exam's last page."""
+        return self.question(submission, question.id).pages
 
     def missing(self, submission: str) -> set[int]:
         """The printed pages this submission's PDF does not have: intake wrote a
@@ -104,12 +104,7 @@ class Workspace:
 
     def fields(self, submission: str, question: Question) -> tuple[Field, ...]:
         """The question's fields with this submission's regions."""
-        lay = self.layers(submission)
-        out = []
-        for f in question.fields:
-            own = lay.own(overrides.join(question.id, 'fields', f.label, 'region'))
-            out.append(f if own is None else dataclasses.replace(f, region=Region(*own)))
-        return tuple(out)
+        return self.question(submission, question.id).fields
 
     def region(self, submission: str, question: Question, label: str) -> Region | None:
         """A field's region for this submission (None: unset, not read)."""

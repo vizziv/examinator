@@ -47,12 +47,10 @@ def test_expect_rev_and_guard(store):
     assert store.get('s', 'q/c', 'result').body == {}
 
 
-def test_history_and_restore(store):
-    a = store.write('s', '', 'split', "one", origin='auto')
+def test_history(store):
+    store.write('s', '', 'split', "one", origin='auto')
     store.write('s', '', 'split', "two", origin='manual', author='ta')
-    assert [h.body for h in store.history('s', '', 'split')] == ["one"]
-    r = store.restore('s', '', 'split', a.rev)
-    assert r.body == "one" and r.origin == 'auto' and r.rev > a.rev
+    store.write('s', '', 'split', "three", origin='manual', author='ta')
     assert [h.body for h in store.history('s', '', 'split')] == ["two", "one"]
     store.purge_history()
     assert store.history('s', '', 'split') == []
