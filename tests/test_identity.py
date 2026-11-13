@@ -423,7 +423,7 @@ def test_rewriting_a_submission_drops_its_unverified_readings(written):
     row = identity.overview(ws, ['s0001'])['rows'][0]
     assert texts(ws, 's0001') == {'id': "90412873"} and row['unread'] == ['name']
     assert row['who']['name'] == "Avery Testwell" and ws.store.submission('s0001').name == "Avery Testwell"
-    assert 's0001' in identity.unread(ws)
+    assert 's0001' not in identity.unread(ws)            # named: "read names" leaves it alone
     calls = len(model.calls)
     identity.read(runner, 's0001')
     assert len(model.calls) == calls + 1 and texts(ws, 's0001')['name'] == "Avery Testwell"   # memo dropped too

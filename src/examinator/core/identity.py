@@ -214,10 +214,18 @@ def values(ws, sid: str | None = None) -> dict[str, dict[str, Value]]:
     return out
 
 
-def unread(ws) -> list[str]:
-    """Submissions with a placed identity field that has no value."""
-    got = values(ws)
-    return [s.id for s in ws.store.submissions() if at(ws, s.id).unread(got.get(s.id, {}))]
+def unread(ws, *, again: bool = False, ats: Mapping[str, At] | None = None) -> list[str]:
+    """What reading names reads: the submissions nobody has named yet with a placed
+    identity field that has no value (`again`: or one no person verified). A named
+    submission's pick stands, and its boxes serve only to propose who wrote it, so
+    reading them would change nothing. `ats`: each submission's `at`, if the caller has them."""
+    got, named = values(ws), {a.submission for a in ws.store.all(kinds=[WHO])}
+
+    def to_read(sid: str) -> bool:
+        a, have = (ats or {}).get(sid) or at(ws, sid), got.get(sid, {})
+        return bool(a.unread(have)) or again and any(
+            have[f.label].verified != 'person' for f in a.fields if f.label in have)
+    return [s.id for s in ws.store.submissions() if s.id not in named and to_read(s.id)]
 
 
 def read(runner, sid: str, *, again: bool = False) -> list:
