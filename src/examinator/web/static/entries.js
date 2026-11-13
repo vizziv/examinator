@@ -38,21 +38,20 @@
   };
   const short = v => { const s = JSON.stringify(v) ?? ''; return s.length > 80 ? s.slice(0, 80) + '…' : s; };
 
-  async function send(form, clear) {
+  // A refusal keeps the draft and takes the revision saved now: saving again overwrites knowingly.
+  function send(form, clear) {
     const path = form.dataset.path;
     const data = clear ? {path, rev: revOf(form), sub} : {path, value: readEntry(form), rev: revOf(form), sub};
     say(form, '…');
-    const r = await request(clear ? '/exam/clear' : '/exam/set', data);
-    if (r.status === 409) {
-      // Keep the draft; take the newer revision so that saving again overwrites it knowingly.
-      const cur = r.body.current || {};
-      form.dataset.rev = cur.rev ?? '';
-      say(form, cur.rev == null ? "changed elsewhere: reverted; save again to overwrite"
-                                : `changed elsewhere by ${cur.who}: ${short(cur.value)}; save again to overwrite`, true);
-      return;
-    }
-    if (!r.ok) { say(form, r.body.error || "failed", true); return; }
-    const b = r.body;
+    return Changes.send(`override::${path}`, clear ? '/exam/clear' : '/exam/set', data, {
+      redraw: cur => {
+        form.dataset.rev = cur.rev ?? '';
+        say(form, cur.rev == null ? "reverted elsewhere; save again to overwrite"
+                                  : `now ${short(cur.value)}; save again to overwrite`, true);
+      },
+      done: b => saved(form, clear, b)});
+  }
+  function saved(form, clear, b) {
     form.dataset.rev = b.rev ?? '';
     form.classList.toggle('over', b.overridden);
     form.classList.remove('dirty');
@@ -122,20 +121,18 @@
     await follow(b.job, `${b.checks.join(', ')} recomputed`);
   });
   // A scan's or a submission's own value: back to what applies to the others.
-  Actions.register('scoped-revert', {run: async ({el}) => {
+  Actions.register('scoped-revert', {run: ({el}) => {
     if (!confirm("Drop this own value?")) return;
-    const m = el.parentElement.querySelector('.emsg');
-    const r = await request('/exam/clear', {path: el.dataset.path, scope: el.dataset.scope,
-                                            rev: el.dataset.rev === '' ? null : Number(el.dataset.rev)});
-    if (r.status === 409) {
-      const cur = r.body.current || {};
-      el.dataset.rev = cur.rev ?? '';
-      m.textContent = cur.rev == null ? "gone already" : `changed by ${cur.who}: ${short(cur.value)}; revert again to drop it`;
-      return;
-    }
-    if (!r.ok) { m.textContent = r.body.error || "failed"; return; }
-    el.closest('tr').remove();
-    document.dispatchEvent(new CustomEvent('entry-saved', {detail: r.body}));
+    const m = el.parentElement.querySelector('.emsg'), {path, scope} = el.dataset;
+    return Changes.send(`override:${scope}:${path}`, '/exam/clear', {path, scope, rev: el.dataset.rev === '' ? null : Number(el.dataset.rev)}, {
+      redraw: cur => {
+        el.dataset.rev = cur.rev ?? '';
+        m.textContent = cur.rev == null ? "gone already" : `now ${short(cur.value)}; revert again to drop it`;
+      },
+      done: b => {
+        el.closest('tr').remove();
+        document.dispatchEvent(new CustomEvent('entry-saved', {detail: b}));
+      }});
   }});
   Actions.register('copy-lines', {available: () => !!$('lines'), run: async () => {
     try { await navigator.clipboard.writeText($('lines').textContent); flash("copied", 'ok'); }

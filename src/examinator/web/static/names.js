@@ -86,48 +86,47 @@
   // (someone typed in), {restore} (undo) or nothing (unname). A statement about a revision
   // that has since changed (Enter twice, a double click) does nothing.
   const about = what => { const r = row(); return r ? {sub: r.sub, rev: r.rev, ...what} : null; };
-  async function name(said, next = true) {
-    const r = view.byId[said.sub];
-    if (!r || r.rev !== said.rev) return;
-    const here = row() === r, before = r.who ? r.who.name : '', was = r.rev;
-    const res = await request('/scans/who', said);
-    if (!res.ok) { flash(res.status === 409 ? 'changed elsewhere' : res.body.error || 'failed'); await load(); return; }
-    const now = res.body.who;
-    report(said.sub, now.name, before, was == null ? {sub: said.sub, rev: now.rev} : {sub: said.sub, rev: now.rev, restore: was});
-    await load();
-    if (next && here && row() && row().sub === said.sub) go(nextOpen(order, k, s => !verified(view.byId[s])));
+  function name(said, next = true) {
+    const r = view.byId[said.sub], before = r && r.who ? r.who.name : '', was = said.rev;
+    if (!r) return;
+    return Changes.send(`who:${said.sub}`, '/scans/who', said, {redraw: () => load(), done: async b => {
+      const now = b.who, here = row() && row().sub === said.sub;
+      report(said.sub, now.name, before, was == null ? {sub: said.sub, rev: now.rev} : {sub: said.sub, rev: now.rev, restore: was});
+      await load();
+      if (next && here && row() && row().sub === said.sub) go(nextOpen(order, k, s => !verified(view.byId[s])));
+    }});
   }
   // One line says what was done, with an undo: itself a statement, made now.
   function report(sub, who, before, undoing) {
     const undo = make('button', {type: 'button', className: 'quiet', textContent: 'undo', title: before ? `back to ${before}` : 'unname it'});
-    undo.addEventListener('click', () => S.enqueue(async () => {
+    undo.addEventListener('click', () => {
+      if (!live()) return;
       $('w-said').replaceChildren();
-      await name(undoing, false);
-      go(order.indexOf(sub));
-    }));
+      name(undoing, false)?.then(b => { if (b) go(order.indexOf(sub)); });
+    });
     $('w-said').replaceChildren(`${sub} → ${who || 'nobody'} · `, undo);
   }
 
-  const S = steps(live, () => { if (view) render(); });
-  S.register('names-verify', {available: () => !!cand(), bind: () => about({key: cand().key}), run: said => name(said)});
+  const S = {register: (name, spec) => Actions.register(name, {...spec,
+    available: ctx => live() && !Changes.busy() && (!spec.available || spec.available(ctx))})};
+  S.register('names-verify', {available: () => !!cand(), run: () => name(about({key: cand().key}))});
   S.register('names-down', {available: () => !!row() && row().candidates.length > 1, run: () => { ci += 1; render(); }});
   S.register('names-up', {available: () => !!row() && row().candidates.length > 1,
     run: () => { ci += row().candidates.length - 1; render(); }});
   S.register('names-skip', {available: () => k < order.length, run: () => go(k + 1)});
   S.register('names-back', {available: () => k > 0, run: () => go(k - 1)});
   S.register('names-type', {available: () => !!row(), run: () => { pick.focus(); pick.select(); }});
-  S.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, long: true, run: async () => {
-    const r = await request('/scans/names/read', {});
-    if (!r.ok) { flash(r.body.error || 'failed'); return; }
-    $('msg').hidden = !r.body.n;
-    $('msg').textContent = r.body.n ? `reading ${r.body.n}…` : '';
-    const job = await waitJob(r.body.job);
-    const failed = (job.outcomes || []).length;
-    $('msg').textContent = job.state !== 'done' ? `read names ${job.state}` : failed ? `${failed} failed` : '';
-    $('msg').hidden = !$('msg').textContent;
-    order = [];         // new readings: doubtful ones first again
-    await load();
-  }});
+  S.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, run: () =>
+    Changes.send('names-read', '/scans/names/read', {rev: view.run}, {long: true, redraw: () => load(), done: async b => {
+      $('msg').hidden = !b.n;
+      $('msg').textContent = b.n ? `reading ${b.n}…` : '';
+      const job = await waitJob(b.job);
+      const failed = (job.outcomes || []).length;
+      $('msg').textContent = job.state !== 'done' ? `read names ${job.state}` : failed ? `${failed} failed` : '';
+      $('msg').hidden = !$('msg').textContent;
+      order = [];         // new readings: doubtful ones first again
+      await load();
+    }})});
 
   // --- the picker: the proposals while empty, else the roster people matching what is typed ---
   const pick = $('w-pick'), list = $('w-list');
@@ -162,7 +161,7 @@
   }
   function choose(j) {
     const x = items[j], said = x && about(x.free ? {text: x.free} : {key: x.key});
-    if (said) S.enqueue(() => name(said));
+    if (said && live()) name(said);
   }
   pick.addEventListener('input', () => { hi = 0; renderList(); });
   pick.addEventListener('focus', renderList);
@@ -177,7 +176,7 @@
       else { ci = hi; render(); }            // over the proposals: the one shown large follows
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (!e.repeat) choose(hi);           // held down: once
+      choose(hi);
     } else if (e.key === 'Escape' && pick.value) {
       e.preventDefault();                    // first Escape clears, the next leaves the box
       pick.value = '';
@@ -299,25 +298,21 @@
     return out.filter(x => !x.clear || x.rev != null);
   }
   const WHERE = {own: 'this submission', all: 'all submissions'};
-  async function saveBoxes(list, what) {
+  // One override per box; a refusal keeps the drafts and takes what is saved now, so saving
+  // again overwrites knowingly. After the last, the saved boxes are taken.
+  function saveBoxes(list, what) {
     say('…');
-    const sub = row().sub;
-    for (const c of list) {
-      const res = await request(c.clear ? '/exam/clear' : '/exam/set',
-        c.clear ? {path: c.path, scope: c.scope, rev: c.rev} : {path: c.path, scope: c.scope, value: c.value, rev: c.rev});
-      if (res.status === 409) {        // keep the drafts, take what is saved now: saving again overwrites knowingly
-        const now = res.body.current || {};
-        await load();
-        say(`changed elsewhere${now.who ? ' by ' + now.who : ''}; save again to overwrite`, true);
-        return;
-      }
-      if (!res.ok) { say(res.body.error || 'failed', true); await load(); return; }
-    }
-    const drafts = bx.drafts;
-    await load(false, true);
-    const shadowed = list.length && !list[0].scope && view.columns.some(c => view.byId[sub].own[c.name] && drafts[c.name]
-      && !Rects.same(drafts[c.name], view.byId[sub].own[c.name].value));
-    say(`${what}${shadowed ? ' · this submission keeps its own' : ''}${list.length && main.dataset.model ? ' · read names to use them' : ''}`);
+    const sub = row().sub, drafts = bx.drafts;
+    const redraw = () => { load(); say('save again to overwrite', true); };
+    const after = async () => {
+      await load(false, true);
+      const shadowed = list.length && !list[0].scope && view.columns.some(c => view.byId[sub].own[c.name] && drafts[c.name]
+        && !Rects.same(drafts[c.name], view.byId[sub].own[c.name].value));
+      say(`${what}${shadowed ? ' · this submission keeps its own' : ''}${list.length && main.dataset.model ? ' · read names to use them' : ''}`);
+    };
+    return Promise.all(list.map((c, j) => Changes.send(`override:${c.scope}:${c.path}`, c.clear ? '/exam/clear' : '/exam/set',
+      c.clear ? {path: c.path, scope: c.scope, rev: c.rev} : {path: c.path, scope: c.scope, value: c.value, rev: c.rev},
+      {redraw, done: j === list.length - 1 ? after : null})));
   }
   S.register('names-box-save-own', {available: () => bx.edit && changes('own').length > 0,
     run: () => saveBoxes(changes('own'), `saved · ${WHERE.own}`)});
@@ -359,11 +354,9 @@
   addEventListener('beforeunload', e => { if (bx.edit && bxDirty()) e.preventDefault(); });
 
   // --- an identity field's value: corrected or verified like any field's ---
-  async function saveValue(r, name, body) {
+  function saveValue(r, name, body) {
     if ($('w-crops').contains(document.activeElement)) document.activeElement.blur();
-    const res = await request(`/s/${encodeURIComponent(r.sub)}/@identity/save`, body);
-    if (!res.ok) flash(res.body.error || 'failed');
-    await load();
+    return Changes.send(`values:${r.sub}`, `/s/${encodeURIComponent(r.sub)}/@identity/save`, body, {redraw: () => load(), done: () => load()});
   }
   function valueBox(r, name) {
     const v = r.values[name], stale = r.stale.includes(name);
@@ -373,13 +366,13 @@
     input.addEventListener('keydown', e => {
       if (e.key !== 'Enter' || e.isComposing) return;
       e.preventDefault();
-      if (e.repeat || (v && input.value === v.text)) return;
-      S.enqueue(() => saveValue(r, name, {values: {[`@identity/${name}`]: {text: input.value, rev: v ? v.rev : null}}}));
+      if ((v && input.value === v.text) || !live()) return;
+      saveValue(r, name, {values: {[`@identity/${name}`]: {text: input.value, rev: v ? v.rev : null}}});
     });
     const out = [make('span', {className: 'dim', textContent: name + ' '}), input];
     if (v && !v.verified && !v.marker) {
       const ok = make('button', {type: 'button', className: 'quiet', textContent: '✓', title: 'verify this value'});
-      ok.addEventListener('click', () => S.enqueue(() => saveValue(r, name, {verify: [{key: `@identity/${name}`, rev: v.rev}]})));
+      ok.addEventListener('click', () => { if (live()) saveValue(r, name, {verify: [{key: `@identity/${name}`, rev: v.rev}]}); });
       out.push(' ', tag('unv', 'unverified'), ok);
     }
     if (stale && v && v.verified !== 'person') out.push(' ', tag('', 'read again'));

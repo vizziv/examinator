@@ -122,60 +122,57 @@
   const WHERE = {own: "this submission", scan: "this scan", all: "all submissions"};
 
   // Save what is edited (`x`: a region, or the print area) at one scope ('own', 'scan', 'all'),
-  // or (`clear`) drop that scope's. A conflict keeps the draft and takes the revision saved now,
-  // so that saving again overwrites knowingly. The answer, or null; x has its new levels.
-  async function saveAt(x, level, clear) {
+  // or (`clear`) drop that scope's; then `done(answer)`, x having its new levels. A refusal
+  // keeps the draft and takes the revision saved now, so that saving again overwrites knowingly.
+  function saveAt(x, level, clear, done) {
     say('…');
-    const res = await request(clear ? '/exam/clear' : '/exam/set',
-                              {path: x.path, scope: scopes[level], value: clear ? null : x.draft, rev: x[level + '_rev'] ?? null, sub});
-    if (res.status === 409) {
-      const cur = res.body.current || {};
-      x[level + '_rev'] = cur.rev ?? null;
-      say(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}${cur.value ? ': ' + JSON.stringify(cur.value) : ''}; save again to overwrite`, true);
-      return null;
-    }
-    if (!res.ok) { say(res.body.error || "failed", true); return null; }
-    Object.assign(x, res.body.levels);
-    return res.body;
+    const scope = scopes[level];
+    return Changes.send(`override:${scope}:${x.path}`, clear ? '/exam/clear' : '/exam/set',
+      {path: x.path, scope, value: clear ? null : x.draft, rev: x[level + '_rev'] ?? null, sub}, {
+        redraw: cur => {
+          x[level + '_rev'] = cur.rev ?? null;
+          say(`now ${cur.value ? JSON.stringify(cur.value) : 'none'}; save again to overwrite`, true);
+        },
+        done: b => { Object.assign(x, b.levels); done(b); }});
   }
 
   // The selected region at one scope ('own' or 'all'); `clear`: drop it there.
-  async function save(level, clear) {
+  function save(level, clear) {
     const r = sel;
     if (!r) return;
     if (clear && !confirm(level === 'own' ? `Drop this submission's own region for ${r.label}?`
                                           : `Back to the package's region for ${r.label}, for all submissions?`)) return;
     const before = r.value, saved = r.draft;
-    const b = await saveAt(r, level, clear);
-    if (!b) return;
-    const moved = !same(before, r.value), shadowed = !clear && !same(r.value, saved);  // a narrower scope still wins here
-    if (moved || !dirty(r)) r.draft = r.value && [...r.value];
-    say((clear ? (level === 'own' ? "own region dropped" : "reverted · all submissions") : `saved · ${WHERE[level]}`)
-        + (shadowed ? " · this submission keeps its own" : moved ? " · read again to use it" : ''));
-    inputs();
-    draw();
-    recrop(b.boxes || {});
-    document.dispatchEvent(new CustomEvent('entry-saved', {detail: {...b, reread: moved ? [r.label] : []}}));
+    return saveAt(r, level, clear, b => {
+      const moved = !same(before, r.value), shadowed = !clear && !same(r.value, saved);  // a narrower scope still wins here
+      if (moved || !dirty(r)) r.draft = r.value && [...r.value];
+      say((clear ? (level === 'own' ? "own region dropped" : "reverted · all submissions") : `saved · ${WHERE[level]}`)
+          + (shadowed ? " · this submission keeps its own" : moved ? " · read again to use it" : ''));
+      inputs();
+      draw();
+      recrop(b.boxes || {});
+      document.dispatchEvent(new CustomEvent('entry-saved', {detail: {...b, reread: moved ? [r.label] : []}}));
+    });
   }
 
   // The print area at one scope ('own', 'scan': every submission from this scan file, 'all');
   // `clear`: drop it there. The crops beside the fields are redrawn.
-  async function savePrint(level, clear) {
+  function savePrint(level, clear) {
     if (clear && !confirm({own: "Drop this submission's own print area?",
                            scan: "Drop this scan's print area, for every submission from it?",
                            all: "Back to the package's print area, for all submissions?"}[level])) return;
     const before = pa.value, saved = pa.draft;
-    const b = await saveAt(pa, level, clear);
-    if (!b) return;
-    pa.draft = [...pa.value];
-    recrop(b.boxes || {});
-    const moved = !same(before, pa.value), shadowed = !clear && !same(pa.value, saved);
-    say(`print area ${clear ? 'dropped' : 'saved'} · ${WHERE[level]}`
-        + (shadowed ? ` · this submission keeps ${pa.own != null ? 'its own' : "its scan's"}` : '')
-        + (moved ? " · read again to use it" : ''));
-    inputs();
-    draw();
-    if (moved) document.dispatchEvent(new CustomEvent('entry-saved', {detail: {reread: ['print area']}}));
+    return saveAt(pa, level, clear, b => {
+      pa.draft = [...pa.value];
+      recrop(b.boxes || {});
+      const moved = !same(before, pa.value), shadowed = !clear && !same(pa.value, saved);
+      say(`print area ${clear ? 'dropped' : 'saved'} · ${WHERE[level]}`
+          + (shadowed ? ` · this submission keeps ${pa.own != null ? 'its own' : "its scan's"}` : '')
+          + (moved ? " · read again to use it" : ''));
+      inputs();
+      draw();
+      if (moved) document.dispatchEvent(new CustomEvent('entry-saved', {detail: {reread: ['print area']}}));
+    });
   }
 
   Actions.register('regions', {available: () => regions.length > 0, run: () => toggle('regions')});

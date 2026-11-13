@@ -419,6 +419,38 @@ normalization. Those are exam code.
 - The app owns the frame: grid, navigation, scan and crop views, fields,
   edit/verify/decide controls, batch reads, settings. Exams own only evidence blocks.
 
+### Changes
+
+**A page has one subject, drawn from one server response. Every change names
+the revision of what it changes as the page drew it, and the server refuses a
+stale one.** Moving to another subject is a navigation (the question page: one
+submission's question; next and previous are page loads), so a change can only
+be about what is on screen, and what was queued dies with the page. Pages that
+edit one subject in place (Split: one scan's plan; the region and print-area
+editors; Exam data; Read: the batch run; Names, while it shows one submission at
+a time in place) send every change the same way:
+
+- **Server.** A POST route is a *change* or a *query* (the route table says
+  which; `change(...)`, `query(...)` in `web/app.py`). A change requires the
+  revision drawn (`rev`, or each item's in a multi-value save) and answers the
+  new one; a stale one is refused with 409 and `current`, what is there now. A
+  run (a read, a check, a batch, reading the name boxes) is a change to its
+  slot: its revision is the last run's id, and a second while one runs is
+  refused. The roster's revision is a digest of it. Only the scan upload (a
+  file, kept once by its digest) is neither.
+- **Browser.** `Changes.send(subject, path, body, {done, redraw})` in
+  `common.js` is the only way to POST a change (`request` only reads; a test
+  scans the scripts). The body is finished when it is sent: built by the
+  press, from what is drawn, and copied. *Changes to one subject go one at a
+  time in press order, each expecting the revision the one before it left;
+  a refusal is said in one line, redraws from `current`, and drops what was
+  queued behind it.* So a quick A A D on Split is three edits in order, and a
+  second V about a submission already named is a harmless repeat or a 409.
+- **One press, one change.** In `actions.js`, for every control: a key's
+  auto-repeat never triggers an action, a held Enter or Space never clicks a
+  button or takes a picker's choice again, and the second click of a double
+  click never reaches a button, an action or a list choice.
+
 Screens for the first version:
 
 - **Grid:** one row per submission, one column per check (a question with no
@@ -632,13 +664,11 @@ submission into `pdfs/`; everything downstream is unchanged.
   a submission), a noted or missing file counts as not written, and stray
   temporary files are swept.
 - **Who** (`core/identity.py`). Three rules hold throughout:
-  1. *An action is about what the person was looking at.* Each naming action
-     (take a proposal, pick from the list, type a name, unname, undo) is made
-     whole when the key is pressed: `{sub, rev, key | text | restore}`
-     (`steps(...).register(name, {bind, run})` in `common.js`). `rev` is
-     required; the server refuses a stale one (409, with the pick as it is
-     now) and an unknown key (400), and never reinterprets one as another.
-     Key repeats are ignored.
+  1. *A naming is a change like any other* (§13, Changes): `{sub, rev, key |
+     text | restore}` (take a proposal, pick from the list, type a name, unname,
+     undo), about the submission drawn. The server refuses a stale `rev` (409,
+     with the pick as it is now) and an unknown key (400), and never
+     reinterprets one as another.
   2. *Automatic matching acts only on unique evidence.* Each identifying
      column (of a reading, a file name or a pick) supports some roster people;
      a match needs them to single out one person. Ties and conflicts between

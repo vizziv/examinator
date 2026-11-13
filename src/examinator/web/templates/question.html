@@ -171,9 +171,9 @@
 
 <div id="run" class="bar panel" data-live>
 <span class="plabel">run</span>
-{% if can_read %}<button type="button" data-action="read"{% if off %} disabled title="no model"{% else %} title="read this question's values again (not those a person verified)"{% endif %}>read</button>
+{% if can_read %}<button type="button" data-action="read" data-rev="{{ read_run }}"{% if off %} disabled title="no model"{% else %} title="read this question's values again (not those a person verified)"{% endif %}>read</button>
 <label title="also read again what a person set or verified (kept in history)"><input type="checkbox" id="read-all"> verified too</label>{% endif %}
-{% for c in checks %}{% if c.fn %}<button type="button" data-action="check" data-check="{{ c.name }}" title="run the check again (checks recompute by themselves after a change; this is for one that timed out, say)">{{ c.name if checks|length > 1 else 'check' }}</button>{% endif %}{% endfor %}
+{% for c in checks %}{% if c.fn %}<button type="button" data-action="check" data-check="{{ c.name }}" data-rev="{{ c.run }}" title="run the check again (checks recompute by themselves after a change; this is for one that timed out, say)">{{ c.name if checks|length > 1 else 'check' }}</button>{% endif %}{% endfor %}
 <span id="reread" hidden><span class="tag unv">reading changed</span></span>
 </div>
 
@@ -192,7 +192,7 @@
 <table class="ev">
 {% for h in history %}
 <tr><td>{{ h.at }}</td><td>{{ h.field }}</td><td>{{ h.who }}{% if h.verified %} ✓{% endif %}</td><td class="preview">{{ h.text }}</td>
-<td><button type="button" data-action="restore" data-key="{{ h.key }}" data-rev="{{ h.rev }}">restore</button></td></tr>
+<td><button type="button" data-action="restore" data-key="{{ h.key }}" data-restore="{{ h.rev }}">restore</button></td></tr>
 {% endfor %}
 </table>
 </details>

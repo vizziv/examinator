@@ -3,17 +3,74 @@
 const meta = name => document.querySelector(`meta[name="${name}"]`)?.content || '';
 const ROOT = meta('root');
 
-async function request(path, data) {
-  const init = data === undefined ? {} : {
-    method: 'POST', body: JSON.stringify(data),
-    headers: {'Content-Type': 'application/json', 'X-Token': meta('token')}};
-  let res, body = {};
-  try {
-    res = await fetch(ROOT + path, init);
-    body = await res.json();
-  } catch (e) { /* network error or a non-JSON reply */ }
-  return {status: res ? res.status : 0, ok: !!res && res.ok, body: body || {}};
-}
+// Reading: a GET, answered as {status, ok, body}.
+const request = path => Changes.get(path);
+
+// Changes: the one way a page changes anything (DESIGN.md, Changes). A change is a finished
+// statement, a route and a body naming the revision the page drew (`rev`, or each item's),
+// copied when it is sent so that nothing computed later can reach it. Changes to one subject
+// go one at a time, in press order, and each expects the revision the one before it left:
+// one made on a revision this run of changes already passed through (pressed before the last
+// answer was drawn) is sent on the newest. A refusal (409) is said in one line, the page is
+// redrawn from what the server says is there now, and what was queued behind it on that
+// subject is dropped, as after any other failure.
+//   Changes.send(subject, path, body, {done(answer), redraw(current), long})
+//   Changes.query(path, body)      a POST that changes nothing (a preview)
+//   Changes.redraw = fn            the page's redraw, for changes that name none (default: reload)
+//   Changes.busy()                 a long change (a model run, Accept) is under way
+const Changes = (() => {
+  const chains = new Map();     // subject -> {tail, n, revs: what this run passed through, now, broken}
+  let long = 0;
+  async function call(path, data) {
+    const init = data === undefined ? {} : {
+      method: 'POST', body: JSON.stringify(data),
+      headers: {'Content-Type': 'application/json', 'X-Token': meta('token')}};
+    let res, body = {};
+    try {
+      res = await fetch(ROOT + path, init);
+      body = await res.json();
+    } catch (e) { /* network error or a non-JSON reply */ }
+    return {status: res ? res.status : 0, ok: !!res && res.ok, body: body || {}};
+  }
+  function refused(r, redraw) {
+    const cur = r.body.current || {};
+    if (r.status === 409) {
+      flash(cur.running ? 'already running' : `changed since it was shown${cur.who ? ' (' + cur.who + ')' : ''}: shown as it is now`);
+      (redraw || api.redraw || (() => location.reload()))(cur);
+    } else flash(r.status ? r.body.error || 'failed' : 'no connection: not saved');
+  }
+  function busy(d) {
+    long += d;
+    if (window.Actions) Actions.enable(document);
+  }
+  function send(subject, path, body, {done, redraw, long: isLong} = {}) {
+    body = JSON.parse(JSON.stringify(body));
+    const c = chains.get(subject) || {tail: Promise.resolve(), n: 0, revs: new Set(), broken: false};
+    chains.set(subject, c);
+    c.n++;
+    if (isLong) busy(1);
+    const mine = c.tail.then(async () => {
+      if (c.broken) return null;
+      const one = 'rev' in body;
+      if (one && c.revs.has(body.rev) && 'now' in c) body.rev = c.now;
+      if (one) c.revs.add(body.rev);
+      const r = await call(path, body);
+      if (!r.ok) { c.broken = true; refused(r, redraw); return null; }
+      if (one && 'rev' in r.body) { c.now = r.body.rev; c.revs.add(c.now); }
+      if (done) await done(r.body);
+      return r.body;
+    }).catch(err => { c.broken = true; console.error(err); flash(`failed: ${(err && err.message) || err}`); return null; })
+      .finally(() => {
+        if (isLong) busy(-1);
+        if (--c.n === 0) { c.revs.clear(); delete c.now; c.broken = false; }
+      });
+    c.tail = mine;
+    return mine;
+  }
+  const query = (path, body) => call(path, body || {});
+  const api = {send, query, get: path => call(path), redraw: null, busy: () => long > 0};
+  return api;
+})();
 
 async function waitJob(id) {
   for (;;) {
@@ -57,34 +114,6 @@ function nextOpen(list, from, open) {
   for (let j = from + 1; j < list.length; j++) if (open(list[j])) return j;
   for (let j = 0; j <= from && j < list.length; j++) if (open(list[j])) return j;
   return list.length;
-}
-
-// Steps that change server state, from keys and buttons alike: keys come faster than
-// replies, so they run one after another. A long step (a model job, Accept) makes every
-// step unavailable until it ends, so keys pressed meanwhile are dropped, not replayed
-// against a moved cursor. Errors are flashed.
-// A step about what the person is looking at says so when the key is pressed: `bind(ctx)`
-// returns the statement (its subject and the revision seen: {sub, rev, ...}), or null for
-// nothing to do, and `run` gets that statement however late it runs. The server refuses a
-// statement whose revision is no longer current (409), so a second press of the same key
-// before the page moved on does nothing.
-function steps(live, changed) {
-  let chain = Promise.resolve(), busy = 0;
-  const oops = err => { console.error(err); flash(`failed: ${(err && err.message) || err}`); };
-  const enqueue = (fn, ctx) => (chain = chain.then(() => fn(ctx)).catch(oops));
-  async function long(fn, ctx) {
-    busy++;
-    changed();
-    try { await enqueue(fn, ctx); } finally { busy--; changed(); }
-  }
-  const register = (name, spec) => Actions.register(name, {
-    available: ctx => live() && !busy && (!spec.available || spec.available(ctx)),
-    run: ctx => {
-      const said = spec.bind ? spec.bind(ctx) : ctx;
-      if (said == null) return;
-      return spec.long ? long(spec.run, said) : enqueue(spec.run, said);
-    }});
-  return {register, enqueue, busy: () => busy > 0};
 }
 
 // A crop is a window onto the cached full-page image: <span class="crop" data-src data-box="l,t,r,b">.
