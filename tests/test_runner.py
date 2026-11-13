@@ -6,6 +6,7 @@ import pytest
 
 from examinator import Check, Exam, Field, Printed, Region
 from examinator.core import overrides
+from examinator.core.reading import Reading
 from examinator.core.runner import Runner
 from examinator.core.store import Conflict
 from examinator.model.fake import FakeModel
@@ -52,11 +53,11 @@ def test_a_printed_reading_is_vouched_for_unless_flagged_and_handwriting_never()
     from examinator import Ask
     f = Field('c', Region(1, 0, 0, 10, 10))
     printed = Printed("the printed number")
-    assert printed.vouches(f, "30") and printed.value({'value': " 30 "}) == "30"
-    assert not printed.vouches(f, printed.value({'value': None}))       # not read: a marker
-    assert not printed.vouches(f, "[REVIEW: smudged] 3?") and not printed.vouches(f, "")
-    assert not Printed("the printed number", verify=True).vouches(f, "30")
-    assert not Ask("the student's name").vouches(f, "Ann")             # handwriting: a person verifies
+    assert printed.vouches(f, Reading("30"))
+    assert not printed.vouches(f, Reading("3", "smudged"))                # unsure: a person looks
+    assert not printed.vouches(f, Reading(""))                            # a blank is never vouched for
+    assert not Printed("the printed number", verify=True).vouches(f, Reading("30"))
+    assert not Ask("the student's name").vouches(f, Reading("Ann"))      # handwriting: a person verifies
 
 
 def test_a_value_with_no_key_is_undecided_and_says_which(tmp_path):
@@ -168,14 +169,14 @@ def test_no_model_blocks_reads(env):
 
 # --- set, verify, unverify ---
 
-def test_a_person_who_sets_a_value_verifies_it_unless_it_carries_a_marker(env):
+def test_a_person_who_sets_a_value_verifies_it_and_clears_its_review(env):
     exam, ws, runner = env
     v = runner.set('s1', 'a', 'x', "1", author='ta')
     assert (v.verified, v.by, v.author) == ('person', 'ta', 'ta')
-    v = runner.set('s1', 'a', 'x', "1 [REVIEW: or 7]", author='ta', expect_rev=v.rev)
-    assert v.verified is None
-    with pytest.raises(ValueError, match="review markers"):
-        runner.verify('s1', 'a', 'x', author='ta', expect_rev=v.rev)
+    v = runner.review('s1', 'a', 'x', note="1 or 7?", expect_rev=v.rev)
+    assert (v.review, v.verified, v.state) == ("1 or 7?", None, 'review')
+    v = runner.set('s1', 'a', 'x', "7", author='ta', expect_rev=v.rev)
+    assert (v.review, v.verified) == (None, 'person')
     with pytest.raises(Conflict):
         runner.set('s1', 'a', 'x', "2", author='tb', expect_rev=v.rev - 1)
 

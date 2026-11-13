@@ -3,9 +3,12 @@
 Three kinds of stored thing, each a store row with a revision that changes
 only when its content changes:
 
-- a **field value** (`Value`): text, and who verified it: nobody, the reader
-  that vouched for it, or a person. Its states: not read (no row), unverified,
-  verified. A value with a review marker is never verified.
+- a **field value** (`Value`): text, who verified it (nobody, the reader
+  that vouched for it, or a person), and whether it needs review (`review`: a
+  note, possibly empty, from the reader that was unsure or a person who
+  flagged it). Its states: not read (no row), review, unverified, verified. A
+  value that needs review is never verified: verifying it, or a person's edit,
+  clears the review.
 - a **result** (`Stored`): a check's proposed grade, its evidence, which
   fields it read at which revisions, and which definition computed it. It is
   current while every field it read is at that revision and the definition
@@ -26,6 +29,7 @@ The grade of a check (`status`), the first that applies:
 |                    | nothing)                                                    |        |
 | 'not_run'          | no result                                                   | no     |
 | 'outdated'         | the result is outdated                                      | no     |
+| 'review'           | current, and some field it read needs review                | no     |
 | 'unverified'       | current, and some field it read is not verified             | no     |
 | 'graded'           | current, every field it read verified, a grade proposed     | yes    |
 
@@ -36,17 +40,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from .defs import DEFAULT, Check, Exam, Grade, Question, has_marker, key
+from .defs import DEFAULT, Check, Exam, Grade, Question, key
 from .store import Row
 
-STATES = ('decided', 'decided_outdated', 'to_decide', 'not_run', 'outdated', 'unverified', 'graded')
+STATES = ('decided', 'decided_outdated', 'to_decide', 'not_run', 'outdated', 'review', 'unverified', 'graded')
 COUNTING = ('decided', 'graded')
 VERIFIERS = ('reader', 'person')
-FIELD_STATES = ('not_read', 'unverified', 'verified')     # a question with no checks: its fields
+FIELD_STATES = ('not_read', 'review', 'unverified', 'verified')     # a question with no checks: its fields
 # every state as a person reads it: the one table wherever a state is shown (grid, filter, CLI)
 LABELS = {
     'decided': "decided", 'decided_outdated': "decided, outdated", 'to_decide': "to decide",
-    'not_run': "not run", 'outdated': "outdated", 'unverified': "unverified", 'graded': "graded",
+    'not_run': "not run", 'outdated': "outdated", 'review': "review", 'unverified': "unverified", 'graded': "graded",
     'not_read': "not read", 'verified': "verified"}
 
 
@@ -59,23 +63,27 @@ class Value:
     by: str | None = None             # the person who verified it
     author: str | None = None         # who wrote this text (a person), None if a reader
     updated_at: str = ''
+    review: str | None = None         # needs review: a note (possibly ''); None if not
 
     @property
     def is_verified(self) -> bool:
-        return self.verified in VERIFIERS
+        return self.verified in VERIFIERS and self.review is None
 
     @property
-    def marker(self) -> bool:
-        return has_marker(self.text)
+    def state(self) -> str:
+        """'review', 'unverified' or 'verified' (FIELD_STATES; no value is 'not_read')."""
+        return 'review' if self.review is not None else 'verified' if self.is_verified else 'unverified'
 
     @staticmethod
     def of(row: Row) -> 'Value':
         b = row.body or {}
+        review = b.get('review')
         return Value(str(b.get('text') or ''), row.rev, b.get('verified'), b.get('by'),
-                     row.author if row.origin == 'manual' else None, row.updated_at)
+                     row.author if row.origin == 'manual' else None, row.updated_at,
+                     str(review) if review is not None else None)
 
     def body(self) -> dict:
-        return {'text': self.text, 'verified': self.verified, 'by': self.by}
+        return {'text': self.text, 'verified': self.verified, 'by': self.by, 'review': self.review}
 
 
 @dataclass(frozen=True)
@@ -117,7 +125,7 @@ class Status:
     state: str
     grade: Grade = Grade()                # shown: the decision's, or the proposal (possibly old)
     author: str | None = None             # who decided
-    waiting: tuple[str, ...] = ()         # 'unverified': the fields read that are not verified
+    waiting: tuple[str, ...] = ()         # 'review', 'unverified': the fields read that hold it back
 
     @property
     def counts(self) -> bool:
@@ -133,6 +141,8 @@ class Status:
 
     @property
     def reason(self) -> str | None:
+        if self.state == 'review':
+            return f"{', '.join(k.split('/', 1)[1] for k in self.waiting)} needs review"
         return self.grade.reason
 
 
@@ -167,6 +177,10 @@ def status(check: Check, values: Values, stored: Stored | None, decision: Decisi
         return Status('not_run')
     if not current(stored, values, defn=defn, code=code):
         return Status('outdated', stored.grade)
+    flagged = tuple(k for k, rev in stored.reads.items()
+                    if rev != DEFAULT and (v := values.get(k)) is not None and v.review is not None)
+    if flagged:
+        return Status('review', stored.grade, waiting=flagged)
     waiting = tuple(k for k, rev in stored.reads.items()
                     if rev != DEFAULT and not ((v := values.get(k)) is not None and v.is_verified))
     if waiting:
@@ -180,10 +194,12 @@ def status(check: Check, values: Values, stored: Stored | None, decision: Decisi
 
 
 def fields_state(question: Question, values: Values) -> str:
-    """How a question's fields stand, for a question with no checks: 'not_read'
-    (some field has no value), 'unverified' (some value is not verified) or 'verified'.
-    A field at its default is verified."""
+    """How a question's fields stand, for a question with no checks: 'review'
+    (some value needs review), 'unverified' (some value is not verified), 'not_read'
+    (some field has no value) or 'verified'. A field at its default is verified."""
     got = [values.get(key(question.id, f.label)) for f in question.fields if f.default is None]
+    if any(v is not None and v.review is not None for v in got):
+        return 'review'
     if any(v is not None and not v.is_verified for v in got):
         return 'unverified'
     if any(v is None for v in got):

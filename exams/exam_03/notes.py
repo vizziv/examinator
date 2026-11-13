@@ -12,7 +12,7 @@ KEEP_CONSTANTS = """\
 Preserve every numeric constant exactly as written, including enormous powers and \
 tiny reciprocals. Never evaluate, clip or replace them, and do not substitute \
 `huge_constant` yourself. `huge_constant` is a name the exam allows: where the \
-student wrote it, keep it, with no review marker for it. """ + FORMULAS
+student wrote it, keep it, and do not call it unsure. """ + FORMULAS
 
 # Question 5's one box has no printed label, and its printed options are numbers
 # (one of them equal to the label).

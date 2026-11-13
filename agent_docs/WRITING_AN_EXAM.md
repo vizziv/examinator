@@ -72,7 +72,7 @@ imported relatively (`from . import keys`).
 
 The self-test draws each case, scripts the model to read exactly your answers
 and printed fields, reads every question, verifies every value as a grader
-would (a value with a `[REVIEW: ...]` marker cannot be verified), runs every
+would (not one that needs review), runs every
 check, and compares the grid. Cover each printing, a wrong answer, a blank
 answer and an unread printed field (`exams/toy_exam/fixtures.py`). A case that
 does not fit the exam is one line naming the case and the key.
@@ -141,10 +141,10 @@ Field('side', Region(2, 0, 60, 1000, 240),
 - `ask` finishes the sentence "Report: ..." in a fixed prompt about printed
   text, and says what to expect and in what form: the reading is the value,
   printed text, never a key. Both `ask` and the prompt are editable in the app.
-- A reading that is absent becomes a value with a review marker. Nothing is
-  guessed.
-- A printed value is **vouched for** unless it carries a review marker: nobody
-  need verify it. `Printed(..., verify=True)` makes a person verify it anyway.
+- A reading that is absent writes nothing: the field stays not read. One the
+  model is unsure of needs review. Nothing is guessed.
+- A printed value is **vouched for** when it is not empty and the model was
+  sure: nobody need verify it. `Printed(..., verify=True)` makes a person verify it anyway.
   A value no key expects is caught by the check: a key per value with no key
   for it is undecided, saying which ("no key for side = 7").
 - **Two shapes.** A question that needs its own printing holds the printed field
@@ -196,8 +196,8 @@ read=readers.code({'2.1': ['weibull'], '2.2': ['weibullish']}, language=LANGUAGE
 
 A reader reads all its fields of one submission in one go: transcribe the
 question's pages, then turn the transcript into one value per field (text;
-`''` is blank, and only when the model says BLANK; a field the reply says
-nothing about is `[REVIEW: not read]`). The transcript is not stored.
+`''` is blank; a field the reply says nothing about stays not read; one the
+model is unsure of needs review). The transcript is not stored.
 `symbols` and `functions` are notation hints for the prompt. For code, the
 question's code is converted once and each field takes its own functions and
 the helpers they call (not another field's functions). `then` rewrites each
@@ -221,9 +221,9 @@ def check(ctx):
     return Result('correct', fields={'code': Judgement('correct', note="3 tests")}, blocks=[Table(...)])
 ```
 
-- `ctx.read(label, question=None)` returns the value (text). A field not read,
-  or carrying a review marker, raises `Undecided`; the grade is undecided and
-  waits for that field. Read only what you use: a field never read is no
+- `ctx.read(label, question=None)` returns the value (text). A field not read
+  raises `Undecided`; the grade is undecided and waits for that field. A field
+  that needs review holds the grade back ("review") until a person verifies it. Read only what you use: a field never read is no
   dependency, and the grade counts once every field read is verified.
 - Return a `Result(grade, fields=, blocks=)`, or a bare grade. The grade is
   what the points accept: `True`/`False`, `'correct'`/`'incorrect'`/`'blank'`/
@@ -396,6 +396,7 @@ uv run examinator synth my_exam /tmp/x/st --stacks            # stacks of scans 
 `-` when undecided. A grade that does not count yet carries its state; the
 total adds what counts, with `+?` while something does not. The states are
 MODEL.md's: `unverified` (normal after `run`: a value it read is not verified),
+`review` (a value it read needs review: the model was unsure),
 `to_decide`, `not_run`, `outdated`, `decided`, `decided_outdated`, `graded`.
 
 **`run` reads and checks every time** (the model is asked again; old values go

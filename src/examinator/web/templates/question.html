@@ -4,17 +4,20 @@
 {% import 'entries.html' as ed %}
 {% import 'rects.html' as rects %}
 {% macro field_block(f) %}
-<div class="field{% if f.marker %} marked{% endif %}{% if not f.own %} elsewhere{% endif %}{% if f.multiline %} multiline{% endif %}" data-key="{{ f.key }}">
+<div class="field{% if f.review is not none %} marked{% endif %}{% if not f.own %} elsewhere{% endif %}{% if f.multiline %} multiline{% endif %}" data-key="{{ f.key }}">
 <span class="fhead">
 <span class="flabel"{% if f.ask %} title="printed: {{ f.ask }}"{% endif %}>{% if f.own %}{{ f.label }}{% elif f.graded %}<a href="{{ root }}/s/{{ sub.id|urlencode }}/{{ f.qid|urlencode }}" title="{{ f.group }}">{{ f.title }}</a>{% else %}<span title="{{ f.group }}">{{ f.title }}</span>{% endif %}{% if f.printed %} <span class="ftag">printed</span>{% endif %}</span>
 <span class="fstate">
 {% if not f.read and f.default is not none %}<span class="tag" title="no value set: the default counts">default</span>
 {% elif not f.read and f.blocked %}<span class="tag" title="its reader cannot read it: type it">{{ f.blocked }}</span>
 {% elif not f.read %}<span class="tag" title="no value yet">not read</span>
-{% elif f.marker %}<span class="tag unv" title="a review marker: correct the value">review</span>
+{% elif f.review is not none %}<span class="tag unv" title="{{ f.review or 'a person should look' }}">review</span>
 {% elif f.verified is none %}<span class="tag unv">unverified</span>{% endif %}
 {% for j in f.judged %}<span class="judged o-{{ j.outcome or 'none' }}" title="{% if checks|length > 1 %}{{ j.check }}: {% endif %}{{ j.outcome or 'undecided' }}{% if j.expected %} · key {{ j.expected }}{% endif %}{% if j.note %} · {{ j.note }}{% endif %}">{{ {'correct': '✓', 'incorrect': '✗', 'blank': '∅'}.get(j.outcome, '?') }}{% if j.note %} <span class="jnote">{{ j.note }}</span>{% endif %}</span>{% endfor %}
-{% if f.read and not f.marker %}<details class="fmenu"><summary tabindex="-1" title="more">⋯</summary><span class="fmenu-items">
+{% if f.read %}<details class="fmenu"><summary tabindex="-1" title="more">⋯</summary><span class="fmenu-items">
+{% if f.review is not none %}<span class="dim">review{% if f.review %}: {{ f.review }}{% endif %}</span>
+<button type="button" data-action="review" data-key="{{ f.key }}" data-rev="{{ f.rev }}" data-on="0">no review</button>
+{% else %}<button type="button" data-action="review" data-key="{{ f.key }}" data-rev="{{ f.rev }}" data-on="1">needs review</button>{% endif %}
 {% if f.verified is none %}<button type="button" data-action="verify-one" data-key="{{ f.key }}" data-rev="{{ f.rev }}">verify this value</button>
 {% else %}<span class="dim">verified{% if f.by %} · {{ f.by }}{% elif f.verified == 'reader' %} · as read{% endif %}</span>
 <button type="button" data-action="unverify" data-key="{{ f.key }}" data-rev="{{ f.rev }}">unverify</button>{% endif %}

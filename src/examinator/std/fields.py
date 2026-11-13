@@ -9,7 +9,7 @@ another question's, and fields that should agree.
 Each is a small frozen dataclass called as `fn(ctx) -> str`, so it is plain data
 in a check's definition (`math.keyed(key, by=...)` picks a key with one) and a
 custom check can call it too. Every read goes through `ctx.read`, so it is
-recorded. A value that is not read, empty, or carries a review marker raises
+recorded. A value that is not read or empty raises
 `Undecided`; so do fields that disagree. Values are compared normalised
 (`core.reading.normalize`: case, spaces, one layer of brackets).
 """

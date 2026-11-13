@@ -261,7 +261,7 @@ def test_printing_reads_bits(exam, pkg):
         assert v.Printing('q4')(ctx) == v.VERSIONS[alt]['q4']
         assert set(ctx.reads) == {f'info/{label}' for label in info(alt)}      # all three bits
     with pytest.raises(Undecided):
-        v.Printing('q4')(context({**info(0), 'q9_variance': '[REVIEW: not read]'}))
+        v.Printing('q4')(context({**info(0), 'q9_variance': 'smudged'}))
     with pytest.raises(Undecided):
         v.Printing('q4')(context(None))
 
@@ -304,8 +304,8 @@ def test_either_order_and_question_2(exam, pkg):
     assert (got['??_6'], got['??_7']) == ('correct', 'incorrect')
     got, _ = outcomes(exam, 'q2', {**right, '??_6': None, '??_7': '[-2, 1]'}, 'original')
     assert (got['??_6'], got['??_7']) == ('blank', 'correct')
-    got, _ = outcomes(exam, 'q2', {**right, '??_6': '[REVIEW: smudged]'}, 'original')
-    assert got['??_6'] is None and got['??_7'] is None
+    got, _ = outcomes(exam, 'q2', {**right, '??_6': '(1, ?)'}, 'original')
+    assert got['??_6'] is None
     got, _ = outcomes(exam, 'q2', right, 'alternate')       # the other animal: radii, share and ears differ
     assert [label for label, o in got.items() if o == 'incorrect'] == ['??_1', '??_3', '??_5', '??_6', '??_7']
     ears = exam.questions['q2'].check('check').fn.key['original'][('??_6', '??_7')]
@@ -423,7 +423,7 @@ def test_question_3(exam, pkg):
     assert q3(p1=None)[0][0] == 'blank' and q3(p1=None)[1] == 'correct'
     assert q3(p2='4w')[0][1] is None and q3(p2='4w')[1] == 'correct'                # unknown symbol: open, cannot tip it
     assert q3(p2='4w', p6='v')[1] is None
-    assert q3(p2='[REVIEW: 4u or 4v]')[0][:3] == [None, None, None]
+    assert q3(p2='4u?')[0][1] is None
     assert grade(exam, 'q3', right, 'left') == 'incorrect'
 
 
@@ -483,7 +483,6 @@ def test_choice_questions(exam, pkg):
     assert q8(f.WRONG['q8']) == {'check': 'correct', 'shiny': 'incorrect'}
     right = f.ANSWERS['q8']['original']
     assert q8({**right, '8.3': None}) == {'check': 'correct', 'shiny': 'incorrect'}
-    assert q8({**right, '8.3': '[REVIEW: smudged]'}) == {'check': 'correct', 'shiny': None}
     assert q8(dict.fromkeys(right)) == {'check': 'blank', 'shiny': 'blank'}
     reads = outcomes(exam, 'q8', right, 'original', 'check')[1]['reads']
     assert {k for k in reads if k.startswith('q8/')} == {'q8/8.1', 'q8/8.2'}      # only what it judges

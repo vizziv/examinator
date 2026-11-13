@@ -91,6 +91,8 @@ class BatchRun:
     outcomes: list[Outcome] = field(default_factory=list)
     total: int = 0                   # reads
     done: int = 0                    # reads finished
+    asked: int = 0                   # fields the finished reads asked for ...
+    got: int = 0                     # ... and those that got a value (the rest stay not read)
     state: str = 'ready'             # 'ready' | 'running' | 'done' | 'cancelled'
     current: str = ''                # in progress: 'reading', then 'recomputing'
 
@@ -116,8 +118,12 @@ class BatchRun:
                                     include_protected=sel.include_protected)
             bad = [o for o in outs if not o.ok]
             with self._lock:
+                self.asked += sum(o.asked for o in outs)
+                self.got += sum(o.read for o in outs)
                 read_for.add(item.submission)
-                self.outcomes.append(bad[0] if bad else Outcome(item.submission, item.question, 'read', 'done'))
+                short = [o for o in outs if o.read < o.asked]       # done, with fields left not read
+                self.outcomes.append(bad[0] if bad else short[0] if short else
+                                     Outcome(item.submission, item.question, 'read', 'done'))
                 self.done += 1
 
         workers = max(1, self.parallel)

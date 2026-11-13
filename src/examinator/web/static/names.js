@@ -402,14 +402,14 @@
       if (isDraft(input) && live()) saveValue(r.sub, name, input.value);
     });
     const out = [make('span', {className: 'dim', textContent: name + ' '}), input];
-    if (v && !v.verified && !v.marker) {
+    if (v && !v.verified) {
       // what is shown is what is verified: a draft is saved (a person who sets a value verifies it)
       const ok = make('button', {type: 'button', className: 'quiet', textContent: '✓', title: 'verify this value'});
       ok.addEventListener('click', () => {
         const el = ok.parentElement.querySelector('input');
         if (live()) saveValue(r.sub, name, isDraft(el) ? el.value : undefined);
       });
-      out.push(' ', tag('unv', 'unverified'), ok);
+      out.push(' ', v.review != null ? tag('unv', 'review', v.review || 'a person should look') : tag('unv', 'unverified'), ok);
     }
     return out;
   }

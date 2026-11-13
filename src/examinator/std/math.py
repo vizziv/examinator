@@ -9,8 +9,8 @@ standard check built from these: one judgement per field, one grade from the
 fields' outcomes (`all_correct`, `at_least(k)`, or the exam's own rule).
 
 Outcomes are 'correct', 'incorrect', 'blank' or None. None means "could not
-decide" (unsupported notation, an unknown symbol, an inconclusive comparison, a
-review marker) and is never used for a demonstrated mismatch.
+decide" (unsupported notation, an unknown symbol, an inconclusive comparison)
+and is never used for a demonstrated mismatch.
 """
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import sympy
 
-from ..core.defs import has_marker
 from ..core.reading import normalize
 from ..core.result import OUTCOMES, Judgement, Result, Undecided
 from .blocks import Note
@@ -452,8 +451,6 @@ def check_field(answer: str | None, entry: Any, *, symbols: Iterable[str] | Mapp
     """
     if answer is None or not answer.strip():
         return 'blank', ""
-    if has_marker(answer):
-        return None, "review"
     try:
         if isinstance(entry, Choice):
             return ('correct', "") if entry.matches(answer) else ('incorrect', "")
@@ -486,26 +483,22 @@ def check_group(answers: Sequence[str | None], entry: Callable) -> list[tuple[st
     `entry(answers)` gets the fields' answers as a tuple, a blank one as None,
     and returns one result for all of them (an outcome or `(outcome, note)`),
     or a list with one result per field. A blank field stays blank whatever
-    `entry` says; all blank skips `entry`, and a review marker in any field
-    leaves the others undecided, as a single-field entry would. Notation
+    `entry` says; all blank skips `entry`. Notation
     `entry` cannot read (`Unsupported`) leaves the answered fields undecided.
     """
     given = tuple(None if a is None or not a.strip() else a for a in answers)
     if all(a is None for a in given):
         return [('blank', "")] * len(given)
-    if any(a is not None and has_marker(a) for a in given):
-        results = [(None, "review")] * len(given)
+    try:
+        got = entry(given)
+    except Unsupported as e:
+        got = (None, str(e))
+    if isinstance(got, list):
+        if len(got) != len(given):
+            raise ValueError(f"key function returned {len(got)} results for {len(given)} fields")
+        results = [_result(r) for r in got]
     else:
-        try:
-            got = entry(given)
-        except Unsupported as e:
-            got = (None, str(e))
-        if isinstance(got, list):
-            if len(got) != len(given):
-                raise ValueError(f"key function returned {len(got)} results for {len(given)} fields")
-            results = [_result(r) for r in got]
-        else:
-            results = [_result(got)] * len(given)
+        results = [_result(got)] * len(given)
     return [('blank', "") if a is None else r for a, r in zip(given, results)]
 
 
@@ -698,8 +691,8 @@ def keyed(key: Mapping[Any, Any], *, by: Any = None, symbols: Mapping[str, str] 
     `fields.agree(...)`, `fields.table(...)`, or any `fn(ctx) -> value` (raise
     `Undecided` when it cannot tell); a value with no key is undecided. `symbols` maps names to assumptions (`{'a': 'positive'}`), or
     lists names; `functions=[]` means no function calls, so juxtaposition is
-    multiplication. A field that is not read, or carries a review marker, is
-    undecided, and so is a grade it could tip.
+    multiplication. A field that is not read is undecided, and so is a grade it
+    could tip.
     """
     from . import fields as fields_
     if not isinstance(symbols, Mapping):
@@ -740,7 +733,7 @@ def normal_form(answer: str | None, *, symbols: Iterable[str] | Mapping[str, Any
     used to grade: two equivalent answers may still differ. None when blank."""
     if answer is None or not answer.strip():
         return None
-    if not text and not has_marker(answer):
+    if not text:
         try:
             expr = parse_expr(answer, symbols=symbols, functions=functions)
             if expr.is_Rational:

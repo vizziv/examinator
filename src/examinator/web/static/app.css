@@ -166,7 +166,7 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 .g-n.idle { color: var(--muted); }
 .g-num { color: var(--fg); background: var(--panel-2); border-color: var(--line); font-variant-numeric: tabular-nums; }
 .st { font-weight: 500; color: var(--muted); background: transparent; border-color: var(--line-strong); }
-.st-unverified, .st-to_decide { color: var(--unv-ink); background: var(--unv-bg); border-color: transparent; }
+.st-review, .st-unverified, .st-to_decide { color: var(--unv-ink); background: var(--unv-bg); border-color: transparent; }
 .st-outdated, .st-decided_outdated { border-color: var(--stale); border-style: dashed; }
 
 /* grade glyphs outside the grid (decide buttons) */
@@ -183,10 +183,10 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 .cell:where([data-v]:not([data-v=t], [data-v=f], [data-v=""])) { --ink: var(--fg); }
 .cell[data-b] { --ink: var(--blank-faded); }
 .cell[data-b] > a { font-weight: 400; }
-.cell.s-unverified[data-v=""], .cell.s-to_decide[data-v=""] { --ink: var(--ask); }
-.cell.s-unverified[data-v=""] > a, .cell.s-to_decide[data-v=""] > a { font-weight: 900; }
+.cell.s-review[data-v=""], .cell.s-unverified[data-v=""], .cell.s-to_decide[data-v=""] { --ink: var(--ask); }
+.cell.s-review[data-v=""] > a, .cell.s-unverified[data-v=""] > a, .cell.s-to_decide[data-v=""] > a { font-weight: 900; }
 /* background: yellow when a person is asked (unverified, needs review); else plain */
-.cell.s-unverified, .cell.s-to_decide { --tint: var(--unv-bg); }
+.cell.s-review, .cell.s-unverified, .cell.s-to_decide { --tint: var(--unv-bg); }
 /* mark: outdated (does not count until rechecked) */
 .cell.s-outdated > a, .cell.s-decided_outdated > a { text-decoration: line-through; text-decoration-thickness: 1px; }
 .cell.s-outdated::after, .cell.s-decided_outdated::after { content: ''; position: absolute; top: 0; right: 0;
@@ -228,7 +228,7 @@ details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var
 #grid td.c { text-align: center; min-width: 30px; }
 #grid td.c a { display: block; padding: 0 6px; line-height: 20px; font-size: 13.5px; font-weight: 600; text-decoration: none; }
 /* ? stands out: heavier and a little larger than the other glyphs (the row keeps its height) */
-#grid td.cell.s-unverified[data-v=""] a, #grid td.cell.s-to_decide[data-v=""] a { font-weight: 900; font-size: 15px; line-height: 18px; }
+#grid td.cell.s-review[data-v=""] a, #grid td.cell.s-unverified[data-v=""] a, #grid td.cell.s-to_decide[data-v=""] a { font-weight: 900; font-size: 15px; line-height: 18px; }
 #grid td.c a:hover { outline: 2px solid var(--ring); outline-offset: -2px; }
 #grid td.c { border-left: 1px solid var(--panel); }     /* a hairline between tinted squares */
 #grid td.total { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }

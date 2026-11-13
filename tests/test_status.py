@@ -30,8 +30,8 @@ def test_decided_when_its_fields_are_unchanged():
     assert (s.state, s.value, s.author, s.counts) == ('decided', False, 'ta', True)
 
 
-def test_decided_counts_even_on_unverified_or_marked_fields():
-    vals = {'q/a': Value("[REVIEW: 1 or 7]", 1)}
+def test_decided_counts_even_on_unverified_fields_or_fields_to_review():
+    vals = {'q/a': Value("1", 1, review="1 or 7?")}
     assert st(vals=vals, decision=Decision(Grade(True), {'q/a': 1}, 'ta', 11)).counts
 
 
@@ -79,6 +79,21 @@ def test_outdated_when_a_field_it_did_not_find_is_read_now():
 def test_outdated_when_the_check_or_the_code_changed():
     assert st(result=stored(True, defn='d0')).state == 'outdated'
     assert st(result=stored(True, code='c0')).state == 'outdated'
+
+
+def test_review_when_a_field_it_read_needs_review():
+    vals = {'q/a': Value("1", 1, review="1 or 7?"), 'q/b': Value("2", 1)}
+    s = st(vals=vals, result=stored(True, reads={'q/a': 1, 'q/b': 1}))
+    assert (s.state, s.value, s.counts, s.waiting, s.reason) == ('review', True, False, ('q/a',), "a needs review")
+    # it comes before unverified, and a note-less flag is a flag too
+    assert st(vals={'q/a': Value("1", 1, 'person', review="")}).state != 'graded'
+    assert st(vals={'q/a': Value("1", 1, review="")}, result=stored(True)).state == 'review'
+
+
+def test_a_value_that_needs_review_is_never_verified():
+    v = Value("1", 1, 'person', review="")
+    assert not v.is_verified and v.state == 'review'
+    assert (Value("1", 1).state, Value("1", 1, 'reader').state) == ('unverified', 'verified')
 
 
 def test_unverified_when_a_field_it_read_is_not_verified():
@@ -139,6 +154,8 @@ def test_fields_state_of_a_question_without_checks():
     assert fields_state(q, {}) == 'not_read'
     assert fields_state(q, values(a=True)) == 'not_read'
     assert fields_state(q, values(a=True, b=False)) == 'unverified'
+    assert fields_state(q, {'q/a': Value("1", 1, review=""), 'q/b': Value("1", 1)}) == 'review'
+    assert fields_state(q, {'q/a': Value("1", 1, review="")}) == 'review'              # before not read
     assert fields_state(q, {'q/a': Value("1", 1, 'reader'), 'q/b': Value("", 2, 'person')}) == 'verified'
     q = exam.question('r', pages=[1], fields=[Field('a'), Field('k', default='10')])
     assert fields_state(q, {'r/a': Value("1", 1, 'person')}) == 'verified'          # k: its default

@@ -5,9 +5,10 @@ concatenation:
 
     readers.answers(prompt=prompts.TRANSCRIBE_ANSWERS + " Angles are in degrees.")
 
-Answer keys never appear in any prompt: only labels and notation do. How a
-model states that nothing is written is BLANK, in every prompt
-(`core.reading`): anything else that states no value is "not read".
+Answer keys never appear in any prompt: only labels and notation do. Every
+reply that the program reads is JSON of field objects, `{"value": ..., "unsure":
+...}` (`core.reading`): an empty value is a blank, and `unsure` says what a person
+should look at.
 """
 from __future__ import annotations
 
@@ -22,13 +23,14 @@ Transcribe only the final answers for the named question. Write one line per \
 answer label, in the order the labels are listed below, as `label: answer`. The \
 answer is only what is handwritten inside that label's answer box; printed text \
 (including the label itself and printed options) is never an answer. If a box has \
-no handwriting, write `label: BLANK`. If the printed labels on the page are missing \
-or garbled, match boxes to labels by their order from top to bottom. Preserve every \
-mistake and unsimplified expression. Do not solve, correct, grade, infer missing \
-answers, or describe supporting work. Read crossed-out attempts only to tell the \
-final answer. For a choice, record the option the student marked or wrote, \
-faithfully; if several remain selected, or the writing is ambiguous, write \
-[REVIEW: reason] as the answer. Ignore unrelated questions on additional pages."""
+no handwriting, write `label: (empty)`. If the printed labels on the page are \
+missing or garbled, match boxes to labels by their order from top to bottom. \
+Preserve every mistake and unsimplified expression. Do not solve, correct, grade, \
+infer missing answers, or describe supporting work. Read crossed-out attempts only \
+to tell the final answer. For a choice, record the option the student marked or \
+wrote, faithfully. Where you are unsure what is written (several choices marked, \
+an unclear character), give your best reading and add `(unsure: why)` after it. \
+Ignore unrelated questions on additional pages."""
 
 TRANSCRIBE_PSEUDOCODE = """\
 Transcribe the final handwritten pseudocode for every part of this question, \
@@ -36,32 +38,34 @@ including any helper functions the student wrote. Copy it literally, character b
 character: every constant, operator, name and indentation exactly as written, with \
 its mistakes and omissions. Do not complete, solve, fix, simplify or assess it. \
 Where you are unsure what is written, copy your best reading and add \
-# [REVIEW: reason] on that line. Write each function's header, printed or \
+`(unsure: why)` at the end of that line. Write each function's header, printed or \
 handwritten, above the student's body; printed comments such as # TODO are not the \
 student's. For a requested function whose body the student left empty, write its \
-header followed by BLANK. Ignore other questions."""
+header followed by (empty). Ignore other questions."""
 
 PARSE_ANSWERS = """\
-Normalize the supplied final-answer transcription into exactly this JSON \
-structure, without Markdown: {"answers": {"label": "answer"}}, with one entry for \
+Normalize the supplied final-answer transcription into exactly this JSON, without \
+Markdown: {"label": {"value": "answer", "unsure": ""}, ...}, with one entry for \
 every supplied label and no other keys. Scalars use explicit multiplication, ** \
-powers, sqrt/exp/log and lowercase variable names. An answer transcribed as BLANK \
-is the string "BLANK"; never use null or leave a label out. Preserve mistakes. Do \
-not solve, simplify, infer missing content, include a key, or assess work. For a \
-choice keep the chosen option text or letter. For ambiguity use a string \
-containing [REVIEW: reason]."""
+powers, sqrt/exp/log and lowercase variable names. An answer transcribed as \
+(empty) has the value "". Where the transcription says (unsure: why), give the \
+best reading as the value and the reason as "unsure"; otherwise "unsure" is "". \
+Preserve mistakes. Do not solve, simplify, infer missing content, include a key, \
+or assess work. For a choice keep the chosen option text or letter."""
 
 PARSE_PSEUDOCODE = """\
 Convert the supplied pseudocode transcription to the restricted language below, \
-and return only that code: plain text, no Markdown, no commentary. Write every \
-requested function, and every helper function the student wrote, once each. \
-Preserve the student's algorithm and all mistakes; copy every constant exactly. Do \
-not repair missing steps, constants, helpers or off-by-one mistakes. You may \
-normalize syntax (e.g. ^ to **) without changing the meaning. A requested \
-function the transcription marks BLANK, or that has only its printed header, is \
-written as its header with the body `pass`; never add code the student did not \
-write. Keep every [REVIEW: reason] as a comment, and use # [REVIEW: reason] for \
-ambiguity or a construct outside the language."""
+function by function, and reply with exactly this JSON, without Markdown: \
+{"function_name": {"value": "def function_name(...):\\n    ...", "unsure": ""}, ...}, \
+one entry for every requested function and every helper function the student \
+wrote, each value the source of that one function. Preserve the student's \
+algorithm and all mistakes; copy every constant exactly. Do not repair missing \
+steps, constants, helpers or off-by-one mistakes. You may normalize syntax (e.g. \
+^ to **) without changing the meaning. A requested function marked (empty), or \
+that has only its printed header, is its header with the body `pass`; never add \
+code the student did not write. Where the transcription says (unsure: why), or a \
+construct is outside the language, keep your best conversion and say in that \
+function's "unsure" what is uncertain and on which line; otherwise "unsure" is ""."""
 
 
 def context(question: Question, labels: Iterable[str]) -> str:

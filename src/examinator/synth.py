@@ -35,6 +35,7 @@ from typing import Any, Mapping
 from PIL import Image, ImageDraw, ImageFont
 
 from .core.ask import Printed
+from .core.reading import Reading
 from .core.defs import IDENTITY as NAMES, Exam, Question, Region
 from .core.runner import Runner
 from .core.workspace import Workspace
@@ -434,7 +435,7 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
             for qid in exam.questions:
                 runner.read(case.name, qid)
             for k, v in runner.values(case.name).items():
-                if not v.is_verified and not v.marker:
+                if not v.is_verified and v.review is None:
                     qid, label = k.split('/', 1)
                     runner.verify(case.name, qid, label, author='selftest', expect_rev=v.rev)
             runner.refresh(case.name)
@@ -476,7 +477,7 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
     region): what the scripted model reads in each identity field, wherever it
     is drawn, is in `STACK_READS`: clean reads, an ID misread by one
     character, a misread name, an ID that belongs to someone else, an empty ID
-    box, an unreadable name, and a student not on the roster, which also lists
+    box, a name the model is unsure of, and a student not on the roster, which also lists
     one person with no exam."""
     cases = load_cases(exam) if cases is None else cases
     root = Path(root)
@@ -561,7 +562,7 @@ STACK_READS = [
     {'name': "Emery Sampleton", 'id': "94207536"},      # clean (once the exam is turned upright)
     {'name': "Finley Dummond", 'id': "95830142"},       # not on the roster
     {'name': "Gray Placeholt", 'id': ""},               # the ID box left empty
-    {'name': None, 'id': "97352618"},                   # the name unreadable
+    {'name': Reading("H?rper F?xtura", "smudged"), 'id': "97352618"},   # the name unsure
     {'name': "Indigo Exemplar", 'id': "98546039"},
     {'name': "Jules Synthe", 'id': "99021457"}]
 # ... and the roster: everyone but Finley Dummond, and one person who sat no exam.

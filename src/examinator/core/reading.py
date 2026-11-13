@@ -2,47 +2,62 @@
 small helpers (the normal form of a printed reading, the memo key of reading a
 landmark region, which intake re-reads whenever it plans a split).
 
-**Silence is not a value.** A field gets a value only from an explicit
-statement about that field in the model's reply:
+**A value is what was read; whether a person should look is a status, not
+text.** Every reader asks for one reply shape: per field, a JSON object
 
-    "some text"           the value
-    "BLANK"               the blank value '' (the prompt says this is how to state it)
-    anything else         NOT_READ: the key missing, null, "", the string "null",
-                          a reply that is not what was asked for
+    {"value": "the text", "unsure": "why, and where (optional)"}
 
-A field that is not read carries a review marker, so it is never vouched for
-and a person must look before any grade that reads it counts; what the model
-did say, if anything, follows the marker.
+(several fields: an object of them keyed by label; code: keyed by function).
+A field object with a text `value` is a `Reading`: its value ('' is a blank,
+an ordinary value), and, when `unsure` says something, a review note.
+Anything else for a field (the key missing, null, the string "null", not an
+object, an unparseable reply) is silence: no reading, and nothing is written,
+so the field stays not read.
 """
 from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
-BLANK = 'BLANK'                         # how a model states that nothing is written
-NOT_READ = "[REVIEW: not read]"
-_NULLS = ('', 'null')       # (not "None": an answer may be that word)
+
+@dataclass(frozen=True)
+class Reading:
+    """One field's value as read, and why a person should look (None: no reason)."""
+    text: str
+    review: str | None = None
 
 
-def statement(said: Any) -> str | None:
-    """What a model stated as one reading, as text (a number or list as its JSON),
-    or None when it stated nothing: absent, null, empty, or the string "null"."""
-    if said is None:
+def field_object(given: Any) -> dict:
+    """The field object a model would reply to read `given` (for scripted replies):
+    text, a `Reading` (with its review as `unsure`), or None (states no value)."""
+    if isinstance(given, Reading):
+        return {'value': given.text, 'unsure': given.review or ("unsure" if given.review is not None else "")}
+    return {'value': given, 'unsure': ""}
+
+
+def text_of(said: Any) -> str | None:
+    """A stated value as text (a number or list as its JSON), or None for silence:
+    absent, null, the string "null", a bool or an object."""
+    if isinstance(said, str):
+        return None if said.strip().lower() == 'null' else said.strip()
+    if isinstance(said, (int, float, list)) and not isinstance(said, bool):
+        return json.dumps(said)
+    return None
+
+
+def reading(obj: Any) -> Reading | None:
+    """The reading in one field object `{"value": ..., "unsure": ...}`, or None."""
+    if not isinstance(obj, dict):
         return None
-    text = said.strip() if isinstance(said, str) else json.dumps(said)
-    return None if text.lower() in _NULLS else text
-
-
-def value(said: Any, *, also: Any = None) -> str:
-    """A field's value from what the model said about that field (see the module).
-    `also`: what else it said (a quote, say), kept after the marker when the field
-    is not read."""
-    text = statement(said)
+    text = text_of(obj.get('value'))
     if text is None:
-        extra = statement(also)
-        return NOT_READ if extra is None else f"{NOT_READ} {extra}"
-    return '' if text == BLANK else text
+        return None
+    unsure = obj.get('unsure')
+    if unsure in (None, False, ''):
+        return Reading(text)
+    return Reading(text, unsure.strip() if isinstance(unsure, str) else '')
 
 
 def json_object(out: str) -> dict:
@@ -52,6 +67,12 @@ def json_object(out: str) -> dict:
     except ValueError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def readings(out: str, names) -> dict[str, Reading]:
+    """The readings a reply `{name: {"value": ..., "unsure": ...}}` states, for `names`."""
+    data = json_object(out)
+    return {n: r for n in names if (r := reading(data.get(n))) is not None}
 
 
 def normalize(reading: str) -> str:

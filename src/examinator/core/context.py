@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Mapping, Protocol, Sequence
 
-from .defs import DEFAULT, Question, Region, has_marker, key
+from .defs import DEFAULT, Question, Region, key
 from .result import Undecided
 
 if TYPE_CHECKING:
@@ -45,8 +45,8 @@ class CheckContext:
 
     def read(self, label: str, *, question: str | None = None) -> str:
         """One field's value (text; '' is blank), or its default while it has no
-        stored value. Recorded. A field that is not read, or whose value carries a
-        review marker, raises `Undecided`."""
+        stored value. Recorded. A field that is not read raises `Undecided` (one
+        that needs review holds the grade back in the status rules)."""
         q = question or self.question.id
         k = key(q, label)
         if k not in self.fields:
@@ -58,8 +58,6 @@ class CheckContext:
         name = label if q == self.question.id else f"{q} {label}"
         if got is None:
             raise Undecided(f"{name} not read")
-        if has_marker(got[1]):
-            raise Undecided(f"{name} has a review marker")
         return got[1]
 
 

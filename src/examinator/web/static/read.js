@@ -72,7 +72,8 @@
     bar.max = Math.max(s.total, 1);
     bar.value = s.done;
     document.getElementById('prog').textContent =
-      `${s.done} / ${s.total} · ${s.state}${s.current ? ' · ' + s.current : ''}${s.failed ? ` · ${s.failed} not done` : ''}${s.error ? ' · ' + s.error : ''}`;
+      `${s.done} / ${s.total} · ${s.state}${s.current ? ' · ' + s.current : ''}${s.failed ? ` · ${s.failed} not done` : ''}` +
+      `${s.asked ? ` · fields read ${s.got} of ${s.asked}` : ''}${s.error ? ' · ' + s.error : ''}`;
     const table = document.getElementById('failures');
     table.replaceChildren();
     for (const f of s.failures) {

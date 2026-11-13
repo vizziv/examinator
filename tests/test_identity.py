@@ -8,6 +8,7 @@ from examinator import load_exam, synth
 from examinator.core import batch, focus, grid, identity, intake, overrides
 from examinator.core.defs import IDENTITY
 from examinator.core.identity import Matcher, distance, name_score, name_tokens, propose, read_roster
+from examinator.core.reading import Reading
 from examinator.core.runner import Runner
 from examinator.core.store import Conflict
 from examinator.core.workspace import Workspace
@@ -443,10 +444,11 @@ def test_a_new_roster_relinks_the_picks(written):
 def test_empty_is_not_unreadable(written):
     ws, runner, model = written
     for col in ('name', 'id'):
-        runner._put_read('s0001', IDENTITY, col, "", False, False)
+        runner._put_read('s0001', IDENTITY, col, Reading(""), False, False)
     assert identity.overview(ws, ['s0001'])['rows'][0]['doubt'] == 'empty'
-    runner._put_read('s0001', IDENTITY, 'name', "[REVIEW: not read]", False, False)
-    assert identity.overview(ws, ['s0001'])['rows'][0]['doubt'] == 'unreadable'
+    runner._put_read('s0001', IDENTITY, 'name', Reading("Ann?", "smudged"), False, False)
+    row = identity.overview(ws, ['s0001'])['rows'][0]
+    assert row['doubt'] == 'unreadable' and row['values']['name']['review'] == "smudged"
 
 
 def test_rewriting_a_submission_drops_its_unverified_readings(written):
@@ -470,9 +472,9 @@ def test_rewriting_a_submission_drops_its_unverified_readings(written):
     identity.read(runner, 's0001')
     assert len(model.calls) == calls + 1 and texts(ws, 's0001')['name'] == "Avery Testwell"
     # grading values: the same rule
-    runner._put_read('s0001', 'areas', 'A.1', "4", False, False)                 # read, unverified
-    runner._put_read('s0001', 'areas', 'side', "red", True, False)              # read, vouched by the reader
-    runner._put_read('s0001', 'areas', 'A.2', "4*x", False, False)
+    runner._put_read('s0001', 'areas', 'A.1', Reading("4"), False, False)                 # read, unverified
+    runner._put_read('s0001', 'areas', 'side', Reading("red"), True, False)              # read, vouched by the reader
+    runner._put_read('s0001', 'areas', 'A.2', Reading("4*x"), False, False)
     runner.verify('s0001', 'areas', 'A.2', author='t', expect_rev=runner.values('s0001')['areas/A.2'].rev)
     runner.set('s0001', 'parity', 'B', "even", author='t')                       # typed
     runner.verify('s0001', IDENTITY, 'name', author='t', expect_rev=runner.values('s0001')['@identity/name'].rev)

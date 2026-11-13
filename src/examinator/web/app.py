@@ -4,7 +4,7 @@
     GET  /filter                    the filter page: facets of every question
     GET  /focus/values              facet values for all submissions (?sub=: one), JSON
     GET  /s/{sub}/{q}               question page (a question graders work through: `exam.questions`)
-    POST /s/{sub}/{q}/{action}      save unverify decide clear read check default restore
+    POST /s/{sub}/{q}/{action}      save unverify review decide clear read check default restore
     POST /s/{sub}/@identity/save    the Names step's values (the identity fields)
     GET  /page/{sub}/{scan}/{index}.jpg    one scanned page (`scan`: names the PDF's content)
     GET  /image/{sub}/{q}/{check}/{digest}    one evidence image of that check's result
@@ -208,7 +208,7 @@ def glyph(st) -> str:
     """What the grade is, as one glyph. Where it is in the workflow is `st.state`."""
     text = focus.grade_text(st)
     if text is None:
-        return {'to_decide': '?', 'unverified': '?', 'outdated': '·'}.get(st.state, '')
+        return {'to_decide': '?', 'review': '!', 'unverified': '?', 'outdated': '·'}.get(st.state, '')
     return '∅' if text == 'blank' else text
 
 
@@ -406,7 +406,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                 if not q.checks:
                     state = row.fields[q.id]
                     cells.append({'qid': q.id, 'col': q.id, 'state': state,
-                                  'glyph': {'verified': '–', 'unverified': '?'}.get(state, ''),
+                                  'glyph': {'verified': '–', 'review': '!', 'unverified': '?'}.get(state, ''),
                                   'cls': 'v-n', 'v': '', 'blank': False, 'counts': False,
                                   'title': status.LABELS[state]})
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
@@ -515,7 +515,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                 'graded': qid in exam.questions,        # else a group apart (identity): no question page
                 'value': v.text if v else '', 'rev': v.rev if v else '', 'read': v is not None,
                 'verified': v.verified if v else None, 'by': v.by if v else None,
-                'marker': bool(v and v.marker),
+                'review': v.review if v else None,
                 'multiline': other.multiline(label),
                 'printed': isinstance(reader, Printed), 'ask': getattr(reader, 'ask', ''),
                 'typed': reader is None, 'default': f.default,
@@ -524,7 +524,8 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                 'judged': judged.get(label, []) if qid == q.id else []})
         for n, f in enumerate(fields):
             f['n'] = n
-        unverified = [f for f in fields if f['read'] and f['verified'] is None and not f['marker']]
+        # what Verify here may verify: a value that needs review is verified one by one (its ⋯ menu)
+        unverified = [f for f in fields if f['read'] and f['verified'] is None and f['review'] is None]
         waiting = [f['key'] for f in unverified if f['own']]           # what Verify here verifies
         waiting_other = [f['key'] for f in unverified if not f['own']]
 
@@ -622,6 +623,20 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             raise Bad("nothing to unverify")
         with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
             v = runner.verify(sub.id, qid, label, author=who(request), expect_rev=rev, verified=False)
+        return {'rev': v.rev}
+
+    def review(request, data):
+        """Flag a value for review (`note`: text, possibly empty) or take the flag off (`note`: null)."""
+        sub, q = target(request)
+        qid, label = field_of(data.get('key'))
+        rev, note = _rev(data), data.get('note')
+        if rev is None:
+            raise Bad("nothing to review")
+        if note is not None and not isinstance(note, str):
+            raise Bad("a note is text")
+        with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
+            v = runner.review(sub.id, qid, label, note=note.strip()[:500] if note is not None else None,
+                              expect_rev=rev)
         return {'rev': v.rev}
 
     def check_of(q: Question, data: dict):
@@ -1229,6 +1244,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         Route('/s/{sub}/{q}', question_page),
         change('/s/{sub}/{q}/save', save),
         change('/s/{sub}/{q}/unverify', unverify),
+        change('/s/{sub}/{q}/review', review),
         change('/s/{sub}/{q}/decide', decide),
         change('/s/{sub}/{q}/clear', clear),
         run('/s/{sub}/{q}/read', read),

@@ -3,16 +3,17 @@
     exam.question('sum', ..., read=readers.answers(notes=NUMBERS))          # short answers
     exam.question('sampler', ..., read=readers.code(['sampler'], language=LANG))  # pseudocode
 
-A reader reads all the fields it is given in one go and returns one value per
-field (text; '' is blank). Inside, it makes two model calls: one to transcribe
-the pages, one to turn the transcript into values. The transcript is not
-stored, shown or verified: one read, one value per field.
+A reader reads all the fields it is given in one go and returns a `Reading`
+per field it read (text, '' a blank, and a review note when the model was
+unsure). Inside, it makes two model calls: one to transcribe the pages, one to
+turn the transcript into values. The transcript is not stored, shown or
+verified: one read, one value per field.
 
-What a reply makes of each field is the reading layer's one rule
-(`core.reading.value`): a field has a value only where the reply states one
-for that field; BLANK is the blank value; anything else is not read, a review
-marker that waits for a person. The model transcribes; the program splits:
-the code reader converts the question's code once, and each field takes its
+The second reply has one shape (`core.reading`): an object of field objects
+`{"value": ..., "unsure": ...}`, keyed by label (answers) or by function name
+(code). A field the reply does not state in that shape is left out: it stays
+not read. The model transcribes; the program splits: the code reader has the
+question's code converted once, function by function, and each field takes its
 own functions from it (`Code.split`).
 
 Each reader is a small frozen dataclass, so its configuration (prompts,
@@ -27,18 +28,11 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from ..core.context import ReadContext
-from ..core.defs import Field, has_marker
-from ..core.reading import BLANK, NOT_READ, json_object, value
+from ..core.defs import Field
+from ..core.reading import Reading, field_object, json_object, reading, readings
 from . import prompts
 
-
-def answers_from_json(text: str, labels: Sequence[str]) -> dict[str, str]:
-    """Each label's value from a parse reply `{"answers": {label: text}}`
-    (`reading.value`: a label the reply does not state is not read)."""
-    answers = json_object(text).get('answers')
-    if not isinstance(answers, dict):
-        answers = {}
-    return {label: value(answers.get(label)) for label in labels}
+EMPTY = '(empty)'       # how a transcript says a box is empty (the parse step turns it into "")
 
 
 def _prompts(reader: Any, what: str) -> None:
@@ -67,7 +61,7 @@ class Answers:
         """With `crops`, it reads each field's region (a field needs one), not the pages."""
         return self.crops
 
-    def read(self, ctx: ReadContext, fields: Sequence[Field]) -> dict[str, str]:
+    def read(self, ctx: ReadContext, fields: Sequence[Field]) -> dict[str, Reading]:
         labels = [f.label for f in fields]
         context = prompts.context(ctx.question, labels)
         images = [ctx.crop(f.region) for f in fields] if self.crops else ctx.pages()
@@ -75,13 +69,13 @@ class Answers:
                                step='transcribe').strip()
         out = ctx.model(prompts.join(self.parse_prompt, context, prompts.notation(self.symbols, self.functions),
                                      self.notes), text=transcript, expect='json', step='parse')
-        return answers_from_json(out, labels)
+        return readings(out, labels)
 
     def script(self, fields: Sequence[Field], given: Mapping[str, Any]) -> dict[str, str]:
-        """The replies that read `given` ({label: text, None or '' blank})."""
+        """The replies that read `given` ({label: text, '' or None blank})."""
         labels = [f.label for f in fields]
-        return {'transcribe': "\n".join(f"{label}: {given.get(label) or BLANK}" for label in labels),
-                'parse': json.dumps({'answers': {label: given.get(label) or BLANK for label in labels}})}
+        return {'transcribe': "\n".join(f"{label}: {given.get(label) or EMPTY}" for label in labels),
+                'parse': json.dumps({label: field_object(given.get(label) or "") for label in labels})}
 
 
 def answers(*, symbols: Sequence[str] = (), functions: Sequence[str] | None = None, notes: str = "",
@@ -95,9 +89,9 @@ def answers(*, symbols: Sequence[str] = (), functions: Sequence[str] | None = No
 
 @dataclass(frozen=True)
 class Code:
-    """Pseudocode: transcribe the question's pages, convert the transcript once
-    into source in the pseudocode language, and give each field its own
-    functions from it (`split`)."""
+    """Pseudocode: transcribe the question's pages, convert the transcript once,
+    function by function, into the pseudocode language, and give each field its
+    own functions (`split`)."""
     entries: Mapping[str, tuple[str, ...]] | tuple[str, ...]    # per field, or the same for every field
     language: Any = None                 # a `pseudocode.Language`; None means the base language
     prompt: str = prompts.TRANSCRIBE_PSEUDOCODE
@@ -114,50 +108,49 @@ class Code:
             return tuple(self.entries.get(label, ()))
         return tuple(self.entries)
 
-    def read(self, ctx: ReadContext, fields: Sequence[Field]) -> dict[str, str]:
+    def read(self, ctx: ReadContext, fields: Sequence[Field]) -> dict[str, Reading]:
         from . import pseudocode
         language = self.language or pseudocode.BASE
         labels = [f.label for f in fields]
         context = prompts.join(prompts.context(ctx.question, labels),
                                prompts.functions({label: self.wanted(label) for label in labels}))
         transcript = ctx.model(prompts.join(self.prompt, context, self.notes), images=ctx.pages(), step='transcribe')
-        source = ctx.model(prompts.join(self.parse_prompt, language.description, context, self.notes),
-                           text=transcript, expect='code', step='parse')
-        return self.split(source, labels)
+        out = ctx.model(prompts.join(self.parse_prompt, language.description, context, self.notes),
+                        text=transcript, expect='json', step='parse')
+        return self.split(out, labels)
 
-    def split(self, source: str, labels: Sequence[str]) -> dict[str, str]:
-        """Each field's value from the question's converted source. A field takes
-        its requested functions and the helpers they call, transitively, but not
-        a function another field requests; lines outside every function go to
-        every field. A field none of whose requested functions the source
-        defines is not read; one whose requested functions are all empty
-        (`pass`, comments) is blank; a requested function missing beside others
-        is marked. A source that is only BLANK says every field is blank."""
+    def split(self, out: str, labels: Sequence[str]) -> dict[str, Reading]:
+        """Each field's reading from the conversion reply `{function: {"value":
+        source, "unsure": ...}}` (a function whose source does not define it is
+        not stated). A field takes its requested functions and the helpers they
+        call, transitively, but not a function another field requests; its
+        review is theirs. A field with a requested function the reply does not
+        state is not read; one whose requested functions are all empty (`pass`,
+        comments) is blank."""
         from .pseudocode import calls, functions, is_empty
-        if source.strip() == BLANK:
-            return {label: '' for label in labels}
-        defs, rest = functions(source)
+        defs = {name: r for name, obj in json_object(out).items()
+                if (r := reading(obj)) is not None and name in functions(r.text)[0]}
         owner = {name: label for label in labels for name in self.wanted(label)}
-        out = {}
+        got = {}
         for label in labels:
             wanted = self.wanted(label)
-            found = [name for name in wanted if name in defs]
-            if not found:
-                out[label] = NOT_READ
+            if not wanted or any(name not in defs for name in wanted):
                 continue
-            take, todo = set(found), list(found)
+            take, todo = set(wanted), list(wanted)
             while todo:
-                for name in calls(defs[todo.pop()], defs):
+                for name in calls(defs[todo.pop()].text, defs):
                     if name not in take and owner.get(name, label) == label:
                         take.add(name)
                         todo.append(name)
-            parts = [*filter(None, [rest]), *(text for name, text in defs.items() if name in take),
-                     *(f"# {NOT_READ} {name}" for name in wanted if name not in defs)]
-            text = "\n\n".join(p.strip('\n') for p in parts) + "\n"
-            if not has_marker(text) and all(is_empty(defs[name]) for name in found):
+            names = [name for name in defs if name in take]
+            notes = [f"{name}: {defs[name].review}" if defs[name].review else name
+                     for name in names if defs[name].review is not None]
+            text = "\n\n".join(defs[name].text.strip('\n') for name in names) + "\n"
+            if all(is_empty(defs[name].text) for name in wanted):
                 text = ''
-            out[label] = self.then(text) if self.then and text else text
-        return out
+            got[label] = Reading(self.then(text) if self.then and text else text,
+                                 "; ".join(notes) if notes else None)
+        return got
 
     def script(self, fields: Sequence[Field], given: Mapping[str, Any]) -> dict[str, str]:
         """The replies that read `given` ({label: source, None or '' blank}): the
@@ -168,9 +161,11 @@ class Code:
         for f in fields:
             for name, text in functions(given.get(f.label) or '')[0].items():
                 defs.setdefault(name, text.strip('\n') + "\n")
-        stubs = [f"def {name}():\n    pass\n" for f in fields for name in self.wanted(f.label) if name not in defs]
-        return {'transcribe': "\n\n".join(given.get(f.label) or f"{f.label}: {BLANK}" for f in fields),
-                'parse': "\n".join([*defs.values(), *stubs])}
+        for f in fields:
+            for name in self.wanted(f.label):
+                defs.setdefault(name, f"def {name}():\n    pass\n")
+        return {'transcribe': "\n\n".join(given.get(f.label) or f"{f.label}: {EMPTY}" for f in fields),
+                'parse': json.dumps({name: field_object(text) for name, text in defs.items()})}
 
     def facets(self, question) -> list:
         """The comments in each field's source, searchable."""
