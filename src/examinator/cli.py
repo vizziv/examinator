@@ -22,8 +22,10 @@ def open_model(args, root: Path):
     if getattr(args, 'fake', False):
         from . import synth
         return synth.fake_model(root)
-    from .model.client import Client, probe
-    if probe(args.model_url, args.model) is None:
+    from .model.client import Client, unavailable
+    why = unavailable(args.model_url, args.model)
+    if why is not None:
+        print(f"model unavailable: {why}", file=sys.stderr)
         return None
     return Client(args.model_url, args.model)
 
@@ -140,10 +142,12 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
             for item in plan.items:
                 print(f"  {item.submission} {item.question}: {item.action} {item.reason}")
             return 0
-        outcomes = batch.BatchRun(runner, plan, parallel=args.parallel).run()
+        run = batch.BatchRun(runner, plan, parallel=args.parallel)
+        outcomes = run.run()
         for o in outcomes:
-            if not o.ok:
+            if not o.ok or o.read < o.asked:
                 print(f"  {o.submission} {o.question} {o.step}: {o.status} {o.detail}")
+        print(f"fields read: {run.got} of {run.asked}" + (" (the rest stay not read)" if run.got < run.asked else ""))
         print(status_table(exam, ws))
     finally:
         runner.close()

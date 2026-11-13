@@ -243,8 +243,8 @@ def read(runner, sid: str, *, again: bool = False) -> list:
 
 
 def usable(v: Value | None) -> str | None:
-    """A value as evidence of who it is: its text, unless blank or marked."""
-    return v.text if v is not None and v.text.strip() and not v.marker else None
+    """A value as evidence of who it is: its text, unless blank or it needs review."""
+    return v.text if v is not None and v.text.strip() and v.review is None else None
 
 
 # --- the pick -------------------------------------------------------------------------
@@ -582,7 +582,7 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
             else:
                 # nothing usable: still to read, could not be read, or every box blank
                 doubt = ('unread' if unread or not have else
-                         'unreadable' if any(v.marker for v in have.values()) else 'empty')
+                         'unreadable' if any(v.review is not None for v in have.values()) else 'empty')
                 prop = {'doubt': doubt, 'match': None, 'candidates': []}
             cache[ck] = prop
         # who is already picked elsewhere is shown, never used to rank: a misreading must not cascade
@@ -591,7 +591,7 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
         body = pick_row.body if pick_row is not None and isinstance(pick_row.body, dict) else None
         link = links.get(sid)
         rows.append({'sub': sid, 'read': read, 'unread': unread,
-                     'values': {c: {'text': v.text, 'rev': v.rev, 'verified': v.verified, 'marker': v.marker}
+                     'values': {c: {'text': v.text, 'rev': v.rev, 'verified': v.verified, 'review': v.review}
                                 for c, v in got.items()},
                      'doubt': prop['doubt'], 'candidates': cands,
                      'match': roster[prop['match']]['key'] if prop['match'] is not None else None,

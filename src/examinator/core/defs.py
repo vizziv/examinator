@@ -15,34 +15,17 @@ import importlib.util
 import inspect
 import json
 import math
-import re
 import sys
 import types
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-# --- review markers ---------------------------------------------------------
-
-REVIEW = re.compile(r'\[REVIEW\b', re.I)   # also catches a marker cut off before its ']'
-
-
 def one_line(text: str) -> str:
     """A value on one line: line breaks become single spaces."""
     if '\n' not in text and '\r' not in text:
         return text
     return ' '.join(part.strip() for part in text.splitlines() if part.strip())
-
-
-def has_marker(body: Any) -> bool:
-    """True if any string inside a JSON-like body carries a `[REVIEW: ...]` marker."""
-    if isinstance(body, str):
-        return bool(REVIEW.search(body))
-    if isinstance(body, Mapping):
-        return any(has_marker(k) or has_marker(v) for k, v in body.items())
-    if isinstance(body, (list, tuple)):
-        return any(has_marker(v) for v in body)
-    return False
 
 
 # --- geometry and fields ----------------------------------------------------

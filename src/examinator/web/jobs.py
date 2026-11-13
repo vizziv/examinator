@@ -17,7 +17,8 @@ def _outcomes(result: Any) -> list[dict]:
     if result is None:
         return []
     items = result if isinstance(result, (list, tuple)) else [result]
-    return [{'step': o.step, 'status': o.status, 'detail': o.detail} for o in items]
+    return [{'step': o.step, 'status': o.status, 'detail': o.detail, 'asked': getattr(o, 'asked', 0),
+             'read': getattr(o, 'read', 0)} for o in items]
 
 
 class Jobs:
@@ -139,6 +140,7 @@ class Batch:
         state = 'running' if self.active else 'failed' if self.error else run.state
         failures = [o for o in outcomes if not o.ok]
         return {'id': self.id, 'state': state, 'done': run.done, 'total': run.total, 'current': run.current,
+                'asked': run.asked, 'got': run.got,
                 'error': self.error if state == 'failed' else '',
                 'failed': len(failures),
                 'failures': [{'submission': o.submission, 'question': o.question, 'step': o.step,

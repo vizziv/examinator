@@ -144,7 +144,7 @@
     busy.hidden = !++running;
     waitJob(job).then(j => {
       busy.hidden = !--running;
-      const bad = (j.outcomes || []).filter(o => o.status !== 'done' && o.status !== 'skipped');
+      const bad = (j.outcomes || []).filter(o => (o.status !== 'done' && o.status !== 'skipped') || o.read < o.asked);
       if (j.state !== 'done') flash(`${j.state}${j.error ? ': ' + j.error : ''}`);
       else if (bad.length) flash(bad.map(o => `${o.step}: ${o.status}${o.detail ? ' — ' + o.detail : ''}`).join('; '));
       refresh();
@@ -288,9 +288,12 @@
                      run: ({el}) => (el ? setNumber(el) : target('number').querySelector('input').focus())},
     edit: {available: hasFields, run: () => inputs()[0].focus()},
     'verify-others': {run: () => save(true, 'waitingOther')},
-    // Rare, so in each field's menu: verify or unverify that one value.
+    // Rare, so in each field's menu: verify or unverify that one value ...
     'verify-one': {run: ({el}) => { const k = el.dataset.key; return change('save', () => ({values: {}, verify: [{key: k, rev: revAt(k)}]}), {values: true}); }},
     unverify: {run: ({el}) => { const k = el.dataset.key; return change('unverify', () => ({key: k, rev: revAt(k)}), {values: true}); }},
+    // ... or flag it for review (or take the flag off): it then counts for nothing until a person verifies it.
+    review: {run: ({el}) => { const k = el.dataset.key, on = el.dataset.on === '1';
+                              return change('review', () => ({key: k, rev: revAt(k), note: on ? '' : null}), {values: true}); }},
     'to-default': {run: ({el}) => { const k = el.dataset.key; return change('default', () => ({key: k, rev: revAt(k)}), {values: true}); }},
     restore: {run: ({el}) => {
       const k = el.dataset.key, restore = el.dataset.restore;

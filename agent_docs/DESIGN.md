@@ -120,23 +120,36 @@ without its images.
 - `std.readers.answers()`: transcribe the pages (or crops), then parse the
   transcript into one value per field. Two model calls; the transcript is not
   stored, shown or verified.
-- `std.readers.code(entries)`: transcribe, then one parse per code field into
-  the pseudocode language; `then=` rewrites the source deterministically.
+- `std.readers.code(entries)`: transcribe, then convert the question's code
+  once into the pseudocode language, function by function (two model calls
+  per question). The program splits: each field takes its requested functions
+  and the helpers they call, but no function another field requests
+  (`Code.split`); one function's review stays out of other fields. `then=`
+  rewrites each field's source deterministically.
+
+Every reply the program reads has one shape (`core.reading`): a field object
+`{"value": ..., "unsure": ...}`, or an object of them keyed by label or by
+function. A field object with a text value is a reading (`''` a blank;
+`unsure` a review note); anything else for a field is silence, and nothing is
+written: the field stays not read. For code, a field with a requested function
+the reply does not state is not read, and one whose requested functions are
+only `pass` or comments (the printed `# TODO`) is blank.
 - `core.ask.Printed`: a field's own reader of printed text (§5).
 
 A **check** is `fn(ctx) -> Result` (or a bare grade), wrapped as
 `Check(fn, points, timeout=, isolate=)`. `ctx.read(label)` reads its own
 question's field, `ctx.read(label, question=...)` another's; each read is
-recorded with the field's revision. A field not read, or with a review marker,
-raises `Undecided`. A setting a grader may change (a constant the check uses)
+recorded with the field's revision. A field not read raises `Undecided`; one
+that needs review holds the grade back in the status rules ("review"). A setting a grader may change (a constant the check uses)
 is a field with a default (`Field(label, default='10')`): it reads as the
 default, verified, until a person sets a value, and a change recomputes the
 check like any other (MODEL.md). Checks run in
 a warm worker process with a wall-clock limit (default 60 s; a worker's
 start-up is not counted).
 
-A model output may contain `[REVIEW: reason]` wherever it is unsure. Such a
-value is never verified, so every grade that read it waits for a person.
+Where the model is unsure it says so in the field object's `unsure`; the value
+then needs review: it is never verified, so every grade that read it waits for
+a person ("review"). A person can flag a value too (the field's ⋯ menu).
 
 ## 5. Printings: printed fields, and checks that read other questions
 
@@ -149,10 +162,10 @@ read into fields like anything else, and checks use it.
   (`core/ask.py`: `Printed` is `Ask` with a prompt about printed text; `Ask`
   alone asks about handwriting, as the identity fields do), asked `ask`. The
   reading is the value: what to expect and in what form is the `ask`'s to say
-  ("as a number (3 or 4)"). A reading that is absent becomes a value with a
-  review marker. Never guess.
-- **A reader may vouch for its value**: `Printed` does for any value without a
-  review marker, unless `verify=True`; `Ask` (handwriting) never does. Such a
+  ("as a number (3 or 4)"). A reading that is absent writes nothing (not read);
+  an unsure one needs review. Never guess.
+- **A reader may vouch for its value**: `Printed` does for any non-empty value
+  the model was sure of, unless `verify=True`; `Ask` (handwriting) never does. Such a
   value is verified by the reader; reading again replaces it, never a value a
   person verified. A value nothing expects is caught where it matters: a key
   per value with no key for it is undecided, naming the field and the value
@@ -226,8 +239,8 @@ functions over stored rows, in `core/status.py`, with one test per row
 
 - Verification approves a value; it does not change who wrote it, nor the
   value's revision. A person who sets a value verifies it.
-- A decision is authoritative even if a field it was made on carries a review
-  marker, and may be made when the check never ran.
+- A decision is authoritative even if a field it was made on needs review,
+  and may be made when the check never ran.
 - A check that read no field never counts by itself.
 - Supporting work on the page is never read or checked. Graders judge it.
 - Status always comes from these rules, never from evidence contents.
@@ -848,7 +861,7 @@ gives a submission's file, written or handed in).
     `nobody` when no column fits anyone. Candidates come in that order: the
     people every column supports first, then by how many columns support
     them, then by how alike. With nothing usable: `unread` (still
-    to read), `unreadable` (a review marker), `empty` (every box blank). A
+    to read), `unreadable` (a value that needs review), `empty` (every box blank). A
     person already picked elsewhere is flagged,
     never dropped or ranked lower: taken-ness never breaks a tie (one
     confident misreading must not cascade into a second wrong match). Computed

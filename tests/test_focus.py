@@ -68,9 +68,9 @@ def test_state_facet_names_each_column_and_what_is_still_to_do(env):
             assert f'{qid}/{name}' in ids
             assert 'decided' not in todo and 'graded' not in todo and 'verified' not in todo
     assert focus.state_facet(exam.questions['a'], 'x') == (
-        'state:x', ('decided_outdated', 'to_decide', 'not_run', 'outdated', 'unverified'))
+        'state:x', ('decided_outdated', 'to_decide', 'not_run', 'outdated', 'review', 'unverified'))
     assert focus.state_facet(exam.questions['b'], 'check')[0] == 'state'
-    assert focus.state_facet(exam.questions['p']) == ('state', ('not_read', 'unverified'))
+    assert focus.state_facet(exam.questions['p']) == ('state', ('not_read', 'review', 'unverified'))
 
 
 def test_table_shape_and_one_submission(env):

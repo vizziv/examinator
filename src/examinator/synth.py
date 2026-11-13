@@ -2,7 +2,9 @@
 
 An exam package may ship `fixtures.py` with `cases() -> list[Case]`. Each case
 becomes one fabricated submission: a scan-like PDF (the printed
-page inset in the print area, answers typed into the field regions), a roster
+page inset in the print area, answers written where a student would: inside
+the answer box, below a printed stub, in a handwriting-like font if the system
+has one (`write`); a blank left empty), a roster
 row, and scripted model replies, so the whole pipeline runs offline. Each
 reader writes its own replies (`reader.script(fields, given)`).
 
@@ -33,6 +35,7 @@ from typing import Any, Mapping
 from PIL import Image, ImageDraw, ImageFont
 
 from .core.ask import Printed
+from .core.reading import Reading
 from .core.defs import IDENTITY as NAMES, Exam, Question, Region
 from .core.runner import Runner
 from .core.workspace import Workspace
@@ -142,6 +145,77 @@ def _font(size: int):
         return ImageFont.load_default()
 
 
+# Handwriting-like fonts the system may have (none is shipped: a page without one uses the default).
+HANDS = ('/System/Library/Fonts/Supplemental/Bradley Hand Bold.ttf', '/System/Library/Fonts/Supplemental/ChalkboardSE.ttc',
+         '/usr/share/fonts/truetype/comic-neue/ComicNeue-Regular.ttf')
+INK = 160               # a grey level below this is print
+PEN = (20, 30, 140)
+
+
+def _hand(size: int):
+    for path in HANDS:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return _font(size)
+
+
+def _run(empty) -> tuple[int, int]:
+    """The longest run of True in a 1-D boolean array: (start, stop); (0, 0) if none."""
+    best, start = (0, 0), None
+    for i, e in enumerate([*empty, False]):
+        if e and start is None:
+            start = i
+        elif not e and start is not None:
+            best = max(best, (start, i), key=lambda s: s[1] - s[0])
+            start = None
+    return best
+
+
+def write(page: Image.Image, region: Region, text: str) -> None:
+    """Write `text` into `region` of a printed page where a student would: in the
+    region's largest part with no print (inside the answer box, not over its label
+    or a printed stub), left-aligned. One line is vertically centred in the
+    widest print-free span across the region's middle, or, when that is narrow
+    (a box of printed options), beside the rightmost print; several lines (code) start
+    at the top of the tallest print-free band, at the print's left margin,
+    indented as written."""
+    import numpy as np
+    l, t, r, b = _box(region)
+    ink = np.asarray(page.convert('L').crop((l, t, r, b))) < INK
+    h, w = ink.shape
+    draw = ImageDraw.Draw(page)
+    lines = text.split('\n')
+    if len(lines) == 1:
+        middle = ink[h // 3: max(2 * h // 3, h // 3 + 1)].any(axis=0)
+        c0, c1 = _run(~middle)
+        r0, r1 = _run(~ink[:, c0:c1].any(axis=1))
+        if c1 - c0 < 0.35 * w or r1 - r0 < 16:
+            # no room inside (a box of printed options, say): beside the print, past the region if need be
+            printed = np.flatnonzero(middle)
+            c0 = int(printed[-1]) + 4 if len(printed) else 0
+            c1, r0, r1 = max(c0 + 40, PAGE[0] - 10 - l), h // 4, h - h // 4
+        size = max(10, min(26, int((r1 - r0) * 0.6)))
+        while size > 10 and _hand(size).getlength(text) > c1 - c0 - 16:
+            size -= 1
+        draw.text((l + c0 + 8, t + (r0 + r1) // 2), text, fill=PEN, font=_hand(size), anchor='lm')
+        return
+    r0, r1 = _run(~ink.any(axis=1))
+    r0, r1 = (r0, r1) if r1 - r0 >= 40 else (0, h)
+    step = max(10, min(24, (r1 - r0 - 10) // len(lines)))
+    size = step - 4
+    printed = np.flatnonzero(ink.any(axis=0))
+    left = int(printed[0]) if len(printed) and printed[0] < w // 2 else 40
+    while size > 8 and max(_hand(size).getlength(s) for s in lines) > w - left - 20:
+        size -= 1
+    font = _hand(size)
+    indent = font.getlength('n') * 0.6
+    for i, s in enumerate(lines):
+        body = s.lstrip(' ')
+        draw.text((l + left + indent * (len(s) - len(body)), t + r0 + 6 + i * step), body, fill=PEN, font=font)
+
+
 def _box(region: Region) -> tuple[int, int, int, int]:
     w, h = PAGE
     return (region.left * w // 1000, region.top * h // 1000, region.right * w // 1000, region.bottom * h // 1000)
@@ -168,7 +242,7 @@ def _printed_pages(exam: Exam, case: Case, renderer: Renderer) -> list[Image.Ima
                     if isinstance(f.read, Printed):
                         l, t, _, _ = _box(f.region)
                         shown = case.printed.get(q.id, {}).get(f.label) or ""
-                        d.text((l + 40, t + 30), f"{q.title}: {shown}", fill='black', font=_font(16))
+                        d.text((l + 40, t + 30), f"{q.title}, {f.label}: {shown}", fill='black', font=_font(16))
                     elif f.read is None:
                         l, t, r, b = _box(f.region)
                         d.rectangle((l, t, r, b), outline='black')
@@ -204,24 +278,20 @@ def _draw_identity(exam: Exam, pages: list[Image.Image], who: Mapping[str, str |
     for f in exam.identity.fields:
         text = who.get(f.label) or ""
         if text and f.region is not None and 1 <= f.region.page <= len(pages):
-            l, t, _, _ = _box(f.region)
-            ImageDraw.Draw(pages[f.region.page - 1]).text((l + 14, t + 12), text, fill=(20, 30, 140), font=_font(26))
+            write(pages[f.region.page - 1], f.region, text)
 
 
 def _draw_answers(exam: Exam, case: Case, pages: list[Image.Image]) -> None:
+    """Write each answer into its field's region (`write`); a blank stays empty.
+    A choice is written as text: a definition says where a field is, not where
+    its printed options are, so there is no bubble to fill."""
     for qid, body in case.answers.items():
         q = exam.questions[qid]
         values = given(q, body)
         for f in q.written:
-            text = _text(values.get(f.label))
-            if f.region is None or not text:
-                continue
-            l, t, _, _ = _box(f.region)
-            draw = ImageDraw.Draw(pages[f.region.page - 1])
-            if '\n' in text:
-                draw.multiline_text((l + 40, t + 20), text, fill=(20, 30, 140), font=_font(14))
-            else:
-                draw.text((l + 12, t + 14), text, fill=(20, 30, 140), font=_font(20))
+            text = _text(values.get(f.label)).strip('\n')
+            if f.region is not None and text:
+                write(pages[f.region.page - 1], f.region, text)
 
 
 def _scan(exam: Exam, printed: list[Image.Image]) -> list[Image.Image]:
@@ -365,7 +435,7 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
             for qid in exam.questions:
                 runner.read(case.name, qid)
             for k, v in runner.values(case.name).items():
-                if not v.is_verified and not v.marker:
+                if not v.is_verified and v.review is None:
                     qid, label = k.split('/', 1)
                     runner.verify(case.name, qid, label, author='selftest', expect_rev=v.rev)
             runner.refresh(case.name)
@@ -407,7 +477,7 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
     region): what the scripted model reads in each identity field, wherever it
     is drawn, is in `STACK_READS`: clean reads, an ID misread by one
     character, a misread name, an ID that belongs to someone else, an empty ID
-    box, an unreadable name, and a student not on the roster, which also lists
+    box, a name the model is unsure of, and a student not on the roster, which also lists
     one person with no exam."""
     cases = load_cases(exam) if cases is None else cases
     root = Path(root)
@@ -492,7 +562,7 @@ STACK_READS = [
     {'name': "Emery Sampleton", 'id': "94207536"},      # clean (once the exam is turned upright)
     {'name': "Finley Dummond", 'id': "95830142"},       # not on the roster
     {'name': "Gray Placeholt", 'id': ""},               # the ID box left empty
-    {'name': None, 'id': "97352618"},                   # the name unreadable
+    {'name': Reading("H?rper F?xtura", "smudged"), 'id': "97352618"},   # the name unsure
     {'name': "Indigo Exemplar", 'id': "98546039"},
     {'name': "Jules Synthe", 'id': "99021457"}]
 # ... and the roster: everyone but Finley Dummond, and one person who sat no exam.

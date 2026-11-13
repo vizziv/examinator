@@ -124,6 +124,7 @@ CHANGES = {
     '/s/{sub}/@identity/save': ('s', lambda s: (f'/s/{first_sub(s)}/@identity/save',
                                                 {'values': {'@identity/name': {'text': "Ann", 'rev': value_rev(s, first_sub(s), '@identity/name')}}})),
     '/s/{sub}/{q}/unverify': ('q', lambda q: ('/s/s1/a/unverify', {'key': 'a/x', 'rev': value_rev(q, 's1', 'a/x')})),
+    '/s/{sub}/{q}/review': ('q', lambda q: ('/s/s1/a/review', {'key': 'a/x', 'rev': value_rev(q, 's1', 'a/x'), 'note': ""})),
     '/s/{sub}/{q}/decide': ('q', lambda q: ('/s/s1/a/decide', {'check': 'x', 'value': True, 'rev': decision_rev(q),
                                                               'seen': {'a/x': value_rev(q, 's1', 'a/x'), 'a/y': value_rev(q, 's1', 'a/y')}})),
     '/s/{sub}/{q}/clear': ('q', lambda q: ('/s/s1/a/clear', {'check': 'x', 'rev': decision_rev(q)})),

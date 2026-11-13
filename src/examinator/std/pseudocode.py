@@ -2379,3 +2379,60 @@ def comment_facet(field: str, *, name: str = 'comments', label: str = "comments"
         return ['\n'.join((c.text, *c.context)) for c in comments(view.value(field), context=context)]
 
     return Facet(name, label, values, kind='text', group='code')
+
+
+# --------------------------------------------------------------------------
+# Functions in source, found from its lines (for splitting a question's code)
+# --------------------------------------------------------------------------
+
+_DEF_LINE = r'def\s+([A-Za-z_]\w*)\s*\('
+_FENCE_LINE = r'\s*```'
+_NAME = r'[A-Za-z_]\w*'
+
+
+def functions(source: str) -> tuple[dict[str, str], str]:
+    """The top-level functions in `source`, found from its lines alone, so code
+    that does not parse still splits: `({name: text}, rest)`. A function is a
+    `def` line at the left margin and the lines after it that are indented,
+    blank or comments; `rest` is every other line that is not blank (a Markdown
+    fence line is dropped). A name defined twice keeps both texts, in order."""
+    defs: dict[str, str] = {}
+    rest, current = [], None
+    for line in source.splitlines():
+        if re.match(_FENCE_LINE, line):
+            continue
+        m = re.match(_DEF_LINE, line)
+        if m:
+            current = m.group(1)
+            defs[current] = f"{defs[current].rstrip()}\n\n{line}" if current in defs else line
+        elif current is not None and (not line.strip() or line[0] in ' \t' or line.startswith('#')):
+            defs[current] += "\n" + line
+        else:
+            current = None
+            if line.strip():
+                rest.append(line)
+    return {name: text.rstrip() + "\n" for name, text in defs.items()}, "\n".join(rest)
+
+
+def calls(text: str, names) -> list:
+    """The `names` that a function's text (from `functions`) mentions outside
+    comments and its own `def` name, in order of first mention."""
+    lines = [line.split('#', 1)[0] for line in text.splitlines()]
+    if lines:
+        lines[0] = re.sub(_DEF_LINE, '(', lines[0], count=1)
+    return [n for n in dict.fromkeys(re.findall(_NAME, "\n".join(lines))) if n in names]
+
+
+def is_empty(text: str) -> bool:
+    """A function's text (from `functions`) that states nothing: after the `def`
+    line only `pass`, `...`, a docstring or comments. Parsed only, never run."""
+    code = [line.split('#', 1)[0].rstrip() for line in text.splitlines()]
+    code = [line for line in code if line.strip()]
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            tree = ast.parse("\n".join(code))
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return len(code) == 1 and code[0].endswith(':')         # a `def` line and nothing else
+    fn = tree.body[0] if len(tree.body) == 1 and type(tree.body[0]) is ast.FunctionDef else None
+    return fn is not None and all(_is_filler(s) or _is_docstring(s) for s in fn.body)

@@ -213,7 +213,7 @@ def test_check_field_expressions():
 
 @pytest.mark.parametrize('answer', [
     'c*(1-a)', 'a.b', 'a[0]', "__import__('os')", 'lambda: a', 'a/2b', '9**9**9',
-    'a [REVIEW: a or 9?]', '[REVIEW]', 'x' * 10_000,
+    'x' * 10_000,
 ])
 def test_check_field_undecided(answer):
     outcome, note = check_field(answer, 'a*b', symbols=POS)
@@ -222,8 +222,6 @@ def test_check_field_undecided(answer):
 
 
 def test_check_field_notes():
-    assert check_field('a [REVIEW: unclear]', 'a', symbols=POS) == (None, 'review')
-    assert check_field('[REVIEW: unclear] C', Choice('C')) == (None, 'review')
     assert check_field('c', 'a', symbols=POS) == (None, "unknown symbol: c")
     assert check_field('1/(a-a)', 'a', symbols=POS)[0] is None
     assert check_field('log(a*b)', 'log(a) + log(b)', symbols=['a', 'b'])[0] is None
@@ -272,7 +270,6 @@ def test_callable_entries():
     assert check_field('a', pair) == (None, "need two values")
     assert check_field('a; zz', pair) == (None, "unknown symbol: zz")       # Unsupported inside
     assert check_field(None, pair) == ('blank', '')
-    assert check_field('a [REVIEW: ?]; b', pair) == (None, 'review')
     assert check_field('x', lambda s: 'blank') == ('blank', '')
     assert check_field('x', lambda s: None) == (None, '')
 
@@ -289,8 +286,8 @@ def test_check_answers_shape():
     assert out['5'] == out['6'] == ('blank', '')
     assert [o for o, _ in out.values()] == ['correct'] * 4 + ['blank'] * 2
     assert m.all_correct({k: o for k, (o, _) in out.items()}) == 'incorrect'
-    out = check_answers({'1': 'a b [REVIEW: b or 6]', '2': 'D'}, {'1': 'a*b', '2': Choice('B')}, symbols=POS)
-    assert out == {'1': (None, 'review'), '2': ('incorrect', '')}
+    out = check_answers({'1': 'a b', '2': 'D'}, {'1': 'a*b', '2': Choice('B')}, symbols=POS)
+    assert out == {'1': ('correct', ''), '2': ('incorrect', '')}
 
 
 def test_normal_forms():
@@ -397,11 +394,6 @@ def test_group_entries():
     out = check_answers({}, {('p', 'q'): one})              # all blank: not called
     assert len(seen) == 1 and [o for o, _ in out.values()] == ['blank', 'blank']
 
-    out = check_answers({'p': '1 [REVIEW: 1 or 7]', 'q': '2'}, {('p', 'q'): one})
-    assert len(seen) == 1 and list(out.values()) == [(None, 'review')] * 2
-    out = check_answers({'p': '1 [REVIEW: 1 or 7]'}, {('p', 'q'): one})
-    assert [o for o, _ in out.values()] == [None, 'blank']
-
     def unreadable(answers):
         raise Unsupported("unknown symbol: z")
     out = check_answers({'p': 'z'}, {('p', 'q'): unreadable})
@@ -424,11 +416,11 @@ def test_keyed_check():
     exam = Exam('k', pages=1)
     exam.question('q', pages=[1], fields=[Field(x) for x in 'xpqz'],
                   check=m.keyed({'x': 'a', ('p', 'q'): both, 'z': 'b'}, symbols=POS))
-    body = try_check(exam, 'q', 'check', {'q/x': 'a', 'q/p': '1', 'q/q': '3', 'q/z': '[REVIEW: b?]'})
+    body = try_check(exam, 'q', 'check', {'q/x': 'a', 'q/p': '1', 'q/q': '3'})
     assert {k: f['outcome'] for k, f in body['fields'].items()} == \
         {'x': 'correct', 'p': 'correct', 'q': 'incorrect', 'z': None}
     assert body['fields']['p']['expected'] == "1 then 2" and 'expected' not in body['fields']['q']
-    assert body['fields']['z']['note'] == "z has a review marker"
+    assert body['fields']['z']['note'] == "z not read"
     assert body['grade']['value'] is False                     # a mistake outranks an undecided field
     assert set(body['reads']) == {'q/x', 'q/p', 'q/q', 'q/z'}
     exam.question('r', pages=[1], fields=[Field('x'), Field('z')], check=m.keyed({'x': 'a', 'z': 'b'}, symbols=POS))

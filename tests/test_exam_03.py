@@ -214,7 +214,7 @@ def test_question_1_scalars(exam):
     assert q1(**{'1.2': '2b(1-a)/a'})['1.2'] == 'incorrect'            # a > 0: a real mismatch
     assert q1(**{'1.2': 'sqrt(b)'})['1.2'] is None                     # no functions in this question
     assert q1(**{'1.4': None})['1.4'] == 'blank'
-    assert q1(**{'1.1': '[0,b] x [a,1] [REVIEW: second bound?]'})['1.1'] is None
+    assert q1(**{'1.1': '[0,b] x [a,1] ?'})['1.1'] is None
 
 
 # --- the huge_constant rewrite --------------------------------------------------------

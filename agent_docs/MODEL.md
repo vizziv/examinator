@@ -51,17 +51,18 @@ not, since they can be recomputed.
 ### 1. Field value
 
 One per field. Its content is text (a number, an expression, source code, a
-printed word; possibly with a `[REVIEW: ...]` marker).
+printed word): what was read, never a note about it.
 
 | State | Meaning |
 | --- | --- |
 | **not read** | No value yet. |
+| **review** | Has a value someone said a person should look at: the reader was unsure, or a person flagged it (with a note, possibly empty). Shown with the "review" badge. |
 | **unverified** | Has a value nobody stands behind. Shown with the "unverified" badge. |
 | **verified** | Someone stands behind the value: a person, or the reader that vouched for it. No badge. |
 
-One attribute, `verified by`: nobody, the reader, or a named person. That is the
-whole state (`status.FIELD_STATES`; the `verified` attribute of a `Value`).
-Choices made here:
+Two attributes: `verified by` (nobody, the reader, or a named person) and
+`review` (none, or a note). That is the whole state (`status.FIELD_STATES`;
+`Value.state`). Choices made here:
 
 - **"Typed by a person" and "read, then verified by a person" are the same
   state.** A person who sets a value verifies it. Who wrote a value is history,
@@ -69,8 +70,19 @@ Choices made here:
 - **Verified by a reader and verified by a person are the same to a check.** They
   differ in one thing only: reading again replaces a value the reader verified,
   never one a person verified.
-- **A value with a review marker cannot be verified.** A marker is not a state.
-- **Blank is a value** (empty text, read as such). It differs from not read.
+- **Whether a person should look is a status, not text.** A value that needs
+  review is never verified and never vouched for; a check that read it is
+  **review** (below). A person verifying it, or saving an edit, clears it; a
+  person may flag a value (or take the flag off) at any time. Flagging keeps
+  the revision, like verifying.
+- **Blank is a value** (empty text, read as such). It differs from not read. No
+  reader vouches for a blank: a person verifies it.
+- **Silence is not a value.** A read writes a field only from an explicit
+  statement about that field in the model's reply (`core.reading`: one field
+  object, `{"value": ..., "unsure": ...}`). Anything else (the field missing
+  from the reply, null, the string "null", a reply that is not that shape)
+  writes nothing: the field stays not read, and the read says how many fields
+  it asked for and how many got a value.
 - **Reading again and getting the same value changes nothing**: same revision,
   still verified, nothing downstream moves.
 - **No transcript, no memo.** Whatever a reader does on the way to the value
@@ -132,6 +144,7 @@ In order; the first that applies:
 | **to decide** | No check; or the result is current, its fields verified, and the proposal is undecided. | No |
 | **not run** | No result. | No |
 | **outdated** | The result is outdated. | No |
+| **review** | The result is current and some field it read needs review ("x needs review"). The proposal is shown. | No |
 | **unverified** | The result is current and some field it read is not verified (a field read at its default is verified). The proposal is shown. | No |
 | **graded** | The result is current, every field it read is verified, the proposal is a grade. | Yes |
 
@@ -143,9 +156,10 @@ Everything the app or a batch read does is one or more of these.
 
 | On | Change | By |
 | --- | --- | --- |
-| Field value | **read**: a reader sets the value; verified by the reader if it vouches, else unverified. Skips values a person verified. | run |
+| Field value | **read**: a reader sets the value, for review if the model was unsure; verified by the reader if it vouches, else unverified. Writes nothing for a field the reply says nothing about. Skips values a person verified. | run |
 | Field value | **set**: a new value, verified by that person. | person |
-| Field value | **verify**: the value as it stands, now verified by that person. | person |
+| Field value | **verify**: the value as it stands, now verified by that person (any review cleared). | person |
+| Field value | **review**: flag the value for review, with a note (unverified); or take the flag off. | person |
 | Field value | **unverify**: back to unverified, value kept. | person |
 | Field value | **unset**: a field with a default back to it (its value dropped). | person |
 | Result | **compute**: run the check on the current values. | automatic |
@@ -156,7 +170,7 @@ Changing how a field is read changes no value. Reading again is asked for
 explicitly; it replaces only values no person verified.
 
 Larger actions are combinations: "verify all here" verifies every unverified
-field on the page; "save and verify" is one set; "read again" is a read of one
+field on the page (not one that needs review: that is verified one by one); "save and verify" is one set; "read again" is a read of one
 question's fields; a batch read is reads, then computes.
 
 ## Changing the exam while grading
@@ -181,7 +195,7 @@ no value yet, and the app can reload the exam package without losing state.
 
 - A question's page shows its own fields and the fields its check read from
   elsewhere, so "verify all here" verifies everything the grade rests on.
-- A field shows a badge only when unverified.
+- A field shows a badge only when it needs review or is unverified.
 - The grid shows one cell per check, by the table above.
 
 ## What goes away
@@ -210,7 +224,7 @@ no value yet, and the app can reload the exam package without losing state.
   handwriting more reliably is a live-model question.
 - Whether the grid needs a column for a question with no check, once its
   fields show on the pages of the questions that read them. (It has one now:
-  not read, unverified, or verified.)
+  not read, review, unverified, or verified.)
 
 ## Where it lives
 

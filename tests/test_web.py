@@ -114,8 +114,8 @@ def test_grid_lists_every_submission(site):
     assert 'data-q="p" data-col="p" data-s="not_read"' in r.text       # s2: not read yet
     assert 'data-s="unverified"' in r.text and 'data-s="not_run"' in r.text
     # each column's "to do" toggle names its state facet and the states that do not count yet
-    assert 'data-facet="a/state:y" data-todo="decided_outdated to_decide not_run outdated unverified"' in r.text
-    assert 'data-facet="b/state"' in r.text and 'data-facet="p/state" data-todo="not_read unverified"' in r.text
+    assert 'data-facet="a/state:y" data-todo="decided_outdated to_decide not_run outdated review unverified"' in r.text
+    assert 'data-facet="b/state"' in r.text and 'data-facet="p/state" data-todo="not_read review unverified"' in r.text
 
 
 def test_question_page_before_and_after_reading(site):
@@ -326,7 +326,7 @@ def test_save_and_verify_all_here_recomputes_and_grades(site):
     assert '<span class="tag unv">unverified</span>' not in site.get('/s/s1/a').text      # no badge once verified
 
 
-def test_verify_unverify_and_markers(site):
+def test_verify_unverify_and_review(site):
     site.run_all()
     rev = site.rev('s1', 'a/x')
     assert site.post('/s/s1/a/unverify', {'key': 'a/x', 'rev': rev}).status_code == 200      # already unverified
@@ -334,11 +334,23 @@ def test_verify_unverify_and_markers(site):
     assert site.value('s1', 'a/x').verified == 'person' and site.rev('s1', 'a/x') == rev     # same revision
     assert site.post('/s/s1/a/unverify', {'key': 'a/x', 'rev': rev}).status_code == 200
     assert site.value('s1', 'a/x').verified is None
-    r = site.post('/s/s1/a/save', {'values': {'a/x': {'text': '1 [REVIEW: or 7]', 'rev': rev}}})
-    assert r.status_code == 200 and site.value('s1', 'a/x').verified is None     # a marker is never verified
-    r = site.post('/s/s1/a/save', {'verify': [{'key': 'a/x', 'rev': site.rev('s1', 'a/x')}]})
-    assert r.status_code == 400 and 'review' in r.json()['error']
-    assert 'tag unv" title="a review marker' in site.get('/s/s1/a').text
+    # a person flags it from the ⋯ menu: review, which "verify here" leaves alone ...
+    assert site.post('/s/s1/a/review', {'key': 'a/x', 'rev': rev, 'note': "1 or 7?"}).status_code == 200
+    v = site.value('s1', 'a/x')
+    assert (v.review, v.verified, site.rev('s1', 'a/x')) == ("1 or 7?", None, rev)
+    page = site.get('/s/s1/a').text
+    assert 'title="1 or 7?">review</span>' in page and 'data-action="review"' in page
+    assert "data-waiting='[\"a/y\"]'" in page or 'a/x' not in page.split("data-waiting='")[1].split("'")[0]
+    assert site.state('s1', 'a', 'x').state == 'review' and site.state('s1', 'a', 'x').reason == "x needs review"
+    # ... until a person verifies it: that clears it
+    assert site.post('/s/s1/a/save', {'verify': [{'key': 'a/x', 'rev': rev}]}).status_code == 200
+    v = site.value('s1', 'a/x')
+    assert (v.review, v.verified) == (None, 'person')
+    # taking the flag off leaves it unverified
+    site.post('/s/s1/a/review', {'key': 'a/x', 'rev': rev, 'note': ""})
+    site.post('/s/s1/a/review', {'key': 'a/x', 'rev': rev, 'note': None})
+    v = site.value('s1', 'a/x')
+    assert (v.review, v.verified) == (None, None)
 
 
 def test_history_and_restore(site):
