@@ -10,6 +10,7 @@ from pathlib import Path
 from .core import batch, focus, grid
 from .core.defs import Exam, load_exam
 from .core.runner import Runner
+from .core.status import LABELS
 from .core.workspace import Workspace
 
 DEFAULT_URL = 'http://localhost:8241/v1'
@@ -36,7 +37,7 @@ def status_table(exam: Exam, ws: Workspace) -> str:
         for q, c in cols:
             st = row.status[(q.id, c.name)]
             shown = focus.grade_text(st) or '-'
-            cells.append(f"{shown} ({st.state})" if not st.counts else shown)
+            cells.append(f"{shown} ({LABELS[st.state]})" if not st.counts else shown)
         lines.append("\t".join([row.submission.id, *cells, f"{row.points:g}{'' if row.complete else '+?'}"]))
     return "\n".join(lines)
 
@@ -93,7 +94,8 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
                     match = next((c['label'] for c in row['candidates'] if c['key'] == row['match']), "-")
                     print(f"  {row['sub']}: {identity.DOUBTS[row['doubt']]}: {match}")
     if not args.accept:
-        print(f"review and accept: examinator serve {args.exam} -w {args.workspace}   (Scans page)")
+        fake = " --fake" if args.fake else ""
+        print(f"review and accept: examinator serve {args.exam} -w {args.workspace}{fake}   (Scans page)")
     return 0
 
 
@@ -174,7 +176,7 @@ def main(argv=None) -> int:
                                     "or plain lines of name and ID separated by a comma or tab")
     p.add_argument('--length', type=int, help="sheets per submission (default: the exam's pages; sheets beyond them are extra)")
     p.add_argument('--no-check', action='store_true', help="do not read landmarks with the model")
-    p.add_argument('--accept', action='store_true', help="write the submissions into pdfs/ as proposed")
+    p.add_argument('--accept', action='store_true', help="write the submissions as proposed (into WORKSPACE/made/)")
     p.add_argument('--names', action='store_true',
                    help="read the name and ID boxes of written submissions with the model and list proposals "
                         "(people confirm them on the Scans page)")
@@ -183,12 +185,12 @@ def main(argv=None) -> int:
     p.add_argument('exam')
     p.add_argument('workspace', nargs='?', help="where to build the synthetic workspace (default: a temp dir)")
 
-    p = sub.add_parser('run', help="read fields, then run checks, for submissions")
+    p = sub.add_parser('run', help="read fields for submissions; checks follow by themselves")
     common(p)
     p.add_argument('--submission', '-s', action='append', help="default: all")
     p.add_argument('--question', '-q', action='append', help="default: all")
     p.add_argument('--missing-only', action='store_true',
-                   help="read only fields with no value; run only checks whose result is not current")
+                   help="read only fields with no value (resumes a read that stopped)")
     p.add_argument('--include-protected', action='store_true',
                    help="read again what a person set or verified (it stays in history)")
     p.add_argument('--parallel', type=int, default=2)

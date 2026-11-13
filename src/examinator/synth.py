@@ -368,7 +368,7 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
                 if not v.is_verified and not v.marker:
                     qid, label = k.split('/', 1)
                     runner.verify(case.name, qid, label, author='selftest', expect_rev=v.rev)
-            runner.refresh(case.name, questions=list(exam.questions))
+            runner.refresh(case.name)
             sheet = runner.sheet(case.name)
             for qid, q in exam.questions.items():
                 for c in q.checks:

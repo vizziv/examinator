@@ -203,7 +203,7 @@ def test_naming_and_a_forced_accept(site):
     plan = client.get(f'/scans/{src}/plan').json()
     plan = post(client, token, f'/scans/{src}/edit', {'op': 'drop', 'sheet': 6, 'rev': plan['rev']}).json()['plan']
     plan = post(client, token, f'/scans/{src}/edit', {'op': 'drop', 'sheet': 17, 'rev': plan['rev']}).json()['plan']
-    busy = [{'id': 's0002', 'change': 'rewrite', 'said': ['grading']}, {'id': 's0005', 'change': 'rewrite', 'said': ['pick']}]
+    busy = [{'id': 's0002', 'change': 'rewrite', 'said': ['values']}, {'id': 's0005', 'change': 'rewrite', 'said': ['name']}]
     assert plan['busy'] == busy
     r = post(client, token, f'/scans/{src}/accept', {'rev': plan['rev']})
     assert r.status_code == 409 and r.json()['current']['busy'] == busy
@@ -272,6 +272,7 @@ def test_names_read_confirm_cycle_skip(site):
     assert r.status_code == 200 and r.json()['who']['name'] == "Avery Testwell"
     r = post(client, token, '/scans/who', {'sub': 's0001', 'key': top['key'], 'rev': None})     # V twice: once
     assert r.status_code == 409 and r.json()['current']['name'] == "Avery Testwell" and r.json()['current']['rev']
+    assert r.json()['error'] == "the name changed: now Avery Testwell"        # who it is now, in the page's words
     # cycle to the second candidate (D), then confirm it
     second = rows['s0004']['candidates'][1]
     assert second['name'] == "Devon Fakely"

@@ -36,7 +36,7 @@ def graded(tmp_path, exam):
         runner.read(sub, 'q')
         for k, v in runner.values(sub).items():
             runner.verify(sub, *k.split('/'), author='ta', expect_rev=v.rev)
-        runner.refresh(sub, questions=['q'])
+        runner.refresh(sub)
     runner.decide('s2', 'q', 'check', False, author='ta')
     return ws, runner
 
@@ -95,8 +95,11 @@ def test_a_question_or_check_added_disturbs_nothing(tmp_path):
     assert st(runner, 's1', 'q', 'check').state == 'graded'
     assert st(runner, 's1', 'q', 'both').state == 'not_run'
     assert st(runner, 's1', 'r', 'check').state == 'not_run'
-    assert runner.refresh('s1') == []                                     # nothing outdated, nothing ran
     assert snapshot(ws, 's1') == before
+    # the new check's fields are all there, so it runs; r's are not read, so its does not
+    assert [o.step for o in runner.refresh('s1')] == ['both']
+    assert st(runner, 's1', 'r', 'check').state == 'not_run'
+    assert {k: v for k, v in snapshot(ws, 's1').items() if k != ('result', 'q/both')} == before
     runner.close()
     ws.close()
 
@@ -109,13 +112,11 @@ def test_a_field_added_to_a_question(tmp_path):
     assert values['q/a'].is_verified and values['q/b'].is_verified and 'q/c' not in values   # not read
     assert st(runner, 's1', 'q', 'check').state == 'graded'               # does not read it: unaffected
     assert snapshot(ws, 's1') == before
-    runner.refresh('s1', questions=['q'])                                 # the new check reads it
-    s = st(runner, 's1', 'q', 'both')
-    assert (s.state, s.value) == ('unverified', None) and "c not read" in s.reason
+    assert runner.refresh('s1') == []                    # the new check waits for its question's new field
+    assert st(runner, 's1', 'q', 'both').state == 'not_run'
     runner.read('s1', 'q', missing_only=True)                             # fills only the new field
     assert runner.values('s1')['q/a'].rev == values['q/a'].rev and runner.values('s1')['q/a'].is_verified
-    assert st(runner, 's1', 'q', 'both').state == 'outdated'
-    runner.refresh('s1')
+    assert [o.step for o in runner.refresh('s1')] == ['both']
     assert st(runner, 's1', 'q', 'both').state == 'unverified'            # waits for the new value
     runner.close()
     ws.close()
@@ -136,7 +137,7 @@ def test_a_field_removed_is_ignored_and_restoring_it_restores_its_value(tmp_path
 
 def test_a_check_removed_and_restored(tmp_path):
     ws, runner = graded(tmp_path, build(extra_check='ab'))
-    runner.refresh('s1', questions=['q'])
+    runner.refresh('s1')
     both = ws.store.get('s1', 'q/both', 'result')
     ws, runner = reopen(ws, runner, build())
     assert runner.refresh('s1') == []

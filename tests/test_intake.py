@@ -344,7 +344,7 @@ def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     agree(ws)
 
 
-def test_accept_asks_about_a_pick_and_own_boxes_and_says_what_goes(stacked):
+def test_accept_asks_about_what_a_person_said_and_says_what_goes(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
@@ -353,15 +353,20 @@ def test_accept_asks_about_a_pick_and_own_boxes_and_says_what_goes(stacked):
     overrides.set(ws, '@print_area', [100, 100, 900, 900], scope=own, author='t')
     ws.store.write('s0003', 'parity/B', 'value', {'text': 'odd'}, origin='auto')        # read, nobody verified
     ws.store.write('s0003', 'parity/A', 'value', {'text': '1', 'verified': 'person', 'by': 't'}, origin='manual')
+    # s0001: only what the model read and what was computed from it, or said about the student
+    ws.store.write('s0001', 'parity/B', 'value', {'text': 'odd', 'verified': 'reader'}, origin='auto')
+    ws.store.write('s0001', 'parity/check', 'result', {'grade': {'value': True}}, origin='auto')
+    ws.store.write('s0001', '@identity/name', 'value', {'text': 'Kit'}, origin='auto')
     edit_(ws, one.id, 'join', sheet=first_of(ws, one.id, 1))     # s0002 and s0003 are one: s0003 goes
-    edit_(ws, one.id, 'drop', sheet=0)                           # and s0001 changes (no work: not asked)
+    edit_(ws, one.id, 'drop', sheet=0)                           # and s0001 changes: not asked about
     rows, gone = intake.outline(ws, one.id)
-    assert intake.disturbed(ws, rows, gone) == [{'id': 's0002', 'change': 'rewrite', 'said': ['pick']},
-                                                {'id': 's0003', 'change': 'remove', 'said': ['grading', 'boxes']}]
+    assert intake.disturbed(ws, rows, gone) == [{'id': 's0002', 'change': 'rewrite', 'said': ['name']},
+                                                {'id': 's0003', 'change': 'remove', 'said': ['values', 'regions']}]
     with pytest.raises(intake.Busy) as e:
         intake.accept(ws, one.id)
     assert e.value.submissions == ['s0002', 's0003']
     intake.accept(ws, one.id, allow=['s0002', 's0003'])
+    assert not ws.store.rows('s0001', 'value')                            # rewritten: read again later
     assert identity.who(ws, 's0002')['name'] == "Someone Named"          # rewritten: the pick stays
     assert not ws.store.overrides(own)                                    # removed: its boxes go
     # a rewrite: its own boxes and what was read go, what a person verified stays
@@ -370,6 +375,9 @@ def test_accept_asks_about_a_pick_and_own_boxes_and_says_what_goes(stacked):
     ws.store.write('s0002', 'parity/B', 'value', {'text': 'odd'}, origin='manual')       # typed, then unverified
     ws.store.write('s0002', 'parity/A', 'value', {'text': '1', 'verified': 'person', 'by': 't'}, origin='auto')
     edit_(ws, one.id, 'drop', sheet=5)
+    rows, gone = intake.outline(ws, one.id)
+    assert intake.disturbed(ws, rows, gone) == [{'id': 's0002', 'change': 'rewrite',
+                                                 'said': ['values', 'name', 'regions']}]     # typed counts too
     assert intake.accept(ws, one.id, allow=['s0002'])['rewritten'] == ['s0002']
     assert not ws.store.overrides(mine)
     assert set(ws.store.rows('s0002', 'value')) == {'parity/A'}

@@ -50,7 +50,7 @@ def kenv(tmp_path):
             assert all(o.ok for o in runner.read(sid, qid))
         for k, v in runner.values(sid).items():
             runner.verify(sid, *k.split('/'), author='t', expect_rev=v.rev)
-        runner.refresh(sid, questions=list(exam.questions))
+        runner.refresh(sid)
     yield ws.exam, ws, runner
     runner.close()
     ws.close()

@@ -33,9 +33,11 @@ one at a time (the server's lock).
 
 **Accept speaks for a person.** It makes every sheet of the plan a person's,
 recorded under the person accepting. A written submission it would rewrite or
-remove that something was said or done about (a pick, grading work, boxes of
-its own: `disturbed`) is not touched unless the person said it may be
-(`allow`); `Busy` names the others. A rewritten submission has new pages
+remove that a person said something about (`disturbed`: values a person typed
+or verified, decisions, the name picked, regions or a print area of its own)
+is not touched unless the person said it may be (`allow`); `Busy` names the
+others. One with only what a model read and what was computed from it is
+rewritten without asking: that is read again. A rewritten submission has new pages
 (`repaged`): what was read from the old ones goes (every value no person
 verified), and so does where things are on them (its own
 regions and print area, drawn on the old pages; a region on a sheet it no
@@ -162,6 +164,14 @@ def plan(ws, id: str) -> Row | None:
     return ws.store.get(id, '', PLAN)
 
 
+def _put(ws, id: str, body: dict, **kw) -> Row:
+    """Write a source's plan; a stale write is refused as "the plan changed"."""
+    try:
+        return ws.store.write(id, '', PLAN, body, **kw)
+    except Conflict:
+        raise Conflict("the plan changed", name='', kind=PLAN) from None
+
+
 def page(ws, src: Source, sheet: int, turns: int = 0) -> Image.Image:
     """One sheet, turned."""
     return turn(ws.renderer.page(source_path(ws, src), sheet), turns)
@@ -267,8 +277,7 @@ def reguess(ws, id: str, *, model=None, length: int | None = None,
         if read.failed:
             body['failed'] = len(read.failed)
     body.pop(UNDONE, None)
-    return ws.store.write(id, '', PLAN, body, origin='manual' if author else 'auto', author=author,
-                          expect_rev=expect_rev)
+    return _put(ws, id, body, origin='manual' if author else 'auto', author=author, expect_rev=expect_rev)
 
 
 # A person's edits: (plan, sheet, delta) -> new plan. An edit of a submission names it by
@@ -323,7 +332,7 @@ def edit(ws, id: str, op: str, *, expect_rev: Any, author: str | None,
         raise ValueError("unknown edit")
     body = _EDITS[op](cur.body, sheet, delta)
     body.pop(UNDONE, None)
-    return ws.store.write(id, '', PLAN, body, origin='manual', author=author, expect_rev=cur.rev)
+    return _put(ws, id, body, origin='manual', author=author, expect_rev=cur.rev)
 
 
 UNDONE = 'undone'       # in a plan brought back by undo: the revision it was brought back from
@@ -347,7 +356,7 @@ def undo(ws, id: str, *, expect_rev: Any) -> Row:
     if old is None:
         raise ValueError("nothing to undo")
     body = {**old.body, UNDONE: old.body.get(UNDONE, old.rev)}
-    return ws.store.write(id, '', PLAN, body, origin=old.origin, author=old.author, expect_rev=expect_rev)
+    return _put(ws, id, body, origin=old.origin, author=old.author, expect_rev=expect_rev)
 
 
 # --- what is written, and accepting -------------------------------------------------
@@ -391,19 +400,24 @@ def sweep(ws) -> None:
             path.unlink(missing_ok=True)
 
 
-SAID = ('pick', 'grading', 'boxes')     # what `disturbed` names
+SAID = ('values', 'decisions', 'name', 'regions')     # what `disturbed` names
 
 
 def disturbed(ws, rows, gone) -> list[dict]:
-    """The written submissions accepting (`outline`) would rewrite or remove that
-    something was said or done about: `{'id', 'change': 'rewrite' | 'remove', 'said'}`,
-    `said` naming the pick, grading work (a value, result or decision outside the
-    identity group) and boxes of its own (overrides at its scope)."""
+    """The written submissions accepting (`outline`) would rewrite or remove that a
+    person said something about, which a rewrite takes or leaves standing on pages
+    it no longer has: `{'id', 'change': 'rewrite' | 'remove', 'said'}`, `said`
+    naming (`SAID`) values a person typed or verified, decisions, the name (the
+    pick) and its own regions or print area (overrides at its scope). What a reader
+    read and the results computed from it are not asked about."""
     out = []
     for sid, change in [(r['id'], 'rewrite') for r in rows if r['state'] == 'changed'] + [(s, 'remove') for s in gone]:
+        rows_ = ws.store.all(submission=sid, kinds=('value', 'decision'))
         said = [what for what, there in zip(SAID, (
+            any(r.kind == 'value' and (r.origin == 'manual' or (r.body or {}).get('verified') == 'person')
+                for r in rows_),
+            any(r.kind == 'decision' for r in rows_),
             ws.store.get(sid, '', identity.WHO) is not None,
-            ws.store.has_work(sid, besides=identity.IDENTITY + '/'),
             bool(ws.store.overrides(overrides.scope(overrides.SUBMISSION, sid))))) if there]
         if said:
             out.append({'id': sid, 'change': change, 'said': said})
@@ -465,7 +479,7 @@ def accept(ws, id: str, *, author: str | None = None, allow: Collection[str] = (
             r['file'] = f'{r["id"]}-{secrets.token_hex(6)}.pdf'
             pdf_pages.write(path, list(zip(r['pages'], r['orient'])), folder / r['file'])
         with ws.store.transaction():
-            cur = ws.store.write(id, '', PLAN, body, origin='manual', author=author, expect_rev=art.rev)
+            cur = _put(ws, id, body, origin='manual', author=author, expect_rev=art.rev)
             if next_n is not None:
                 ws.store.set_setting('intake_next', next_n)
             for r in writes:

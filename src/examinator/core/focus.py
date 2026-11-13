@@ -22,11 +22,11 @@ its values is selected (or, for a text facet, contains the search text).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .defs import Exam, Question, key
-from .status import COUNTING, FIELD_STATES, STATES, Sheet, Status
+from .status import COUNTING, FIELD_STATES, LABELS, STATES, Sheet, Status
 
 KINDS = ('choice', 'text')
 BLANK = '(blank)'        # the value of a blank answer, for facets that show one
@@ -42,7 +42,8 @@ class Facet:
     has few distinct values (a checkbox list); a 'text' facet has free text,
     searched: the first line of each value is what a search matches, any
     further lines are context shown with it. `group` lays related facets
-    together; `order` fixes the display order of known values.
+    together; `order` fixes the display order of known values; `shown` is how a
+    value is shown to a person (one not in it, as it is).
     """
     name: str
     label: str
@@ -50,6 +51,7 @@ class Facet:
     kind: str = 'choice'
     group: str = ''
     order: tuple[str, ...] = ()
+    shown: Mapping[str, str] = field(default_factory=dict, compare=False)
 
     def __post_init__(self):
         if self.kind not in KINDS:
@@ -117,10 +119,10 @@ def builtin_facets(question: Question) -> list[Facet]:
         out.append(Facet('grade' + suffix, 'grade' + named, lambda v, n=c.name: [grade_value(v.status(n))],
                          group='grade', order=GRADES))
         out.append(Facet(state_facet(question, c.name)[0], 'state' + named,
-                         lambda v, n=c.name: [v.status(n).state], group='grade', order=STATES))
+                         lambda v, n=c.name: [v.status(n).state], group='grade', order=STATES, shown=LABELS))
     if not question.checks:
         out.append(Facet(state_facet(question)[0], 'state', lambda v: [v.fields_state()],
-                         group='grade', order=FIELD_STATES))
+                         group='grade', order=FIELD_STATES, shown=LABELS))
     for f in question.fields:       # what was read of the printing, say: few values, filterable
         if f.read is not None:
             out.append(Facet(f'field/{f.label}', f.label, lambda v, label=f.label: [shown(v.value(label))],
@@ -206,7 +208,7 @@ def describe_facets(exam: Exam) -> list[dict]:
     """What the page needs to lay facets out, per question."""
     return [{'id': qid, 'title': q.title,
              'facets': [{'id': facet_id(qid, f), 'name': f.name, 'label': f.label, 'kind': f.kind,
-                         'group': f.group, 'order': list(f.order)} for f in facets(q)]}
+                         'group': f.group, 'order': list(f.order), 'shown': dict(f.shown)} for f in facets(q)]}
             for qid, q in exam.questions.items()]
 
 

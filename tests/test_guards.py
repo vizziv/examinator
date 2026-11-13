@@ -62,7 +62,7 @@ def test_no_answer_key_in_any_prompt(tmp_path):
         for sub in ws.store.submissions():
             for qid in exam.questions:
                 runner.read(sub.id, qid)
-            runner.refresh(sub.id, questions=list(exam.questions))
+            runner.refresh(sub.id)
     finally:
         runner.close()
         ws.close()

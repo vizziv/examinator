@@ -84,13 +84,6 @@ IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 IMMUTABLE = 'private, max-age=31536000, immutable'     # a URL that names its content
 RESTARTED = "the app restarted since this page was loaded: reload"
 # What a person sees of a status: one word per idea (DESIGN.md, Words on screen).
-STATE_LABELS = {
-    'decided': "decided", 'decided_outdated': "decided, outdated", 'to_decide': "to decide",
-    'not_run': "not run", 'outdated': "outdated", 'unverified': "unverified", 'graded': "graded",
-    # a question with no checks: how its fields stand
-    'not_read': "not read", 'verified': "verified"}
-
-
 class Bad(ValueError):
     """Input the grader (or the page's script) should correct: HTTP 400."""
 
@@ -306,7 +299,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
     root = urlsplit(public_url).path.rstrip('/') if public_url else ''
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(HERE / 'templates'), autoescape=True,
                              trim_blocks=True, lstrip_blocks=True)
-    env.globals.update(labels=STATE_LABELS)
+    env.globals.update(labels=status.LABELS)
     jobs = Jobs()
     lock = threading.Lock()
 
@@ -375,9 +368,9 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             return JSONResponse({'ok': True, **(out or {})})
         return endpoint
 
-    def refresh(sid: str, qid: str | None = None) -> str:
-        """Recompute in the background what a change outdated (and this question's checks never run)."""
-        return jobs.start(lambda: runner.refresh(sid, questions=[qid] if qid else []))
+    def refresh(sid: str) -> str:
+        """The background rule (`Runner.refresh`) for one submission, after a change to it."""
+        return jobs.start(lambda: runner.refresh(sid))
 
     def recompute(subs: list[str]) -> str:
         """Recompute what is outdated in these submissions, in order: one job at a time,
@@ -409,13 +402,13 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                     cells.append({'qid': q.id, 'col': q.column(c.name), 'state': st.state,
                                   'glyph': glyph(st), 'cls': value_class(st), 'v': value_key(st),
                                   'blank': 'blank' in st.flags, 'counts': st.counts,
-                                  'title': STATE_LABELS[st.state]})
+                                  'title': status.LABELS[st.state]})
                 if not q.checks:
                     state = row.fields[q.id]
                     cells.append({'qid': q.id, 'col': q.id, 'state': state,
                                   'glyph': {'verified': '–', 'unverified': '?'}.get(state, ''),
                                   'cls': 'v-n', 'v': '', 'blank': False, 'counts': False,
-                                  'title': STATE_LABELS[state]})
+                                  'title': status.LABELS[state]})
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
                          'complete': row.complete, 'sort': row.points,
                          'hidden': bool(sel) and not focus.matches(table, sel, row.submission.id)})
@@ -613,7 +606,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
     def save(request, data):
         sub, q = target(request)
         revs, wrote = save_values(request, sub, data)
-        return {'revs': revs, 'job': refresh(sub.id, q.id) if wrote else None}
+        return {'revs': revs, 'job': refresh(sub.id) if wrote else None}
 
     def names_save(request, data):
         """The Names step's own save: the identity fields' values, typed or verified."""
@@ -675,7 +668,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
 
         def work():
             outs = runner.read(sub.id, q.id, include_protected=protected)
-            return outs + runner.refresh(sub.id, questions=[q.id])
+            return outs + runner.refresh(sub.id)
         return {'job': jobs.start(work, slot=f'read:{sub.id}/{q.id}')}
 
     def run_check(request, data):
@@ -690,7 +683,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         qid, label = field_of(data.get('key'))
         with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
             runner.unset(sub.id, qid, label, expect_rev=_rev(data))
-        return {'rev': None, 'job': refresh(sub.id, q.id)}
+        return {'rev': None, 'job': refresh(sub.id)}
 
     def restore(request, data):
         """A field's earlier value (`restore`: its revision in the history) back, set by
@@ -704,7 +697,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
             v = runner.set(sub.id, qid, label, str((old.body or {}).get('text', '')), author=who(request),
                            expect_rev=_rev(data))
-        return {'rev': v.rev, 'job': refresh(sub.id, q.id)}
+        return {'rev': v.rev, 'job': refresh(sub.id)}
 
     def levels(lay, path: str, base, stored: dict) -> dict:
         """One value at each scope, for the scope editor: this submission's own ('own'),
@@ -1088,6 +1081,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         except Conflict as e:           # stale, or work it would disturb (`busy`): the plan as it is now
             e.current = plan_view(src)
             raise
+        recompute(report['rewritten'])          # their values read from the old pages are gone
         return {'report': report, **planned(src)}
 
     def roster_text(data: dict) -> str:

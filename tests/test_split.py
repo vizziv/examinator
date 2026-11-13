@@ -177,7 +177,7 @@ def test_a_submission_is_its_kept_sheets():
     plan = split.accepted(split.new_plan(10, 3))        # 0-2, 3-5, 6-8, 9: every start a person's
     plan = split.confirm(plan, 1)
     plan = split.drop(plan, 3)                          # its first page dropped: the next kept sheet starts it
-    assert split.runs(plan)[:2] == [[0, 1, 2], [4, 5]] and split.verified(plan)[1]
+    assert split.runs(plan)[:2] == [[0, 1, 2], [4, 5]] and not split.verified(plan)[1]    # to verify again
     assert split.span(plan, 0) == [0, 1, 2, 3] and split.dropped(plan) == [3]     # in the span before, in no run
     plan = split.drop(split.drop(plan, 4), 5)           # all its sheets: it is gone, no empty submission
     assert split.runs(plan) == [[0, 1, 2], [6, 7, 8], [9]]
@@ -211,7 +211,7 @@ def test_moving_a_sheet_in_the_pile():
     plan = split.toggle_extra(split.confirm(plan, 1), 7)
     plan = split.shift(split.turn(plan, [7]), 7, -1)
     assert [(r['i'], r.get('extra'), r.get('turn')) for r in plan['sheets'][6:8]] == [(7, True, 1), (5, None, None)]
-    assert split.verified(plan)[1] and first_pages(plan) == [0, 6]
+    assert first_pages(plan) == [0, 6]
 
 
 def test_a_reordered_pile_stays_when_a_boundary_moves():
@@ -317,12 +317,14 @@ def test_step_through_confirm_and_move():
     plan = split.confirm(plan, 0)
     plan = split.move(plan, 1, -1)                   # the guess was one page late: a person's start now
     assert first_pages(plan) == [0, 4, 9, 14, 19]            # later guesses follow the moved one
-    assert split.verified(plan)[:3] == [True, False, False] and split.cursor(plan) == 1   # moved, not verified
+    # the first lost its last sheet: verified no more; the moved one is not verified either
+    assert split.verified(plan)[:3] == [False, False, False] and split.cursor(plan) == 0
+    plan = split.confirm(plan, 0)
     plan = split.move(split.move(plan, 2, 1), 2, 1)
     assert first_pages(plan) == [0, 4, 11, 16]
     # going back and moving a start never moves another a person said
     plan = split.move(plan, 1, 1)
-    assert first_pages(plan) == [0, 5, 11, 16] and split.verified(plan)[:3] == [True, False, False]
+    assert first_pages(plan) == [0, 5, 11, 16] and split.verified(plan)[:3] == [False, False, False]
     with pytest.raises(ValueError):
         split.confirm(plan, 4)
 
@@ -390,10 +392,24 @@ def test_a_sheet_moved_across_a_boundary_and_back_verifies_nothing():
     assert split.runs(there)[:2] == [[0, 1, 2, 3], [4, 5, 6, 7, 8]]   # and the guesses after it follow
     back = split.shift(there, 4, -1)                    # Shift+A: back
     assert split.runs(back) == split.runs(plan) and not any(split.verified(back))
-    # a verified submission stays verified, as the same sheets, through both
+    # a verified submission given a sheet nobody verified in it is verified no more, and
+    # stays so when the sheet goes back: a person verifies it again
     plan = split.confirm(plan, 1)
-    back = split.shift(split.shift(plan, 4, 1), 4, -1)
-    assert split.runs(back) == split.runs(plan) and split.verified(back) == [False, True, False]
+    there = split.shift(plan, 4, 1)
+    assert split.runs(there)[1] == [4, 5, 6, 7, 8, 9] and split.verified(there) == [False, False, False]
+    back = split.shift(there, 4, -1)
+    assert split.runs(back) == split.runs(plan) and not any(split.verified(back))
+
+
+def test_an_edit_that_changes_what_was_verified_unverifies_it_and_no_other_edit_does():
+    plan = split.confirm(split.confirm(split.new_plan(15, L), 0), 1)       # 0-4, 5-9 verified; 10-14 not
+    assert split.verified(plan) == [True, True, False]
+    for edit in (lambda p: split.toggle_extra(p, 6), lambda p: split.add_missing(p, 7),
+                 lambda p: split.shift(p, 6, 1), lambda p: split.drop(p, 9), lambda p: split.cut(p, 7), lambda p: split.join(p, 1)):
+        assert split.verified(edit(plan))[:2] == [True, False]
+    assert split.verified(split.move(plan, 1, 1)) == [False, False, False]     # each loses or gains sheet 5
+    for edit in (lambda p: split.turn(p, [6]), lambda p: split.cut(p, 12), lambda p: split.toggle_extra(p, 11)):
+        assert split.verified(edit(plan))[:2] == [True, True]          # a turn is not what was verified
 
 
 def test_a_correction_cascades_forward_up_to_a_verified_submission():

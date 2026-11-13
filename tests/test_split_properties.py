@@ -43,6 +43,11 @@ def whole(plan):
     return [tuple(run) for run, v in zip(split.runs(plan), split.verified(plan)) if v]
 
 
+def looked(plan):
+    """The verified submissions, each as a person looked at it."""
+    return {look for look, v in zip(split.looks(plan), split.verified(plan)) if v}
+
+
 def touched(plan, op, k, sheet):
     """The sheets an edit names: a verified submission holding none of them must not change."""
     at = split.starts(plan) + [len(plan['sheets'])]
@@ -56,7 +61,7 @@ def touched(plan, op, k, sheet):
         return sum(s <= p for s in at[:-1]) - 1
     if op in ('confirm', 'move', 'join'):
         return sub(k) | sub(k - 1 if op == 'move' else k + 1 if op == 'join' else k)
-    if op in ('cut', 'drop', 'restore', 'shift'):
+    if op in ('cut', 'drop', 'restore', 'shift', 'extra', 'missing', 'unmissing'):
         return {sheet} | sub(owner(sheet)) | (sub(owner(sheet) - 1) | sub(owner(sheet) + 1) if op == 'shift' else set())
     return set()
 
@@ -116,6 +121,7 @@ class Desk:
         if op == 'guess':
             got = split.guess(plan, self.read if rng.random() < 0.5 else None)
             assert person(got) == person(plan)                              # a guess changes only guesses
+            assert looked(got) == looked(plan)
             self.set(got)
         elif op == 'accept':
             self.accept()
@@ -142,6 +148,8 @@ class Desk:
             assert {w for w in whole(plan) if not named & set(w)} <= set(whole(got)), op
             if op == 'confirm':                                             # verifying the guess changes no run
                 assert split.runs(got) == split.runs(plan)
+            # every submission still verified looks exactly as when it was verified
+            assert looked(got) <= looked(plan) | ({split.looks(got)[k]} if op == 'confirm' else set()), op
             self.set(got)
         return op
 

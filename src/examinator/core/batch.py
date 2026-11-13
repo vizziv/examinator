@@ -4,11 +4,14 @@
 protected or already present, and what is blocked: per question, what
 `runner.to_read` says, the computation each read then executes. The app shows
 it live as the options change, and a run plans again when it starts. Only
-questions graders work through are selected (`Exam.questions`). A batch has no
-check step: checks recompute by themselves (`Runner.refresh`), and once every
-read has finished the batch refreshes each selected submission, so a check
-that reads another question's fields finds them. Cancelling stops queued work
-and lets running tasks finish.
+questions graders work through are selected (`Exam.questions`).
+
+**The batch is its reads.** Its progress counts reads, so it matches the plan,
+and cancelling stops the reads not yet started (running ones finish). Checks
+recompute by themselves (`Runner.refresh`): once the reads stop, finished or
+cancelled, every submission something was read for is refreshed, all its
+fields in place, so a check that reads another question's fields finds them.
+That is not part of what is counted or cancelled.
 
 A batch never replaces what a person set or verified unless told to
 (`include_protected`), and a read that finds a value changed meanwhile is
@@ -86,13 +89,13 @@ class BatchRun:
     plan: Plan
     parallel: int = 2
     outcomes: list[Outcome] = field(default_factory=list)
-    total: int = 0                   # reads, plus one refresh per submission
-    done: int = 0
+    total: int = 0                   # reads
+    done: int = 0                    # reads finished
     state: str = 'ready'             # 'ready' | 'running' | 'done' | 'cancelled'
     current: str = ''                # in progress: 'reading', then 'recomputing'
 
     def __post_init__(self):
-        self.total = self.plan.count('read') + len(self.plan.selection.submissions)
+        self.total = self.plan.count('read')
         self._cancel = threading.Event()
         self._lock = threading.Lock()
 
@@ -100,33 +103,30 @@ class BatchRun:
         self._cancel.set()
 
     def run(self) -> list[Outcome]:
-        """Execute the plan. Blocks until finished or cancelled."""
+        """Execute the plan. Blocks until the reads are finished or cancelled and the
+        submissions read for are refreshed."""
         self.state = 'running'
         sel = self.plan.selection
+        read_for: set[str] = set()
 
         def read(item):
             if self._cancel.is_set():
-                return None
+                return
             outs = self.runner.read(item.submission, item.question, missing_only=sel.missing_only,
                                     include_protected=sel.include_protected)
             bad = [o for o in outs if not o.ok]
-            return [bad[0] if bad else Outcome(item.submission, item.question, 'read', 'done')]
+            with self._lock:
+                read_for.add(item.submission)
+                self.outcomes.append(bad[0] if bad else Outcome(item.submission, item.question, 'read', 'done'))
+                self.done += 1
 
-        def refresh(sub):
-            return None if self._cancel.is_set() else self.runner.refresh(sub, questions=sel.questions)
-
-        with ThreadPoolExecutor(max_workers=max(1, self.parallel)) as pool:
-            for step, fn, todo in (('reading', read, [i for i in self.plan.items if i.action == 'read']),
-                                   ('recomputing', refresh, list(sel.submissions))):
-                self.current = step
-                for outs in pool.map(fn, todo):
-                    if outs is None:
-                        continue
-                    with self._lock:
-                        self.outcomes.extend(outs)
-                        self.done += 1
-                if self._cancel.is_set():
-                    break
+        workers = max(1, self.parallel)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            self.current = 'reading'
+            list(pool.map(read, [i for i in self.plan.items if i.action == 'read']))
+            self.current = 'recomputing'
+            for outs in pool.map(self.runner.refresh, [s for s in sel.submissions if s in read_for]):
+                self.outcomes.extend(outs)
         self.current = ''
         self.state = 'cancelled' if self._cancel.is_set() else 'done'
         return self.outcomes

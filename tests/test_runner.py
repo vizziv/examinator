@@ -72,7 +72,7 @@ def test_a_value_with_no_key_is_undecided_and_says_which(tmp_path):
     try:
         assert all(o.ok for o in runner.read('s1', 'q'))
         assert value(ws, 's1', 'q/n').verified == 'reader'
-        runner.refresh('s1', questions=['q'])
+        runner.refresh('s1')
         st = state(runner, 's1', 'q', 'check')
         assert st.value is None and st.reason == "no key for n = 30"
         runner.set('s1', 'q', 'n', '10', author='ta')
@@ -236,7 +236,7 @@ def test_a_check_that_reads_a_field_not_read_yet_is_undecided_and_outdated_once_
     assert (st.state, st.value) == ('unverified', None) and "not read" in st.reason
     runner.read('s1', 'p')
     assert state(runner, 's1', 'a', 'x').state == 'outdated'
-    assert [o.step for o in runner.refresh('s1')] == ['x']
+    assert [o.step for o in runner.refresh('s1')] == ['x', 'y']           # x again; y never ran, a's fields are there
     for k, v in runner.values('s1').items():
         runner.verify('s1', *k.split('/'), author='ta', expect_rev=v.rev)
     assert (state(runner, 's1', 'a', 'x').state, state(runner, 's1', 'a', 'x').value) == ('graded', True)
@@ -258,11 +258,14 @@ def test_a_result_computed_from_values_that_changed_meanwhile_is_discarded(env):
     assert out.status == 'discarded' and ws.store.get('s1', 'a/x', 'result') is None
 
 
-def test_refresh_recomputes_only_what_is_outdated(env):
+def test_refresh_runs_what_is_not_current_once_its_fields_are_there(env):
     exam, ws, runner = env
+    assert runner.refresh('s1') == []                                         # nothing read: nothing to run
+    runner.read('s1', 'a')
+    assert sorted(o.step for o in runner.refresh('s1')) == ['x', 'y']         # a's fields are there; b's are not
+    assert state(runner, 's1', 'b', 'check').state == 'not_run'
     read_all(runner, 's1')
-    assert [o.step for o in runner.refresh('s1')] == []                       # nothing ran yet: not outdated
-    assert sorted(o.step for o in runner.refresh('s1', questions=['a', 'b'])) == ['check', 'x', 'y']
+    assert sorted(o.step for o in runner.refresh('s1')) == ['check', 'x', 'y']   # a's read p: outdated
     assert runner.refresh('s1') == []
     runner.set('s1', 'a', 'y', "3", author='ta')
     assert [o.step for o in runner.refresh('s1')] == ['y']                    # only the check that read it
@@ -330,23 +333,31 @@ def test_a_decision_needs_a_value_that_fits(env):
 
 # --- batch ---
 
-def test_a_cancelled_batch_stops_queued_reads(tmp_path):
+def test_a_cancelled_batch_stops_queued_reads_and_what_was_read_is_checked(tmp_path):
+    """The batch is its reads: Stop stops reads, progress counts reads (as the plan
+    does), and every submission something was read for is refreshed regardless."""
     from examinator.core import batch
     exam = Exam('r', pages=1)
-    exam.question('info', pages=[1], fields=[Field('c', Region(1, 0, 0, 500, 100),
-                                                    read=Printed("the cue"))])
-    ws = workspace(tmp_path, exam, subs=('s1', 's2', 's3'))
-    holder = {}
+    exam.question('info', pages=[1], fields=[Field('c', Region(1, 0, 0, 500, 100), read=Printed("the cue"))],
+                  check=Check(lambda ctx: 'correct' if ctx.read('c') == 'one' else 'incorrect', isolate=False))
+    subs = ('s1', 's2', 's3')
+    ws = workspace(tmp_path, exam, subs=subs)
+    holder, calls = {}, []
 
     def reply(call):
-        holder['run'].cancel()                      # stop pressed during the first read
+        calls.append(call)
+        if len(calls) == 2:
+            holder['run'].cancel()                  # stop pressed during the second read
         return '{"value": "one"}'
     runner = Runner(ws, model=FakeModel(reply))
-    plan = batch.plan(ws, batch.Selection(('s1', 's2', 's3'), ('info',)), model_available=True)
+    plan = batch.plan(ws, batch.Selection(subs, ('info',)), model_available=True)
     run = holder['run'] = batch.BatchRun(runner, plan, parallel=1)
     run.run()
-    assert run.state == 'cancelled' and run.done == 1 < run.total
-    assert [value(ws, s, 'info/c') is not None for s in ('s1', 's2', 's3')] == [True, False, False]
+    assert run.state == 'cancelled' and (run.done, run.total) == (2, plan.count('read')) == (2, 3)
+    assert [value(ws, s, 'info/c') is not None for s in subs] == [True, True, False]
+    assert [state(runner, s, 'info', 'check').state for s in subs] == ['graded', 'graded', 'not_run']
+    resume = batch.plan(ws, batch.Selection(subs, ('info',), missing_only=True), model_available=True)
+    assert [i.submission for i in resume.items if i.action == 'read'] == ['s3']
     runner.close()
     ws.close()
 
