@@ -328,7 +328,6 @@ def test_reaccept_rewrites_only_what_changed_and_guards_work(stacked):
     with pytest.raises(intake.Busy):        # s0002 would go away with its work
         intake.accept(ws, one.id)
     ws.store.delete('s0002', 'parity/B', 'value')
-    ws.store.purge_history()
     report = intake.accept(ws, one.id)
     assert report['removed'] == ['s0002'] and not (ws.pdfs / 's0002.pdf').exists()
     assert 's0002' not in {s.id for s in ws.store.submissions()}

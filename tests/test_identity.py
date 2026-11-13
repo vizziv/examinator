@@ -1,10 +1,11 @@
 """Who wrote each submission: rosters, the matcher, readings and picks. Synthetic material only."""
+import random
 from pathlib import Path
 
 import pytest
 
 from examinator import load_exam, synth
-from examinator.core import focus, grid, identity, intake, overrides
+from examinator.core import batch, focus, grid, identity, intake, overrides
 from examinator.core.defs import IDENTITY
 from examinator.core.identity import Matcher, distance, name_score, name_tokens, propose, read_roster
 from examinator.core.runner import Runner
@@ -48,19 +49,34 @@ def test_lines_that_cannot_be_read_are_reported():
     people, problems = read_roster("Ada Lovelace\nAda, Lovelace\n12, 34\nAlan Turing, 1\nAlan T, 1\n")
     assert [p['name'] for p in people] == ["Alan Turing"]
     assert problems == ["line 1: expected a name and an ID", "line 2: expected a name and an ID",
-                        "line 3: expected a name and an ID", "line 5: ID 1 is already on line 4"]
+                        "line 3: expected a name and an ID", "line 5: Alan T <1> cannot be told apart from line 4"]
     with pytest.raises(ValueError, match="line 1"):
         identity.parse_roster("Ada Lovelace\n")
 
 
-def test_an_id_or_email_two_people_share_is_a_problem():
+def test_a_roster_is_valid_exactly_when_everyone_on_it_is_found_as_themselves():
+    """One rule (`Matcher.find`) instead of duplicate checks: a line whose person could not
+    be told apart from an earlier one's is a problem, so a pick of anyone kept links to them."""
+    people, problems = read_roster("Name,Student ID\nJohn Smith,44444444\nJohn Smith,\n")
+    assert [p['id'] for p in people] == ["44444444"]
+    assert problems == ["line 3: John Smith cannot be told apart from line 2"]
+    people, problems = read_roster("Name,Student ID\nJohn Smith,\nJohn Smith,44444444\n")    # either order
+    assert [p['id'] for p in people] == [''] and len(problems) == 1
     people, problems = read_roster("Name,Email,Student ID\nAda Lovelace,ada@example.invalid,31415926\n"
-                                   "Ada King,ada.king@example.invalid,31415926\n"
-                                   "Alan Turing,ADA@example.invalid,27182818\nKim Park,,\nKim  park,,\n")
-    assert [p['name'] for p in people] == ["Ada Lovelace", "Kim Park"]
-    assert problems == ["line 3: ID 31415926 is already on line 2", "line 4: email ADA@example.invalid is already on line 2",
-                        "line 6: name Kim  park is already on line 5"]
-    # and should a roster hold one anyway, an ID two people have singles out nobody
+                                   "Ada King,,31415926\nKim Park,,\nKim  park,,\n"
+                                   "Ada King,ada.king@example.invalid,31415926\n")
+    assert [p['name'] for p in people] == ["Ada Lovelace", "Kim Park", "Ada King"]     # the email tells her apart
+    assert problems == ["line 3: Ada King <31415926> cannot be told apart from line 2",
+                        "line 5: Kim  park cannot be told apart from line 4"]
+    rng = random.Random(4580)
+    for _ in range(200):
+        lines = [",".join((rng.choice(["Ada Lovelace", "Ada King", "lovelace ada", "Kim Park"]),
+                           rng.choice(["", "a@x.invalid", "b@x.invalid"]), rng.choice(["", "11111111", "22222222"])))
+                 for _ in range(rng.randint(1, 6))]
+        people, problems = read_roster("Name,Email,Student ID\n" + "\n".join(lines) + "\n")
+        m = Matcher(people)
+        assert all(m.find(p) == i for i, p in enumerate(people)) and len(people) + len(problems) == len(lines)
+    # and should a roster hold such people anyway, an ID two people have singles out nobody
     twins = [{'name': "Ada Lovelace", 'id': "31415926", 'key': 'a'}, {'name': "Ada King", 'id': "31415926", 'key': 'b'}]
     assert propose({'id': "31415926"}, twins)['doubt'] == 'tie'
     assert propose({'id': "31415926", 'name': "Ada King"}, twins)['doubt'] == 'agree'
@@ -137,6 +153,28 @@ def test_a_misread_name_with_the_id_unread():
     assert r['doubt'] == 'name' and top(r) == 'grace' and r['candidates'][0]['why'] == "name close"
 
 
+def test_a_proposal_is_one_computation_of_who_and_in_what_order():
+    """Who the evidence singles out (`match`), the doubt and the order come from one place:
+    the people every column read supports first; a column that supports nobody is a conflict."""
+    roster = [{'key': 'ada', 'name': "Ada Lovelace", 'id': "11111111"}, {'key': 'bob', 'name': "Bob Stone", 'id': "22222222"}]
+    r = propose({'name': "Bobby Stane", 'id': "11111199"}, roster)     # the ID, two off, is Ada's; the name nobody's
+    assert r['doubt'] == 'disagree' and r['match'] is None and top(r) == 'ada'
+    r = propose({'name': "Ada Lovelace", 'id': "99999999"}, roster)    # an ID that fits nobody is evidence
+    assert r['doubt'] == 'disagree' and r['match'] is None
+    r = propose({'name': "Bob Ston", 'id': "11111111"}, roster)
+    assert r['doubt'] == 'disagree' and [c['key'] for c in r['candidates']] == ['ada', 'bob']
+    for read in ({'name': "Ada Lovelace", 'id': "11111111"}, {'id': "11111112"}, {'name': "Lovelace Ada"}):
+        r = propose(read, roster)
+        assert roster[r['match']]['key'] == top(r) == 'ada' and r['doubt'] in ('agree', 'id', 'name')
+    rng = random.Random(4580)
+    for _ in range(300):                # whenever there is a match, it is the first candidate
+        read = {'name': rng.choice([None, "Ada Lovelace", "Bob Stone", "Ada Stone", "Bobby Lovelace"]),
+                'id': rng.choice([None, "11111111", "22222222", "11111122", "12121212", "99999999"])}
+        r = propose(read, roster)
+        assert (r['match'] is not None) == (r['doubt'] in ('agree', 'id', 'name'))
+        assert r['match'] is None or roster[r['match']]['key'] == top(r)
+
+
 def test_id_and_name_point_at_different_people():
     r = propose({'name': "Grace Hopper", 'id': "31415926"}, ROSTER)
     assert r['doubt'] == 'disagree'
@@ -147,7 +185,7 @@ def test_id_and_name_point_at_different_people():
 def test_nobody_close_and_nothing_read():
     r = propose({'name': "Finley Dummond", 'id': "95830142"}, ROSTER)
     assert r['doubt'] == 'nobody' and r['candidates'] == []
-    assert propose({'name': None, 'id': ''}, ROSTER) == {'doubt': 'unread', 'candidates': []}
+    assert propose({'name': None, 'id': ''}, ROSTER) == {'doubt': 'unread', 'match': None, 'candidates': []}
 
 
 def test_names_too_alike_are_a_tie_and_all_are_candidates():
@@ -224,7 +262,7 @@ def written(tmp_path):
     intake.reguess(ws, two.id, model=model)
     intake.accept(ws, two.id)
     identity.set_roster(ws, (root / 'roster.csv').read_text())
-    runner = Runner(toy, ws, model=model)
+    runner = Runner(ws, model=model)
     yield ws, runner, model
     runner.close()
     ws.close()
@@ -246,7 +284,7 @@ def test_identity_fields_are_ordinary_values(written):
     assert all(c.prompt.count("Read the HANDWRITTEN") == 1 and c.tag[1] == IDENTITY for c in model.calls[-2:])
     assert "Avery" not in " ".join(c.prompt for c in model.calls)            # no roster in any prompt
     identity.read(runner, 's0001', again=True)
-    assert len(model.calls) == calls and runner.values('s0001') == got      # remembered: free, unchanged
+    assert len(model.calls) == calls + 2 and runner.values('s0001') == got  # asked again; the same values
     assert ws.store.get('s0001', '', identity.WHO) is None                  # reading never picks
     # set, verify, history, and a read never replaces what a person set
     v = runner.set('s0001', IDENTITY, 'name', "Avery  Testwell", author='t')
@@ -259,8 +297,7 @@ def test_identity_fields_are_ordinary_values(written):
 
 def test_moving_a_box_changes_no_value_and_reading_again_is_asked(written):
     """The standing rule: changing how a field is read changes no value. Reading
-    again is explicit (`again`), and the memo is keyed by the region, so a moved box
-    asks the model again while an unmoved one is free."""
+    again is explicit (`again`), and asks the model about every box no person verified."""
     ws, runner, model = written
     for sid in ('s0001', 's0002'):
         identity.read(runner, sid)
@@ -268,21 +305,21 @@ def test_moving_a_box_changes_no_value_and_reading_again_is_asked(written):
     g = ws.exam.identity
     path, scope = '@identity/fields/name/region', overrides.scope(overrides.SUBMISSION, 's0001')
     overrides.set(ws, path, [1, 100, 120, 800, 200], scope=scope, author='t')
-    assert ws.region('s0001', g, 'name').top == 120 and ws.region('s0002', g, 'name') == g.field('name').region
+    assert ws.layers('s0001').question(g.id).field('name').region.top == 120 and ws.layers('s0002').question(g.id).field('name').region == g.field('name').region
     assert {sid: runner.values(sid) for sid in before} == before                  # no value changed
     row = identity.overview(ws, ['s0001'])['rows'][0]
     assert 's0001' not in identity.unread(ws) and row['unread'] == [] and row['read']['name'] == "Avery Testwell"
     calls = len(model.calls)
     assert identity.read(runner, 's0001') == [] and len(model.calls) == calls     # only missing values are read
     identity.read(runner, 's0001', again=True)
-    assert len(model.calls) == calls + 1        # the moved box asks again; the ID box is remembered
+    assert len(model.calls) == calls + 2        # both boxes asked again
     # every submission's box moved: reading again replaces what no person verified, only
     runner.verify('s0002', IDENTITY, 'name', author='t', expect_rev=runner.values('s0002')['@identity/name'].rev)
     overrides.set(ws, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='t')
     assert runner.values('s0002') == {**before['s0002'], '@identity/name': runner.values('s0002')['@identity/name']}
     calls = len(model.calls)
     identity.read(runner, 's0002', again=True)
-    assert len(model.calls) == calls + 1 and [c.tag[2] for c in model.calls[-1:]] == ['read:id']
+    assert len(model.calls) == calls + 1 and [c.tag[2] for c in model.calls[-1:]] == ['read:id']   # name: verified
     assert runner.values('s0002')['@identity/name'].verified == 'person'
 
 
@@ -295,7 +332,9 @@ def test_the_group_is_kept_apart_from_grading(written):
     assert all(q != IDENTITY for q, _ in row.status) and IDENTITY not in row.fields
     assert IDENTITY not in {d['id'] for d in focus.describe_facets(exam)}
     assert not any(k.startswith(IDENTITY) for k in focus.values_table(exam, ws.store))
-    assert IDENTITY not in exam.grading and IDENTITY in exam.questions
+    assert IDENTITY not in exam.questions and exam.group(IDENTITY) is exam.identity     # asked for by name
+    with pytest.raises(KeyError):           # a batch selects among the questions graders work through
+        batch.plan(ws, batch.Selection(('s0001',), (IDENTITY,)), model_available=True)
 
 
 def test_the_awkward_cases(written):
@@ -412,8 +451,8 @@ def test_empty_is_not_unreadable(written):
 
 def test_rewriting_a_submission_drops_its_unverified_readings(written):
     """Split's Accept rewrites a submission from other sheets: what a reader wrote and no
-    person typed or verified is dropped (identity and grading fields alike: not read), and
-    the memo with it; values a person typed or verified, and the pick, stay."""
+    person typed or verified is dropped (identity and grading fields alike: not read);
+    values a person typed or verified, and the pick, stay."""
     ws, runner, model = written
     identity.read(runner, 's0001')
     runner.set('s0001', IDENTITY, 'id', "90412873", author='t')
@@ -427,7 +466,7 @@ def test_rewriting_a_submission_drops_its_unverified_readings(written):
     assert 's0001' not in identity.unread(ws)            # named: "read names" leaves it alone
     calls = len(model.calls)
     identity.read(runner, 's0001')
-    assert len(model.calls) == calls + 1 and texts(ws, 's0001')['name'] == "Avery Testwell"   # memo dropped too
+    assert len(model.calls) == calls + 1 and texts(ws, 's0001')['name'] == "Avery Testwell"
     # grading values: only a forced Accept rewrites a submission with grading work; the same rule
     runner._put_read('s0001', 'areas', 'A.1', "4", False, False)                 # read, unverified
     runner._put_read('s0001', 'areas', 'side', "red", True, False)              # read, vouched by the reader
@@ -444,17 +483,17 @@ def test_rewriting_a_submission_drops_its_unverified_readings(written):
     assert identity.who(ws, 's0001')['name'] == "Avery Testwell"
 
 
-def test_a_failed_call_is_no_reading_and_not_remembered(tmp_path):
+def test_a_failed_call_is_no_reading(tmp_path):
     toy = load_exam(TOY)
     root = tmp_path / 'ws'
     paths = synth.stacks(toy, root)
     ws = Workspace(root, toy, create=True)
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    broken = Runner(toy, ws, model=FakeModel({}))
+    broken = Runner(ws, model=FakeModel({}))
     assert {o.status for o in identity.read(broken, 's0001')} == {'failed'}
     assert texts(ws, 's0001') == {} and 's0001' in identity.unread(ws)
-    identity.read(Runner(toy, ws, model=synth.fake_model(root)), 's0001')
+    identity.read(Runner(ws, model=synth.fake_model(root)), 's0001')
     assert texts(ws, 's0001')['id'] == "90412873"
     ws.close()
 
@@ -467,7 +506,7 @@ def test_a_box_drawn_in_the_app_is_read_on_synthetic_stacks(tmp_path):
     root = tmp_path / 'ws'
     paths = synth.stacks(toy, root)
     bare = Exam('bare', pages=toy.pages, print_area=toy.print_area, landmarks=toy.landmarks)
-    for qid, q in toy.grading.items():
+    for qid, q in toy.questions.items():
         bare.questions[qid] = q
     ws = Workspace(root, bare, create=True)
     one, _ = intake.add_source(ws, paths[0])
@@ -475,7 +514,18 @@ def test_a_box_drawn_in_the_app_is_read_on_synthetic_stacks(tmp_path):
     assert identity.placed(ws) == () and identity.unread(ws) == []
     overrides.set(ws, '@identity/fields/name/region', [1, 100, 100, 800, 200], author='t')
     assert [f.label for f in identity.placed(ws)] == ['name'] and identity.unread(ws)[0] == 's0001'
-    runner = Runner(bare, ws, model=synth.fake_model(root))
+    runner = Runner(ws, model=synth.fake_model(root))
     identity.read(runner, 's0001')
     assert texts(ws, 's0001') == {'name': "Avery Testwell"}
     ws.close()
+
+
+def test_who_a_submission_is_is_read_from_its_pick(written):
+    """No stored copy to keep in step: whatever writes or undoes the pick, the submission's
+    name, email and student ID are the pick's."""
+    ws, runner, model = written
+    ws.store.write('s0001', '', identity.WHO, {'name': "Ada", 'id': "1", 'email': "a@x.invalid"}, origin='manual')
+    s = ws.store.submission('s0001')
+    assert (s.name, s.student, s.email) == ("Ada", "1", "a@x.invalid") and s in ws.store.submissions()
+    ws.store.delete('s0001', '', identity.WHO)
+    assert ws.store.submission('s0001').name == "" and ws.sync() and ws.store.submission('s0001').name == ""

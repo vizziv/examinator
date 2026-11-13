@@ -71,8 +71,9 @@ Choices made here:
 - **Blank is a value** (empty text, read as such). It differs from not read.
 - **Reading again and getting the same value changes nothing**: same revision,
   still verified, nothing downstream moves.
-- **No transcript.** Whatever a reader does on the way to the value is not
-  stored.
+- **No transcript, no memo.** Whatever a reader does on the way to the value
+  is not stored, so every read asks the model again. A read happens only
+  when a person asks for one; "missing only" resumes a read that stopped.
 - **Changing how a field is read changes no value.** A value does not record
   what it was read from; reading again is a person's choice (a question's
   "read", the Read page, "read names").
@@ -189,8 +190,8 @@ no value yet, and the app can reload the exam package without losing state.
   group (`defs.IDENTITY`, '@identity') has one field per roster column (name,
   ID, email; those the exam maps placed, the others drawn in the app): values,
   verifying, reads, regions at every scope, all as for any field. It is kept
-  apart from grading (`Question.apart`: no grid column, total, facet or batch
-  read; read on the Names step). Who wrote a submission is then one stored
+  apart from grading: not one of `Exam.questions` (no grid column, total,
+  facet or batch read), reached only by its name; read on the Names step. Who wrote a submission is then one stored
   pick per submission, a person's choice among proposals computed purely from
   those values and the roster (`core.identity`). The pick records the person;
   their place on the roster is derived. Automatic matching acts only on
@@ -213,10 +214,11 @@ no value yet, and the app can reload the exam package without losing state.
 | Field, Check, Question, Exam, points (`Bool`, `Number`) | `core/defs.py` |
 | What a check returns (`Result`, `Judgement`, `Undecided`) | `core/result.py` |
 | `ctx.read` (recorded reads), the reader's context | `core/context.py` |
+| What a read reads, and why not (`to_read`) | `core/runner.py` |
 | Stored value, result, decision; the status table; totals | `core/status.py` |
 | The small changes (read, set, verify, compute, decide, clear) | `core/runner.py` |
 | Asking about one region (`Ask`, `Printed`); handwriting readers | `core/ask.py`; `std/readers.py` |
-| Overrides at every scope; what applies to one submission (`Layers`) | `core/overrides.py`; `Workspace.layers`, `question`, `layout` |
+| A workspace's own definition (`Workspace.exam`); overrides at every scope; what applies to one submission (`Layers`: `question`, `layout`) | `core/workspace.py`; `core/overrides.py`; `Workspace.layers` |
 | Batch: reads, then computes | `core/batch.py` |
 | One row table, addressed `(submission, name, kind)` | `core/store.py` |
 

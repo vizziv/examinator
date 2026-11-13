@@ -8,21 +8,20 @@ outdated when a field it read changes, and its grade counts only once every
 field it read is verified.
 
 A reader is called with a `ReadContext`: the pages and crops of one
-submission, and the loopback model. Inside an isolated check there are no
-pages and no model.
+submission, and the loopback model. Every read asks the model: nothing but
+the value a read writes is kept. Inside an isolated check there are no pages
+and no model.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Mapping, Protocol, Sequence
 
 from .defs import DEFAULT, Question, Region, has_marker, key
 from .result import Undecided
 
 if TYPE_CHECKING:
     from PIL.Image import Image
-
-    from ..pdf.layout import Layout
 
 
 class Unavailable(RuntimeError):
@@ -69,11 +68,8 @@ class Services(Protocol):
 
     def pages(self, submission: str, question: Question) -> list['Image']: ...
     def crop(self, submission: str, region: Region) -> 'Image': ...
-    def layout(self, submission: str) -> 'Layout': ...
     def model(self, prompt: str, *, images: Sequence['Image'], text: str | None,
               expect: str, tag: tuple[str, str, str]) -> str: ...
-    def memo(self, submission: str, key: str) -> str | None: ...
-    def set_memo(self, submission: str, key: str, value: str) -> None: ...
 
 
 @dataclass
@@ -81,7 +77,6 @@ class ReadContext:
     submission: str
     question: Question
     services: Services | None = None
-    fresh: bool = False             # ask again rather than use a remembered reading
 
     def pages(self) -> list['Image']:
         """Rendered images of the question's selected pages for this submission."""
@@ -91,27 +86,12 @@ class ReadContext:
         """One rendered region, mapped through the scan layout."""
         return self._services().crop(self.submission, region)
 
-    def layout(self) -> 'Layout':
-        """This submission's scan layout (its print area): what a crop depends on."""
-        return self._services().layout(self.submission)
-
     def model(self, prompt: str, *, images: Sequence['Image'] = (), text: str | None = None,
               expect: str = 'text', step: str = 'read') -> str:
         """Call the loopback model. `expect` is 'text', 'json' or 'code'; `step`
         names the call (it tags it, for a scripted model and for diagnostics)."""
         return self._services().model(
             prompt, images=images, text=text, expect=expect, tag=(self.submission, self.question.id, step))
-
-    def remember(self, key: str, compute: Callable[[], str]) -> str:
-        """A per-submission memo (a printed field's reading); `fresh` asks again."""
-        s = self._services()
-        if not self.fresh:
-            hit = s.memo(self.submission, key)
-            if hit is not None:
-                return hit
-        value = compute()
-        s.set_memo(self.submission, key, value)
-        return value
 
     def _services(self) -> Services:
         if self.services is None:

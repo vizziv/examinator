@@ -26,11 +26,16 @@ else the package's.
   definition with it applied is valid: `Exam.validate`, the validation the
   package goes through, runs on a copy with the change, in the context of its
   scope (one submission's extra sheets are pages it may name). Here a JSON value
-  is only decoded into the kind of object it replaces. A stored override that no
-  longer validates is skipped and reported.
-- **An open workspace has its overrides applied**: opening one applies the
-  exam's (`Workspace.refresh`, which every exam-wide edit repeats), and what
-  holds for one submission is `Layers` (`Workspace.layers`), the one resolver.
+  is only decoded into the kind of object it replaces. One scope's overrides of
+  one root are applied together when the definition with all of them validates
+  (so one valid only with another is not lost), else all but the one that
+  breaks them, else one by one in path order (`_layer`).
+  A stored override that does not validate is skipped and reported, at every
+  scope alike (`Skipped`, `Workspace.skipped_overrides`).
+- **A workspace's definition is its own**: opening one makes `Workspace.exam`
+  the package's definition with the exam's overrides (`apply`, repeated by
+  every exam-wide edit; the package's `Exam` is never changed), and what holds
+  for one submission is `Layers` (`Workspace.layers`), the one resolver.
 
 What can be edited is what is plain data: text, numbers, booleans, a `Region`,
 page lists, a printed field's `reads` map, and key entries that are text or a
@@ -38,9 +43,9 @@ choice (an object with an `accepted` tuple of texts). Functions are never
 editable, and neither are names used as addresses or result specs. A
 configuration field can opt out with `dataclasses.field(metadata={'override': False})`.
 
-`Exam.base` keeps the roots as built; `apply` makes the live ones the base plus
-the exam's overrides, replacing frozen objects along each path, never mutating
-them. Because a check's hash describes the live check, an edited key outdates
+`Exam.base` keeps the roots as built; `apply` makes a definition of the base
+plus the exam's overrides, replacing frozen objects along each path, never
+mutating them. Because a check's hash describes the live check, an edited key outdates
 exactly the checks that used it. Changing how a field is read changes no value.
 """
 from __future__ import annotations
@@ -82,9 +87,11 @@ class Entry:
 
 @dataclass(frozen=True)
 class Skipped:
-    """A stored override that could not be applied (the package changed)."""
+    """A stored override that could not be applied (the package changed), and its
+    scope as stored ('': the exam's)."""
     path: str
     reason: str
+    scope: str = ''
 
 
 # --- paths ---------------------------------------------------------------------
@@ -333,11 +340,9 @@ def _locate(exam: Exam, path: str) -> _Loc:
     return _Loc(segs[0], segs[1:], kind, nullable, SCOPES.get(kind, (EXAM,)))
 
 
-def _change(exam: Exam, roots: Mapping[str, Any], path: str, value: Any, level: str,
-            pages: int | None = None) -> tuple[Any, Any]:
+def _put(exam: Exam, roots: Mapping[str, Any], path: str, value: Any, level: str) -> tuple[Any, Any]:
     """The root `path` is under, in `roots`, with `value` (JSON) put there, and the value
-    in normal JSON form; `ValueError` unless the definition with it is valid (`Exam.validate`,
-    with `pages` the pages that may be named at this scope)."""
+    in normal JSON form; `ValueError` if it cannot be put there (validity aside)."""
     loc = _locate(exam, path)
     if level not in loc.scopes:
         where = {EXAM: "every submission", SOURCE: "one scan", SUBMISSION: "one submission"}[level]
@@ -345,9 +350,65 @@ def _change(exam: Exam, roots: Mapping[str, Any], path: str, value: Any, level: 
     if value is None and (level != EXAM or not loc.nullable):
         raise ValueError("a value is required" + (" (to drop it, clear it)" if level != EXAM else ""))
     obj = _decode(loc.kind, value, _get(exam.base[loc.root], loc.segs))
-    node = _set(roots[loc.root], loc.segs, obj)
-    exam.with_roots({**roots, loc.root: node}).validate(pages=pages)
-    return node, _encode(loc.kind, obj)
+    return _set(roots[loc.root], loc.segs, obj), _encode(loc.kind, obj)
+
+
+def _change(exam: Exam, roots: Mapping[str, Any], path: str, value: Any, level: str,
+            pages: int | None = None) -> tuple[Any, Any]:
+    """`_put`, and `ValueError` unless the definition with it is valid (`Exam.validate`,
+    with `pages` the pages that may be named at this scope)."""
+    node, value = _put(exam, roots, path, value, level)
+    exam.with_roots({**roots, split(path)[0]: node}).validate(pages=pages)
+    return node, value
+
+
+FAILS = (ValueError, KeyError, TypeError)
+
+
+def _layer(exam: Exam, roots: dict[str, Any], items: Mapping[str, Any], level: str,
+           pages: int | None = None) -> tuple[dict[str, Any], dict[str, Any], list[Skipped]]:
+    """`roots` with one scope's overrides (`items`, {path: JSON value}) put in, root by
+    root: all of a root's together when the definition with them validates; else all
+    but the one that breaks them; else one by one in path order, each if the
+    definition with it validates. (roots, {path: normal JSON value applied}, skipped)."""
+    roots, applied, skipped = dict(roots), {}, []
+    by_root: dict[str, list[str]] = {}
+    for path in sorted(items):
+        by_root.setdefault(split(path)[0], []).append(path)
+
+    def together(root, paths):
+        trial, got = dict(roots), {}
+        for path in paths:
+            trial[root], got[path] = _put(exam, trial, path, items[path], level)
+        exam.with_roots(trial).validate(pages=pages)
+        return trial, got
+
+    for root, paths in by_root.items():
+        try:
+            roots, got = together(root, paths)
+            applied.update(got)
+            continue
+        except FAILS as e:
+            why = e
+        for bad in paths if len(paths) > 1 else ():
+            try:
+                roots, got = together(root, [p for p in paths if p != bad])
+            except FAILS:
+                continue
+            applied.update(got)
+            try:
+                _change(exam, roots, bad, items[bad], level, pages)
+            except FAILS as e:
+                why = e
+            skipped.append(Skipped(bad, str(why)))
+            break
+        else:
+            for path in paths:
+                try:
+                    roots[root], applied[path] = _change(exam, roots, path, items[path], level, pages)
+                except FAILS as e:
+                    skipped.append(Skipped(path, str(e)))
+    return roots, applied, skipped
 
 
 def validate(exam: Exam, path: str, value: Any) -> Any:
@@ -390,22 +451,12 @@ def entry(exam: Exam, path: str) -> Entry | None:
     return next((e for e in editable(exam, split(path)[0]) if e.path == path), None)
 
 
-def apply(exam: Exam, mapping: Mapping[str, Any]) -> list[Skipped]:
-    """Make the live exam its base definition plus `mapping` ({path: JSON value},
-    the exam's own overrides), each applied if the definition with it validates.
-
-    Roots without overrides go back to their base objects. An override whose path
-    no longer exists or whose value no longer fits is skipped and reported."""
-    roots, applied, skipped = dict(exam.base), {}, []
-    for path in sorted(mapping):
-        try:
-            root = split(path)[0]
-            roots[root], applied[path] = _change(exam, roots, path, mapping[path], EXAM)
-        except (ValueError, KeyError, TypeError) as e:
-            skipped.append(Skipped(path, str(e)))
-    exam.overrides = applied     # first: a worker never runs older data than a result's recorded hash
-    exam.install(roots)
-    return skipped
+def apply(exam: Exam, mapping: Mapping[str, Any]) -> tuple[Exam, list[Skipped]]:
+    """A copy of `exam` that is its package's definition (`base`) plus `mapping`
+    ({path: JSON value}, the exam's own overrides; `_layer`), and the overrides
+    skipped: those whose path no longer exists or whose value no longer fits."""
+    roots, applied, skipped = _layer(exam, dict(exam.base), mapping, EXAM)
+    return exam.with_roots(roots, overrides=applied), skipped
 
 
 # --- what applies to one submission ------------------------------------------------------
@@ -414,7 +465,8 @@ class Layers:
     """The definition as it is for one submission, or for the sheets of one source
     scan: each value is the submission's own, else its source scan's (when it was
     split from one), else the exam's, else the package's. The one resolver: every
-    per-submission value is looked up here (`Workspace.layers`)."""
+    per-submission value is looked up here (`Workspace.layers`), each root resolved
+    once (`question`, `layout`). Overrides here that do not validate are `skipped`."""
 
     def __init__(self, ws: 'Workspace', *, submission: str | None = None, source: str | None = None):
         if submission is not None and source is None:
@@ -423,6 +475,7 @@ class Layers:
         self.ws, self.exam, self.submission, self.source = ws, ws.exam, submission, source
         self.stored = {level: ws.store.overrides(scope(level, id))
                        for level, id in ((SUBMISSION, submission), (SOURCE, source)) if id}
+        self.skipped: list[Skipped] = []
         self._roots: dict[str, Any] = {}
         self._pages: int | None = None
 
@@ -433,21 +486,43 @@ class Layers:
         return self._pages
 
     def root(self, name: str) -> Any:
-        """A root of the definition here (a question, the print area): the live one with
-        the scan's, then the submission's overrides under it, each applied if the
-        definition with it validates (as at the exam's scope)."""
+        """A root of the definition here (a question, the identity group, the print
+        area): the workspace's, with the scan's, then the submission's overrides put in
+        as at the exam's scope (`_layer`). `KeyError` if there is no such root."""
         if name not in self._roots:
             roots = self.exam.roots()
-            for level in (SOURCE, SUBMISSION):
-                for path, o in self.stored.get(level, {}).items():
-                    if split(path)[0] != name:
-                        continue
-                    try:
-                        roots[name], _ = _change(self.exam, roots, path, o.value, level, self.pages())
-                    except (ValueError, KeyError, TypeError):
-                        pass            # no longer fits the package: not applied
+            if name not in roots:
+                raise KeyError(name)
+            for level, id in ((SOURCE, self.source), (SUBMISSION, self.submission)):
+                mine = {p: o.value for p, o in self.stored.get(level, {}).items() if split(p)[0] == name}
+                roots, _, skipped = _layer(self.exam, roots, mine, level, self.pages())
+                self.skipped += [dataclasses.replace(s, scope=scope(level, id)) for s in skipped]
             self._roots[name] = roots[name]
         return self._roots[name]
+
+    def question(self, id: str):
+        """A question (or the identity group, by name) as it is here: its regions, its
+        pages (a submission's extra sheets among them). `KeyError` if there is none."""
+        if self.exam.group(id) is None:
+            raise KeyError(id)
+        return self.root(id)
+
+    @property
+    def layout(self):
+        """The print area here."""
+        from ..pdf.layout import Layout
+        return Layout(self.root(PRINT_AREA))
+
+    def check(self) -> list[Skipped]:
+        """Resolve every root this scope's own overrides touch: what is skipped here."""
+        for level, stored in self.stored.items():
+            for path in stored:
+                try:
+                    self.root(split(path)[0])
+                except KeyError:
+                    self.skipped.append(Skipped(path, f"no question {split(path)[0]!r}",
+                                                scope(level, self.submission if level == SUBMISSION else self.source)))
+        return self.skipped
 
     def value(self, path: str) -> Any:
         """The value in force at `path` (JSON)."""
@@ -480,7 +555,8 @@ def _hashes(exam: Exam) -> dict:
 def _changed(ws: 'Workspace', path: str, scope: str) -> Change:
     if scope != '':         # below the exam: only how fields are read, for some submissions
         return Change(())
-    c0, skipped = _hashes(ws.exam), ws.refresh()
+    c0 = _hashes(ws.exam)
+    skipped = ws.refresh()
     c1 = _hashes(ws.exam)
     return Change(tuple(k for k in c1 if c1[k] != c0.get(k)), tuple(skipped))
 

@@ -29,7 +29,7 @@ def open_model(args, root: Path):
 
 def status_table(exam: Exam, ws: Workspace) -> str:
     """The grade grid as text, printed after `run`."""
-    cols = [(q, c) for q in exam.grading.values() for c in q.checks]
+    cols = [(q, c) for q in exam.questions.values() for c in q.checks]
     lines = ["\t".join(['submission', *[q.column(c.name) for q, c in cols], 'total'])]
     for row in grid.load(exam, ws.store):
         cells = []
@@ -78,7 +78,7 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
         if model is None or not identity.boxed(ws):
             print("names: needs the model and identity fields with regions (Exam(identity={...}))", file=sys.stderr)
         else:
-            runner = Runner(exam, ws, model=model)
+            runner = Runner(ws, model=model)
             try:
                 for sid in identity.unread(ws):
                     for o in identity.read(runner, sid):
@@ -90,8 +90,8 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
             print(f"names: {view['left']} of {len(view['rows'])} to confirm (Scans page, Names)")
             for row in view['rows']:
                 if row['who'] is None:
-                    top = row['candidates'][0]['label'] if row['candidates'] else "-"
-                    print(f"  {row['sub']}: {identity.DOUBTS[row['doubt']]}: {top}")
+                    match = next((c['label'] for c in row['candidates'] if c['key'] == row['match']), "-")
+                    print(f"  {row['sub']}: {identity.DOUBTS[row['doubt']]}: {match}")
     if not args.accept:
         print(f"review and accept: examinator serve {args.exam} -w {args.workspace}   (Scans page)")
     return 0
@@ -104,9 +104,9 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
     if args.cmd == 'intake':
         return intake_cmd(args, exam, ws)
     ws.sync()
-    unknown = [q for q in args.question or () if q not in exam.grading] if args.cmd == 'run' else []
+    unknown = [q for q in args.question or () if q not in exam.questions] if args.cmd == 'run' else []
     if unknown:
-        print(f"examinator run: no question {', '.join(unknown)} (questions: {', '.join(exam.grading)})",
+        print(f"examinator run: no question {', '.join(unknown)} (questions: {', '.join(exam.questions)})",
               file=sys.stderr)
         return 2
     model = open_model(args, ws.root)
@@ -114,7 +114,7 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
     if args.cmd == 'serve':
         import uvicorn
         from .web.app import create_app
-        runner = Runner(exam, ws, model=model)
+        runner = Runner(ws, model=model)
         app = create_app(exam, ws, runner, author=args.author or getpass.getuser(),
                          public_url=args.public_url)
         # A new or empty workspace opens on Scans, where submissions come from.
@@ -126,10 +126,10 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
             runner.close()
         return 0
 
-    runner = Runner(exam, ws, model=model)
+    runner = Runner(ws, model=model)
     try:
         subs = tuple(args.submission or [s.id for s in ws.store.submissions()])
-        sel = batch.Selection(subs, tuple(args.question or exam.grading), missing_only=args.missing_only,
+        sel = batch.Selection(subs, tuple(args.question or exam.questions), missing_only=args.missing_only,
                               include_protected=args.include_protected)
         plan = batch.plan(ws, sel, model_available=model is not None)
         for action in batch.ACTIONS:
@@ -240,7 +240,7 @@ def command(args, exam: Exam) -> int:
         print(f"examinator {args.cmd}: {e}", file=sys.stderr)
         return 2
     try:
-        return workspace_cmd(args, exam, ws)
+        return workspace_cmd(args, ws.exam, ws)      # the workspace's own definition
     finally:
         ws.close()
 

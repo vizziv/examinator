@@ -57,7 +57,7 @@ from . import identity, split
 from .ask import Printed
 from .defs import Landmark, digest
 from .reading import normalize, region_key
-from .store import ANY, Row, Conflict, Made, Source
+from .store import ANY, Row, Conflict, Made, Source, Submission
 
 PLAN = 'split'
 
@@ -412,9 +412,8 @@ def disturbed(ws, rows, gone) -> list[str]:
 
 
 def forget_reads(ws, sid: str) -> None:
-    """A submission's pages changed: drop what was read from the old ones (the memo,
-    and values a reader wrote that no person typed or verified)."""
-    ws.store.clear_memo(sid)
+    """A submission's pages changed: drop what was read from the old ones (values
+    a reader wrote that no person typed or verified)."""
     for r in ws.store.all(kinds=['value'], submission=sid):
         if r.origin != 'manual' and (r.body or {}).get('verified') != 'person':
             ws.store.delete(sid, r.name, 'value')
@@ -484,7 +483,7 @@ def accept(ws, id: str, *, force: bool = False, expect_rev: Any = ANY) -> dict:
         for r in writes:
             sid = r['id']
             ws.store.set_made(Made(sid, id, tuple(r['pages']), tuple(r['orient']), now))
-            ws.store.put_submissions([identity.submission(ws, sid, f'{sid}.pdf')])
+            ws.store.put_submissions([Submission(sid, '', '', f'{sid}.pdf')])
             forget_reads(ws, sid)
         for sid in gone:
             ws.store.delete_made(sid)

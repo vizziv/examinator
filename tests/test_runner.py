@@ -1,5 +1,7 @@
 """The small changes: read, set, verify, unverify; compute; decide, clear.
 Everything here is synthetic."""
+from pathlib import Path
+
 import pytest
 
 from examinator import Check, Exam, Field, Printed, Region
@@ -10,6 +12,8 @@ from examinator.model.fake import FakeModel
 
 from conftest import SCRIPT, Parse, make_exam, workspace
 
+TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
+
 
 
 def value(ws, sub, k):
@@ -19,12 +23,12 @@ def value(ws, sub, k):
 
 
 def state(runner, sub, qid, check):
-    q = runner.exam.questions[qid]
-    return runner.sheet(sub).status(runner.exam, q, q.check(check))
+    q = runner.ws.exam.questions[qid]
+    return runner.sheet(sub).status(runner.ws.exam, q, q.check(check))
 
 
 def read_all(runner, sub):
-    for qid in runner.exam.grading:
+    for qid in runner.ws.exam.questions:
         assert all(o.ok for o in runner.read(sub, qid)), qid
 
 
@@ -37,7 +41,7 @@ def test_read_writes_values_unverified_unless_the_reader_vouches(env, tmp_path):
     assert value(ws, 's1', 'p/c1').text == 'one' and value(ws, 's1', 'p/c1').verified is None   # verify=True
     trusted = make_exam(trust=True)
     ws2 = workspace(tmp_path / 't', trusted)
-    r2 = Runner(trusted, ws2, model=FakeModel(dict(SCRIPT)))
+    r2 = Runner(ws2, model=FakeModel(dict(SCRIPT)))
     read_all(r2, 's1')
     assert value(ws2, 's1', 'p/c1').verified == 'reader'           # one of a closed set: vouched for
     r2.close()
@@ -80,7 +84,7 @@ def test_a_field_without_a_region_is_not_read_until_it_has_one(tmp_path):
     exam = Exam('r', pages=1)
     exam.question('info', pages=[1], fields=[Field('c', read=Printed("the cue", reads={'1': 'one'}))])
     ws = workspace(tmp_path, exam, subs=('s1',))
-    runner = Runner(exam, ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
+    runner = Runner(ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
     outs = runner.read('s1', 'info')
     assert [(o.status, o.detail) for o in outs] == [('blocked', "no region: c")] and value(ws, 's1', 'info/c') is None
     overrides.set(ws, 'info/fields/c/region', [1, 0, 0, 500, 100], scope='submission:s1',
@@ -90,25 +94,23 @@ def test_a_field_without_a_region_is_not_read_until_it_has_one(tmp_path):
     ws.close()
 
 
-def test_a_printed_reading_is_remembered_per_crop_and_a_new_print_area_reads_again(env):
+def test_a_read_asks_the_model_every_time_and_keeps_only_the_value(env):
+    """Nothing remembers a field's reading but its value: reading again (always a
+    person's request) asks the model again, for the same crop or another; reading
+    only what is missing (resuming a read) asks nothing of what has a value."""
     exam, ws, _ = env
     replies = {'read:c1': '{"value": "1"}', 'read:c2': '{"value": "i"}'}
-    runner = Runner(exam, ws, model=FakeModel(lambda call: replies[call.tag[2]]))
+    runner = Runner(ws, model=FakeModel(lambda call: replies[call.tag[2]]))
 
     def calls():
         return len([c for c in runner.model.calls if c.tag[1] == 'p'])
     assert all(o.ok for o in runner.read('s1', 'p'))
     assert calls() == 2 and value(ws, 's1', 'p/c1').text == 'one'
-    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 2        # the same crops: remembered
+    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 4        # the same crops: asked again
     replies.update({'read:c1': '{"value": "2"}', 'read:c2': '{"value": "ii"}'})
-    own = lambda path, value: (overrides.set(ws, path, value, scope='submission:s1', author='ta')
-                               if value is not None else overrides.clear(ws, path, scope='submission:s1'))
-    own('@print_area', [50, 50, 950, 950])                                       # another crop
-    assert all(o.ok for o in runner.read('s1', 'p'))
-    assert calls() == 4 and value(ws, 's1', 'p/c1').text == 'two'
-    own('@print_area', None)                                                     # the first crop again
-    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 4
-    assert value(ws, 's1', 'p/c1').text == 'one'
+    assert all(o.ok for o in runner.read('s1', 'p')) and calls() == 6
+    assert value(ws, 's1', 'p/c1').text == 'two'
+    assert runner.read('s1', 'p', missing_only=True) == [] and calls() == 6
 
 
 def test_a_failed_read_writes_nothing_and_says_why_structurally(env):
@@ -122,7 +124,7 @@ def test_a_failed_read_writes_nothing_and_says_why_structurally(env):
 def test_no_model_blocks_reads(env):
     exam, ws, runner = env
     runner.model = None
-    assert [(o.status, o.detail) for o in runner.read('s1', 'a')] == [('blocked', "model unavailable")]
+    assert [(o.status, o.detail) for o in runner.read('s1', 'a')] == [('blocked', "model unavailable: x, y")]
 
 
 # --- set, verify, unverify ---
@@ -231,7 +233,7 @@ def test_a_check_with_no_function_is_decided_by_a_person(tmp_path):
     exam = Exam('m', pages=1)
     exam.question('w', pages=[1], fields=[Field('x')], check=Check(None))
     ws = workspace(tmp_path, exam, subs=('s1',))
-    runner = Runner(exam, ws)
+    runner = Runner(ws)
     assert runner.compute('s1', 'w', 'check').status == 'blocked'
     assert state(runner, 's1', 'w', 'check').state == 'to_decide'
     runner.decide('s1', 'w', 'check', True, author='ta')
@@ -300,7 +302,7 @@ def test_a_cancelled_batch_stops_queued_reads(tmp_path):
     def reply(call):
         holder['run'].cancel()                      # stop pressed during the first read
         return '{"value": "1"}'
-    runner = Runner(exam, ws, model=FakeModel(reply))
+    runner = Runner(ws, model=FakeModel(reply))
     plan = batch.plan(ws, batch.Selection(('s1', 's2', 's3'), ('info',)), model_available=True)
     run = holder['run'] = batch.BatchRun(runner, plan, parallel=1)
     run.run()
@@ -315,7 +317,7 @@ def test_a_batch_reads_what_it_plans_and_never_what_a_person_set_meanwhile(tmp_p
     exam = Exam('r', pages=1)
     exam.question('info', pages=[1], fields=[Field('c', read=Printed("the cue", reads={'1': 'one'}))])
     ws = workspace(tmp_path, exam, subs=('s1', 's2'))
-    runner = Runner(exam, ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
+    runner = Runner(ws, model=FakeModel({('info', 'read:c'): '{"value": "1"}'}))
     sel = batch.Selection(('s1', 's2'), ('info',))
     plan = lambda: batch.plan(ws, sel, model_available=True)
     assert [(i.question, i.action) for i in plan().items] == [('info', 'blocked')] * 2
@@ -343,16 +345,15 @@ def test_a_whole_page_reader_on_a_missing_page_is_blocked_and_not_planned(tmp_pa
     missing page: the runner blocks it, the batch plan does not count it, and the
     model is never asked."""
     from examinator.core import batch
-    from examinator.core.runner import unreadable
     exam = make_exam()
     ws = workspace(tmp_path, exam, subs=('s1', 's2'))
     short_pdf(ws, 's1', 1)                                  # s1 has no page 2
     model = FakeModel(dict(SCRIPT))
-    runner = Runner(exam, ws, model=model)
+    runner = Runner(ws, model=model)
     try:
         assert ws.missing('s1') == {2}
-        assert unreadable(ws, 's1', exam.questions['b']) == {'x': 'page missing'}
-        assert unreadable(ws, 's2', exam.questions['b']) == {}
+        assert runner.to_read('s1', 'b').blocked == {'x': 'page missing'}
+        assert runner.to_read('s2', 'b').blocked == {}
         assert [(o.status, o.detail) for o in runner.read('s1', 'b')] == [('blocked', "page missing: x")]
         assert value(ws, 's1', 'b/x') is None and not model.calls
         plan = batch.plan(ws, batch.Selection(('s1', 's2'), ('b',)), model_available=True)
@@ -368,7 +369,7 @@ def test_a_whole_page_reader_needs_every_page_of_its_question(tmp_path):
     """Some of a whole-page reader's pages missing: none of its fields is read (a
     field with a region on a page that is there included). A region reader reads
     a field whose page is there."""
-    from examinator.core.runner import unreadable
+    from examinator.core.runner import to_read
     exam = Exam('two', pages=2)
     exam.question('w', pages=[1, 2], fields=[Field('x', Region(1, 0, 0, 500, 100)), Field('y')], read=Parse())
     cue = Printed("cue", reads={'1': 'one'})
@@ -377,8 +378,9 @@ def test_a_whole_page_reader_needs_every_page_of_its_question(tmp_path):
     ws = workspace(tmp_path, exam, subs=('s1',))
     short_pdf(ws, 's1', 1)
     try:
-        assert unreadable(ws, 's1', exam.questions['w']) == {'x': 'page missing', 'y': 'page missing'}
-        assert unreadable(ws, 's1', exam.questions['r']) == {'d': 'page missing', 'e': 'no region'}
+        why = lambda qid: to_read(ws.layers('s1').question(qid), {}, ws.missing('s1')).blocked
+        assert why('w') == {'x': 'page missing', 'y': 'page missing'}
+        assert why('r') == {'d': 'page missing', 'e': 'no region'}
     finally:
         ws.close()
 
@@ -386,3 +388,64 @@ def test_a_whole_page_reader_needs_every_page_of_its_question(tmp_path):
 def test_a_crops_reader_reads_regions():
     from examinator.std import readers
     assert readers.answers(crops=True).needs_region and not readers.answers().needs_region
+
+
+# --- what a read reads: one computation ----------------------------------------------
+
+def test_the_plan_counts_exactly_what_the_reads_then_do(tmp_path, monkeypatch):
+    """For random selections and options on a synthetic workspace (some values verified,
+    a box taken away, a submission missing a page, the model on or off), each question's
+    plan is what reading it then does: the fields its readers are given, field for field,
+    and nothing at all where it reads none."""
+    import random
+
+    from examinator import load_exam, synth
+    from examinator.core import batch, runner as runner_mod
+    from examinator.core.workspace import Workspace
+    toy = load_exam(TOY)
+    root = synth.generate(toy, tmp_path / 'ws', synth.load_cases(toy))
+    ws = Workspace(root, toy)
+    ws.sync()
+    model = synth.fake_model(root)
+    runner = Runner(ws, model=model)
+    given: list[tuple[str, str, tuple[str, ...]]] = []
+    real = runner_mod.read_group
+    monkeypatch.setattr(runner_mod, 'read_group', lambda ws_, sub, q, reader, fields, services: (
+        given.append((sub, q.id, tuple(f.label for f in fields))), real(ws_, sub, q, reader, fields, services))[1])
+    rng = random.Random(4580)
+    subs = [s.id for s in ws.store.submissions()]
+    seen = set()
+    try:
+        short_pdf(ws, subs[0], 2)                                       # pages 3 and 4 missing
+        overrides.set(ws, 'areas/fields/A.1/region', None, author='ta')   # this box taken away
+        for sid in subs[1:3]:
+            runner.read(sid, 'areas')
+            runner.read(sid, 'parity')
+            for k, v in list(runner.values(sid).items()):
+                if k.startswith('parity/') or k.endswith('/side'):
+                    runner.verify(sid, *k.split('/'), author='ta', expect_rev=v.rev)
+        for _ in range(25):
+            sel = batch.Selection(tuple(rng.sample(subs, rng.randint(1, len(subs)))),
+                                  tuple(rng.sample(list(ws.exam.questions), rng.randint(1, len(ws.exam.questions)))),
+                                  missing_only=rng.random() < 0.4, include_protected=rng.random() < 0.3)
+            on = rng.random() < 0.8
+            plan = batch.plan(ws, sel, model_available=on)
+            seen |= {(i.action, i.reason) for i in plan.items if i.action != 'read'} | {i.action for i in plan.items}
+            runner.model = model if on else None
+            planned = {(i.submission, i.question): i for i in plan.items}
+            for sid in sel.submissions:
+                for qid in sel.questions:
+                    want = runner.to_read(sid, qid, missing_only=sel.missing_only,
+                                          include_protected=sel.include_protected)
+                    given.clear()
+                    outs = runner.read(sid, qid, missing_only=sel.missing_only, include_protected=sel.include_protected)
+                    item = planned.get((sid, qid))
+                    assert sum(len(g[2]) for g in given) == (item.fields if item else 0) == want.count
+                    assert [g[2] for g in given] == [tuple(f.label for f in fs) for _, fs in want.groups]
+                    assert (item is not None and item.action == 'blocked') == (
+                        not given and any(o.status == 'blocked' for o in outs))
+        assert {'read', 'skip_present', 'skip_protected', ('blocked', "model unavailable"),
+                ('blocked', "page missing")} <= seen
+    finally:
+        runner.close()
+        ws.close()

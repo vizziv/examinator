@@ -112,9 +112,9 @@ def test_a_submission_may_name_its_extra_sheets(tmp_path):
     with pytest.raises(ValueError, match=r"page 3 is not a printed page \(1..1\) or an extra sheet \(2..2\)"):
         overrides.set(ws, 'k/fields/x/region', [3, 0, 0, 500, 100], scope=S1, author='ta')
     q = exam.questions['k']
-    assert ws.region('s1', q, 'x') == Region(2, 0, 0, 500, 100) and ws.selected_pages('s1', q) == (1, 2)
-    assert ws.region('s2', q, 'x') == q.field('x').region and ws.selected_pages('s2', q) == (1,)
-    assert ws.crop('s1', ws.region('s1', q, 'x')).getpixel((5, 5))[0] < 50          # from the black sheet
+    assert ws.layers('s1').question(q.id).field('x').region == Region(2, 0, 0, 500, 100) and ws.layers('s1').question(q.id).pages == (1, 2)
+    assert ws.layers('s2').question(q.id).field('x').region == q.field('x').region and ws.layers('s2').question(q.id).pages == (1,)
+    assert ws.crop('s1', ws.layers('s1').question(q.id).field('x').region).getpixel((5, 5))[0] < 50          # from the black sheet
     ws.close()
 
 
@@ -139,10 +139,15 @@ def test_opening_a_workspace_applies_its_overrides(tmp_path):
     overrides.set(ws, 'k/fields/x/region', [1, 10, 10, 20, 20], author='ta')
     ws.close()
     exam = tiny()
+    base = exam.questions['k'].field('x').region
     ws = Workspace(ws.root, exam)
-    assert exam.questions['k'].field('x').region == Region(1, 10, 10, 20, 20)
-    assert ws.region('s1', exam.questions['k'], 'x') == Region(1, 10, 10, 20, 20)
+    assert ws.exam.questions['k'].field('x').region == Region(1, 10, 10, 20, 20)
+    assert ws.layers('s1').question('k').field('x').region == Region(1, 10, 10, 20, 20)
+    other = Workspace(workspace(tmp_path / 'other', exam).root, exam)       # the same package, another workspace
+    assert exam.questions['k'].field('x').region == base and exam.overrides == {}   # the package is untouched
+    assert other.exam.questions['k'].field('x').region == base and ws.exam is not other.exam
     ws.close()
+    other.close()
 
 
 # --- 3. a group apart is reached only through its own step -----------------------------------
@@ -151,7 +156,7 @@ def test_opening_a_workspace_applies_its_overrides(tmp_path):
 def site(tmp_path):
     exam = tiny()
     ws = workspace(tmp_path, exam)
-    runner = Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
+    runner = Runner(ws, model=FakeModel(dict(SCRIPT)))
     yield Site(exam, ws, runner)
     runner.close()
     ws.close()

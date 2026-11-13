@@ -1,6 +1,6 @@
 """Small helpers for readings: the `value` of a model's JSON reply, the normal
-form of a printed reading, and the memo key of reading one region (`core.ask`,
-intake's landmarks)."""
+form of a printed reading, and the memo key of reading one landmark region
+(intake's, which re-reads every sheet whenever it plans a split)."""
 from __future__ import annotations
 
 import json

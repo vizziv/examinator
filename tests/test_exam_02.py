@@ -80,8 +80,8 @@ def grade(exam, qid, answers, printing=None, check=None):
 
 
 def status(runner, sub, qid, check='check'):
-    q = runner.exam.questions[qid]
-    return runner.sheet(sub).status(runner.exam, q, q.check(check))
+    q = runner.ws.exam.questions[qid]
+    return runner.sheet(sub).status(runner.ws.exam, q, q.check(check))
 
 
 def read_and_verify(runner, sub, questions):
@@ -101,9 +101,9 @@ def test_selftest(exam, tmp_path):
 
 def test_definition(exam, pkg):
     v = pkg('versions')
-    assert list(exam.grading) == ['info'] + [f'q{i}' for i in range(1, 13)]
+    assert list(exam.questions) == ['info'] + [f'q{i}' for i in range(1, 13)]
     assert exam.pages == 28 and exam.print_area == (0, 0, 1000, 1000)
-    q = exam.grading
+    q = exam.questions
     assert q['info'].checks == () and q['info'].read is None
     assert all(isinstance(f.read, Printed) for f in q['info'].fields)
     assert [f.label for f in q['info'].fields] == [f.label for pair in v.FIELDS.values() for f in pair]
@@ -198,7 +198,7 @@ def test_versions_match_the_printed_blanks(exam, pkg):
         finally:
             doc.close()
     # Two printings show a question's pages identically exactly when they share its printing.
-    for qid, q in exam.grading.items():
+    for qid, q in exam.questions.items():
         if qid == 'info':
             continue
         seen = {}
@@ -220,7 +220,7 @@ def test_two_bits_combine_into_a_printing(exam, pkg, tmp_path):
     root = synth.generate(exam, tmp_path / 'ws', cases)
     ws = Workspace(root, exam)
     ws.sync()
-    runner = Runner(exam, ws, model=synth.fake_model(root))
+    runner = Runner(ws, model=synth.fake_model(root))
 
     def printed(sid):
         return {k.split('/')[1]: v.text for k, v in runner.values(sid).items() if k.startswith('info/')}
@@ -456,7 +456,7 @@ def test_work_is_decided_by_a_person(exam, pkg, tmp_path):
     root = synth.generate(exam, tmp_path / 'ws', [case])
     ws = Workspace(root, exam)
     ws.sync()
-    runner = Runner(exam, ws, model=synth.fake_model(root))
+    runner = Runner(ws, model=synth.fake_model(root))
     try:
         read_and_verify(runner, S, ('info', 'q7'))
         answer, check = status(runner, S, 'q7', 'answer'), status(runner, S, 'q7', 'check')
@@ -625,10 +625,10 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
     ws = Workspace(root, exam)
     ws.sync()
     model = synth.fake_model(root)
-    runner = Runner(exam, ws, model=model)
+    runner = Runner(ws, model=model)
     try:
         for sub in ws.store.submissions():
-            for qid in exam.grading:
+            for qid in exam.questions:
                 assert all(o.ok for o in runner.read(sub.id, qid))
     finally:
         runner.close()

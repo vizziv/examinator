@@ -28,7 +28,7 @@ def test_builtin_facets_agree_with_the_status_rules(env):
     table = focus.values_table(exam, ws.store)
     rows = {r.submission.id: r for r in grid.load(exam, ws.store)}
     for sid in ('s1', 's2'):
-        for qid, q in exam.grading.items():
+        for qid, q in exam.questions.items():
             several = len(q.checks) > 1
             for c in q.checks:
                 st = rows[sid].status[(qid, c.name)]
@@ -48,7 +48,7 @@ def test_builtin_facets_agree_with_the_status_rules(env):
 def test_state_facet_names_each_column_and_what_is_still_to_do(env):
     exam = env[0]
     ids = {f['id'] for q in focus.describe_facets(exam) for f in q['facets']}
-    for qid, q in exam.grading.items():
+    for qid, q in exam.questions.items():
         for check in [c.name for c in q.checks] or [None]:
             name, todo = focus.state_facet(q, check)
             assert f'{qid}/{name}' in ids
@@ -62,7 +62,7 @@ def test_state_facet_names_each_column_and_what_is_still_to_do(env):
 def test_table_shape_and_one_submission(env):
     exam, ws, runner = env
     table = focus.values_table(exam, ws.store)
-    ids = {focus.facet_id(qid, f) for qid, q in exam.grading.items() for f in focus.facets(q)}
+    ids = {focus.facet_id(qid, f) for qid, q in exam.questions.items() for f in focus.facets(q)}
     assert set(table) == ids
     for col in table.values():
         assert all(isinstance(v, list) and all(isinstance(x, str) for x in v) for v in col.values())
