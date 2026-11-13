@@ -43,6 +43,11 @@ STATES = ('decided', 'decided_outdated', 'to_decide', 'not_run', 'outdated', 'un
 COUNTING = ('decided', 'graded')
 VERIFIERS = ('reader', 'person')
 FIELD_STATES = ('not_read', 'unverified', 'verified')     # a question with no checks: its fields
+# every state as a person reads it: the one table wherever a state is shown (grid, filter, CLI)
+LABELS = {
+    'decided': "decided", 'decided_outdated': "decided, outdated", 'to_decide': "to decide",
+    'not_run': "not run", 'outdated': "outdated", 'unverified': "unverified", 'graded': "graded",
+    'not_read': "not read", 'verified': "verified"}
 
 
 @dataclass(frozen=True)

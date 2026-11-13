@@ -408,7 +408,7 @@
   function renderRows() {
     const E = plan.entries;
     const order = E.map((e, j) => j);
-    const fine = j => (E[j].doubts.length || !E[j].verified ? 0 : 1);
+    const fine = j => (E[j].doubts.length ? -E[j].doubts.length : E[j].verified ? 1 : 0);   // doubtful first, most first; then unverified
     const here = done() || (peek !== null && owner(peek) < 0) ? -1 : k;
     order.sort((a, b) => fine(a) - fine(b) || a - b);
     const twice = {};

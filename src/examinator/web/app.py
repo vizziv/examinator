@@ -84,13 +84,6 @@ IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 IMMUTABLE = 'private, max-age=31536000, immutable'     # a URL that names its content
 RESTARTED = "the app restarted since this page was loaded: reload"
 # What a person sees of a status: one word per idea (DESIGN.md, Words on screen).
-STATE_LABELS = {
-    'decided': "decided", 'decided_outdated': "decided, outdated", 'to_decide': "to decide",
-    'not_run': "not run", 'outdated': "outdated", 'unverified': "unverified", 'graded': "graded",
-    # a question with no checks: how its fields stand
-    'not_read': "not read", 'verified': "verified"}
-
-
 class Bad(ValueError):
     """Input the grader (or the page's script) should correct: HTTP 400."""
 
@@ -306,7 +299,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
     root = urlsplit(public_url).path.rstrip('/') if public_url else ''
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(HERE / 'templates'), autoescape=True,
                              trim_blocks=True, lstrip_blocks=True)
-    env.globals.update(labels=STATE_LABELS)
+    env.globals.update(labels=status.LABELS)
     jobs = Jobs()
     lock = threading.Lock()
 
@@ -409,13 +402,13 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                     cells.append({'qid': q.id, 'col': q.column(c.name), 'state': st.state,
                                   'glyph': glyph(st), 'cls': value_class(st), 'v': value_key(st),
                                   'blank': 'blank' in st.flags, 'counts': st.counts,
-                                  'title': STATE_LABELS[st.state]})
+                                  'title': status.LABELS[st.state]})
                 if not q.checks:
                     state = row.fields[q.id]
                     cells.append({'qid': q.id, 'col': q.id, 'state': state,
                                   'glyph': {'verified': '–', 'unverified': '?'}.get(state, ''),
                                   'cls': 'v-n', 'v': '', 'blank': False, 'counts': False,
-                                  'title': STATE_LABELS[state]})
+                                  'title': status.LABELS[state]})
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
                          'complete': row.complete, 'sort': row.points,
                          'hidden': bool(sel) and not focus.matches(table, sel, row.submission.id)})
