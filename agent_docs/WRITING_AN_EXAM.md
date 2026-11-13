@@ -228,9 +228,12 @@ def check(ctx):
   (`'correct'`, `'incorrect'`, `'blank'`, `None`), optionally `expected=` and
   `note=`. Blocks are shown below: `Note`, `Table`, `Code`, `Details`
   (collapsed) and `Image`, or the plain dicts they stand for (`std.blocks`).
-  They are checked when the check returns: a block that does not fit (a
-  table cell that is not text, a number, a boolean or None; an unknown key)
-  is a check error, shown as undecided with the reason.
+  Everything returned is checked when the check returns: a grade its points
+  do not accept (NaN or an infinity, a number out of range), flags that are
+  not text, a reason that is not text, a judgement of another shape, or a
+  block that does not fit (a table cell that is not text, a number, a
+  boolean or None; an unknown key) is a check error, shown as undecided with
+  the reason.
 - `Image(data, media_type='image/png', alt=, title=)` shows an image file's
   bytes (PNG, JPEG, GIF, WebP or SVG, at most 2 MB; at most 8 MB of evidence
   per result) with an `<img>`; top-level images go first, in a row. Draw on a
