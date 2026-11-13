@@ -17,8 +17,9 @@ with a blank placeholder where a page is missing (None in `Made.pages`), then
 its extra sheets in order (`split.lay_out`). Nothing downstream offsets a page. A submission
 that would change or disappear while it has grading work (identity fields are
 not grading work) is not touched unless the caller insists (`force`): `Busy`
-names them. A rewritten submission's remembered readings, and what a reader
-read in its identity fields, are dropped.
+names them. A rewritten submission's remembered readings are dropped; a value a
+reader read from a sheet it no longer has is stale (it records what it was read
+from: `runner.sources`).
 
 Who a submission is stays an attribute: the id is opaque and never changes.
 The roster, the identity fields, and the person a grader picks are
@@ -434,7 +435,6 @@ def accept(ws, id: str, *, force: bool = False,
                 ws.store.set_made(Made(sid, id, tuple(pages), {'sheets': orients}, now))
                 ws.store.put_submissions([identity.submission(ws, sid, f'{sid}.pdf')])
                 ws.store.clear_memo(sid)        # readings of the old pages
-                identity.forget(ws, sid)        # and what a reader read in the identity fields
             for sid in gone:
                 ws.store.delete_made(sid)
                 ws.store.delete_submission(sid)

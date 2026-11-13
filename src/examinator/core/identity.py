@@ -3,16 +3,25 @@ proposals, and the person a grader picks.
 
     setting 'people'                  the roster: [{'name', 'id', 'email', 'key'}]
     row (sub, '@identity/<column>', 'value')   an identity field's value, like any field's
-    row (sub, '', 'who')         the pick: a person's, or from an ID in the file name: {'name', 'id', 'email', 'key'?}
+    row (sub, '', 'who')              the pick: the person picked, {'name', 'id', 'email', 'from'}
 
 Where students write who they are is the exam's built-in group of identity
 fields (`defs.IDENTITY`): one ordinary field per roster column, with a region
 set in the package or drawn in the app (for every submission or for one), read
 by its reader (`Ask` about the handwriting, by default) with `Runner.read`, and
-set or verified like any field. Proposals are computed, never stored:
-`propose(read, roster)` is a pure function from the values (by roster column)
-to ranked candidates with a reason and a qualitative doubt. Nothing here
-confirms an identity; only `set_who`, a person's action, writes the pick.
+set or verified like any field. A value a reader wrote records what it was
+read from; one read from something else than its field would read now is
+stale: read again, and no evidence meanwhile.
+
+Matching acts only on unique evidence. Each identifying column (of a reading,
+or of a pick) yields the roster people it supports; a match needs them to
+single out one person. Ties and conflicts between columns are doubts shown to a
+person, never resolved silently. Proposals are computed, never stored:
+`Matcher.propose(read)` is a pure function of the values and the roster.
+Nothing here confirms an identity; only `pick`, a person's action, writes the
+pick, which records the person (not a roster key): its link to the current
+roster, and so "taken" and "twice", are derived by the same matching
+(`Matcher.find`). Whether someone is taken never changes a proposal.
 """
 from __future__ import annotations
 
@@ -21,21 +30,25 @@ import difflib
 import io
 import re
 import unicodedata
+from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
-from .defs import IDENTITY, Field, Question, digest, key, split_key
+from .defs import IDENTITY, Field, Question, digest, split_key
+from .runner import sheet, sources
 from .status import Value
-from .store import ANY, Submission
+from .store import Submission
 
 WHO = 'who'
+COLUMNS = ('name', 'id', 'email')
 
 # --- the roster ---------------------------------------------------------------------
 
 NAME_COLUMNS = ('name', 'full name', 'student name', 'student')
 FIRST, LAST = ('first name', 'first', 'given name'), ('last name', 'last', 'surname', 'family name')
 EMAIL = ('email', 'e-mail', 'email address')
-ID_COLUMNS = ('student id', 'sid', 'id', 'student number', 'netid', 'net id', 'id number')
+ID_COLUMNS = ('student id', 'sid', 'id', 'student number', 'id number')
 HEADERS = set(NAME_COLUMNS + FIRST + LAST + EMAIL + ID_COLUMNS)
+LONGEST = 200       # characters of a name (an email, an ID: less)
 
 
 def looks_like_id(text: str) -> bool:
@@ -45,7 +58,7 @@ def looks_like_id(text: str) -> bool:
 
 
 def _person(name: str, id: str = '', email: str = '') -> dict:
-    p = {'name': name.strip()[:200], 'id': id.strip()[:100], 'email': email.strip()[:200]}
+    p = {'name': name.strip()[:LONGEST], 'id': id.strip()[:100], 'email': email.strip()[:LONGEST]}
     p['key'] = p['email'] or p['id'] or p['name']
     return p
 
@@ -68,8 +81,9 @@ def read_roster(text: str) -> tuple[list[dict], list[str]]:
     spaces and at least one digit (`looks_like_id`); with more than two parts,
     exactly one may look like an ID and the rest is the name ("Lovelace, Ada,
     12345"). If neither part looks like an ID, the part without spaces is the
-    ID ("Ada Lovelace, alovelace"). Blank lines are skipped; a person already
-    listed (same email, ID or name) is reported, not added twice."""
+    ID ("Ada Lovelace, alovelace"). Blank lines are skipped. An email or ID
+    already on another line (or, for someone with neither, the same name) is
+    a problem: it could not tell two people apart."""
     text = text.lstrip('﻿')
     lines = text.splitlines()
     first = next((ln for ln in lines if ln.strip()), '')
@@ -105,10 +119,14 @@ def read_roster(text: str) -> tuple[list[dict], list[str]]:
             out.append((n, _person(name, ids[0])))
     people, seen = [], {}
     for n, p in out:
-        if p['key'] in seen:
-            problems.append(f"line {n}: {p['key']} is already on line {seen[p['key']]}")
+        marks = [(c, id_text(p[c])) for c in ('email', 'id') if id_text(p[c])] \
+            or [('name', ' '.join(sorted(name_tokens(p['name']))))]
+        dup = next((m for m in marks if m in seen), None)
+        if dup is not None:
+            what = {'email': "email", 'id': "ID", 'name': "name"}[dup[0]]
+            problems.append(f"line {n}: {what} {p[dup[0]]} is already on line {seen[dup]}")
             continue
-        seen[p['key']] = n
+        seen.update((m, n) for m in marks)
         people.append(p)
     return people, problems
 
@@ -134,71 +152,15 @@ def people(ws) -> list[dict]:
     return [dict(p) for p in ws.store.setting('people', [])]
 
 
+def on_roster(ws, key: str) -> dict | None:
+    """The roster person a page names by `key` (None: nobody, as after the roster changed)."""
+    return next((p for p in people(ws) if p['key'] == key), None)
+
+
 def label(person: Mapping) -> str:
-    """How a person appears in the picker (also what it sends back)."""
+    """How a person appears in lists."""
     extra = person.get('id') or person.get('email')
     return f"{person['name']} <{extra}>" if extra else person['name']
-
-
-# --- the pick -------------------------------------------------------------------------
-
-def who(ws, submission: str) -> dict:
-    """The person picked for a submission: {'name', 'id', 'email'} ('' when nobody)."""
-    a = ws.store.get(submission, '', WHO)
-    body = a.body if a is not None and isinstance(a.body, dict) else {}
-    return {'name': body.get('name', ""), 'id': body.get('id', ""), 'email': body.get('email', "")}
-
-
-def submission(ws, sid: str, pdf: str) -> Submission:
-    """A written submission's record, named by its pick."""
-    w = who(ws, sid)
-    return Submission(sid, w['name'], w['email'], pdf, w['id'])
-
-
-def set_who(ws, sid: str, text: str, *, author: str | None, expect_rev: Any = ANY) -> dict:
-    """Name a submission: a roster entry's label or key, free text if the roster
-    has no match (someone not on it), or nothing to clear it. `expect_rev`:
-    the pick's revision the person saw (None: there was none)."""
-    s = ws.store.submission(sid)
-    if s is None:
-        raise KeyError(sid)
-    text = (text or '').strip()[:300]
-    if not text:
-        ws.store.delete(sid, '', WHO, expect_rev=expect_rev)
-        body = {'name': "", 'id': "", 'email': ""}
-        rev = None
-    else:
-        roster = people(ws)
-        person = next((p for p in roster if text in (label(p), p['key'])), None)
-        # "Name, ID" (what the page starts typing from): that person if both match, else kept as typed
-        name, comma, id = text.rpartition(',')
-        name, id = (name.strip(), id.strip()) if comma and looks_like_id(id.strip()) else (text, "")
-        if person is None and id:
-            person = next((p for p in roster if p['id'] == id and fold(p['name']) == fold(name)), None)
-        body = ({'name': person['name'], 'id': person['id'], 'email': person['email'], 'key': person['key']}
-                if person else {'name': name, 'id': id, 'email': ""})
-        rev = ws.store.write(sid, '', WHO, body, origin='manual', author=author, expect_rev=expect_rev).rev
-    ws.store.put_submissions([Submission(s.id, body['name'], body['email'], s.pdf, body['id'])])
-    return {**body, 'rev': rev}
-
-
-def by_file(ws) -> int:
-    """The programmatic way to name submissions: a PDF whose file name carries
-    exactly one roster ID, as a whole run of letters and digits ("31415926.pdf",
-    "quiz-31415926.pdf"), is picked for that person, unless the submission has
-    or ever had a pick: a person's word, clearing included, stands."""
-    ids = {fold(p['id']): p for p in people(ws) if p['id']}
-    n = 0
-    for s in ws.store.submissions() if ids else ():
-        found = {t for t in re.findall(r'[^\W_]+', fold(s.id)) if t in ids}
-        if len(found) != 1 or ws.store.get(s.id, '', WHO) is not None or ws.store.history(s.id, '', WHO):
-            continue
-        p = ids[found.pop()]
-        body = {'name': p['name'], 'id': p['id'], 'email': p['email'], 'key': p['key']}
-        ws.store.write(s.id, '', WHO, body, origin='auto', expect_rev=None)
-        ws.store.put_submissions([Submission(s.id, p['name'], p['email'], s.pdf, p['id'])])
-        n += 1
-    return n
 
 
 # --- the identity fields: ordinary fields of the built-in group ------------------------
@@ -209,10 +171,43 @@ def group(ws) -> Question:
 
 
 def placed(ws, sid: str | None = None) -> tuple[Field, ...]:
-    """The identity fields in use: those with a region, every submission's (or
-    with this submission's own regions)."""
+    """The identity fields with a region: every submission's (or this submission's)."""
     g = group(ws)
     return tuple(f for f in (g.fields if sid is None else ws.fields(sid, g)) if f.region is not None)
+
+
+def boxed(ws) -> bool:
+    """Whether any submission has a name or ID box: the one test for "are there boxes"
+    (to show "read names", to read them)."""
+    return bool(placed(ws)) or any(placed(ws, s.id) for s in ws.store.submissions())
+
+
+@dataclass(frozen=True)
+class At:
+    """One submission's identity fields as they apply to it now, built once: its
+    placed fields (with its own regions), its print area, what reading each
+    would look at (`runner.sources`), and the sheets its boxes are on."""
+    fields: tuple[Field, ...]
+    layout: Any
+    sources: Mapping[str, str]
+    made: Any                       # `store.Made`, None for a PDF handed in split
+
+    @property
+    def sheets(self) -> dict[str, Any]:
+        """The sheets its boxes are on: page (as text) -> `runner.sheet`."""
+        return {str(p): sheet(self.made, p) for p in sorted({f.region.page for f in self.fields}) or [1]}
+
+    def stale(self, got: Mapping[str, Value]) -> list[str]:
+        """The placed fields to read: with no value, or a value read from something else."""
+        return [f.label for f in self.fields
+                if f.label not in got or got[f.label].stale(self.sources.get(f.label))]
+
+
+def at(ws, sid: str) -> At:
+    g = group(ws)
+    layout = ws.layout(sid)
+    fields = tuple(f for f in ws.fields(sid, g) if f.region is not None)
+    return At(fields, layout, sources(ws, sid, g, fields, layout=layout), ws.store.made_of(sid))
 
 
 def values(ws, sid: str | None = None) -> dict[str, dict[str, Value]]:
@@ -223,46 +218,17 @@ def values(ws, sid: str | None = None) -> dict[str, dict[str, Value]]:
     return out
 
 
-def stale(ws, sid: str, got: Mapping[str, Value]) -> list[str]:
-    """The identity fields of one submission to read: in use, and with no value, or
-    with a value no person verified that was read under another region, reader or
-    scan layout (a reader that remembers its readings says which: `Ask.memo_key`)."""
-    layout = None
-    out = []
-    for f in placed(ws, sid):
-        v = got.get(f.label)
-        if v is not None and v.verified == 'person':
-            continue
-        memo_key = getattr(f.read, 'memo_key', None)
-        if v is not None and callable(memo_key):
-            layout = layout or ws.layout(sid)
-            if ws.store.memo(sid, memo_key(IDENTITY, f, layout)) is not None:
-                continue
-        elif v is not None:
-            continue
-        out.append(f.label)
-    return out
-
-
 def unread(ws) -> list[str]:
-    """Submissions with an identity field to read (`stale`)."""
+    """Submissions with an identity field to read (`At.stale`)."""
     got = values(ws)
-    return [s.id for s in ws.store.submissions() if stale(ws, s.id, got.get(s.id, {}))]
+    return [s.id for s in ws.store.submissions() if at(ws, s.id).stale(got.get(s.id, {}))]
 
 
 def read(runner, sid: str, *, fresh: bool = False) -> list:
-    """Read one submission's identity fields that are in use: `Runner.read` of the
-    group, so what a person verified stays. `fresh` asks the model again."""
+    """Read one submission's placed identity fields: `Runner.read` of the group, so
+    what a person verified stays. `fresh` asks the model again."""
     labels = [f.label for f in placed(runner.ws, sid)]
     return runner.read(sid, IDENTITY, labels=labels, fresh=fresh) if labels else []
-
-
-def forget(ws, sid: str) -> None:
-    """Drop what a reader read in a submission's identity fields (its pages changed);
-    what a person set stays."""
-    for col, v in values(ws, sid).get(sid, {}).items():
-        if v.verified != 'person':
-            ws.store.delete(sid, key(IDENTITY, col), 'value')
 
 
 def usable(v: Value | None) -> str | None:
@@ -270,13 +236,97 @@ def usable(v: Value | None) -> str | None:
     return v.text if v is not None and v.text.strip() and not v.marker else None
 
 
+# --- the pick -------------------------------------------------------------------------
+
+def who(ws, submission: str) -> dict:
+    """The person picked for a submission: {'name', 'id', 'email'} ('' when nobody)."""
+    a = ws.store.get(submission, '', WHO)
+    body = a.body if a is not None and isinstance(a.body, dict) else {}
+    return {c: body.get(c, "") for c in COLUMNS}
+
+
+def submission(ws, sid: str, pdf: str) -> Submission:
+    """A written submission's record, named by its pick."""
+    w = who(ws, sid)
+    return Submission(sid, w['name'], w['email'], pdf, w['id'])
+
+
+def typed(text: str) -> dict:
+    """Someone typed in rather than picked from the roster: "Name", or "Name, ID"."""
+    text = text.strip() if isinstance(text, str) else ''
+    if not text or len(text) > LONGEST:
+        raise ValueError(f"expected a name (at most {LONGEST} characters)")
+    name, comma, id = text.rpartition(',')
+    return _person(name, id) if comma and name.strip() and looks_like_id(id.strip()) else _person(text)
+
+
+def pick(ws, sid: str, person: Mapping | None, *, author: str | None, expect_rev: int | None,
+         origin: str = 'manual') -> dict:
+    """Name a submission: the person (`on_roster`, `typed`), or None to unname it.
+    `expect_rev` is the pick's revision the person saw (None: there was none). The
+    pick records the sheets its boxes were on: when they change, it is to confirm again."""
+    s = ws.store.submission(sid)
+    if s is None:
+        raise KeyError(sid)
+    if person is None:
+        ws.store.delete(sid, '', WHO, expect_rev=expect_rev)
+        rev = None
+    else:
+        body = {c: str(person.get(c) or '') for c in COLUMNS}
+        rev = ws.store.write(sid, '', WHO, {**body, 'from': at(ws, sid).sheets}, origin=origin,
+                             author=author, expect_rev=expect_rev).rev
+    return _named(ws, s, rev)
+
+
+def restore(ws, sid: str, rev: int, *, expect_rev: int | None) -> dict:
+    """Undo: the pick as it was at revision `rev` (or none, if `rev` was its removal)."""
+    s = ws.store.submission(sid)
+    if s is None:
+        raise KeyError(sid)
+    return _named(ws, s, ws.store.restore(sid, '', WHO, rev, expect_rev=expect_rev).rev)
+
+
+def _named(ws, s: Submission, rev: int | None) -> dict:
+    w = who(ws, s.id)
+    ws.store.put_submissions([Submission(s.id, w['name'], w['email'], s.pdf, w['id'])])
+    return {**w, 'rev': rev}
+
+
+def recheck(body: Mapping, now: At) -> bool:
+    """A pick made while its boxes were on other sheets than they are now (the
+    submission was rewritten from changed sheets): to confirm again."""
+    return any(sheet(now.made, int(p)) != s for p, s in (body.get('from') or {}).items())
+
+
+def by_file(ws) -> int:
+    """The programmatic way to name submissions: a PDF whose file name carries
+    exactly one roster ID that only one person has, as a whole run of letters
+    and digits ("31415926.pdf", "quiz-31415926.pdf"), is picked for that
+    person, unless the submission has or ever had a pick: a person's word,
+    clearing included, stands."""
+    count: dict[str, int] = {}
+    for p in people(ws):
+        if id_text(p['id']):
+            count[id_text(p['id'])] = count.get(id_text(p['id']), 0) + 1
+    ids = {id_text(p['id']): p for p in people(ws) if count.get(id_text(p['id'])) == 1}
+    n = 0
+    for s in ws.store.submissions() if ids else ():
+        found = {t for t in re.findall(r'[^\W_]+', fold(s.id)) if t in ids}
+        if len(found) != 1 or ws.store.get(s.id, '', WHO) is not None or ws.store.history(s.id, '', WHO):
+            continue
+        pick(ws, s.id, ids[found.pop()], author=None, expect_rev=None, origin='auto')
+        n += 1
+    return n
+
+
 # --- proposing: pure ------------------------------------------------------------------
 
-DOUBTS = {'agree': "both agree", 'id': "ID only", 'name': "name only", 'disagree': "they disagree",
-          'nobody': "nobody close", 'empty': "empty", 'unread': "not read yet"}
-ORDER = ('disagree', 'nobody', 'empty', 'unread', 'name', 'id', 'agree')     # most doubtful first
-NAME_CLOSE = 0.8        # a name this similar points to a person ...
-NAME_MARGIN = 0.05      # ... if nobody else is within this of it
+DOUBTS = {'agree': "both agree", 'id': "ID only", 'email': "email only", 'name': "name only",
+          'disagree': "they disagree", 'tie': "several match", 'nobody': "nobody close",
+          'unreadable': "unreadable", 'empty': "empty", 'unread': "not read yet"}
+ORDER = ('disagree', 'tie', 'nobody', 'unreadable', 'empty', 'unread', 'name', 'email', 'id', 'agree')   # most doubtful first
+NAME_CLOSE = 0.8        # a name this similar supports a person ...
+NAME_MARGIN = 0.05      # ... unless someone else is within this of the best
 NAME_SOME = 0.6         # below this a name is no evidence at all
 NAME_EXACT = 0.999      # a name this similar is the same name
 ID_WEIGHT = {0: 1.0, 0.5: 0.9, 1: 0.7, 2: 0.45}       # by distance (0.5: look-alike characters only)
@@ -345,10 +395,11 @@ class Matcher:
 
     def __init__(self, roster: Sequence[Mapping]):
         self.roster = list(roster)
+        self.index = {p.get('key'): i for i, p in enumerate(self.roster)}
         self._names = [name_tokens(p.get('name') or '') for p in self.roster]
         self._ids = {f: [id_text(p.get(f) or '') for p in self.roster] for f in ('id', 'email')}
         self._alike = {f: [x.translate(ALIKE) for x in ids] for f, ids in self._ids.items()}
-        self._exact = {f: {} for f in self._ids}
+        self._exact: dict[str, dict[str, list[int]]] = {f: {} for f in self._ids}
         for f, ids in self._ids.items():
             for i, x in enumerate(ids):
                 if x:
@@ -373,66 +424,57 @@ class Matcher:
                 out[i] = d or 0.5
         return out
 
-    def propose(self, read: Mapping[str, str | None], *, taken: Mapping[str, str] | None = None,
-                limit: int = 5) -> dict:
-        """Ranked candidates for one submission from its readings by roster field
-        ('name', 'id', 'email'), each with a short reason; and the doubt:
-        'agree' (ID and name point to the same person), 'id' or 'name' (only
-        one points to someone), 'disagree' (they point to different people),
-        'nobody' (neither is close to anyone), 'unread' (nothing was read).
-        `taken` maps roster keys already picked for other submissions to those
-        submissions; such candidates are flagged, not left out."""
-        taken = taken or {}
-        if not any(read.get(f) for f in ('name', 'id', 'email')):
-            return {'doubt': 'unread', 'candidates': []}
-        dist: dict[int, float] = {}
-        for f in ('id', 'email'):
-            if read.get(f):
-                for i, d in self._id_distances(f, read[f]).items():
-                    dist[i] = min(d, dist.get(i, d))
-        names: dict[int, float] = {}
-        tokens = name_tokens(read.get('name') or '')
-        if tokens:
-            # one matcher per part read (difflib caches its second sequence), one ratio per distinct pair
-            seen: dict[tuple[str, str], float] = {}
-            sms = {t: difflib.SequenceMatcher(None, '', t) for t in tokens}
+    def _name_scores(self, reading: str | None) -> dict[int, float]:
+        """Roster index -> how alike the names are, for those at least `NAME_SOME`."""
+        tokens = name_tokens(reading or '')
+        if not tokens:
+            return {}
+        # one matcher per part read (difflib caches its second sequence), one ratio per distinct pair
+        seen: dict[tuple[str, str], float] = {}
+        sms = {t: difflib.SequenceMatcher(None, '', t) for t in tokens}
 
-            def ratio(t, u):
-                r = seen.get((t, u))
-                if r is None:
-                    sm = sms[t]
-                    sm.set_seq1(u)
-                    r = seen[t, u] = sm.ratio() if sm.real_quick_ratio() >= 0.5 and sm.quick_ratio() >= 0.5 else 0.0
-                return r
-            for i, toks in enumerate(self._names):
-                s = name_score(tokens, toks, ratio)
-                if s >= NAME_SOME:
-                    names[i] = s
-        by_id = None
-        if dist:
-            best = min(dist.values())
-            near = [i for i, d in dist.items() if d == best]
-            by_id = near[0] if len(near) == 1 else None
-        by_name = None
-        if names:
-            ranked = sorted(names.values(), reverse=True)
-            top = max(names, key=lambda i: names[i])
-            if ranked[0] >= NAME_CLOSE and (len(ranked) == 1 or ranked[0] - ranked[1] >= NAME_MARGIN):
-                by_name = top
-        # Evidence that cannot single anyone out alone still agrees with what the other points to:
-        # a name shared by two people, beside an ID that picks one of them.
-        if by_name is None and by_id is not None and names.get(by_id, 0) >= NAME_CLOSE:
-            by_name = by_id
-        if by_id is None and by_name is not None and by_name in dist:
-            by_id = by_name
-        if by_id is not None and by_name is not None:
-            doubt = 'agree' if by_id == by_name else 'disagree'
-        elif by_id is not None:
-            doubt = 'id'
-        elif by_name is not None:
-            doubt = 'name'
-        else:
-            doubt = 'nobody'
+        def ratio(t, u):
+            r = seen.get((t, u))
+            if r is None:
+                sm = sms[t]
+                sm.set_seq1(u)
+                r = seen[t, u] = sm.ratio() if sm.real_quick_ratio() >= 0.5 and sm.quick_ratio() >= 0.5 else 0.0
+            return r
+        out = {}
+        for i, toks in enumerate(self._names):
+            s = name_score(tokens, toks, ratio)
+            if s >= NAME_SOME:
+                out[i] = s
+        return out
+
+    def propose(self, read: Mapping[str, str | None], *, limit: int = 5) -> dict:
+        """Ranked candidates for one submission from its readings by roster column
+        ('name', 'id', 'email'), each with a short reason; and the doubt.
+
+        Each column read supports the people it fits best: an ID or email the
+        nearest within tolerance, a name those within `NAME_MARGIN` of the best
+        if that is at least `NAME_CLOSE`. The people every supporting column
+        shares decide: exactly one is 'agree' (two columns or more) or the
+        column's name ('id', 'email', 'name'); several, 'tie'; none, 'disagree'.
+        No column supporting anyone is 'nobody'; nothing read, 'unread'."""
+        if not any(read.get(c) for c in COLUMNS):
+            return {'doubt': 'unread', 'candidates': []}
+        support: dict[str, set[int]] = {}
+        dist: dict[int, float] = {}
+        for c in ('id', 'email'):
+            d = self._id_distances(c, read[c]) if read.get(c) else {}
+            if d:
+                best = min(d.values())
+                support[c] = {i for i, x in d.items() if x == best}
+                for i, x in d.items():
+                    dist[i] = min(x, dist.get(i, x))
+        names = self._name_scores(read.get('name'))
+        top = max(names.values(), default=0.0)
+        if top >= NAME_CLOSE:
+            support['name'] = {i for i, s in names.items() if s >= NAME_CLOSE and top - s < NAME_MARGIN}
+        common = set.intersection(*support.values()) if support else set()
+        doubt = ('nobody' if not support else 'disagree' if not common else 'tie' if len(common) > 1
+                 else 'agree' if len(support) > 1 else next(iter(support)))
         scores = {i: ID_WEIGHT.get(dist.get(i, -1), 0.0) + names.get(i, 0.0) for i in set(dist) | set(names)}
         # ties go to the ID: it is the stronger evidence
         order = sorted(scores, key=lambda i: (-scores[i], dist.get(i, 9), i))[:limit]
@@ -446,15 +488,28 @@ class Matcher:
                 s = names[i]
                 why.append("name exact" if s >= NAME_EXACT else "name close" if s >= NAME_CLOSE else f"name {round(s * 100)}%")
             cands.append({'key': p.get('key'), 'name': p.get('name', ''), 'id': p.get('id', ''),
-                          'label': label(p), 'score': round(scores[i], 3), 'why': ", ".join(why),
-                          'taken': taken.get(p.get('key'))})
+                          'label': label(p), 'score': round(scores[i], 3), 'why': ", ".join(why)})
         return {'doubt': doubt, 'candidates': cands}
 
+    def find(self, person: Mapping) -> int | None:
+        """The roster person a pick is (index), on unique exact evidence: by ID and
+        email where the pick and the roster have them (a person whose other column
+        differs is not them), else by the whole name; None when it is nobody, or
+        several."""
+        strong = {c: id_text(person.get(c) or '') for c in ('id', 'email')}
+        strong = {c: v for c, v in strong.items() if v and self._exact[c]}
+        if strong:
+            hits = {i for c, v in strong.items() for i in self._exact[c].get(v, ())}
+            ok = [i for i in hits if all(self._ids[c][i] in ('', v) for c, v in strong.items())]
+        else:
+            tokens = sorted(name_tokens(person.get('name') or ''))
+            ok = [i for i, t in enumerate(self._names) if tokens and sorted(t) == tokens]
+        return ok[0] if len(ok) == 1 else None
 
-def propose(read: Mapping[str, str | None], roster: Sequence[Mapping], *,
-            taken: Mapping[str, str] | None = None, limit: int = 5) -> dict:
+
+def propose(read: Mapping[str, str | None], roster: Sequence[Mapping], *, limit: int = 5) -> dict:
     """`Matcher(roster).propose(...)`: see there."""
-    return Matcher(roster).propose(read, taken=taken, limit=limit)
+    return Matcher(roster).propose(read, limit=limit)
 
 
 # --- everything at once, for the page and the command line ----------------------------
@@ -462,63 +517,71 @@ def propose(read: Mapping[str, str | None], roster: Sequence[Mapping], *,
 CACHE_LIMIT = 20_000        # proposals an overview cache holds before it starts again
 
 
-def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None) -> dict:
+def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None,
+             ats: Mapping[str, At] | None = None) -> dict:
     """Every submission (or `subs`) with its identity values, those to read
-    (`stale`), the proposal and the pick, most doubtful unconfirmed first, then the confirmed ones; and the
-    roster entries nobody is picked for. `cache`, a dict the caller keeps,
-    remembers proposals by value revisions and roster."""
+    (`At.stale`), the proposal and the pick, the unconfirmed first (most doubtful
+    first), then the confirmed ones; who on the roster is picked for which
+    submissions; and those nobody is picked for. `cache`, a dict the caller
+    keeps, remembers proposals by value revisions and roster; `ats`, each
+    submission's `at`, if the caller has them."""
     roster = people(ws)
-    cols = [f.label for f in group(ws).fields]
     rkey = digest(roster)
-    matcher = None
     cache = {} if cache is None else cache
     if len(cache) > CACHE_LIMIT:
         cache.clear()
+    matcher = cache.get(('matcher', rkey))
+    if matcher is None:
+        matcher = cache['matcher', rkey] = Matcher(roster)
     known = [s.id for s in ws.store.submissions()]
     ids = known if subs is None else [s for s in subs if s in set(known)]
     picks = {a.submission: a for a in ws.store.all(kinds=[WHO]) if a.submission in set(known)}
     every = values(ws)
-    taken: dict[str, list[str]] = {}
-    for sid, a in picks.items():
-        k = (a.body or {}).get('key')
-        if k:
-            taken.setdefault(k, []).append(sid)
+    # who each pick is on the roster now: derived, so a new roster relinks every pick
+    links = {sid: matcher.find(a.body or {}) for sid, a in picks.items()}
+    taken: dict[int, list[str]] = {}
+    for sid, i in sorted(links.items()):
+        if i is not None:
+            taken.setdefault(i, []).append(sid)
 
-    def other(k: str | None, sid: str) -> str | None:
-        """Another submission the person `k` is picked for, if any."""
-        return next((s for s in taken.get(k, ()) if s != sid), None)
+    def elsewhere(key: str | None, sid: str) -> str | None:
+        return next((s for s in taken.get(matcher.index.get(key), ()) if s != sid), None)
 
     rows = []
     for sid in ids:
+        a = (ats or {}).get(sid) or at(ws, sid)
         got = every.get(sid, {})
-        fields = [f.label for f in placed(ws, sid)]
-        read = {c: usable(got.get(c)) for c in fields}
-        ck = (sid, tuple((c, got[c].rev) for c in cols if c in got), tuple(fields), rkey)
+        stale = a.stale(got)
+        fresh = {f.label: got[f.label] for f in a.fields if f.label not in stale}
+        read = {c: usable(v) for c, v in fresh.items()}
+        ck = (sid, tuple((c, v.rev) for c, v in fresh.items()), tuple(stale), rkey)
         prop = cache.get(ck)
         if prop is None:
-            if roster and any(read.values()):
-                matcher = matcher or Matcher(roster)
+            if any(read.values()):
                 prop = matcher.propose(read)
             else:
-                # every field in use has a value and none says anything: empty, not unread
-                blank = bool(fields) and all(c in got for c in fields)
-                prop = {'doubt': 'nobody' if any(read.values()) else 'empty' if blank else 'unread',
-                        'candidates': []}
+                # nothing usable: still to read, could not be read, or every box blank
+                doubt = ('unread' if stale or not fresh else
+                         'unreadable' if any(v.marker for v in fresh.values()) else 'empty')
+                prop = {'doubt': doubt, 'candidates': []}
             cache[ck] = prop
         # who is already picked elsewhere is shown, never used to rank: a misreading must not cascade
-        cands = [{**c, 'taken': other(c['key'], sid)} for c in prop['candidates']]
-        pick = picks.get(sid)
-        body = pick.body if pick is not None and isinstance(pick.body, dict) else None
-        twice = bool(body and body.get('key') and len(taken.get(body['key'], ())) > 1)
-        rows.append({'sub': sid, 'read': read, 'stale': stale(ws, sid, got),
+        cands = [{**c, 'taken': elsewhere(c['key'], sid)} for c in prop['candidates']]
+        pick_row = picks.get(sid)
+        body = pick_row.body if pick_row is not None and isinstance(pick_row.body, dict) else None
+        link = links.get(sid)
+        rows.append({'sub': sid, 'read': read, 'stale': stale,
                      'values': {c: {'text': v.text, 'rev': v.rev, 'verified': v.verified, 'marker': v.marker}
                                 for c, v in got.items()},
                      'doubt': prop['doubt'], 'candidates': cands,
-                     'who': ({'name': body.get('name', ""), 'id': body.get('id', ""), 'key': body.get('key'),
-                              'twice': twice} if body else None),
-                     'rev': pick.rev if pick is not None else None})
+                     'who': ({**{c: body.get(c, "") for c in COLUMNS},
+                              'person': roster[link]['key'] if link is not None else None,
+                              'twice': link is not None and len(taken[link]) > 1,
+                              'recheck': recheck(body, a)} if body else None),
+                     'rev': pick_row.rev if pick_row is not None else None})
     rank = {d: i for i, d in enumerate(ORDER)}
-    rows.sort(key=lambda x: (x['who'] is not None, rank[x['doubt']] if x['who'] is None else 0, x['sub']))
-    picked = set(taken)
-    return {'rows': rows, 'nobody': [p for p in roster if p['key'] not in picked],
-            'left': sum(1 for x in rows if x['who'] is None)}
+    done = lambda x: x['who'] is not None and not x['who']['recheck']
+    rows.sort(key=lambda x: (done(x), 0 if done(x) else rank[x['doubt']], x['sub']))
+    return {'rows': rows, 'nobody': [p for i, p in enumerate(roster) if i not in taken],
+            'taken': {roster[i]['key']: subs for i, subs in taken.items()},
+            'left': sum(1 for x in rows if not done(x))}

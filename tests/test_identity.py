@@ -47,9 +47,28 @@ def test_lines_that_cannot_be_read_are_reported():
     people, problems = read_roster("Ada Lovelace\nAda, Lovelace\n12, 34\nAlan Turing, 1\nAlan T, 1\n")
     assert [p['name'] for p in people] == ["Alan Turing"]
     assert problems == ["line 1: expected a name and an ID", "line 2: expected a name and an ID",
-                        "line 3: expected a name and an ID", "line 5: 1 is already on line 4"]
+                        "line 3: expected a name and an ID", "line 5: ID 1 is already on line 4"]
     with pytest.raises(ValueError, match="line 1"):
         identity.parse_roster("Ada Lovelace\n")
+
+
+def test_an_id_or_email_two_people_share_is_a_problem():
+    people, problems = read_roster("Name,Email,Student ID\nAda Lovelace,ada@example.invalid,31415926\n"
+                                   "Ada King,ada.king@example.invalid,31415926\n"
+                                   "Alan Turing,ADA@example.invalid,27182818\nKim Park,,\nKim  park,,\n")
+    assert [p['name'] for p in people] == ["Ada Lovelace", "Kim Park"]
+    assert problems == ["line 3: ID 31415926 is already on line 2", "line 4: email ADA@example.invalid is already on line 2",
+                        "line 6: name Kim  park is already on line 5"]
+    # and should a roster hold one anyway, an ID two people have singles out nobody
+    twins = [{'name': "Ada Lovelace", 'id': "31415926", 'key': 'a'}, {'name': "Ada King", 'id': "31415926", 'key': 'b'}]
+    assert propose({'id': "31415926"}, twins)['doubt'] == 'tie'
+    assert propose({'id': "31415926", 'name': "Ada King"}, twins)['doubt'] == 'agree'
+    assert Matcher(twins).find({'name': "Ada King", 'id': "31415926"}) is None
+
+
+def test_header_names_are_generic():
+    people, problems = read_roster("Name,NetID\nAda Lovelace,al815\n")
+    assert problems == [] and people[0]['id'] == ''          # one institution's word is not a column here
 
 
 def test_a_header_means_columns_by_name():
@@ -130,9 +149,9 @@ def test_nobody_close_and_nothing_read():
     assert propose({'name': None, 'id': ''}, ROSTER) == {'doubt': 'unread', 'candidates': []}
 
 
-def test_names_too_alike_point_at_nobody_but_all_are_candidates():
+def test_names_too_alike_are_a_tie_and_all_are_candidates():
     r = propose({'name': "Kim Park"}, ROSTER)                           # two people of one name
-    assert r['doubt'] == 'nobody'
+    assert r['doubt'] == 'tie'
     assert [c['key'] for c in r['candidates'][:2]] == ['kim1', 'kim2']
     r = propose({'name': "Kim Park", 'id': "44444444"}, ROSTER)         # the ID settles it
     assert r['doubt'] == 'agree' and top(r) == 'kim2'
@@ -140,9 +159,24 @@ def test_names_too_alike_point_at_nobody_but_all_are_candidates():
     assert r['doubt'] == 'name' and [c['key'] for c in r['candidates'][:2]] == ['john', 'jon']
 
 
-def test_someone_already_picked_is_flagged_not_left_out():
-    r = propose({'name': "Ada Lovelace", 'id': "31415926"}, ROSTER, taken={'ada': 's0007'})
-    assert top(r) == 'ada' and r['candidates'][0]['taken'] == 's0007'
+def test_a_name_that_fits_others_than_the_id_is_a_disagreement():
+    roster = ROSTER + [{'name': "Ada Lovelace", 'id': "55555555", 'key': 'ada2'}]
+    r = propose({'name': "Ada Lovelace", 'id': "27182818"}, roster)     # two Adas, and Turing's ID
+    assert r['doubt'] == 'disagree' and top(r) == 'alan'
+    r = propose({'name': "Ada Lovelace", 'id': "31415926"}, roster)     # the ID picks one of them
+    assert r['doubt'] == 'agree' and top(r) == 'ada'
+    assert propose({'name': "Ada Lovelace"}, roster)['doubt'] == 'tie'
+    assert propose({'id': "31415926", 'email': "x@example.invalid"}, roster)['doubt'] == 'id'
+
+
+def test_finding_a_pick_on_a_roster():
+    m = Matcher(ROSTER + [{'name': "Ada Lovelace", 'id': '', 'email': "ada@example.invalid", 'key': 'ada3'}])
+    assert m.find({'name': "Someone", 'id': "27182818"}) == 1           # by ID, whatever the name
+    assert m.find({'name': "Alan Turing", 'id': "99999999"}) is None    # an ID nobody has: not by name
+    assert m.find({'name': "turing, alan"}) == 1                        # nothing else to go by: the whole name
+    assert m.find({'name': "Kim Park"}) is None                         # two of them
+    assert m.find({'name': "Ada Lovelace", 'id': "31415926", 'email': "ada@example.invalid"}) is None   # conflict
+    assert Matcher([{'name': "Ada Lovelace", 'key': 'a'}]).find({'name': "Ada Lovelace", 'id': "1"}) == 0
 
 
 def test_distance_and_name_score():
@@ -286,10 +320,10 @@ def test_picks_confirm_flag_twice_and_name_submissions(written):
     for sid in ('s0004', 's0007'):
         identity.read(runner, sid)
     gray = next(p for p in identity.people(ws) if p['name'] == "Gray Placeholt")
-    body = identity.set_who(ws, 's0007', gray['key'], author='t', expect_rev=None)
+    body = identity.pick(ws, 's0007', gray, author='t', expect_rev=None)
     assert body['id'] == "96174385" and ws.store.submission('s0007').student == "96174385"
     with pytest.raises(Conflict):                   # someone else picked meanwhile
-        identity.set_who(ws, 's0007', gray['key'], author='t', expect_rev=None)
+        identity.pick(ws, 's0007', gray, author='t', expect_rev=None)
     rows = {r['sub']: r for r in identity.overview(ws)['rows']}
     # Gray (by the ID) and Devon (by the name) match equally well: still a doubt, ranked by the
     # match alone (the ID first); Gray, already picked for s0007, is flagged, not moved
@@ -297,37 +331,130 @@ def test_picks_confirm_flag_twice_and_name_submissions(written):
     assert rows['s0004']['doubt'] == 'disagree' and cands[0]['score'] == cands[1]['score']
     assert cands[0]['key'] == gray['key'] and cands[0]['taken'] == 's0007'
     assert cands[1]['name'] == "Devon Fakely" and cands[1]['taken'] is None
-    identity.set_who(ws, 's0004', identity.label(gray), author='t')
+    identity.pick(ws, 's0004', gray, author='t', expect_rev=None)
     rows = {r['sub']: r for r in identity.overview(ws)['rows']}
     assert rows['s0004']['who']['twice'] and rows['s0007']['who']['twice']
     view = identity.overview(ws)
     assert view['left'] == 8 and [r['sub'] for r in view['rows']][-2:] == ['s0004', 's0007']
     assert "Gray Placeholt" not in {p['name'] for p in view['nobody']}
-    # someone not on the roster: free text; clearing
-    identity.set_who(ws, 's0006', "Finley Dummond", author='t')
+    assert view['taken'] == {gray['key']: ['s0004', 's0007']}
+    # someone not on the roster: typed; "Name, ID" keeps its ID; clearing
+    rev = identity.pick(ws, 's0006', identity.typed("Finley Dummond"), author='t', expect_rev=None)['rev']
     assert ws.store.submission('s0006').name == "Finley Dummond" and ws.store.submission('s0006').student == ''
-    identity.set_who(ws, 's0006', "", author='t')
+    rev = identity.pick(ws, 's0006', identity.typed("Finley Dummond, 95830142"), author='t', expect_rev=rev)['rev']
+    assert (ws.store.submission('s0006').name, ws.store.submission('s0006').student) == ("Finley Dummond", "95830142")
+    assert identity.typed("Dummond, Finley")['name'] == "Dummond, Finley"
+    with pytest.raises(ValueError):
+        identity.typed("  ")
+    # typed with a roster person's ID: it is that person, derived like any pick
+    rev = identity.pick(ws, 's0006', identity.typed("G. Placeholt, 96174385"), author='t', expect_rev=rev)['rev']
+    assert {r['sub']: r for r in identity.overview(ws)['rows']}['s0006']['who']['person'] == gray['key']
+    identity.pick(ws, 's0006', None, author='t', expect_rev=rev)
     assert ws.store.submission('s0006').name == ""
-    # "Name, ID" as the page starts typing from what was read: the roster person when both
-    # match, else kept as typed with its ID
-    assert identity.set_who(ws, 's0006', "gray placeholt, 96174385", author='t')['key'] == gray['key']
-    body = identity.set_who(ws, 's0006', "Finley Dummond, 95830142", author='t')
-    assert (body['name'], body['id']) == ("Finley Dummond", "95830142")
-    assert identity.set_who(ws, 's0006', "Dummond, Finley", author='t')['name'] == "Dummond, Finley"
-    identity.set_who(ws, 's0006', "", author='t')
     assert ws.sync() == 10 and ws.store.submission('s0007').student == "96174385"
 
 
-def test_rewriting_a_submission_drops_what_was_read_but_keeps_the_pick(written):
+def test_who_is_taken_never_changes_a_proposal(written):
+    """The owner's rule: picks elsewhere never move the order, scores or doubt of proposals."""
+    ws, runner, model = written
+    for sid in sorted(ws.store.made()):
+        identity.read(runner, sid)
+    strip = lambda view: {r['sub']: (r['doubt'], [{k: v for k, v in c.items() if k != 'taken'} for c in r['candidates']])
+                          for r in view['rows']}
+    before = strip(identity.overview(ws))
+    roster = identity.people(ws)
+    for n, sid in enumerate(sorted(ws.store.made())):           # everyone picked: some twice, some wrongly
+        identity.pick(ws, sid, roster[n % 3], author='t', expect_rev=None)
+    after = identity.overview(ws)
+    assert strip(after) == before
+    assert any(c['taken'] for r in after['rows'] for c in r['candidates'])
+
+
+def test_a_new_roster_relinks_the_picks(written):
+    """Picks record the person; who they are on the roster is derived, so a roster
+    replaced by one keyed differently (emails added) keeps them matched, and "twice" still holds."""
+    ws, runner, model = written
+    with_emails = (ws.root / 'roster.csv').read_text()
+    identity.set_roster(ws, "\n".join(f"{p['name']}, {p['id']}" for p in identity.people(ws)) + "\n")
+    old = identity.people(ws)                       # keyed by ID
+    identity.pick(ws, 's0001', old[0], author='t', expect_rev=None)
+    identity.pick(ws, 's0002', old[0], author='t', expect_rev=None)
+    identity.pick(ws, 's0003', old[2], author='t', expect_rev=None)
+    identity.set_roster(ws, with_emails)
+    new = identity.people(ws)                       # keyed by email
+    assert new[0]['key'] != old[0]['key']
+    view = identity.overview(ws)
+    rows = {r['sub']: r for r in view['rows']}
+    assert rows['s0001']['who']['person'] == rows['s0002']['who']['person'] == new[0]['key']
+    assert rows['s0001']['who']['twice'] and not rows['s0003']['who']['twice']
+    assert old[0]['name'] not in {p['name'] for p in view['nobody']}
+    # a roster with names only: matched by the whole name
+    identity.set_roster(ws, "Name\n" + "\n".join(p['name'] for p in old) + "\n")
+    assert {r['sub']: r for r in identity.overview(ws)['rows']}['s0003']['who']['person'] == old[2]['name']
+
+
+def source_of(ws, sid, col):
+    return identity.at(ws, sid).sources[col]
+
+
+def test_empty_is_not_unreadable(written):
+    ws, runner, model = written
+    for col in ('name', 'id'):
+        runner._put_read('s0001', IDENTITY, col, "", False, source_of(ws, 's0001', col), False)
+    assert identity.overview(ws, ['s0001'])['rows'][0]['doubt'] == 'empty'
+    runner._put_read('s0001', IDENTITY, 'name', "[REVIEW: not read]", False, source_of(ws, 's0001', 'name'), False)
+    assert identity.overview(ws, ['s0001'])['rows'][0]['doubt'] == 'unreadable'
+
+
+def test_a_value_records_what_it_was_read_from(written):
+    """Region A, then the submission's own B (read), then A again: the value is B's
+    reading, so it is stale under A, shown as such and no evidence, until read again."""
+    ws, runner, model = written
+    path, scope = '@identity/fields/name/region', overrides.scope(overrides.SUBMISSION, 's0001')
+    identity.read(runner, 's0001')
+    a = runner.values('s0001')['@identity/name']
+    assert a.source == source_of(ws, 's0001', 'name') and 's0001' not in identity.unread(ws)
+    overrides.set(ws.exam, ws.store, path, [1, 100, 400, 800, 480], scope=scope, author='t')
+    assert 's0001' in identity.unread(ws)
+    identity.read(runner, 's0001')
+    b = runner.values('s0001')['@identity/name']
+    assert b.source != a.source and 's0001' not in identity.unread(ws)
+    overrides.clear(ws.exam, ws.store, path, scope=scope, expect_rev=ws.store.overrides(scope)[path].rev)
+    row = identity.overview(ws, ['s0001'])['rows'][0]
+    assert row['stale'] == ['name'] and 's0001' in identity.unread(ws)
+    assert 'name' not in row['read'] and row['doubt'] == 'id'                # B's reading is no evidence under A
+    identity.read(runner, 's0001')
+    assert runner.values('s0001')['@identity/name'].source == a.source and 's0001' not in identity.unread(ws)
+    # a value a person verified or typed is never stale
+    overrides.set(ws.exam, ws.store, path, [1, 100, 400, 800, 480], scope=scope, author='t')
+    runner.verify('s0001', IDENTITY, 'name', author='t', expect_rev=runner.values('s0001')['@identity/name'].rev)
+    runner.set('s0001', IDENTITY, 'id', "90412873", author='t')
+    assert 's0001' not in identity.unread(ws)
+
+
+def test_rewriting_a_submission_keeps_what_still_holds(written):
+    """A rewritten submission keeps its values and its pick; a value read from a sheet it no
+    longer has is stale, and its pick is to confirm again."""
     ws, runner, model = written
     identity.read(runner, 's0001')
     runner.set('s0001', IDENTITY, 'id', "90412873", author='t')
-    identity.set_who(ws, 's0001', identity.people(ws)[0]['key'], author='t')
+    identity.pick(ws, 's0001', identity.people(ws)[0], author='t', expect_rev=None)
     one = ws.store.made()['s0001'].source
     intake.edit(ws, one, 'drop', sheet=3, expect_rev=intake.plan(ws, one).rev, author='t')
     assert intake.accept(ws, one)['rewritten'] == ['s0001']               # names are not grading work
-    assert texts(ws, 's0001') == {'id': "90412873"}                       # what a person set stays
-    assert ws.store.submission('s0001').name == "Avery Testwell"
+    row = identity.overview(ws, ['s0001'])['rows'][0]
+    assert texts(ws, 's0001') == {'name': "Avery Testwell", 'id': "90412873"}
+    assert row['stale'] == [] and not row['who']['recheck'] and ws.store.submission('s0001').name == "Avery Testwell"
+    # the sheet with the name box turned: the reading is stale, the pick to confirm again
+    intake.edit(ws, one, 'turn_page', sheet=0, expect_rev=intake.plan(ws, one).rev, author='t')
+    intake.accept(ws, one)
+    view = identity.overview(ws)
+    row = {r['sub']: r for r in view['rows']}['s0001']
+    assert row['stale'] == ['name'] and row['who']['recheck'] and row['who']['name'] == "Avery Testwell"
+    assert view['left'] == 10
+    rev = ws.store.get('s0001', '', identity.WHO).rev
+    identity.pick(ws, 's0001', identity.people(ws)[0], author='t', expect_rev=rev)          # confirmed again
+    assert not {r['sub']: r for r in identity.overview(ws)['rows']}['s0001']['who']['recheck']
 
 
 def test_a_failed_call_is_no_reading_and_not_remembered(tmp_path):
