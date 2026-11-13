@@ -4,10 +4,12 @@
 // proposal and goes to the next unverified submission, W / S show the other proposals, A / D
 // the other submissions. The picker under it filters the roster as you type (name, ID or
 // email); Enter takes the highlighted person and moves on. Nothing is named until a person
-// says so. Unverified and doubtful submissions come first. "boxes" draws the name and ID
-// boxes on the page, for every submission (rects.js, as regions are drawn on the question
-// page), saved as exam data (/exam/set, /exam/clear: listed on the Exam data page, revertible
-// there). Also the Roster step's table: everyone on it and the submission they are named for.
+// says so. Unverified and doubtful submissions come first. Each identity field (a name, an ID)
+// is an ordinary field: under its crop its value, which can be corrected (Enter) or verified
+// (/s/<sub>/@identity/save, as on a question page). "boxes" draws their regions on the page
+// (rects.js, as regions are drawn on the question page), saved for this submission or for
+// all as exam data (/exam/set, /exam/clear: listed on the Exam data page, revertible there).
+// Also the Roster step's table: everyone on it and the submission they are named for.
 // The step is shown by scans.js (the 'tab' event).
 (() => {
   const main = $('scans');
@@ -29,24 +31,24 @@
     words: fold(p.name).split(/[^\p{L}\p{N}]+/u).filter(Boolean), ids: [fold(p.id), fold(p.email)].filter(Boolean),
     hay: fold(`${p.name} ${p.id} ${p.email}`)}));
   // People matching every word typed, best first: a word starting a name part, the ID or the
-  // email counts more than one found inside them. Among equal matches, those `later(p)` says
-  // (already named for another submission) come after the rest.
-  function search(text, limit, later = () => false) {
+  // email counts more than one found inside them; equal matches in roster order. Who is already
+  // named for another submission is shown, never used to rank.
+  function search(text, limit) {
     const q = fold(text).split(/[\s,;<>]+/).filter(Boolean);
     if (!q.length) return limit ? [] : ROSTER;
     const hits = [];
-    for (const p of ROSTER) {
+    for (const [i, p] of ROSTER.entries()) {
       let score = 0;
       for (const t of q) {
         if (p.words.some(w => w.startsWith(t)) || p.ids.some(x => x.startsWith(t))) score += 2;
         else if (p.hay.includes(t)) score += 1;
         else { score = -1; break; }
       }
-      if (score > 0) hits.push([score, p]);
+      if (score > 0) hits.push([score, i, p]);
     }
-    if (!limit) return hits.map(h => h[1]);
-    hits.sort((a, b) => b[0] - a[0] || later(a[1]) - later(b[1]) || a[1].name.localeCompare(b[1].name));
-    return hits.slice(0, limit).map(h => h[1]);
+    if (!limit) return hits.map(h => h[2]);
+    hits.sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+    return hits.slice(0, limit).map(h => h[2]);
   }
   const elsewhere = (key, sub) => (taken[key] || []).filter(s => s !== sub);
 
@@ -65,8 +67,8 @@
     const typed = x => (x.candidates.length ? 0 : 1);
     order = order.filter(s => view.byId[s]).concat(fresh.sort((a, b) => typed(a) - typed(b)).map(x => x.sub));
     if (k >= order.length || !known.size) k = first();
-    if (keep) setBoxes(view.boxes, true);
-    else if (retake || !bx.edit || !bxDirty()) setBoxes(view.boxes);
+    if (retake) bx.touched = false;
+    for (const c of view.columns) if (!Actions.has(`names-box-add-${c.name}`)) addAction(c.name);
     if (want) jump();
     render();
     if (!$('roster-box').hidden) renderRoster();
@@ -111,7 +113,7 @@
   S.register('names-skip', {available: () => k < order.length, run: () => go(k + 1)});
   S.register('names-back', {available: () => k > 0, run: () => go(k - 1)});
   S.register('names-type', {available: () => !!row(), run: () => { pick.focus(); pick.select(); }});
-  S.register('names-read', {available: () => !!main.dataset.model && view.fields.length > 0, long: true, run: async () => {
+  S.register('names-read', {available: () => !!main.dataset.model && !!view && view.fields.length > 0, long: true, run: async () => {
     const r = await request('/scans/names/read', {});
     if (!r.ok) { flash(r.body.error || 'failed'); return; }
     $('msg').hidden = !r.body.n;
@@ -132,7 +134,7 @@
     const r = row(), text = pick.value.trim();
     if (!r) return [];
     if (!text) return r.candidates.map(c => ({key: c.key, name: c.name, id: c.id, why: c.why, taken: c.taken}));
-    const found = search(text, SHOWN, p => elsewhere(p.key, r.sub).length > 0).map(p => ({key: p.key, name: p.name,
+    const found = search(text, SHOWN).map(p => ({key: p.key, name: p.name,
       id: p.id, email: p.email, taken: elsewhere(p.key, r.sub)[0] || null}));
     return found.length ? found : [{free: text}];       // someone not on the roster: kept as typed
   }
@@ -195,38 +197,42 @@
   want = (location.hash.match(/sub=([^&]+)/) || [])[1] || null;
   if (want) want = decodeURIComponent(want);
 
-  // --- the name and ID boxes, drawn on the page shown (for every submission) ---
-  // The boxes are exam data: a declared box's region is the override '<root>/<name>/region' (none:
-  // not used), any other box is one override '<root>/<name>' holding all of it.
-  const bx = {edit: false, saved: [], drafts: [], revs: {}, declared: [], base: {}, root: '', asks: {}, sel: 0};
-  const clone = b => b.map(x => ({...x, region: [...x.region]}));
-  const bxDirty = () => !Rects.same(bx.drafts, bx.saved);
-  const boxDirty = x => !Rects.same(x, bx.saved.find(s => s.name === x.name));
-  const curBox = () => bx.drafts[bx.sel] || null;
-  const cur = () => (bx.edit && curBox() ? curBox().region : null);
-  const put = d => { curBox().region = d; };
+  // --- the identity fields' boxes, drawn on the page shown ---
+  // One box per roster column (view.columns): its region for every submission ('value', the
+  // exam's override '<path>' or the package's 'base'; null: not placed), or this submission's
+  // own (row.own). Saved like a region on the question page: for this submission or for all.
+  const bx = {edit: false, drafts: {}, touched: false, sel: ''};
+  const col = name => view.columns.find(c => c.name === name);
+  const saved = (r, name) => (r && r.own[name] ? r.own[name].value : col(name).value);
+  const savedAll = r => Object.fromEntries(view.columns.map(c => [c.name, saved(r, c.name)]));
+  const boxDirty = name => !Rects.same(bx.drafts[name], saved(row(), name));
+  const bxDirty = () => !!row() && view.columns.some(c => boxDirty(c.name));
+  const placed = () => view.columns.filter(c => bx.drafts[c.name]).map(c => c.name);
+  const cur = () => (bx.edit && bx.drafts[bx.sel] ? bx.drafts[bx.sel] : null);
+  const put = d => { bx.drafts[bx.sel] = d; bx.touched = true; };
   const say = (text, bad) => { $('wb-msg').textContent = text || ''; $('wb-msg').classList.toggle('notice', !!bad); };
-  function setBoxes(b, keep) {
-    Object.assign(bx, {saved: clone(b.boxes), revs: b.revs, declared: b.declared, base: b.base, root: b.root, asks: b.asks});
-    if (!keep) bx.drafts = clone(b.boxes);
-    bx.sel = Math.min(bx.sel, Math.max(0, bx.drafts.length - 1));
+  // The drafts follow the submission shown until something is edited.
+  function syncBoxes() {
+    if (!bx.touched || !row()) bx.drafts = Object.fromEntries(Object.entries(savedAll(row())).map(([k, v]) => [k, v && [...v]]));
+    if (!bx.drafts[bx.sel]) bx.sel = placed()[0] || '';
   }
   const page = (sub, index) => `${ROOT}/page/${encodeURIComponent(sub)}/${index}.jpg`;
   function drawBoxes() {
     const r = row(), sheet = $('wb-sheet');
     for (const el of sheet.querySelectorAll('.rbox, .parea')) el.remove();
     if (!r || !bx.edit) return;
-    const p = curBox() ? curBox().region[0] : 1;
+    const p = cur() ? cur()[0] : 1;
     const img = sheet.querySelector('img'), src = page(r.sub, r.cover + p - 1);
     if (img.getAttribute('src') !== src) img.src = src;
     sheet.append(Rects.area(r.print_area));          // context: where the printed page is on this scan
-    bx.drafts.forEach((x, i) => {
-      if (x.region[0] !== p) return;
-      const el = Rects.box(x.name, {sel: i === bx.sel, dirty: boxDirty(x)});
-      el.dataset.i = i;
-      Rects.place(el, x.region, r.print_area, view.pad);
+    for (const name of placed()) {
+      const d = bx.drafts[name];
+      if (d[0] !== p) continue;
+      const el = Rects.box(name + (r.own[name] ? ' (own)' : ''), {sel: name === bx.sel, dirty: boxDirty(name)});
+      el.dataset.name = name;
+      Rects.place(el, d, r.print_area, view.pad);
       sheet.append(el);
-    });
+    }
     $('wb-save').classList.toggle('dirty', bxDirty());
     Actions.enable($('wb'));
   }
@@ -236,72 +242,90 @@
     $('w-look').hidden = bx.edit;
     $('w-boxes-on').setAttribute('aria-pressed', String(bx.edit));
     if (!bx.edit) return;
-    const sel = $('wb-pick');
-    sel.replaceChildren(...bx.drafts.map((x, i) => make('option', {value: i, textContent: x.name + (x.roster ? '' : ' (not compared)')})));
+    syncBoxes();
+    const sel = $('wb-pick'), names = placed();
+    sel.replaceChildren(...names.map(n => make('option', {value: n, textContent: n})));
     sel.value = bx.sel;
-    sel.hidden = !bx.drafts.length;
-    for (const el of document.querySelectorAll('.wb-n, #wb-w, #wb-h')) el.closest('label').hidden = !bx.drafts.length;
+    sel.hidden = !names.length;
+    for (const el of document.querySelectorAll('.wb-n, #wb-w, #wb-h')) el.closest('label').hidden = !names.length;
+    for (const b of $('wb-add').querySelectorAll('button')) b.hidden = !!bx.drafts[b.dataset.col];
     fill(cur());
     drawBoxes();
   }
-  function select(i) { bx.sel = i; say(''); renderBoxes(); }
-  $('wb-pick').addEventListener('change', () => select(Number($('wb-pick').value)));
-  function add(roster, label, region) {
-    let n = label, j = 2;
-    while (bx.drafts.some(x => x.name === n)) n = `${label} ${j++}`;
-    bx.drafts.push({name: n, roster, region});
-    select(bx.drafts.length - 1);
-    say('new box: drag it onto the box on the page');
+  function select(name) { bx.sel = name; say(''); renderBoxes(); }
+  $('wb-pick').addEventListener('change', () => select($('wb-pick').value));
+  // "+ <column>": a box for a column with none, somewhere visible on the first page.
+  function addAction(name) {
+    const action = `names-box-add-${name}`;
+    S.register(action, {available: () => bx.edit && !!row() && !bx.drafts[name], run: () => {
+      const y = 100 + 120 * view.columns.findIndex(c => c.name === name);
+      bx.drafts[name] = [1, 100, y, 700, y + 80];
+      bx.touched = true;
+      select(name);
+      say('new box: drag it onto the box on the page');
+    }});
+    const b = make('button', {type: 'button', textContent: `+ ${name}`, title: `a box where the ${name} is written`});
+    Object.assign(b.dataset, {action, col: name});
+    $('wb-add').append(b);
   }
-  const has = roster => bx.drafts.some(x => x.roster === roster);
   S.register('names-boxes', {available: () => !!row(), run: () => { bx.edit = !bx.edit; say(''); render(); }});
-  S.register('names-box-add-name', {available: () => bx.edit && !has('name'), run: () => add('name', 'name', [1, 100, 100, 700, 180])});
-  S.register('names-box-add-id', {available: () => bx.edit && !has('id'), run: () => add('id', 'id', [1, 100, 220, 500, 300])});
-  S.register('names-box-remove', {available: () => bx.edit && !!curBox(), run: () => {
-    bx.drafts.splice(bx.sel, 1);
-    select(Math.max(0, bx.sel - 1));
+  S.register('names-box-remove', {available: () => bx.edit && !!cur(), run: () => {
+    bx.drafts[bx.sel] = null;
+    bx.touched = true;
+    select(placed()[0] || '');
+    say('removed: save for all');
   }});
-  S.register('names-box-undo', {available: () => bx.edit && bxDirty(), run: () => { bx.drafts = clone(bx.saved); select(Math.min(bx.sel, bx.drafts.length - 1)); }});
-  // What saving the drafts changes: one override set or cleared per box that differs from the saved.
-  const esc = n => n.replace(/%/g, '%25').replace(/\//g, '%2F');
-  function changes() {
-    const saved = Object.fromEntries(bx.saved.map(x => [x.name, x])), out = [];
-    const drafts = Object.fromEntries(bx.drafts.map(x => [x.name, x]));
-    for (const name of new Set([...Object.keys(saved), ...Object.keys(drafts)])) {
-      const a = saved[name], b = drafts[name];
-      if (a && b && Rects.same(a, b)) continue;
-      if (bx.declared.includes(name)) {         // its region; the package's again: no override
-        const path = `${bx.root}/${esc(name)}/region`, value = b ? b.region : null;
-        out.push(Rects.same(value, bx.base[name]) ? {path, clear: true} : {path, value});
+  S.register('names-box-undo', {available: () => bx.edit && bxDirty(), run: () => { bx.touched = false; say(''); renderBoxes(); }});
+  // What saving the drafts changes, one override set or cleared per box: for all submissions, against
+  // every submission's region (the package's again: no override); for this one, against what it shows.
+  function changes(level) {
+    const r = row(), out = [], scope = level === 'own' ? `submission:${r.sub}` : '';
+    for (const c of view.columns) {
+      const d = bx.drafts[c.name];
+      if (level === 'own') {
+        if (!d || !boxDirty(c.name)) continue;
+        const own = r.own[c.name];
+        out.push(Rects.same(d, c.value) && own ? {path: c.path, scope, clear: true, rev: own.rev}
+          : {path: c.path, scope, value: d, rev: own ? own.rev : null});
       } else {
-        const path = `${bx.root}/${esc(name)}`;
-        out.push(b ? {path, value: {region: b.region, ask: b.ask || bx.asks[b.roster], roster: b.roster}} : {path, clear: true});
+        if (Rects.same(d, c.value)) continue;
+        out.push(Rects.same(d, c.base) ? {path: c.path, scope, clear: true, rev: c.rev} : {path: c.path, scope, value: d, rev: c.rev});
       }
     }
-    return out.filter(c => !c.clear || c.path in bx.revs);
+    return out.filter(x => !x.clear || x.rev != null);
   }
+  const WHERE = {own: 'this submission', all: 'all submissions'};
   async function saveBoxes(list, what) {
     say('…');
+    const sub = row().sub;
     for (const c of list) {
-      const rev = bx.revs[c.path] ?? null;
-      const res = await request(c.clear ? '/exam/clear' : '/exam/set', c.clear ? {path: c.path, rev} : {path: c.path, value: c.value, rev});
+      const res = await request(c.clear ? '/exam/clear' : '/exam/set',
+        c.clear ? {path: c.path, scope: c.scope, rev: c.rev} : {path: c.path, scope: c.scope, value: c.value, rev: c.rev});
       if (res.status === 409) {        // keep the drafts, take what is saved now: saving again overwrites knowingly
-        const cur = res.body.current || {};
-        await load(true);
-        say(`changed elsewhere${cur.who ? ' by ' + cur.who : ''}; save again to overwrite`, true);
+        const now = res.body.current || {};
+        await load();
+        say(`changed elsewhere${now.who ? ' by ' + now.who : ''}; save again to overwrite`, true);
         return;
       }
-      if (!res.ok) { say(res.body.error || 'failed', true); await load(true); return; }
-      if (res.body.rev == null) delete bx.revs[c.path]; else bx.revs[c.path] = res.body.rev;
+      if (!res.ok) { say(res.body.error || 'failed', true); await load(); return; }
     }
-    order = [];         // the readings no longer apply: read again, doubtful ones first again
+    const drafts = bx.drafts;
     await load(false, true);
-    say(`${what} · all submissions${view.boxes.boxes.length && main.dataset.model ? ' · read names to use them' : ''}`);
+    const shadowed = list.length && !list[0].scope && view.columns.some(c => view.byId[sub].own[c.name] && drafts[c.name]
+      && !Rects.same(drafts[c.name], view.byId[sub].own[c.name].value));
+    say(`${what}${shadowed ? ' · this submission keeps its own' : ''}${list.length && main.dataset.model ? ' · read names to use them' : ''}`);
   }
-  S.register('names-box-save', {available: () => bx.edit && bxDirty(), run: () => saveBoxes(changes(), 'saved')});
-  S.register('names-box-revert', {available: () => bx.edit && Object.keys(bx.revs).length > 0, run: () => {
-    if (!confirm(bx.declared.length ? "Back to the boxes the exam declares, for all submissions?" : "Remove the boxes, for all submissions?")) return;
-    return saveBoxes(Object.keys(bx.revs).map(path => ({path, clear: true})), 'reverted');
+  S.register('names-box-save-own', {available: () => bx.edit && changes('own').length > 0,
+    run: () => saveBoxes(changes('own'), `saved · ${WHERE.own}`)});
+  S.register('names-box-save', {available: () => bx.edit && !!row() && changes('all').length > 0,
+    run: () => saveBoxes(changes('all'), `saved · ${WHERE.all}`)});
+  S.register('names-box-drop-own', {available: () => bx.edit && !!row() && !!row().own[bx.sel], run: () => {
+    if (!confirm(`Drop this submission's own box for ${bx.sel}?`)) return;
+    return saveBoxes([{path: col(bx.sel).path, scope: `submission:${row().sub}`, clear: true, rev: row().own[bx.sel].rev}], 'own box dropped');
+  }});
+  S.register('names-box-revert', {available: () => bx.edit && view.columns.some(c => c.rev != null), run: () => {
+    if (!confirm("Back to the boxes the exam declares, for all submissions?")) return;
+    return saveBoxes(view.columns.filter(c => c.rev != null).map(c => ({path: c.path, scope: '', clear: true, rev: c.rev})), 'reverted · all submissions');
   }});
   Rects.arrows(() => live() && cur(), put, () => { fill(cur()); drawBoxes(); });
   // dragging: inside a box moves it, a corner resizes it; a click on another box selects it
@@ -310,8 +334,7 @@
   sheetEl.addEventListener('pointerdown', e => {
     const el = e.target.closest('.rbox');
     if (e.button !== 0 || !el || !bx.edit) return;
-    const i = Number(el.dataset.i);
-    if (i !== bx.sel) { select(i); return; }
+    if (el.dataset.name !== bx.sel) { select(el.dataset.name); return; }
     const q = sheetEl.getBoundingClientRect(), [wl, wt, wr, wb] = row().print_area;
     drag = {h: e.target.dataset.h || '', x: e.clientX, y: e.clientY, d: [...cur()],
             kx: 1e6 / (q.width * (wr - wl)), ky: 1e6 / (q.height * (wb - wt))};     // pixels -> per-mille of the printed page
@@ -331,6 +354,34 @@
   sheetEl.addEventListener('pointercancel', drop);
   addEventListener('beforeunload', e => { if (bx.edit && bxDirty()) e.preventDefault(); });
 
+  // --- an identity field's value: corrected or verified like any field's ---
+  async function saveValue(r, name, body) {
+    if ($('w-crops').contains(document.activeElement)) document.activeElement.blur();
+    const res = await request(`/s/${encodeURIComponent(r.sub)}/@identity/save`, body);
+    if (!res.ok) flash(res.body.error || 'failed');
+    await load();
+  }
+  function valueBox(r, name) {
+    const v = r.values[name], stale = r.stale.includes(name);
+    const input = make('input', {type: 'text', className: 'mono', value: v ? v.text : '', spellcheck: false,
+      placeholder: stale && main.dataset.model ? 'not read yet' : '', title: 'Enter: save (settled by you)'});
+    input.setAttribute('aria-label', name);
+    input.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || e.isComposing) return;
+      e.preventDefault();
+      if (v && input.value === v.text) return;
+      S.enqueue(() => saveValue(r, name, {values: {[`@identity/${name}`]: {text: input.value, rev: v ? v.rev : null}}}));
+    });
+    const out = [make('span', {className: 'dim', textContent: name + ' '}), input];
+    if (v && !v.settled && !v.marker) {
+      const ok = make('button', {type: 'button', className: 'quiet', textContent: '✓', title: 'verify this value'});
+      ok.addEventListener('click', () => S.enqueue(() => saveValue(r, name, {verify: [{key: `@identity/${name}`, rev: v.rev}]})));
+      out.push(' ', tag('unv', 'unverified'), ok);
+    }
+    if (stale && v && v.settled !== 'person') out.push(' ', tag('', 'read again'));
+    return out;
+  }
+
   // --- drawing the step ---
   let whole = !!pref('namesWhole', false);      // the whole first page, not only its top
   $('w-whole').addEventListener('click', () => { whole = !whole; setPref('namesWhole', whole); renderStep(); });
@@ -344,7 +395,7 @@
     return el;
   }
   // With no boxes nothing is read: unverified is all there is to say.
-  const doubtTag = r => (r.who ? tag('', 'verified') : !view.fields.length ? tag('unv', 'unverified')
+  const doubtTag = r => (r.who ? tag('', 'verified') : !r.crops.length ? tag('unv', 'unverified')
     : tag(DOUBT[r.doubt], view.doubts[r.doubt]));
 
   function renderStep() {
@@ -353,16 +404,15 @@
     $('w-main').hidden = done;
     $('w-sub').textContent = done ? (order.length ? 'done' : 'no submissions yet') : r.sub;
     $('w-pos').textContent = done ? '' : `${k + 1} of ${order.length}`;
-    $('w-tags').replaceChildren(...(done ? [] : [doubtTag(r), r.who && r.who.twice ? tag('bad', 'name twice') : '',
-      r.failed.length ? tag('bad', 'read failed', r.failed.join(', ')) : '']));
+    $('w-tags').replaceChildren(...(done ? [] : [doubtTag(r), r.who && r.who.twice ? tag('bad', 'name twice') : '']));
     if (done) return;
-    $('w-crops').replaceChildren(...r.crops.map(c => {
-      const read = r.read[c.name];
-      const known = Object.prototype.hasOwnProperty.call(r.read, c.name);
-      return make('figure', {}, crop(r.sub, c), make('figcaption', {},
-        make('span', {className: 'dim', textContent: c.name + ' '}),
-        make('span', {className: read ? 'mono' : 'dim', textContent: read == null ? (known ? 'empty' : 'not read yet') : read})));
-    }));
+    // the crops and their values: keep a value being typed in when nothing about it changed
+    const typing = document.activeElement && $('w-crops').contains(document.activeElement);
+    if (!typing || $('w-crops').dataset.sub !== r.sub) {
+      $('w-crops').dataset.sub = r.sub;
+      $('w-crops').replaceChildren(...r.crops.map(c => make('figure', {}, crop(r.sub, c),
+        make('figcaption', {}, ...valueBox(r, c.name)))));
+    }
     // The page: with no boxes, always (its top, or whole); with boxes, on request.
     const boxes = r.crops.length > 0, img = $('w-page').querySelector('img'), src = page(r.sub, r.cover);
     $('w-page').hidden = boxes && !whole;
@@ -408,10 +458,11 @@
 
   function render() {
     const left = view.left, n = view.rows.length, fields = view.fields.length;
-    const counts = {};
+    const counts = {}, stale = view.rows.filter(r => r.stale.length).length;
     for (const r of view.rows) if (!r.who) counts[r.doubt] = (counts[r.doubt] || 0) + 1;
     $('w-sum').replaceChildren(!n ? tag('', 'no submissions yet') : left ? tag('unv', `${left} unverified`) : tag('', `all ${n} verified`),
-      ...['disagree', 'nobody', 'empty', 'unread'].filter(d => counts[d] && (fields || d !== 'unread')).map(d => tag(DOUBT[d], `${counts[d]} ${view.doubts[d]}`)));
+      ...['disagree', 'nobody', 'empty'].filter(d => counts[d]).map(d => tag(DOUBT[d], `${counts[d]} ${view.doubts[d]}`)),
+      stale ? tag('', `${stale} to read`) : '');
     $('w-roster').textContent = view.roster ? `roster: ${view.roster}` : 'no roster yet';
     main.querySelector('[data-action="names-read"]').hidden = !fields;
     $('w-noboxes').hidden = !!fields;
@@ -419,7 +470,7 @@
     renderBoxes();
     renderStep();
     renderRows();
-    main.dispatchEvent(new CustomEvent('names', {detail: {n, left, unread: fields ? counts.unread || 0 : 0, proposal: !!cand(), fields}}));
+    main.dispatchEvent(new CustomEvent('names', {detail: {n, left, unread: stale, proposal: !!cand(), fields}}));
     Actions.hints();
     Actions.enable(main);
   }

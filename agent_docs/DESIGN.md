@@ -30,7 +30,7 @@ the status of a grade) is [`MODEL.md`](MODEL.md). This document is the rest.
 ```text
 src/examinator/           the library and app (this repository)
   core/                   definitions, store, status rules, runner, batch, overrides, focus;
-                          printed fields (printed); intake (split, intake, identity); reading a region (reading)
+                          asking about one region (ask: `Ask`, `Printed`); intake (split, intake, identity); reading helpers (reading)
   pdf/  model/            rendering, scan layout, orientation, writing PDFs; loopback model client
   std/                    the standard library: readers, prompts, fields, math, pseudocode, blocks
   web/                    server and browser interface
@@ -128,7 +128,8 @@ read into fields like anything else, and checks use it.
 
 - **A printed field** (`Field(label, region, read=Printed(ask, reads=...))`)
   is a field whose value the model reads from the *printed* text in its region
-  (`core/printed.py`), asked `ask`. With `reads`, a reading is normalised (case,
+  (`core/ask.py`: `Printed` is `Ask` with a prompt about printed text; `Ask`
+  alone asks about handwriting, as the identity fields do), asked `ask`. With `reads`, a reading is normalised (case,
   spaces, one layer of brackets or quotes, a trailing `.` or `%`) and mapped to a
   value; the prompt lists the expected readings and tells the model to answer
   with a review marker when it sees none of them. A reading that is absent, or
@@ -148,8 +149,8 @@ read into fields like anything else, and checks use it.
   question's own field, `std.fields.value(label, question=...)`,
   `std.fields.agree(...)` (fields that must agree, else undecided), or any
   `fn(ctx) -> value`.
-- Reading a printed field is `core/reading.py`, shared with intake's landmarks
-  and identity boxes. Regions are instructor-defined template rectangles. Do
+- Asking the model one thing about one region is `Ask.call`, the one call
+  path for printed fields, identity fields and intake's landmarks. Regions are instructor-defined template rectangles. Do
   **not** ask the model to locate regions (see `LESSONS.md`).
 
 **Open, worth a spike:** read a printed field with no model call by comparing
@@ -207,7 +208,7 @@ a change in the app, when the app starts, and before a batch run from the CLI.
 ```sql
 create table row (
   submission text not null,      -- or a source id, for its split plan
-  kind       text not null,      -- 'value' 'result' 'decision' 'identity' 'who' 'split'
+  kind       text not null,      -- 'value' 'result' 'decision' 'who' 'split'
   name       text not null,      -- 'question/label', 'question/check', a question id, or ''
   body       text,               -- JSON
   origin     text not null,      -- 'auto' | 'manual'
@@ -294,8 +295,8 @@ the PDF's identity, the page and the resolution.
   `Workspace.layout`, `fields`, `region`, `selected_pages`). Which scopes a kind
   of value may be set at is one table (`overrides.SCOPES`): a region and pages
   for the exam or a submission, a reader's note for a submission, the print
-  area and cover pages at all three; everything else, `@identity` included,
-  for the exam only. One validator (`overrides.validate`) serves every scope;
+  area and cover pages at all three; everything else for the exam only. The
+  identity fields' regions are field regions like any (exam or submission). One validator (`overrides.validate`) serves every scope;
   every scope has revisions, history and conflicts alike; the app sets and
   clears them all through `/exam/set` and `/exam/clear` with a `scope`.
 - Page numbers in an exam definition are **printed exam pages**. A scan may
@@ -470,7 +471,8 @@ submission into `pdfs/`; everything downstream is unchanged.
   needed: at the expected boundary, then neighbours back and forth (a page
   number jumps straight to the right place), and memoised per source, sheet,
   landmark, orientation and print area (`core/reading.py`'s `region_key`, the key
-  printed fields and identity boxes use too, with their cover pages). A
+  `Ask` uses too, with the cover pages). A landmark is asked as a `Printed`
+  would be (`Ask.call`). A
   failed model call leaves its sheet unread, not read as nothing; the plan
   counts such sheets (`failed`) and is not marked checked when every call failed.
 - **Doubts** are computed, never stored: too few or too many pages, a first
@@ -498,7 +500,8 @@ submission into `pdfs/`; everything downstream is unchanged.
   orientation. Ids are opaque (`s0001`), allocated once, never reused.
   Accepting marks every start confirmed. An entry left with no pages removes
   its submission. A submission that would change or disappear while it has
-  grading work (a value, a result or a decision) is refused with the
+  grading work (a value, a result or a decision; identity fields' values are
+  not grading work) is refused with the
   list (`Busy`); a forced accept keeps the work and clears that submission's
   model memo. PDFs are written to temporary files and moved into place only
   after the store has committed, so a plan edit in between changes nothing.
@@ -509,31 +512,33 @@ submission into `pdfs/`; everything downstream is unchanged.
   unreadable lines) comes before saving. The Roster tab lists everyone on it
   (sent once with the page, filtered in the browser) with the submission each
   is picked for, a link to it on Names, or "unmatched".
-  - **Declared boxes**: `Exam(identity=[Identity(name, region, ask, roster)])`,
-    shaped like a printed field, but about handwriting (`IDENTITY_PROMPT`); `roster`
-    is the roster field the reading is compared with (`'name'`, `'id'`,
-    `'email'`, or None to show only); boxes sharing a field are joined (first
-    and last name). The library names no field beyond those three.
-  - **Drawn boxes**: the Names tab's "boxes" (B) draws them on a submission's
-    page, inside its print area, with the question page's rectangle editor
-    (`static/rects.js`, shared with `regions.js`). They are exam data, saved
-    for every submission through `/exam/set` and `/exam/clear` like a field's
-    region (`core/overrides.py`, the exam-level list `@identity`, see
-    `Exam.LISTS`): a declared box's region is `@identity/<name>/region` (none:
-    the box is not used; also its `ask` and `roster`), a box the package does
-    not declare is one override `@identity/<name>` holding all of it (clearing
-    it takes it away). They show on the Exam data page and its change list,
-    with revisions, conflicts and revert. A box added in the app asks by its
-    roster field (`identity.ASKS`). `identity.boxes(ws)` (the live boxes with a
-    region) is what reading, proposals and the pages use.
-  - **Reading**: per written submission and box, through the model, memoised
-    per box (region and question), print area and cover pages. Stored as the
-    row `(submission, '', 'identity')`, `{'fields', 'basis'}` (history like
-    any row; unchanged readings are not rewritten); a reading under an old
-    box definition is ignored. A background job on the Scans page (and
-    `intake --names`) reads only what `identity.unread` lists; hidden
-    without a model or boxes. Accepting a rewritten submission drops its
-    reading (and memo), not its pick. No roster text ever reaches a prompt.
+  - **Identity fields**: `Exam(identity={'name': Field('name', Region(...)),
+    'id': Field('id', ...)})` maps roster columns to ordinary fields of the
+    built-in group `@identity` (`defs.identity_group`): one field per roster
+    column (`name`, `id`, `email`), those not mapped with no region. A field
+    without a reader of its own is read by `Ask(defs.ASKS[column])`, about
+    the handwriting. The group is a question in `exam.questions` with
+    `apart=True`; `exam.grading` (the grid, totals, filter facets, the Read
+    page, batch runs, prev/next question) leaves it out. Everything else is
+    a field's: values with revisions, history and `settled`; `Runner.read`,
+    `set`, `verify`; re-read protection; regions at exam and submission scope
+    (`@identity/fields/<column>/region`, the Exam data page); the memo;
+    scripted fake-model replies.
+  - **Boxes** on the Names tab ("boxes", B) are those regions, drawn on a
+    submission's page with the question page's rectangle editor
+    (`static/rects.js`): "+ <column>" for a column with none, "save for this
+    submission" or "save for all", "drop own", "revert all", as on the
+    question page.
+  - **Reading**: `identity.read(runner, sub)` is `Runner.read` of the group's
+    placed fields (`intake --names`, the Scans page's background job).
+    `identity.unread` lists submissions with a placed field with no value, or
+    a value no person settled whose reading is not remembered under the
+    field's current region and layout (`Ask.memo_key`): a moved box is read
+    again. Accepting a rewritten submission drops its memo and what a reader
+    read in its identity fields, not what a person set, nor its pick. No
+    roster text ever reaches a prompt. Each value shows under its crop on
+    the Names tab, where it can be corrected (Enter) or verified (✓), through
+    the question page's save endpoint.
   - **Proposing** is pure: `propose(readings by roster field, roster)` ranks
     candidates (an exact ID first; then IDs that differ only in look-alike
     characters such as `l`/`1` and `o`/`0`, compared both ways round so IDs
@@ -541,8 +546,11 @@ submission into `pdfs/`; everything downstream is unchanged.
     1 for 4-7, none for shorter; names by
     order-insensitive token similarity, accents, case and punctuation folded)
     with a reason, and gives a doubt: `agree`, `id`, `name`, `disagree`,
-    `nobody`, `unread`. A person already picked elsewhere is flagged, not
-    dropped, and comes after the others among equal scores. Computed on read, cached by reading revision and roster.
+    `nobody`, `empty`, `unread`, from the group's values (blank or marked
+    values are no evidence). A person already picked elsewhere is flagged,
+    never dropped or ranked lower: taken-ness never breaks a tie (one
+    confident misreading must not cascade into a second wrong match). Computed
+    on read, cached by value revisions and roster.
   - **Picking**: every submission is named by its pick `(submission, '', 'who')`
     (`{'name', 'id', 'email', 'key'}`), written by a person against the
     revision they saw. One programmatic way in, for PDFs handed in already
@@ -558,8 +566,8 @@ submission into `pdfs/`; everything downstream is unchanged.
     filters the roster as you type (a word starting a name part, ID or email
     first, then anywhere); Enter picks the highlighted person and moves on;
     while empty it lists the proposals. A person picked elsewhere is tagged
-    "already s0003" (a problem pill), listed after the others among equal
-    matches, and may still be picked (both are then flagged "name twice"). It also lists roster entries with no exam.
+    "already s0003" (a problem pill), ranked by the match alone (ties in
+    roster order), and may still be picked (both are then flagged "name twice"). It also lists roster entries with no exam.
 - A pre-split PDF that came in sideways could be fixed by adding it as a
   source of one submission (`length` = its pages), at the cost of a new id.
 

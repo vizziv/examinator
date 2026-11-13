@@ -7,7 +7,7 @@ addressed (as `get`, `write` and `delete` take it) by `(submission, name, kind)`
     'question/label'    'value'     a field's value: {'text', 'settled', 'by'}   (`core.status`)
     'question/check'    'result'    a check's result: grade, evidence, what it read
     'question/check'    'decision'  a person's grade for a check, and what they saw
-    ''                  'identity', 'who'   intake: who wrote it (`core.identity`)
+    ''                  'who'       who wrote it: the person picked (`core.identity`)
     ''                  'split'     intake: a source's split plan (`submission` is the source id)
 
 Overrides of exam data (`core.overrides`) are their own table, keyed by
@@ -193,9 +193,10 @@ class Store:
         return {r[1]: _row(r) for r in rows}
 
     def all(self, *, kinds: Iterable[str] | None = None, drop: str | None = None,
-            submission: str | None = None) -> list[Row]:
-        """Every row (of some kinds, of one submission), in one query. `drop`
-        is a JSON path left out of each body ('$.blocks'), so large parts are never loaded."""
+            submission: str | None = None, prefix: str | None = None) -> list[Row]:
+        """Every row (of some kinds, of one submission, whose name starts with
+        `prefix`), in one query. `drop` is a JSON path left out of each body
+        ('$.blocks'), so large parts are never loaded."""
         body = 'body' if drop is None else 'json_remove(body, ?)'
         sql, args = f'select submission, name, kind, {body}, origin, author, updated_at, rev from row', []
         if drop is not None:
@@ -208,6 +209,9 @@ class Store:
         if submission is not None:
             where.append('submission=?')
             args.append(submission)
+        if prefix is not None:
+            where.append('substr(name, 1, ?)=?')
+            args += [len(prefix), prefix]
         if where:
             sql += ' where ' + ' and '.join(where)
         with self._lock:
@@ -388,12 +392,14 @@ class Store:
         with self._lock:
             self._db.execute('delete from submission where id=?', (id,))
 
-    def has_work(self, submission: str) -> bool:
-        """Whether a submission has grading work: a value, a result or a decision."""
+    def has_work(self, submission: str, *, besides: str = '') -> bool:
+        """Whether a submission has grading work: a value, a result or a decision
+        (with `besides`, one whose name does not start with it)."""
         with self._lock:
             return self._db.execute(
-                f"select 1 from row where submission=? and kind in ({','.join('?' * len(WORK))}) limit 1",
-                (submission, *WORK)).fetchone() is not None
+                f"select 1 from row where submission=? and kind in ({','.join('?' * len(WORK))}) "
+                "and (?='' or substr(name, 1, ?)!=?) limit 1",
+                (submission, *WORK, besides, len(besides), besides)).fetchone() is not None
 
     @contextmanager
     def transaction(self):

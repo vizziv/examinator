@@ -38,9 +38,6 @@ area and the cover pages all live there, with revisions and history.
 - **Non-rectangular regions:** click points for a polygon around the actual
   answer, so the model sees the answer and not the surrounding work. Pairs
   with the per-submission region override.
-- **Identity boxes as ordinary fields**: they live in the scoped override store
-  already (`@identity/...`, exam scope only); a box per submission would be one
-  line in `overrides.SCOPES` once the boxes are fields.
 - **Own values of a removed submission** stay in the store (the Exam data page
   marks them "gone", revertible); intake does not clear them.
 - **No full page load between submissions:** today "next submission" loads a
@@ -65,9 +62,9 @@ area and the cover pages all live there, with revisions and history.
 - A narrow (~900 px) question page can scroll sideways with a wide crop.
 - Never exercised in a browser: uploading scans, a roster from a file,
   Accept's confirmation dialog, the Names tab for PDFs handed in already split.
-- Exam 3 declares no landmarks or identity boxes (boxes can now be drawn on
-  the Names tab; the scripted fake model has no answers for drawn boxes, so
-  "read names" fails there with `--fake`).
+- Exam 3 declares no landmarks or identity fields (boxes are drawn on the
+  Names tab; with `--fake` they read the synthetic stacks' names, but an email
+  box drawn on synthetic stacks has no scripted answer).
 - Picking a person already named for another submission names both (flagged
   "name twice"); it does not offer to move them.
 - No live-model run yet (`compare` untested live).
@@ -104,4 +101,5 @@ authoring guide.
   fuzzy matches and let it say which is plausible. Opens onto the model using
   tools interactively, a much larger topic. The matching heuristic is internal
   and can change with testing; the candidate rule is "the read identity fields,
-  fuzzy-searched together, turn up exactly one person not already taken".
+  fuzzy-searched together, turn up exactly one person". Whether a person is
+  already matched elsewhere never ranks or settles anything: it is only shown.

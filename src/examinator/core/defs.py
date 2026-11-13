@@ -100,29 +100,6 @@ class Landmark:
     reads: Mapping[str, int] | None = None
 
 
-ROSTER_FIELDS = ('name', 'id', 'email')     # what a roster row may hold (`core.identity`)
-
-
-@dataclass(frozen=True)
-class Identity:
-    """A box where the student writes who they are (a name, an ID, ...), read by
-    the model to propose a roster entry (`core.identity`). Like a printed
-    field: a `region` on a printed page and what to `ask` about it, here about the
-    handwriting. `roster` names the roster field the reading is compared with
-    ('name', 'id' or 'email'); None shows the reading without comparing it.
-    Several boxes may share a roster field (first and last name): their
-    readings are joined. A box whose `region` is None is not used (one taken
-    away in the app: `core.overrides`)."""
-    name: str = field(metadata={'override': False})     # its address
-    region: Region | None
-    ask: str
-    roster: str | None = None
-
-    def __post_init__(self):
-        if self.roster not in (None, *ROSTER_FIELDS):
-            raise ValueError(f"identity {self.name!r}: roster must be one of {ROSTER_FIELDS} or None")
-
-
 # --- grades -------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -244,7 +221,12 @@ class Check:
 
 @dataclass(frozen=True)
 class Question:
-    """A group: some fields and any number of checks. It has no state."""
+    """A group: some fields and any number of checks. It has no state.
+
+    `apart`: kept apart from grading (the built-in group of identity fields,
+    `IDENTITY`): no grid column, total, facets, batch reading or place in the
+    question order (`Exam.grading` leaves it out); its fields are fields like
+    any other."""
     id: str
     title: str
     pages: tuple[int, ...]                 # printed pages holding the answer
@@ -252,6 +234,7 @@ class Question:
     read: Any = None                       # reads the fields that have no reader of their own
     checks: tuple[Check, ...] = ()
     facets: tuple[Any, ...] = field(default=(), metadata={'describe': False})
+    apart: bool = field(default=False, metadata={'describe': False})
 
     @property
     def labels(self) -> tuple[str, ...]:
@@ -305,24 +288,51 @@ def split_key(k: str) -> tuple[str, str]:
     return question, label
 
 
+IDENTITY = '@identity'      # the built-in group of identity fields (question ids never start with '@')
+ROSTER_FIELDS = ('name', 'id', 'email')     # what a roster row may hold (`core.identity`)
+# What to ask about a roster column's field, when the exam does not say.
+ASKS = {'name': "the student's full name", 'id': "the student ID number",
+        'email': "the student's email address"}
+
+
+def identity_group(pages: int, identity: Mapping[str, Field] | None) -> Question:
+    """The built-in group of identity fields: one field per roster column, labelled
+    by it. A column the exam maps is its field as declared (asked about the
+    handwriting, `core.ask.Ask`, unless it has a reader); any other column is a
+    field with no region yet (drawn in the app: then it is read)."""
+    from .ask import Ask
+    identity = dict(identity or {})
+    for col, f in identity.items():
+        if col not in ROSTER_FIELDS:
+            raise ValueError(f"identity: {col!r} is not a roster column {ROSTER_FIELDS}")
+        if not isinstance(f, Field) or f.label != col:
+            raise ValueError(f"identity: {col!r} maps to a Field labelled {col!r}")
+        if f.region is not None:
+            check_region(f.region, pages, f"identity {col!r}")
+    fields = [identity.get(col) or Field(col) for col in [*identity, *(c for c in ROSTER_FIELDS if c not in identity)]]
+    fields = [f if f.read is not None else dataclasses.replace(f, read=Ask(ASKS[f.label])) for f in fields]
+    for f in fields:
+        f.read.validate(f"identity {f.label!r}")
+    return Question(IDENTITY, "Names", (1,), tuple(fields), apart=True)
+
+
 class Exam:
     """One printed exam: its pages and its questions.
 
-    `LISTS` are the exam-level lists of named items (frozen dataclasses with a
-    `name`) that overrides may edit, add to and take from (`core.overrides`,
-    paths '@<list>/...'); `base_lists` keeps them as the package built them.
+    `identity` maps roster columns ('name', 'id', 'email') to the fields where
+    students write them: ordinary fields of the built-in group `IDENTITY`
+    (`identity_group`), read on the scans page's Names step, never graded.
     `ATTRS` are the exam's own values overrides may replace (paths '@<attr>'):
     the print area (where the printed page sits on a scanned sheet: left, top,
     right, bottom, per-mille of the sheet) and the cover pages (scanned pages
     before printed page 1); `base_attrs` keeps them as the package built them."""
 
-    LISTS: Mapping[str, type] = {'identity': Identity}
     ATTRS: tuple[str, ...] = ('print_area', 'cover_pages')
 
     def __init__(self, id: str, *, title: str = "", pages: int,
                  print_area: Sequence[int] = (0, 0, 1000, 1000), cover_pages: int = 0,
                  crop_pad: int = 12, landmarks: Sequence[Landmark] = (),
-                 identity: Sequence[Identity] = ()):
+                 identity: Mapping[str, Field] | None = None):
         self.id = id
         self.title = title or id
         self.pages = pages
@@ -330,23 +340,29 @@ class Exam:
         self.cover_pages = cover_pages          # likewise
         self.crop_pad = crop_pad                # per-mille of the printed page around every crop
         self.landmarks = tuple(landmarks)       # how to tell which printed page a scanned sheet is (intake)
-        self.identity = tuple(identity)         # where students write who they are (intake: who is it)
-        for what, items in (('landmark', self.landmarks), ('identity', self.identity)):
-            names = [x.name for x in items]
-            if len(set(names)) != len(names):
-                raise ValueError(f"duplicate {what} names {names}")
-        for what, items in (('landmark', self.landmarks), ('identity', self.identity)):
-            for x in items:
-                if x.region is not None or what != 'identity':
-                    check_region(x.region, pages, f"{what} {x.name!r}")
-        self.questions: dict[str, Question] = {}   # live: base definitions plus overrides
-        self.base: dict[str, Question] = {}        # as built by the package
+        names = [x.name for x in self.landmarks]
+        if len(set(names)) != len(names):
+            raise ValueError(f"duplicate landmark names {names}")
+        for x in self.landmarks:
+            check_region(x.region, pages, f"landmark {x.name!r}")
+        group = identity_group(pages, identity)
+        self.questions: dict[str, Question] = {IDENTITY: group}   # live: base definitions plus overrides
+        self.base: dict[str, Question] = {IDENTITY: group}        # as built by the package
         self.overrides: dict[str, Any] = {}        # applied overrides {path: JSON value}; see `overrides`
-        self.base_lists: dict[str, tuple] = {name: getattr(self, name) for name in self.LISTS}
         self.base_attrs: dict[str, Any] = {name: getattr(self, name) for name in self.ATTRS}
         self.path: Path | None = None           # set by `load_exam`
         self.code_hash: str = ''
         self._hashes: dict = {}
+
+    @property
+    def grading(self) -> dict[str, Question]:
+        """The questions graders work through, in order: all but those kept apart."""
+        return {qid: q for qid, q in self.questions.items() if not q.apart}
+
+    @property
+    def identity(self) -> Question:
+        """The built-in group of identity fields, live (regions drawn in the app included)."""
+        return self.questions[IDENTITY]
 
     def question(self, id: str, *, title: str = "", pages: Sequence[int],
                  fields: Sequence[Field] = (), read: Any = None,

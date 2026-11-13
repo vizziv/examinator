@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from examinator import Check, Exam, Field, Identity, Printed, Region, load_exam
+from examinator import Check, Exam, Field, Printed, Region, load_exam
 from examinator.core import overrides
 from examinator.core.as_python import describe_changes
 from examinator.core.runner import Runner
@@ -18,7 +18,7 @@ TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
 
 
 def hashes(exam):
-    return {(qid, c.name): exam.check_hash(q, c) for qid, q in exam.questions.items() for c in q.checks}
+    return {(qid, c.name): exam.check_hash(q, c) for qid, q in exam.grading.items() for c in q.checks}
 
 
 def make_keyed_exam():
@@ -45,11 +45,11 @@ def kenv(tmp_path):
     ws = workspace(tmp_path, exam)
     runner = Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
     for sid in ('s1', 's2'):
-        for qid in exam.questions:
+        for qid in exam.grading:
             assert all(o.ok for o in runner.read(sid, qid))
         for k, v in runner.values(sid).items():
             runner.verify(sid, *k.split('/'), author='t', expect_rev=v.rev)
-        runner.refresh(sid, questions=list(exam.questions))
+        runner.refresh(sid, questions=list(exam.grading))
     yield exam, ws, runner
     runner.close()
     ws.close()
@@ -139,63 +139,48 @@ def test_stale_overrides_are_skipped_and_reported():
     assert exam.overrides == {'areas/read/notes': "Answers are integers."}
 
 
-# --- the exam's lists: identity boxes ----------------------------------------------------
+# --- the identity fields: a group like any other ------------------------------------------
 
-def test_identity_boxes_are_exam_data():
+def test_identity_fields_are_exam_data():
     exam = load_exam(TOY)
     entries = {e.path: e for e in overrides.editable(exam)}
-    declared = {f.name: f for f in exam.identity}
-    for name, f in declared.items():
-        e = entries[f'@identity/{name}/region']
-        assert e.kind == 'region' and e.nullable and e.base == [f.region.page, f.region.left, f.region.top,
-                                                               f.region.right, f.region.bottom]
-        assert entries[f'@identity/{name}/ask'].kind == 'text'
-        assert entries[f'@identity/{name}/roster'].kind == 'text' and entries[f'@identity/{name}/roster'].nullable
-    assert not any(p.startswith('@identity') and p.endswith('/name') for p in entries)     # the address
-    assert {e.path for e in overrides.editable(exam, '@identity')} == {p for p in entries if p.startswith('@identity')}
+    for f in exam.identity.fields:
+        e = entries[f'@identity/fields/{f.label}/region']
+        assert e.kind == 'region' and e.nullable
+        assert e.base == (None if f.region is None else [f.region.page, f.region.left, f.region.top,
+                                                         f.region.right, f.region.bottom])
+        assert entries[f'@identity/fields/{f.label}/read/ask'].kind == 'text'
+    assert '@identity/pages' not in entries and '@identity/note' not in entries     # no page to show
     base = exam.identity
-    added = {'region': [1, 10, 10, 300, 60], 'ask': "the email", 'roster': 'email'}
-    skipped = overrides.apply(exam, {'@identity/name/region': [1, 100, 190, 820, 290], '@identity/id/region': None,
-                                     '@identity/netid': added})
+    skipped = overrides.apply(exam, {'@identity/fields/name/region': [1, 100, 190, 820, 290],
+                                     '@identity/fields/id/region': None,
+                                     '@identity/fields/email/region': [1, 10, 10, 300, 60]})
     assert skipped == []
-    assert [f.name for f in exam.identity] == ['name', 'id', 'netid']
-    assert exam.identity[0].region == Region(1, 100, 190, 820, 290) and exam.identity[0].ask == base[0].ask
-    assert exam.identity[1].region is None                      # taken away: not used
-    assert exam.identity[2] == Identity('netid', Region(1, 10, 10, 300, 60), "the email", 'email')
-    assert exam.base_lists['identity'] == base                  # nothing mutated
-    entries = {e.path: e for e in overrides.editable(exam)}
-    assert entries['@identity/netid'].kind == 'item' and entries['@identity/netid'].base is None
-    assert entries['@identity/netid'].current == added and entries['@identity/id/region'].current is None
-    assert overrides.apply(exam, {}) == [] and exam.identity == base
-    # checked like any value, and by the item's own class
-    for path, value in [('@identity/name/region', [1, 500, 0, 400, 100]), ('@identity/name/roster', 'phone'),
-                        ('@identity/name/name', 'x'), ('@identity/name', {'region': [1, 1, 1, 2, 2], 'ask': "?"}),
-                        ('@identity/new', {'region': [1, 1, 1, 2, 2]}), ('@identity/new', None),
-                        ('@identity/new', {'region': [1, 1, 1, 2, 2], 'ask': "?", 'roster': 'phone'}),
-                        ('@identity/new', {'region': [1, 1, 1, 2, 2], 'ask': "?", 'colour': 'red'}),
-                        ('@identity', 1), ('@landmarks/x', 1)]:
+    g = exam.identity
+    assert g.field('name').region == Region(1, 100, 190, 820, 290) and g.field('name').read == base.field('name').read
+    assert g.field('id').region is None                         # taken away: not read
+    assert g.field('email').region == Region(1, 10, 10, 300, 60)    # a column the package left unplaced
+    assert exam.base['@identity'] is base                       # nothing mutated
+    assert overrides.apply(exam, {}) == [] and exam.identity is base
+    for path, value in [('@identity/fields/name/region', [1, 500, 0, 400, 100]), ('@identity/fields/nick/region', [1, 1, 1, 2, 2]),
+                        ('@identity/fields/name/label', 'x'), ('@identity', 1), ('@landmarks/x', 1)]:
         with pytest.raises(ValueError):
             overrides.validate(exam, path, value)
-    # one the package now declares itself is skipped, not applied twice
-    skipped = overrides.apply(exam, {'@identity/name': {'region': [1, 1, 1, 2, 2], 'ask': "?"}})
-    assert [s.path for s in skipped] == ['@identity/name'] and exam.identity == base
-    with pytest.raises(ValueError):
-        exam.question('@identity', pages=[1])
 
 
-def test_identity_box_changes_described_as_python(tmp_path):
+def test_identity_field_changes_described_as_python(tmp_path):
     exam = load_exam(TOY)
     ws = Workspace(tmp_path / 'ws', exam, create=True)
     try:
-        overrides.set(exam, ws.store, '@identity/id/region', [1, 100, 330, 600, 410], author='ta')
-        overrides.set(exam, ws.store, '@identity/netid', {'region': [1, 10, 10, 300, 60], 'ask': "the email",
-                                                          'roster': 'email'}, author='ta')
+        overrides.set(exam, ws.store, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='ta')
+        change = overrides.set(exam, ws.store, '@identity/fields/email/region', [1, 10, 10, 300, 60], author='ta')
+        assert change.checks == () and change.fields == (('@identity', 'email'),)     # offered to read again
         lines = describe_changes(exam, ws.store)
-        assert any(x.startswith('@identity/id/region: Region(') and '-> Region(1, 100, 330, 600, 410)' in x for x in lines)
-        assert any(x.startswith("@identity/netid: (added) -> Identity('netid', region=Region(1, 10, 10, 300, 60), "
-                                "ask='the email', roster='email')") for x in lines)
-        change = overrides.clear(exam, ws.store, '@identity/netid')
-        assert change.checks == () and [f.name for f in exam.identity] == ['name', 'id']
+        assert any(x.startswith('@identity/fields/id/region: Region(') and '-> Region(1, 100, 330, 600, 420)' in x
+                   for x in lines)
+        assert any(x.startswith('@identity/fields/email/region: None -> Region(1, 10, 10, 300, 60)') for x in lines)
+        overrides.clear(exam, ws.store, '@identity/fields/email/region')
+        assert exam.identity.field('email').region is None
     finally:
         ws.close()
 
@@ -408,9 +393,10 @@ def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
     overrides.clear(exam, ws.store, 'a/note', scope=S1)
     overrides.clear(exam, ws.store, 'a/pages')
     assert pages('s1') == ((1,), "")
-    # identity boxes: the exam only, for now
+    # an identity field's region, for one submission too (a student who wrote their name elsewhere)
+    assert overrides.validate(load_exam(TOY), '@identity/fields/name/region', [1, 1, 1, 5, 5], S1) == [1, 1, 1, 5, 5]
     with pytest.raises(ValueError):
-        overrides.validate(load_exam(TOY), '@identity/name/region', [1, 1, 1, 5, 5], S1)
+        overrides.validate(load_exam(TOY), '@identity/fields/name/read/ask', "x", S1)
 
 
 def test_conflicts_at_each_scope(scoped):
@@ -449,7 +435,7 @@ def test_one_validator_for_every_scope(scoped):
 def test_changes_below_the_exam_outdate_no_check(scoped):
     exam, ws = scoped
     before = {qc: exam.check_hash(exam.questions[qc[0]], exam.questions[qc[0]].check(qc[1])) for qc in
-              [(qid, c.name) for qid, q in exam.questions.items() for c in q.checks]}
+              [(qid, c.name) for qid, q in exam.grading.items() for c in q.checks]}
     change = overrides.set(exam, ws.store, 'a/fields/x/region', [1, 0, 0, 5, 5], scope=S1, author='ta')
     assert change.checks == () and change.fields == (('a', 'x'),)
     change = overrides.set(exam, ws.store, '@print_area', [5, 5, 995, 995], scope=SRC, author='ta')

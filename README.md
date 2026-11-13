@@ -87,13 +87,13 @@ with no spaces). The box shows how many people it read, the first few rows,
 and any line it could not read, before you save.
 
 If the exam declares where students write who they are
-(`Exam(identity=[Identity('name', Region(...), ask=..., roster='name'),
-Identity('id', ..., roster='id')])`), **read names** asks the model what is
-written in each box (once per submission; reading again is free) and each submission gets
+(`Exam(identity={'name': Field('name', Region(...)), 'id': Field('id', Region(...))})`,
+or boxes drawn on the Names tab, for every submission or for one), **read names**
+asks the model what is written in each box (once per submission; reading again is free) and each submission gets
 ranked proposals from the roster, with why ("ID exact, name close", "ID 1
 off") and how sure: *both agree*, *ID only*, *name only*, *they disagree*,
 *nobody close*, *empty*, *not read yet*. Nothing is named until a person verifies it. One
-submission at a time, its boxes large beside the best proposal:
+submission at a time, its boxes large (each with what was read, to correct or verify) beside the best proposal:
 
 | Key | |
 | --- | --- |

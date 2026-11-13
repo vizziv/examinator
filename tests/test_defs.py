@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from examinator import Bool, Check, Exam, Field, Identity, Landmark, Number, Printed, Region, load_exam
+from examinator import Ask, Bool, Check, Exam, Field, Landmark, Number, Printed, Region, load_exam
+from examinator.core.defs import IDENTITY
 from examinator.std import fields, math, readers
 
 EXAMS = Path(__file__).resolve().parents[1] / 'exams'
@@ -42,7 +43,32 @@ def test_printed_landmark_and_identity_regions_are_checked():
     with pytest.raises(ValueError, match="landmark 'title'"):
         Exam('t', pages=2, landmarks=[Landmark('title', Region(0, 0, 0, 10, 10), ask="the title")])
     with pytest.raises(ValueError, match="identity 'name'"):
-        Exam('t', pages=2, identity=[Identity('name', Region(1, 10, 10, 5, 20), ask="the name")])
+        Exam('t', pages=2, identity={'name': Field('name', Region(1, 10, 10, 5, 20))})
+
+
+def test_identity_maps_roster_columns_to_ordinary_fields():
+    """Any subset of the roster's columns; the group always has a field per column."""
+    for mapping in ({}, None, {'id': Field('id', Region(1, 0, 0, 9, 9))},
+                    {'email': Field('email', None, read=Printed("the printed email")), 'name': Field('name')}):
+        exam = Exam('t', pages=1, identity=mapping)
+        g = exam.identity
+        assert g.id == IDENTITY and g.apart and g.checks == () and exam.questions[IDENTITY] is g
+        assert list(exam.grading) == [] and IDENTITY not in exam.grading
+        mapped = list(mapping or {})
+        assert list(g.labels) == mapped + [c for c in ('name', 'id', 'email') if c not in mapped]
+        for f in g.fields:
+            if f.label in mapped:
+                assert f == mapping[f.label] or (mapping[f.label].read is None and f.region == mapping[f.label].region)
+            else:
+                assert f.region is None        # not placed: drawn in the app
+            assert isinstance(f.read, Ask)     # handwriting unless the field says otherwise
+    assert isinstance(Exam('t', pages=1, identity={'email': Field('email', read=Printed("x"))}).identity.field('email').read, Printed)
+    with pytest.raises(ValueError, match="roster column"):
+        Exam('t', pages=1, identity={'nickname': Field('nickname')})
+    with pytest.raises(ValueError, match="labelled 'name'"):
+        Exam('t', pages=1, identity={'name': Field('who')})
+    with pytest.raises(ValueError):
+        Exam('t', pages=1).question(IDENTITY, pages=[1])
 
 
 def test_question_pages_are_printed_pages():
@@ -51,7 +77,7 @@ def test_question_pages_are_printed_pages():
 
 
 def test_a_printed_field_needs_an_ask_and_text_readings_and_may_wait_for_its_region():
-    with pytest.raises(ValueError, match="q: field 'side': a printed field needs an `ask`"):
+    with pytest.raises(ValueError, match="q: field 'side': a field read by asking needs an `ask`"):
         define(fields=[printed(ask=" ")])
     with pytest.raises(ValueError, match="q: field 'side': `reads` maps readings"):
         define(fields=[printed(reads={'a': 1})])

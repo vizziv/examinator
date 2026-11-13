@@ -1,38 +1,33 @@
-"""Who wrote each submission: the roster, what the model read in the boxes where
-students write who they are, ranked proposals, and the person a grader picks.
+"""Who wrote each submission: the roster, the identity fields, ranked
+proposals, and the person a grader picks.
 
     setting 'people'                  the roster: [{'name', 'id', 'email', 'key'}]
-    row (sub, '', 'identity')    what the model read: {'fields': {box: text | None}, 'basis': {box: digest}}
+    row (sub, '@identity/<column>', 'value')   an identity field's value, like any field's
     row (sub, '', 'who')         the pick: a person's, or from an ID in the file name: {'name', 'id', 'email', 'key'?}
 
-The boxes are the exam's `Identity` declarations as the overrides leave them
-(`core.overrides`, paths '@identity/...'): a box drawn or moved in the app, for
-every submission, is exam data like a field's region. Reading is memoised per
-submission, box and scan layout, so reading again is free. Proposals are
-computed, never stored: `propose(readings, roster)` is a pure function from
-what was read (by roster field) to ranked candidates with a reason and a
-qualitative doubt. Nothing here confirms an identity; only `set_who`, a
-person's action, writes the pick.
+Where students write who they are is the exam's built-in group of identity
+fields (`defs.IDENTITY`): one ordinary field per roster column, with a region
+set in the package or drawn in the app (for every submission or for one), read
+by its reader (`Ask` about the handwriting, by default) with `Runner.read`, and
+set or verified like any field. Proposals are computed, never stored:
+`propose(read, roster)` is a pure function from the values (by roster column)
+to ranked candidates with a reason and a qualitative doubt. Nothing here
+confirms an identity; only `set_who`, a person's action, writes the pick.
 """
 from __future__ import annotations
 
 import csv
 import difflib
-import functools
 import io
-import json
 import re
 import unicodedata
 from typing import Any, Iterable, Mapping, Sequence
 
-from ..pdf.orient import Orient
-from .defs import Identity, digest
-from .reading import ask, basis, region_key
-from . import overrides
-from .store import ANY, Row, Submission
+from .defs import IDENTITY, Field, Question, digest, key, split_key
+from .status import Value
+from .store import ANY, Submission
 
 WHO = 'who'
-READ = 'identity'
 
 # --- the roster ---------------------------------------------------------------------
 
@@ -206,118 +201,73 @@ def by_file(ws) -> int:
     return n
 
 
-# --- the boxes ------------------------------------------------------------------------
+# --- the identity fields: ordinary fields of the built-in group ------------------------
 
-LIST = 'identity'       # the exam's list of boxes (`Exam.LISTS`), overridden at '@identity/...'
-# What to ask about a box added in the app, by the roster field it is compared with.
-ASKS = {'name': "the student's full name", 'id': "the student ID number",
-        'email': "the student's email address"}
-
-
-def boxes(ws) -> tuple[Identity, ...]:
-    """The identity boxes in use: the exam's, as overridden; a box whose region
-    was taken away is not used."""
-    return tuple(f for f in ws.exam.identity if f.region is not None)
+def group(ws) -> Question:
+    """The built-in group of identity fields (`defs.IDENTITY`), live."""
+    return ws.exam.identity
 
 
-def box_json(f: Identity) -> dict:
-    r = f.region
-    return {'name': f.name, 'region': None if r is None else [r.page, r.left, r.top, r.right, r.bottom],
-            'ask': f.ask, 'roster': f.roster}
+def placed(ws, sid: str | None = None) -> tuple[Field, ...]:
+    """The identity fields in use: those with a region, every submission's (or
+    with this submission's own regions)."""
+    g = group(ws)
+    return tuple(f for f in (g.fields if sid is None else ws.fields(sid, g)) if f.region is not None)
 
 
-def boxes_state(ws) -> dict:
-    """The boxes for the page's editor: those in use, the names the exam declares (a
-    declared box is edited at '@identity/<name>/region', any other is one override
-    '@identity/<name>') with their regions as declared, the revision of each override
-    on them, and what to ask about a box added, by its roster field."""
-    root = overrides.LIST + LIST
-    revs = {p: o.rev for p, o in ws.store.overrides().items() if overrides.split(p)[0] == root}
-    declared = ws.exam.base_lists[LIST]
-    return {'boxes': [box_json(f) for f in boxes(ws)], 'root': root, 'declared': [f.name for f in declared],
-            'base': {f.name: box_json(f)['region'] for f in declared}, 'revs': revs, 'asks': ASKS}
+def values(ws, sid: str | None = None) -> dict[str, dict[str, Value]]:
+    """Every submission's identity values (or one's): {submission: {column: Value}}."""
+    out: dict[str, dict[str, Value]] = {}
+    for r in ws.store.all(kinds=['value'], submission=sid, prefix=IDENTITY + '/'):
+        out.setdefault(r.submission, {})[split_key(r.name)[1]] = Value.of(r)
+    return out
 
 
-# --- reading the boxes ----------------------------------------------------------------
-
-IDENTITY_PROMPT = """\
-Read the HANDWRITTEN text in this image of a box on an exam page, where the student writes who they are.
-Report: {ask}.
-Answer with exactly this JSON, without Markdown: {{"value": "the text as written"}}
-Copy the handwriting character by character, even where it looks misspelled or incomplete. Use null for the value if the box is empty or unreadable."""
-
-
-def _tag(ws, sid: str, page: int) -> tuple[str, str, str]:
-    """Which scanned sheet a call reads, for the call's tag (diagnostics, and the
-    scripted model): a written submission's source sheet and how it was turned."""
-    made = ws.store.made().get(sid)
-    i = ws.layout(sid).scan_index(page)
-    if made is not None and 0 <= i < len(made.pages):
-        sheets = made.orient.get('sheets') or []
-        o = Orient.from_json(sheets[i] if i < len(sheets) else None)
-        return made.source, f'{made.pages[i]}@{o.code}', READ
-    return sid, str(i), READ
-
-
-def read(ws, sid: str, model, *, fresh: bool = False, prompt: str = IDENTITY_PROMPT) -> Row | None:
-    """Ask the model what is written in each of the exam's identity boxes on one
-    submission, and store the readings (unchanged readings are not rewritten).
-    A failed call is no reading and is not remembered. `fresh` asks again."""
-    fields = boxes(ws)
-    if not fields or model is None:
-        return None
-    layout = ws.layout(sid)
-    values, failed = {}, []
-    for f in fields:
-        key = region_key('identity', f.name, basis(f), layout)
-        hit = None if fresh else ws.store.memo(sid, key)
-        if hit is None:
-            try:
-                complete = functools.partial(model.complete, tag=_tag(ws, sid, f.region.page))
-                got = ask(complete, prompt, f.ask, ws.crop(sid, f.region))
-            except Exception:
-                values[f.name] = None
-                failed.append(f.name)
+def stale(ws, sid: str, got: Mapping[str, Value]) -> list[str]:
+    """The identity fields of one submission to read: in use, and with no value, or
+    with a value no person settled that was read under another region, reader or
+    scan layout (a reader that remembers its readings says which: `Ask.memo_key`)."""
+    layout = None
+    out = []
+    for f in placed(ws, sid):
+        v = got.get(f.label)
+        if v is not None and v.settled == 'person':
+            continue
+        memo_key = getattr(f.read, 'memo_key', None)
+        if v is not None and callable(memo_key):
+            layout = layout or ws.layout(sid)
+            if ws.store.memo(sid, memo_key(IDENTITY, f, layout)) is not None:
                 continue
-            hit = json.dumps(got)
-            ws.store.set_memo(sid, key, hit)
-        values[f.name] = json.loads(hit)
-    body = {'fields': values, 'basis': {f.name: basis(f) for f in fields}}
-    if failed:
-        body['failed'] = failed
-    cur = ws.store.get(sid, '', READ)
-    if cur is not None and cur.body == body:
-        return cur
-    return ws.store.write(sid, '', READ, body, origin='auto')
-
-
-def readings(fields: Sequence[Identity], body: Mapping | None) -> dict[str, str | None]:
-    """The stored readings that still apply to the boxes as declared now."""
-    body = body or {}
-    made = body.get('basis') or {}
-    got = body.get('fields') or {}
-    return {f.name: got.get(f.name) for f in fields if f.name in got and made.get(f.name) == basis(f)}
+        elif v is not None:
+            continue
+        out.append(f.label)
+    return out
 
 
 def unread(ws) -> list[str]:
-    """Submissions whose boxes still need reading: some box has no reading
-    under its current declaration, or a call failed last time."""
-    fields = boxes(ws)
-    reads = {a.submission: a.body for a in ws.store.all(kinds=[READ])}
-    return [s.id for s in ws.store.submissions()
-            if len(readings(fields, reads.get(s.id))) < len(fields) or (reads.get(s.id) or {}).get('failed')]
+    """Submissions with an identity field to read (`stale`)."""
+    got = values(ws)
+    return [s.id for s in ws.store.submissions() if stale(ws, s.id, got.get(s.id, {}))]
 
 
-def by_roster(fields: Sequence[Identity], read: Mapping[str, str | None]) -> dict[str, str | None]:
-    """Readings by the roster field they are compared with; boxes sharing a
-    field are joined in declaration order (an ID without spaces)."""
-    out: dict[str, list[str]] = {}
-    for f in fields:
-        if f.roster is not None:
-            out.setdefault(f.roster, [])
-            if read.get(f.name):
-                out[f.roster].append(read[f.name])
-    return {k: (('' if k != 'name' else ' ').join(v) or None) for k, v in out.items()}
+def read(runner, sid: str, *, fresh: bool = False) -> list:
+    """Read one submission's identity fields that are in use: `Runner.read` of the
+    group, so what a person settled stays. `fresh` asks the model again."""
+    labels = [f.label for f in placed(runner.ws, sid)]
+    return runner.read(sid, IDENTITY, labels=labels, fresh=fresh) if labels else []
+
+
+def forget(ws, sid: str) -> None:
+    """Drop what a reader read in a submission's identity fields (its pages changed);
+    what a person set stays."""
+    for col, v in values(ws, sid).get(sid, {}).items():
+        if v.settled != 'person':
+            ws.store.delete(sid, key(IDENTITY, col), 'value')
+
+
+def usable(v: Value | None) -> str | None:
+    """A value as evidence of who it is: its text, unless blank or marked."""
+    return v.text if v is not None and v.text.strip() and not v.marker else None
 
 
 # --- proposing: pure ------------------------------------------------------------------
@@ -511,14 +461,15 @@ def propose(read: Mapping[str, str | None], roster: Sequence[Mapping], *,
 
 CACHE_LIMIT = 20_000        # proposals an overview cache holds before it starts again
 
+
 def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None) -> dict:
-    """Every submission (or `subs`) with what was read, the proposal and
-    the pick, most doubtful unconfirmed first, then the confirmed ones; and the
+    """Every submission (or `subs`) with its identity values, those to read
+    (`stale`), the proposal and the pick, most doubtful unconfirmed first, then the confirmed ones; and the
     roster entries nobody is picked for. `cache`, a dict the caller keeps,
-    remembers proposals by reading revision and roster."""
-    fields = boxes(ws)
+    remembers proposals by value revisions and roster."""
     roster = people(ws)
-    rkey = digest([roster, [box_json(f) for f in fields]])
+    cols = [f.label for f in group(ws).fields]
+    rkey = digest(roster)
     matcher = None
     cache = {} if cache is None else cache
     if len(cache) > CACHE_LIMIT:
@@ -526,41 +477,43 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
     known = [s.id for s in ws.store.submissions()]
     ids = known if subs is None else [s for s in subs if s in set(known)]
     picks = {a.submission: a for a in ws.store.all(kinds=[WHO]) if a.submission in set(known)}
-    reads = {a.submission: a for a in ws.store.all(kinds=[READ])}
+    every = values(ws)
     taken: dict[str, list[str]] = {}
     for sid, a in picks.items():
-        key = (a.body or {}).get('key')
-        if key:
-            taken.setdefault(key, []).append(sid)
+        k = (a.body or {}).get('key')
+        if k:
+            taken.setdefault(k, []).append(sid)
 
-    def other(key: str | None, sid: str) -> str | None:
-        """Another submission the person `key` is picked for, if any."""
-        return next((s for s in taken.get(key, ()) if s != sid), None)
+    def other(k: str | None, sid: str) -> str | None:
+        """Another submission the person `k` is picked for, if any."""
+        return next((s for s in taken.get(k, ()) if s != sid), None)
 
     rows = []
     for sid in ids:
-        r = reads.get(sid)
-        got = readings(fields, r.body if r else None)
-        ck = (sid, r.rev if r else None, rkey)
+        got = every.get(sid, {})
+        fields = [f.label for f in placed(ws, sid)]
+        read = {c: usable(got.get(c)) for c in fields}
+        ck = (sid, tuple((c, got[c].rev) for c in cols if c in got), tuple(fields), rkey)
         prop = cache.get(ck)
         if prop is None:
-            if roster and any(got.values()):
+            if roster and any(read.values()):
                 matcher = matcher or Matcher(roster)
-                prop = matcher.propose(by_roster(fields, got))
+                prop = matcher.propose(read)
             else:
-                # every box read and none had anything: empty, not unread
-                blank = r is not None and len(got) == len(fields) and not (r.body or {}).get('failed')
-                prop = {'doubt': 'nobody' if any(got.values()) else 'empty' if blank else 'unread', 'candidates': []}
+                # every field in use has a value and none says anything: empty, not unread
+                blank = bool(fields) and all(c in got for c in fields)
+                prop = {'doubt': 'nobody' if any(read.values()) else 'empty' if blank else 'unread',
+                        'candidates': []}
             cache[ck] = prop
+        # who is already picked elsewhere is shown, never used to rank: a misreading must not cascade
         cands = [{**c, 'taken': other(c['key'], sid)} for c in prop['candidates']]
-        # among equal scores, people already picked for another submission come last (still offered)
-        cands.sort(key=lambda c: (-c['score'], c['taken'] is not None))
-        prop = {'doubt': prop['doubt'], 'candidates': cands}
         pick = picks.get(sid)
         body = pick.body if pick is not None and isinstance(pick.body, dict) else None
         twice = bool(body and body.get('key') and len(taken.get(body['key'], ())) > 1)
-        rows.append({'sub': sid, 'read': got, 'failed': (r.body or {}).get('failed', []) if r else [],
-                     'doubt': prop['doubt'], 'candidates': prop['candidates'],
+        rows.append({'sub': sid, 'read': read, 'stale': stale(ws, sid, got),
+                     'values': {c: {'text': v.text, 'rev': v.rev, 'settled': v.settled, 'marker': v.marker}
+                                for c, v in got.items()},
+                     'doubt': prop['doubt'], 'candidates': cands,
                      'who': ({'name': body.get('name', ""), 'id': body.get('id', ""), 'key': body.get('key'),
                               'twice': twice} if body else None),
                      'rev': pick.rev if pick is not None else None})

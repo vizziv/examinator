@@ -3,9 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from examinator import Exam, Identity, Region, load_exam, synth
-from examinator.core import identity, intake
+from examinator import load_exam, synth
+from examinator.core import focus, grid, identity, intake, overrides
+from examinator.core.defs import IDENTITY
 from examinator.core.identity import Matcher, distance, name_score, name_tokens, propose, read_roster
+from examinator.core.runner import Runner
 from examinator.core.store import Conflict
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
@@ -165,23 +167,6 @@ def test_a_prepared_roster_gives_the_same_answers():
         assert m.propose(read) == propose(read, ROSTER)
 
 
-def test_by_roster_joins_boxes_that_share_a_field():
-    fields = [Identity('first', Region(1, 0, 0, 1, 1), "", roster='name'),
-              Identity('last', Region(1, 0, 0, 1, 1), "", roster='name'),
-              Identity('id', Region(1, 0, 0, 1, 1), "", roster='id'),
-              Identity('section', Region(1, 0, 0, 1, 1), "")]
-    got = identity.by_roster(fields, {'first': "Ada", 'last': "Lovelace", 'id': "3141 5926", 'section': "B"})
-    assert got == {'name': "Ada Lovelace", 'id': "3141 5926"}
-    assert identity.by_roster(fields, {'first': None}) == {'name': None, 'id': None}
-
-
-def test_identity_declarations_are_checked():
-    with pytest.raises(ValueError, match="roster"):
-        Exam('x', pages=1, identity=[Identity('name', Region(1, 0, 0, 9, 9), "", roster='nickname')])
-    with pytest.raises(ValueError, match="duplicate"):
-        Exam('x', pages=1, identity=[Identity('a', Region(1, 0, 0, 9, 9), ""), Identity('a', Region(1, 0, 0, 9, 9), "")])
-
-
 # --- reading, storing, picking: the synthetic stacks end to end ---
 
 @pytest.fixture
@@ -204,32 +189,77 @@ def written(tmp_path):
     intake.reguess(ws, two.id, model=model)
     intake.accept(ws, two.id)
     identity.set_roster(ws, (root / 'roster.csv').read_text())
-    yield ws, model
+    runner = Runner(toy, ws, model=model)
+    yield ws, runner, model
+    runner.close()
     ws.close()
 
 
-def test_reading_is_memoised_and_stored_with_history(written):
-    ws, model = written
+def texts(ws, sid):
+    return {c: v.text for c, v in identity.values(ws, sid).get(sid, {}).items()}
+
+
+def test_identity_fields_are_ordinary_values(written):
+    ws, runner, model = written
     assert sorted(ws.store.made()) == [f's{n:04d}' for n in range(1, 11)]
-    a = identity.read(ws, 's0001', model)
-    assert a.body['fields'] == {'name': "Avery Testwell", 'id': "90412873"} and a.origin == 'auto'
+    assert [o.status for o in identity.read(runner, 's0001')] == ['done', 'done']     # email: no region, not read
+    assert texts(ws, 's0001') == {'name': "Avery Testwell", 'id': "90412873"}
+    got = runner.values('s0001')
+    assert got['@identity/name'].settled is None                    # nobody stands behind it yet
     calls = len(model.calls)
-    assert identity.read(ws, 's0001', model).rev == a.rev and len(model.calls) == calls   # free, unchanged
-    assert all(c.prompt.count("Read the HANDWRITTEN") == 1 for c in model.calls[-2:])
+    identity.read(runner, 's0001')
+    assert len(model.calls) == calls and runner.values('s0001') == got     # remembered: free, unchanged
+    assert all(c.prompt.count("Read the HANDWRITTEN") == 1 and c.tag[1] == IDENTITY for c in model.calls[-2:])
     assert "Avery" not in " ".join(c.prompt for c in model.calls)            # no roster in any prompt
-    b = identity.read(ws, 's0001', model, fresh=True)
-    assert len(model.calls) == calls + 2 and b.rev == a.rev                  # asked again, same answer
-    # the pick is a different row; reading never writes it
-    assert ws.store.get('s0001', '', identity.WHO) is None
-    ws.store.write('s0001', '', identity.READ, {'fields': {}, 'basis': {}}, origin='auto')
-    assert identity.read(ws, 's0001', model).rev != a.rev
-    assert ws.store.history('s0001', '', identity.READ)
+    identity.read(runner, 's0001', fresh=True)
+    assert len(model.calls) == calls + 2 and runner.values('s0001') == got  # asked again, same answer
+    assert ws.store.get('s0001', '', identity.WHO) is None                  # reading never picks
+    # set, verify, history, and a read never replaces what a person set
+    v = runner.set('s0001', IDENTITY, 'name', "Avery  Testwell", author='t')
+    assert v.settled == 'person' and ws.store.history('s0001', '@identity/name', 'value')
+    runner.verify('s0001', IDENTITY, 'id', author='t', expect_rev=got['@identity/id'].rev)
+    identity.read(runner, 's0001', fresh=True)
+    assert texts(ws, 's0001')['name'] == "Avery  Testwell" and runner.values('s0001')['@identity/id'].settled == 'person'
+    assert identity.overview(ws, ['s0001'])['rows'][0]['read'] == {'name': "Avery  Testwell", 'id': "90412873"}
+
+
+def test_a_region_for_one_submission_moves_its_crop_and_reads_again(written):
+    ws, runner, model = written
+    for sid in ('s0001', 's0002'):
+        identity.read(runner, sid)
+    assert 's0001' not in identity.unread(ws)
+    g = ws.exam.identity
+    path, scope = '@identity/fields/name/region', overrides.scope(overrides.SUBMISSION, 's0001')
+    change = overrides.set(ws.exam, ws.store, path, [1, 100, 120, 800, 200], scope=scope, author='t')
+    assert change.fields == (('@identity', 'name'),)
+    assert ws.region('s0001', g, 'name').top == 120 and ws.region('s0002', g, 'name') == g.field('name').region
+    assert identity.unread(ws)[:1] == ['s0001'] and 's0002' not in identity.unread(ws)
+    assert identity.overview(ws, ['s0001'])['rows'][0]['stale'] == ['name']
+    calls = len(model.calls)
+    identity.read(runner, 's0001')
+    assert len(model.calls) == calls + 1 and 's0001' not in identity.unread(ws)     # only the moved one
+    # every submission's region moved: all read again, but what a person settled
+    runner.verify('s0002', IDENTITY, 'name', author='t', expect_rev=runner.values('s0002')['@identity/name'].rev)
+    overrides.set(ws.exam, ws.store, '@identity/fields/id/region', [1, 100, 330, 600, 420], author='t')
+    assert identity.overview(ws, ['s0002'])['rows'][0]['stale'] == ['id']
+
+
+def test_the_group_is_kept_apart_from_grading(written):
+    ws, runner, model = written
+    identity.read(runner, 's0001')
+    exam = ws.exam
+    row = next(r for r in grid.load(exam, ws.store) if r.submission.id == 's0001')
+    assert '@identity/name' in row.sheet.values
+    assert all(q != IDENTITY for q, _ in row.status) and IDENTITY not in row.fields
+    assert IDENTITY not in {d['id'] for d in focus.describe_facets(exam)}
+    assert not any(k.startswith(IDENTITY) for k in focus.values_table(exam, ws.store))
+    assert IDENTITY not in exam.grading and IDENTITY in exam.questions
 
 
 def test_the_awkward_cases(written):
-    ws, model = written
+    ws, runner, model = written
     for sid in sorted(ws.store.made()):
-        identity.read(ws, sid, model)
+        identity.read(runner, sid)
     rows = {r['sub']: r for r in identity.overview(ws)['rows']}
     got = {sid: (r['doubt'], r['candidates'][0]['name'] if r['candidates'] else None) for sid, r in rows.items()}
     assert got == {
@@ -252,20 +282,21 @@ def test_the_awkward_cases(written):
 
 
 def test_picks_confirm_flag_twice_and_name_submissions(written):
-    ws, model = written
+    ws, runner, model = written
     for sid in ('s0004', 's0007'):
-        identity.read(ws, sid, model)
+        identity.read(runner, sid)
     gray = next(p for p in identity.people(ws) if p['name'] == "Gray Placeholt")
     body = identity.set_who(ws, 's0007', gray['key'], author='t', expect_rev=None)
     assert body['id'] == "96174385" and ws.store.submission('s0007').student == "96174385"
     with pytest.raises(Conflict):                   # someone else picked meanwhile
         identity.set_who(ws, 's0007', gray['key'], author='t', expect_rev=None)
     rows = {r['sub']: r for r in identity.overview(ws)['rows']}
-    # Gray (by the ID) and Devon (by the name) match equally well: Gray is already picked for
-    # s0007, so is offered after Devon, flagged
+    # Gray (by the ID) and Devon (by the name) match equally well: still a doubt, ranked by the
+    # match alone (the ID first); Gray, already picked for s0007, is flagged, not moved
     cands = rows['s0004']['candidates']
-    assert cands[0]['score'] == cands[1]['score'] and cands[0]['name'] == "Devon Fakely" and cands[0]['taken'] is None
-    assert cands[1]['key'] == gray['key'] and cands[1]['taken'] == 's0007'
+    assert rows['s0004']['doubt'] == 'disagree' and cands[0]['score'] == cands[1]['score']
+    assert cands[0]['key'] == gray['key'] and cands[0]['taken'] == 's0007'
+    assert cands[1]['name'] == "Devon Fakely" and cands[1]['taken'] is None
     identity.set_who(ws, 's0004', identity.label(gray), author='t')
     rows = {r['sub']: r for r in identity.overview(ws)['rows']}
     assert rows['s0004']['who']['twice'] and rows['s0007']['who']['twice']
@@ -288,13 +319,14 @@ def test_picks_confirm_flag_twice_and_name_submissions(written):
 
 
 def test_rewriting_a_submission_drops_what_was_read_but_keeps_the_pick(written):
-    ws, model = written
-    identity.read(ws, 's0001', model)
+    ws, runner, model = written
+    identity.read(runner, 's0001')
+    runner.set('s0001', IDENTITY, 'id', "90412873", author='t')
     identity.set_who(ws, 's0001', identity.people(ws)[0]['key'], author='t')
     one = ws.store.made()['s0001'].source
     intake.edit(ws, one, 'drop', sheet=3, expect_rev=intake.plan(ws, one).rev, author='t')
     assert intake.accept(ws, one)['rewritten'] == ['s0001']               # names are not grading work
-    assert ws.store.get('s0001', '', identity.READ) is None
+    assert texts(ws, 's0001') == {'id': "90412873"}                       # what a person set stays
     assert ws.store.submission('s0001').name == "Avery Testwell"
 
 
@@ -305,8 +337,31 @@ def test_a_failed_call_is_no_reading_and_not_remembered(tmp_path):
     ws = Workspace(root, toy, create=True)
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    a = identity.read(ws, 's0001', FakeModel({}))
-    assert a.body['fields'] == {'name': None, 'id': None} and a.body['failed'] == ['name', 'id']
-    assert identity.read(ws, 's0001', synth.fake_model(root)).body['fields']['id'] == "90412873"
+    broken = Runner(toy, ws, model=FakeModel({}))
+    assert {o.status for o in identity.read(broken, 's0001')} == {'failed'}
+    assert texts(ws, 's0001') == {} and 's0001' in identity.unread(ws)
+    identity.read(Runner(toy, ws, model=synth.fake_model(root)), 's0001')
+    assert texts(ws, 's0001')['id'] == "90412873"
     ws.close()
 
+
+def test_a_box_drawn_in_the_app_is_read_on_synthetic_stacks(tmp_path):
+    """An exam that declares no identity fields: boxes drawn for every submission are read
+    with the scripted model, as declared ones are."""
+    from examinator import Exam, Field, Region
+    toy = load_exam(TOY)
+    root = tmp_path / 'ws'
+    paths = synth.stacks(toy, root)
+    bare = Exam('bare', pages=toy.pages, print_area=toy.print_area, landmarks=toy.landmarks)
+    for qid, q in toy.grading.items():
+        bare.questions[qid] = q
+    ws = Workspace(root, bare, create=True)
+    one, _ = intake.add_source(ws, paths[0])
+    intake.accept(ws, one.id)
+    assert identity.placed(ws) == () and identity.unread(ws) == []
+    overrides.set(bare, ws.store, '@identity/fields/name/region', [1, 100, 100, 800, 200], author='t')
+    assert [f.label for f in identity.placed(ws)] == ['name'] and identity.unread(ws)[0] == 's0001'
+    runner = Runner(bare, ws, model=synth.fake_model(root))
+    identity.read(runner, 's0001')
+    assert texts(ws, 's0001') == {'name': "Avery Testwell"}
+    ws.close()

@@ -1,36 +1,11 @@
-"""Asking the model what one region of a page says: the one mechanism behind
-printed fields (`core.printed`), intake landmarks (`core.intake`) and identity
-boxes (`core.identity`).
-
-Each of those is a region plus a question (`ask`); the model answers with JSON
-whose `value` is the reading. What a reading depends on is its `basis`, and
-answers are memoised under a key built by `memo_key`. What is remembered, and
-what a failed call means, is each caller's business.
-"""
+"""Small helpers for readings: the `value` of a model's JSON reply, the normal
+form of a printed reading, and the memo key of reading one region (`core.ask`,
+intake's landmarks)."""
 from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable, Iterable
-
-from .defs import digest
-
-
-def prompt(template: str, ask: str, expected: Iterable[str] = ()) -> str:
-    """The template with the question filled in; with `expected`, the readings
-    that are possible (they name a printing or a page, never an answer)."""
-    text = template.format(ask=ask)
-    expected = list(expected)
-    if expected:
-        text += "\nThe value is expected to be one of: " + " | ".join(expected) + "."
-    return text
-
-
-def ask(call: Callable[..., str], template: str, question: str, image: Any,
-        expected: Iterable[str] = ()) -> str | None:
-    """One reading: `call(prompt, images=[image], expect='json')` (a model's
-    `complete`, perhaps with a tag bound), reduced to its `value`."""
-    return json_value(call(prompt(template, question, expected), images=[image], expect='json'))
+from typing import Any
 
 
 def json_value(out: str) -> str | None:
@@ -53,20 +28,9 @@ def normalize(reading: str) -> str:
     return s
 
 
-def basis(thing: Any) -> str:
-    """Digest of what a reading of `thing` (a `Landmark` or an `Identity` box)
-    depends on: its region and its question."""
-    return digest({'region': thing.region, 'ask': thing.ask})
-
-
-def memo_key(kind: str, name: str, defn: str, *where: Any) -> str:
-    """The memo key of one reading: what is read (`kind`, `name`), a digest of its
-    definition, and whatever else the crop depends on (print area, orientation, ...)."""
-    return ':'.join(str(x) for x in (kind, name, defn, *where))
-
-
 def region_key(kind: str, name: str, defn: str, layout: Any, *where: Any) -> str:
     """The memo key of reading one region under a scan layout (`pdf.layout.Layout`):
-    its print area and cover pages say which scanned page is cropped, and where;
-    `where` adds anything else the crop depends on (a sheet's orientation, its index)."""
-    return memo_key(kind, name, defn, list(layout.print_area), layout.cover_pages, *where)
+    what is read (`kind`, `name`), a digest of its definition, the layout's print
+    area and cover pages (which scanned page is cropped, and where), and anything
+    else the crop depends on (`where`: a sheet's orientation, its index)."""
+    return ':'.join(str(x) for x in (kind, name, defn, list(layout.print_area), layout.cover_pages, *where))

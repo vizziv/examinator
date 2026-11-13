@@ -12,9 +12,11 @@ compares the grades with `Case.expect`. It doubles as a test of every question
 and printing of the exam.
 
 Which printing a case is, is a fact about the case: `Case.printed` says what is
-printed in each printed field (`core.printed.Printed`), so the placeholder pages
+printed in each printed field (`core.ask.Printed`), so the placeholder pages
 show it and the scripted model reads it; `Case.blank` names the blank PDF of
-that printing to draw on.
+that printing to draw on. Who wrote it is made up (`person`): written into the
+identity fields that have a region, and what every identity field's reader is
+told it reads, wherever its region is drawn later.
 
 Nothing here touches real student data: every byte is derived from the exam
 definition, instructor-provided blank PDFs and the cases.
@@ -30,8 +32,8 @@ from typing import Any, Mapping
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .core.defs import Exam, Question, Region
-from .core.printed import Printed
+from .core.ask import Printed
+from .core.defs import IDENTITY as NAMES, Exam, Question, Region
 from .core.runner import Runner
 from .core.workspace import Workspace
 from .pdf.render import Renderer
@@ -73,7 +75,7 @@ def given(q: Question, body: Any) -> dict[str, str | None]:
 
 def check_cases(exam: Exam, cases: list[Case]) -> None:
     """`BadCase` naming the case and the key for any case that does not fit the exam."""
-    columns = [col for q in exam.questions.values() if q.checks for col in q.columns()]
+    columns = [col for q in exam.grading.values() if q.checks for col in q.columns()]
     names = [c.name for c in cases]
     for case in cases:
         def bad(what):
@@ -81,9 +83,9 @@ def check_cases(exam: Exam, cases: list[Case]) -> None:
         if names.count(case.name) > 1:
             raise bad("two cases have this name")
         for qid, body in case.answers.items():
-            q = exam.questions.get(qid)
+            q = exam.grading.get(qid)
             if q is None:
-                raise bad(f"answers: no question {qid!r} (questions: {list(exam.questions)})")
+                raise bad(f"answers: no question {qid!r} (questions: {list(exam.grading)})")
             written = [f.label for f in q.written]
             if isinstance(body, Mapping):
                 unknown = [k for k in body if k not in written]
@@ -94,7 +96,7 @@ def check_cases(exam: Exam, cases: list[Case]) -> None:
             elif len(written) != 1:
                 raise bad(f"answers[{qid!r}]: expected {{label: text or None}} for the fields {written}")
         for qid, values in case.printed.items():
-            q = exam.questions.get(qid)
+            q = exam.grading.get(qid)
             if q is None:
                 raise bad(f"printed: no question {qid!r}")
             printed = [f.label for f in q.fields if isinstance(f.read, Printed)]
@@ -159,7 +161,7 @@ def _printed_pages(exam: Exam, case: Case, renderer: Renderer) -> list[Image.Ima
             im = Image.new('RGB', PAGE, 'white')
             d = ImageDraw.Draw(im)
             d.text((40, 30), f"{exam.title}  (synthetic)  page {p}", fill='black', font=_font(18))
-            for q in exam.questions.values():
+            for q in exam.grading.values():
                 for f in q.fields:
                     if f.region is None or f.region.page != p:
                         continue
@@ -176,10 +178,10 @@ def _printed_pages(exam: Exam, case: Case, renderer: Renderer) -> list[Image.Ima
                 if text:
                     l, t, r, b = _box(lm.region)
                     d.text((l + 6, t + 4), text, fill='black', font=_font(max(14, min(30, (b - t) - 8))))
-            for f in exam.identity:
-                if f.region.page == p:
+            for f in exam.identity.fields:
+                if f.region is not None and f.region.page == p:
                     l, t, r, b = _box(f.region)
-                    d.text((l, t - 22), f"{f.name}:", fill='black', font=_font(16))
+                    d.text((l, t - 22), f"{f.label}:", fill='black', font=_font(16))
                     d.line((l, b, r, b), fill='black')
         pages.append(im)
     return pages
@@ -192,11 +194,16 @@ def landmark_text(lm, page: int) -> str | None:
     return str(page) if page >= lm.region.page else None
 
 
-def _draw_identity(exam: Exam, pages: list[Image.Image], person: Mapping[str, str]) -> None:
-    """Write a person into the exam's identity boxes (the box's roster field, else its name)."""
-    for f in exam.identity:
-        text = person.get(f.roster or f.name) or ""
-        if text and 1 <= f.region.page <= len(pages):
+def person(i: int) -> dict[str, str]:
+    """The made-up student of a synthetic workspace's `i`-th case (from 1), by roster column."""
+    return {'name': f"Synthetic Student {i:02d}", 'id': f"9{i:07d}", 'email': f"synthetic{i:02d}@example.invalid"}
+
+
+def _draw_identity(exam: Exam, pages: list[Image.Image], who: Mapping[str, str | None]) -> None:
+    """Write a person into the identity fields that have a region."""
+    for f in exam.identity.fields:
+        text = who.get(f.label) or ""
+        if text and f.region is not None and 1 <= f.region.page <= len(pages):
             l, t, _, _ = _box(f.region)
             ImageDraw.Draw(pages[f.region.page - 1]).text((l + 14, t + 12), text, fill=(20, 30, 140), font=_font(26))
 
@@ -234,12 +241,19 @@ def _scan(exam: Exam, printed: list[Image.Image]) -> list[Image.Image]:
     return out
 
 
-def script_for(exam: Exam, case: Case) -> dict[str, str]:
+def script_for(exam: Exam, case: Case, who: Mapping[str, str | None] | None = None) -> dict[str, str]:
     """Scripted model replies for one case, `'question|step' -> text`: what each
-    reader would be told to read the case's answers and printed fields. A
-    question or printed field the case does not mention has no reply."""
+    reader would be told to read the case's answers and printed fields, and
+    (`who`, by roster column) the identity fields. A question or printed field
+    the case does not mention has no reply."""
     script: dict[str, str] = {}
-    for qid, q in exam.questions.items():
+    g = exam.identity
+    for reader, fields in g.groups() if who else ():
+        make = getattr(reader, 'script', None)
+        if callable(make):
+            for step, reply in make(fields, {f.label: who.get(f.label) for f in fields}).items():
+                script[f'{g.id}|{step}'] = reply
+    for qid, q in exam.grading.items():
         for reader, fields in q.groups():
             make = getattr(reader, 'script', None)
             if not callable(make):
@@ -275,13 +289,12 @@ def _generate(exam: Exam, root: Path, cases: list[Case]) -> Path:
         for i, case in enumerate(cases, 1):
             printed = _printed_pages(exam, case, renderer)
             _draw_answers(exam, case, printed)
-            _draw_identity(exam, printed, {'name': f"Synthetic Student {i:02d}", 'id': f"9{i:07d}",
-                                           'email': f"synthetic{i:02d}@example.invalid"})
+            _draw_identity(exam, printed, person(i))
             scan = _scan(exam, printed)
             scan[0].save(pdfs / f'{case.name}.pdf', 'PDF', save_all=True,
                          append_images=scan[1:], resolution=100.0)
-            w.writerow([f"Synthetic Student {i:02d}", f"9{i:07d}", f"synthetic{i:02d}@example.invalid"])
-            script[case.name] = script_for(exam, case)
+            w.writerow([person(i)['name'], person(i)['id'], person(i)['email']])
+            script[case.name] = script_for(exam, case, person(i))
     (root / SCRIPT).write_text(json.dumps(script, indent=1))
     return root
 
@@ -290,20 +303,51 @@ class NoScript(FileNotFoundError):
     """`--fake` on a workspace that `synth` did not make."""
 
 
+STACKS = '@stacks'      # in a stacks script: per source, which student each sheet is ('sheet@orientation')
+STUDENT = '@student:'   # ... and per student, the replies for their submission, as for a case
+
+
 def fake_model(root: str | Path):
-    """The scripted model for a synthetic workspace. `NoScript` if `root` has none."""
+    """The scripted model for a synthetic workspace. `NoScript` if `root` has none.
+
+    A submission intake made from a synthetic stack is looked up in the workspace
+    (`root`'s store): the student on its first sheet, read the right way up, is
+    answered for; shown any other way, its identity fields read as nothing."""
     from .model.fake import FakeModel
+    from .pdf.orient import Orient
     path = Path(root) / SCRIPT
     if not path.is_file():
         raise NoScript(f"{root} has no scripted model ({SCRIPT}): it was not made by `synth`, "
                        "or `synth` did not finish")
     script = json.loads(path.read_text())
+    db = Path(root) / 'exam.sqlite'
+
+    def student(submission: str) -> tuple[bool, dict]:
+        """(made from a stack, the replies for its student: none if it is shown the wrong way)."""
+        if STACKS not in script or not db.is_file():
+            return False, {}
+        import sqlite3
+        con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+        try:
+            row = con.execute('select source, pages, orient from made where submission=?', (submission,)).fetchone()
+        finally:
+            con.close()
+        if row is None or row[0] not in script[STACKS]:
+            return False, {}
+        sheets = (json.loads(row[2] or '{}').get('sheets') or [None])
+        k = script[STACKS][row[0]].get(f'{json.loads(row[1])[0]}@{Orient.from_json(sheets[0]).code}')
+        return True, script.get(f'{STUDENT}{k}', {}) if k is not None else {}
 
     def reply(call):
         submission, question, step = call.tag
         entry = script.get(submission, {}).get(f'{question}|{step}')
-        if isinstance(entry, dict):     # intake: one reply per landmark's or box's question
+        if isinstance(entry, dict):     # intake: one reply per landmark's question
             return next((v for ask, v in entry.items() if ask in call.prompt), None)
+        if entry is None and submission not in script:
+            stacked, replies = student(submission)
+            if stacked and not replies and question == NAMES:
+                return json.dumps({'value': None})
+            entry = replies.get(f'{question}|{step}')
         return entry
 
     return FakeModel(reply)
@@ -321,15 +365,15 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
     problems = []
     try:
         for case in cases:
-            for qid in exam.questions:
+            for qid in exam.grading:
                 runner.read(case.name, qid)
             for k, v in runner.values(case.name).items():
                 if not v.is_settled and not v.marker:
                     qid, label = k.split('/', 1)
                     runner.verify(case.name, qid, label, author='selftest', expect_rev=v.rev)
-            runner.refresh(case.name, questions=list(exam.questions))
+            runner.refresh(case.name, questions=list(exam.grading))
             sheet = runner.sheet(case.name)
-            for qid, q in exam.questions.items():
+            for qid, q in exam.grading.items():
                 for c in q.checks:
                     col = q.column(c.name)
                     if col not in case.expect:
@@ -352,17 +396,19 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
 
 def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> list[Path]:
     """Synthetic "big bad" scans for intake, in `root/incoming/` (`root` a new or
-    empty directory), with a roster (`root/roster.csv`) and scripted landmark
-    readings (`root/fake_model.json`).
+    empty directory), with a roster (`root/roster.csv`) and the scripted model
+    (`root/fake_model.json`): landmark readings per sheet, and per student what
+    their submission's fields read, once intake has made it (`fake_model`).
 
     `stack-1.pdf`: six students, one missing printed page 3, one with a stray
     blank sheet after printed page 2, one put in upside down. `stack-2.pdf`:
     fed in upside down as a whole, three students and the first two sheets of a
     fourth, so its length is not a multiple of the exam's. The model reads a
-    landmark, or an identity box, only on a sheet turned the right way up.
+    landmark, or an identity field, only on a sheet turned the right way up.
 
-    Who is who (`STACK_PEOPLE`, the exam's identity boxes): what the scripted
-    model reads is in `STACK_READS`: clean reads, an ID misread by one
+    Who is who (`STACK_PEOPLE`, written in the identity fields that have a
+    region): what the scripted model reads in each identity field, wherever it
+    is drawn, is in `STACK_READS`: clean reads, an ID misread by one
     character, a misread name, an ID that belongs to someone else, an empty ID
     box, an unreadable name, and a student not on the roster, which also lists
     one person with no exam."""
@@ -401,7 +447,9 @@ def _stacks(exam: Exam, root: Path, cases: list[Case]) -> list[Path]:
            + turned(stray(student(2), 2), IDENTITY, 2) + turned(student(3), IDENTITY, 3)
            + turned(student(4), HALF, 4) + turned(student(5), IDENTITY, 5))
     two = [x for k in (6, 7, 8) for x in turned(student(k), HALF, k)] + turned(student(9), HALF, 9)[:2]
-    script = {}
+    script: dict[str, Any] = {STACKS: {}}
+    for k in range(len(STACK_PEOPLE)):
+        script[f'{STUDENT}{k}'] = script_for(exam, cases[k % len(cases)], STACK_READS[k])
     out = []
     for name, sheets in (('stack-1.pdf', one), ('stack-2.pdf', two)):
         path = root / 'incoming' / name
@@ -409,7 +457,7 @@ def _stacks(exam: Exam, root: Path, cases: list[Case]) -> list[Path]:
         images[0].save(path, 'PDF', save_all=True, append_images=images[1:], resolution=100.0)
         import hashlib
         sid = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
-        replies = {}
+        replies, whose = {}, {}
         for i, (_, page, o, k) in enumerate(sheets):
             # the model reads a sheet only when it is shown the right way up: undoing `o`
             up = HALF if o == HALF else IDENTITY
@@ -419,14 +467,9 @@ def _stacks(exam: Exam, root: Path, cases: list[Case]) -> list[Path]:
             if up != IDENTITY:      # shown as scanned, it reads as nothing
                 replies[f'{i}@00|landmark'] = {lm.ask: json.dumps({'quote': "", 'value': None})
                                                for lm in exam.landmarks}
-            boxes = [f for f in exam.identity if f.region.page == page]
-            if boxes:
-                said = STACK_READS[k]
-                replies[f'{i}@{up.code}|identity'] = {
-                    f.ask: json.dumps({'value': said.get(f.roster or f.name)}) for f in boxes}
-                if up != IDENTITY:
-                    replies[f'{i}@00|identity'] = {f.ask: json.dumps({'value': None}) for f in boxes}
+            whose[f'{i}@{up.code}'] = k
         script[sid] = replies
+        script[STACKS][sid] = whose
         out.append(path)
     (root / SCRIPT).write_text(json.dumps(script, indent=1))
     with (root / 'roster.csv').open('w', newline='') as fh:
@@ -451,7 +494,7 @@ STACK_READS = [
     {'name': "Devon Fakely", 'id': "96174385"},         # the ID is Gray Placeholt's
     {'name': "Emery Sampleton", 'id': "94207536"},      # clean (once the exam is turned upright)
     {'name': "Finley Dummond", 'id': "95830142"},       # not on the roster
-    {'name': "Gray Placeholt", 'id': None},             # the ID box left empty
+    {'name': "Gray Placeholt", 'id': ""},               # the ID box left empty
     {'name': None, 'id': "97352618"},                   # the name unreadable
     {'name': "Indigo Exemplar", 'id': "98546039"},
     {'name': "Jules Synthe", 'id': "99021457"}]

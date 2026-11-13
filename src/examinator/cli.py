@@ -28,7 +28,7 @@ def open_model(args, root: Path):
 
 
 def status_table(exam: Exam, ws: Workspace) -> str:
-    cols = [(q, c) for q in exam.questions.values() for c in q.checks]
+    cols = [(q, c) for q in exam.grading.values() for c in q.checks]
     lines = ["\t".join(['submission', *[q.column(c.name) for q, c in cols], 'total'])]
     for row in grid.load(exam, ws.store):
         cells = []
@@ -61,7 +61,7 @@ def compare_models(args, exam: Exam, ws: Workspace) -> int:
         print("name at least one model: --model NAME[@URL] or --ocr NAME[@URL]", file=sys.stderr)
         return 1
     subs = args.submission or [s.id for s in ws.store.submissions()][:args.limit]
-    qids = args.question or list(exam.questions)
+    qids = args.question or list(exam.grading)
     out_dir = Path(args.out) if args.out else ws.root / 'exports' / time.strftime('compare-%Y%m%d-%H%M%S')
     results = compare.run(exam, ws, entrants, submissions=subs, questions=qids,
                           make_client=lambda e: clients.get(e) or compare.client_for(e),
@@ -108,11 +108,17 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
                   f"{len(r['removed'])} removed, {r['unchanged']} unchanged")
     if args.names:
         model = model or open_model(args, ws.root)
-        if model is None or not identity.boxes(ws):
-            print("names: needs the model and identity boxes (Exam(identity=[...]))", file=sys.stderr)
+        if model is None or not identity.placed(ws):
+            print("names: needs the model and identity fields with regions (Exam(identity={...}))", file=sys.stderr)
         else:
-            for sid in identity.unread(ws):
-                identity.read(ws, sid, model)
+            runner = Runner(exam, ws, model=model)
+            try:
+                for sid in identity.unread(ws):
+                    for o in identity.read(runner, sid):
+                        if not o.ok:
+                            print(f"  {sid}: {o.status} {o.detail}", file=sys.stderr)
+            finally:
+                runner.close()
             view = identity.overview(ws)
             print(f"names: {view['left']} of {len(view['rows'])} to confirm (Scans page, Names)")
             for row in view['rows']:
@@ -157,7 +163,7 @@ def workspace_cmd(args, exam: Exam, ws: Workspace) -> int:
     runner = Runner(exam, ws, model=model)
     try:
         subs = tuple(args.submission or [s.id for s in ws.store.submissions()])
-        sel = batch.Selection(subs, tuple(args.question or exam.questions), missing_only=args.missing_only,
+        sel = batch.Selection(subs, tuple(args.question or exam.grading), missing_only=args.missing_only,
                               include_protected=args.include_protected)
         plan = batch.plan(exam, ws.store, sel, model_available=model is not None, regions=ws.fields)
         for action in batch.ACTIONS:

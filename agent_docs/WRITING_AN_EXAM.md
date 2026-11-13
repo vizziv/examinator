@@ -80,7 +80,7 @@ does not fit the exam is one line naming the case and the key.
 **Imports** (everything an exam package needs):
 
 ```python
-from examinator import Exam, Field, Printed, Region, Landmark, Identity, Check, Bool, Number, Grade
+from examinator import Exam, Field, Ask, Printed, Region, Landmark, Check, Bool, Number, Grade
 from examinator import Result, Judgement, Undecided, Facet
 from examinator.synth import Case
 from examinator.std import readers, math, fields, pseudocode, prompts
@@ -93,7 +93,7 @@ from examinator.core.runner import try_check                       # in your tes
 
 ```python
 exam = Exam('toy', title="Toy exam", pages=4, print_area=[50, 40, 950, 900], cover_pages=1,
-            landmarks=[...], identity=[...])
+            landmarks=[...], identity={...})
 exam.question('areas', title="Areas", pages=[2], fields=[...], read=..., check=... or checks={...})
 ```
 
@@ -161,14 +161,30 @@ environment variable naming the blanks' directory, so fixtures draw each case
 on its blank and tests compare the printed fields with the blanks' text and
 skip without them.
 
-### Landmarks and identity boxes (intake)
+### Landmarks and identity fields (intake)
 
 Needed only when scans arrive as stacks of many students. Both are declared on
 the `Exam`: `Landmark(name, region, ask, reads)` tells a scanned sheet's printed
 page (`reads` maps a reading to a page; without it the reading is the page
-number); `Identity(name, region, ask, roster)` is a box read for handwriting and
-compared with the roster field `roster` (`'name'`, `'id'`, `'email'`, or
-`None`). See `exams/toy_exam/exam.py`.
+number). `identity` maps roster columns to ordinary fields where students
+write who they are, labelled by the column:
+
+```python
+exam = Exam('x', pages=4, identity={
+    'name': Field('name', Region(1, 100, 200, 800, 280)),            # asked about the handwriting
+    'id': Field('id', Region(1, 100, 330, 600, 410), read=Ask("the student ID number, digits only")),
+})
+```
+
+Any of `'name'`, `'id'`, `'email'`; a region may be None, and the mapping may
+be left out: boxes are then drawn on the Scans page's Names tab (for every
+submission, or one). A field without a reader is read by
+`Ask(<what to ask about that column>)`. `Ask(ask, reads=..., verify=...)`
+asks the model one thing about a field's region, by default about
+handwriting; `Printed` is the same about printed text; any reader works (one
+that vouches for its value settles it). These fields are never graded; a
+person picks who the submission is from proposals on the Names tab. See
+`exams/toy_exam/exam.py`.
 
 ## 5. Readers
 

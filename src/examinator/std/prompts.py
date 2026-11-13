@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from ..core.defs import Question
-from ..core.printed import PRINTED_PROMPT  # noqa: F401  (re-exported)
+from ..core.ask import HANDWRITTEN_PROMPT, PRINTED_PROMPT  # noqa: F401  (re-exported)
 from ..model.client import PREAMBLE  # noqa: F401  (re-exported)
 
 TRANSCRIBE_ANSWERS = """\

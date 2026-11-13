@@ -2,7 +2,7 @@
 library is generic. One question scored as a number in a range, printed in
 three versions: a printed field in the question says which, and picks the key.
 One boolean question printed the same for everyone."""
-from examinator import Check, Exam, Field, Grade, Identity, Landmark, Number, Printed, Region
+from examinator import Ask, Check, Exam, Field, Grade, Landmark, Number, Printed, Region
 from examinator.std import math, readers
 
 exam = Exam('toy', title="Toy exam", pages=4,
@@ -12,10 +12,8 @@ exam = Exam('toy', title="Toy exam", pages=4,
                                 ask="the title printed in this box", reads={'TOY EXAM': 1}),
                        Landmark('page_number', region=Region(1, 900, 940, 990, 990),
                                 ask="the printed page number, as a number")],
-            identity=[Identity('name', Region(1, 100, 200, 800, 280), roster='name',
-                               ask="the student's full name"),
-                      Identity('id', Region(1, 100, 330, 600, 410), roster='id',
-                               ask="the student ID number")])
+            identity={'name': Field('name', Region(1, 100, 200, 800, 280)),
+                      'id': Field('id', Region(1, 100, 330, 600, 410), read=Ask("the student ID number, digits only"))})
 
 
 def count_correct(outcomes):

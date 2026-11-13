@@ -632,11 +632,11 @@ def ksite(tmp_path):
     ws = workspace(tmp_path, exam)
     runner = Runner(exam, ws, model=FakeModel(dict(SCRIPT)))
     for sid in ('s1', 's2'):
-        for qid in exam.questions:
+        for qid in exam.grading:
             assert all(o.ok for o in runner.read(sid, qid))
         for k, v in runner.values(sid).items():
             runner.verify(sid, *k.split('/'), author='t', expect_rev=v.rev)
-        runner.refresh(sid, questions=list(exam.questions))
+        runner.refresh(sid, questions=list(exam.grading))
     yield Site(exam, ws, runner)
     runner.close()
     ws.close()

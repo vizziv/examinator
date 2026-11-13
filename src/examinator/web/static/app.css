@@ -556,6 +556,7 @@ figure.sh .acts button { background: var(--panel); border: 1px solid var(--line-
 #w-crops .crop { border: 2px solid var(--accent2); background: #fff; }
 #w-crops figcaption { font-size: 13px; padding-top: 2px; }
 #w-crops figcaption .mono { font-size: 15px; }
+#w-crops figcaption input { width: min(22em, 70%); }
 #w-prop { flex: 1 1 16em; display: flex; flex-direction: column; gap: 4px; padding-top: 4px; }
 #w-name { font-size: 1.6rem; font-weight: 650; line-height: 1.2; }
 #w-id { font-size: 1.15rem; }

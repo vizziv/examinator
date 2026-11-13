@@ -92,7 +92,7 @@ def test_selftest(exam, tmp_path):
 
 
 def test_definition(exam, pkg):
-    assert list(exam.questions) == ['info'] + [f'q{i}' for i in range(1, 10)]
+    assert list(exam.grading) == ['info'] + [f'q{i}' for i in range(1, 10)]
     assert exam.pages == 22 and exam.cover_pages == 1 and exam.print_area == (0, 0, 1000, 1000)
     info = exam.questions['info']
     assert info.checks == () and info.read is None and all(isinstance(f.read, Printed) for f in info.fields)
@@ -110,7 +110,7 @@ def test_definition(exam, pkg):
     assert exam.questions['q2'].read.then is pkg('huge_constants').rewrite
     assert exam.questions['q7'].read.then is None
     groups = {}
-    for q in exam.questions.values():
+    for q in exam.grading.values():
         if q.id in ('info', 'q2', 'q7'):
             continue
         assert [c.name for c in q.checks] == ['check'] and q.columns() == [q.id] and q.check('check').points.counts
@@ -602,7 +602,7 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
     runner = Runner(exam, ws, model=model)
     try:
         for sub in ws.store.submissions():
-            for qid in exam.questions:
+            for qid in exam.grading:
                 assert all(o.ok for o in runner.read(sub.id, qid))
     finally:
         runner.close()

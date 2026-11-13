@@ -101,9 +101,9 @@ def test_selftest(exam, tmp_path):
 
 def test_definition(exam, pkg):
     v = pkg('versions')
-    assert list(exam.questions) == ['info'] + [f'q{i}' for i in range(1, 13)]
+    assert list(exam.grading) == ['info'] + [f'q{i}' for i in range(1, 13)]
     assert exam.pages == 28 and exam.cover_pages == 1 and exam.print_area == (0, 0, 1000, 1000)
-    q = exam.questions
+    q = exam.grading
     assert q['info'].checks == () and q['info'].read is None
     assert all(isinstance(f.read, Printed) for f in q['info'].fields)
     assert [f.label for f in q['info'].fields] == [f.label for pair in v.FIELDS.values() for f in pair]
@@ -198,7 +198,7 @@ def test_versions_match_the_printed_blanks(exam, pkg):
         finally:
             doc.close()
     # Two printings show a question's pages identically exactly when they share its printing.
-    for qid, q in exam.questions.items():
+    for qid, q in exam.grading.items():
         if qid == 'info':
             continue
         seen = {}
@@ -628,7 +628,7 @@ def test_no_answer_key_in_any_prompt(exam, pkg, tmp_path):
     runner = Runner(exam, ws, model=model)
     try:
         for sub in ws.store.submissions():
-            for qid in exam.questions:
+            for qid in exam.grading:
                 assert all(o.ok for o in runner.read(sub.id, qid))
     finally:
         runner.close()

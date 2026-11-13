@@ -27,7 +27,7 @@ def test_compare_runs_both_modes_and_leaves_the_store_alone(tmp_path):
     ws = Workspace(root, exam)
     ws.sync()
     subs = [s.id for s in ws.store.submissions()][:2]
-    qid = next(q.id for q in exam.questions.values() if any(f.region for f in q.fields))
+    qid = next(q.id for q in exam.grading.values() if any(f.region for f in q.fields))
     boxes = sum(1 for f in exam.questions[qid].fields if f.region and f.read is None)    # answer boxes, not printed fields
     before = ws.store.version()
 
@@ -62,7 +62,7 @@ def test_compare_reports_failures_without_model_text(tmp_path):
 
     sub = ws.store.submissions()[0].id
     r, = compare.run(exam, ws, [compare.Entrant('x', '')], submissions=[sub],
-                     questions=[next(iter(exam.questions))], make_client=lambda e: Broken())
+                     questions=[next(iter(exam.grading))], make_client=lambda e: Broken())
     assert r.text is None and r.error == "ModelError: model server returned HTTP 500"
     assert compare.summary([r], {})[0]['failed'] == 1
 
@@ -71,7 +71,7 @@ def test_compare_reports_failures_without_model_text(tmp_path):
             raise RuntimeError("could quote an answer")
 
     a, b = compare.run(exam, ws, [compare.Entrant('y', '')], submissions=[sub, sub],
-                       questions=[next(iter(exam.questions))], make_client=lambda e: Odd())
+                       questions=[next(iter(exam.grading))], make_client=lambda e: Odd())
     assert (a.text, a.error) == (None, "RuntimeError") and b.error == "RuntimeError"   # the run goes on
     ws.close()
 

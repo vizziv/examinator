@@ -172,9 +172,14 @@ no value yet, and the app can reload the exam package without losing state.
 - The difference between a check's own question and other questions.
 - "Waits on another question", the trusted-fields list, verification per
   question, and the special no-grade question: it is fields with no check.
-- Names and IDs are not fields: who wrote a submission is `core.identity`. Its
-  name and ID boxes are exam data, edited like a field's region (overrides
-  under `@identity`), but they have no value, check or status here.
+- Identification is a built-in group of ordinary fields plus a pick. The
+  group (`defs.IDENTITY`, '@identity') has one field per roster column (name,
+  ID, email; those the exam maps placed, the others drawn in the app): values,
+  settling, reads, regions at every scope, all as for any field. It is kept
+  apart from grading (`Question.apart`: no grid column, total, facet or batch
+  read; read on the Names step). Who wrote a submission is then one stored
+  pick per submission, a person's choice among proposals computed purely from
+  those values and the roster (`core.identity`).
 
 ## Open, to settle by trying
 
@@ -195,7 +200,7 @@ no value yet, and the app can reload the exam package without losing state.
 | `ctx.read` (recorded reads), the reader's context | `core/context.py` |
 | Stored value, result, decision; the status table; totals | `core/status.py` |
 | The small changes (read, set, verify, compute, decide, clear) | `core/runner.py` |
-| Printed reader; handwriting readers | `core/printed.py`; `std/readers.py` |
+| Asking about one region (`Ask`, `Printed`); handwriting readers | `core/ask.py`; `std/readers.py` |
 | Overrides at every scope; what applies to one submission (`Layers`) | `core/overrides.py`; `Workspace.layout`, `fields` |
 | Batch: reads, then computes | `core/batch.py` |
 | One row table, addressed `(submission, name, kind)` | `core/store.py` |

@@ -23,7 +23,7 @@ def state(runner, sub, qid, check):
 
 
 def read_all(runner, sub):
-    for qid in runner.exam.questions:
+    for qid in runner.exam.grading:
         assert all(o.ok for o in runner.read(sub, qid)), qid
 
 

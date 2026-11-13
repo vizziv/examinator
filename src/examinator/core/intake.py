@@ -11,17 +11,19 @@ mirror) added to the one above it: the whole source (`orient`), a submission
 is shown as `sheet_orient(body, i)` composes them; nothing else resolves it. A
 split edit that moves a sheet into another submission keeps how it looks (its
 own turn makes up the difference). Pages are written upright, and what intake
-made records each sheet's orientation (`Made.orient`), which identity uses to
-tag model calls; nothing downstream turns a page again.
+made records each sheet's orientation (`Made.orient`); nothing downstream
+turns a page again.
 
 Accepting a plan writes the PDFs whose sheets (or orientation) changed and
 records, per submission, which sheets of which source it holds. A submission
-that would change or disappear while it has grading work is not touched unless
-the caller insists (`force`): `Busy` names them.
+that would change or disappear while it has grading work (identity fields are
+not grading work) is not touched unless the caller insists (`force`): `Busy`
+names them. A rewritten submission's remembered readings, and what a reader
+read in its identity fields, are dropped.
 
 Who a submission is stays an attribute: the id is opaque and never changes.
-The roster, the model's reading of the name and ID boxes, and the person a
-grader picks are `core.identity`.
+The roster, the identity fields, and the person a grader picks are
+`core.identity`.
 """
 from __future__ import annotations
 
@@ -40,14 +42,13 @@ from PIL import Image
 
 from ..pdf import pages as pdf_pages, render
 from ..pdf.orient import ALL, IDENTITY, MIRROR, QUARTER, Orient
-from . import identity, overrides, reading, split
+from . import identity, overrides, split
+from .ask import Printed
 from .defs import Landmark, digest
-from .reading import normalize
-from .printed import PRINTED_PROMPT
+from .reading import normalize, region_key
 from .store import ANY, Row, Conflict, Made, Source
 
 PLAN = 'split'
-LANDMARK_PROMPT = PRINTED_PROMPT    # a landmark, like a printed field, is printed text
 
 
 class Busy(Conflict):
@@ -187,11 +188,17 @@ def page_of(lm: Landmark, text: str | None) -> int | None:
     return int(digits) if digits and len(digits) <= 4 else None
 
 
+def ask(lm: Landmark) -> Printed:
+    """How a landmark is read: printed text, asked about like a printed field."""
+    return Printed(lm.ask, reads={k: str(v) for k, v in (lm.reads or {}).items()})
+
+
 class LandmarkReader:
     """Reads one sheet's position from the exam's landmarks (first that answers
-    wins), through the model, memoised per source, sheet, landmark, orientation
-    and print area (the source's, else the exam's). A failed call is no reading and is not remembered: the
-    sheets it left unread are `failed`; `calls` counts the calls made."""
+    wins), through the model (`Ask.call`, as for a printed field), memoised per
+    source, sheet, landmark, orientation and print area (the source's, else the
+    exam's). A failed call is no reading and is not remembered: the sheets it
+    left unread are `failed`; `calls` counts the calls made."""
 
     def __init__(self, ws, src: Source, body: Mapping, model):
         self.ws, self.src, self.body, self.model = ws, src, body, model
@@ -207,7 +214,7 @@ class LandmarkReader:
         image = None
         failed = False
         for lm in exam.landmarks:
-            key = reading.region_key('landmark', lm.name, digest(lm), self.layout, o.code, i)
+            key = region_key('landmark', lm.name, digest(lm), self.layout, o.code, i)
             hit = ws.store.memo(self.src.id, key)
             if hit is None:
                 if image is None:
@@ -215,8 +222,7 @@ class LandmarkReader:
                 self.calls += 1
                 complete = functools.partial(self.model.complete, tag=(self.src.id, f'{i}@{o.code}', 'landmark'))
                 try:
-                    got = reading.ask(complete, LANDMARK_PROMPT, lm.ask,
-                                      self.layout.crop(image, lm.region, exam.crop_pad), lm.reads or ())
+                    got = ask(lm).call(complete, self.layout.crop(image, lm.region, exam.crop_pad))
                 except Exception:
                     self.failures += 1
                     failed = True
@@ -487,9 +493,11 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
     gone = removed(ws, id)
     entries = body['entries']
     sheets = _sheets_of(body, src.pages)
+    def work(sid):
+        return ws.store.has_work(sid, besides=identity.IDENTITY + '/')
     busy = [e['id'] for e, st, (pages, _) in zip(entries, states, sheets)
-            if st == 'changed' and pages and ws.store.has_work(e['id'])]
-    busy += [s for s in gone if ws.store.has_work(s)]
+            if st == 'changed' and pages and work(e['id'])]
+    busy += [s for s in gone if work(s)]
     if busy and not force:
         raise Busy(busy)
     fresh = _next_ids(ws, {s.id for s in ws.store.submissions()} | set(made))
@@ -526,7 +534,7 @@ def accept(ws, id: str, *, author: str | None = None, force: bool = False,
                 ws.store.set_made(Made(sid, id, tuple(pages), {'sheets': orients}, now))
                 ws.store.put_submissions([identity.submission(ws, sid, f'{sid}.pdf')])
                 ws.store.clear_memo(sid)        # readings of the old pages
-                ws.store.delete(sid, '', identity.READ)     # and what the model read on them
+                identity.forget(ws, sid)        # and what a reader read in the identity fields
             # Every PDF written from this scan starts with as many cover sheets as the plan has,
             # whatever the exam's default: the scan's own cover pages.
             overrides.set(ws.exam, ws.store, '@cover_pages', cover(ws, body),

@@ -38,9 +38,9 @@ def test_no_answer_key_in_any_prompt(tmp_path):
     runner = Runner(exam, ws, model=model)
     try:
         for sub in ws.store.submissions():
-            for qid in exam.questions:
+            for qid in exam.grading:
                 runner.read(sub.id, qid)
-            runner.refresh(sub.id, questions=list(exam.questions))
+            runner.refresh(sub.id, questions=list(exam.grading))
     finally:
         runner.close()
         ws.close()
@@ -80,7 +80,7 @@ def test_isolated_checks_time_out_and_crash_as_undecided(tmp_path):
     ws = Workspace(tmp_path / 'ws', exam)
     runner = Runner(exam, ws)
     try:
-        for qid in exam.questions:
+        for qid in exam.grading:
             runner.set('s', qid, 'x', "1", author='t')
             assert runner.compute('s', qid, 'check').ok
 
@@ -180,7 +180,7 @@ def test_a_batch_reads_everything_before_any_check(env):
     """A check that reads the printing (another question) finds it."""
     from examinator.core import batch
     exam, ws, runner = env
-    plan = batch.plan(exam, ws.store, batch.Selection(('s1',), tuple(exam.questions)), model_available=True)
+    plan = batch.plan(exam, ws.store, batch.Selection(('s1',), tuple(exam.grading)), model_available=True)
     run = batch.BatchRun(runner, plan, parallel=1)
     outs = run.run()
     steps = [o.step for o in outs]
