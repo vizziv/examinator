@@ -215,9 +215,11 @@ function nextOpen(list, from, open) {
 }
 
 // A crop is a window onto the cached full-page image: <span class="crop" data-src data-box="l,t,r,b">.
-// Its size follows the region's own size times the grader's crop scale (1 shows a page 1000 px
-// wide), no wider than the fields panel (half of it beside a multi-line value); or its own data-width.
-const CROP_SCALE = 1.2, CROP_MIN = 0.4, CROP_MAX = 3;
+// It is drawn at the region's own size times the grader's crop scale (1 shows a page 1000 px
+// wide), or at its own data-width, and never shrunk to fit. In the fields panel a crop wider
+// than the panel scrolls sideways inside a box the panel's width, and a multi-line value's crop
+// sits beside the value only when both fit (the value keeps TEXT_MIN), else above it.
+const CROP_SCALE = 1.2, CROP_MIN = 0.4, CROP_MAX = 3, TEXT_MIN = 16;   // em
 const cropScale = () => Math.min(CROP_MAX, Math.max(CROP_MIN, Number(pref('cropScale', CROP_SCALE)) || CROP_SCALE));
 function setCropScale(value) {
   setPref('cropScale', Math.min(CROP_MAX, Math.max(CROP_MIN, value)));
@@ -231,21 +233,18 @@ function showCropScale() {
 }
 function drawCrop(crop) {
   const [l, t, r, b] = crop.dataset.box.split(',').map(Number);
-  let img = crop.firstElementChild;
+  let view = crop.firstElementChild, img = view?.firstElementChild;
   if (!img) {
+    view = document.createElement('span');
     img = new Image();
     img.alt = '';
     img.addEventListener('load', () => drawCrop(crop));
     img.src = crop.dataset.src;
-    crop.append(img);
+    view.append(img);
+    crop.append(view);
   }
   if (r <= l || b <= t) return;
-  let width = Number(crop.dataset.width);
-  if (!width) {
-    width = (r - l) * 1000 * cropScale();
-    const room = crop.closest('.fields');
-    if (room) width = Math.min(width, Math.max(160, (room.clientWidth - 4) * (crop.closest('.field.multiline') ? 0.5 : 1)));
-  }
+  const width = Number(crop.dataset.width) || (r - l) * 1000 * cropScale();
   // Until the image is here, its box takes a letter page's proportions, so the page is
   // laid out once and the picture fills in (drawn again when it loads).
   const w = img.naturalWidth || 17, h = img.naturalWidth ? img.naturalHeight : 22;
@@ -253,8 +252,15 @@ function drawCrop(crop) {
   img.style.width = w * k + 'px';
   img.style.marginLeft = -l * w * k + 'px';
   img.style.marginTop = -t * h * k + 'px';
-  crop.style.width = width + 'px';
-  crop.style.height = (b - t) * h * k + 'px';
+  view.style.width = width + 'px';
+  view.style.height = (b - t) * h * k + 'px';
+  const box = width + crop.offsetWidth - crop.clientWidth, room = crop.closest('.fields')?.clientWidth;
+  const field = crop.closest('.field.multiline');
+  if (field && room) {
+    const style = getComputedStyle(field);
+    field.classList.toggle('above', box + parseFloat(style.columnGap) + TEXT_MIN * parseFloat(style.fontSize) > room);
+  }
+  crop.style.maxWidth = room ? room + 'px' : '';
 }
 function drawCrops(root) {
   for (const crop of (root || document).querySelectorAll('.crop')) drawCrop(crop);
@@ -262,7 +268,7 @@ function drawCrops(root) {
 
 // The header spans the window, not the page, so it stays put when a wide page scrolls sideways.
 function sizeHeader() { document.documentElement.style.setProperty('--vw', document.documentElement.clientWidth + 'px'); }
-addEventListener('resize', () => { sizeHeader(); drawCrops(); });
+addEventListener('resize', sizeHeader);
 if (window.ResizeObserver) new ResizeObserver(sizeHeader).observe(document.documentElement);
 // A range's filled part (WebKit has no progress pseudo-element): --fill on the input.
 function fillRange(el) {

@@ -286,10 +286,11 @@ a.navbtn.off { visibility: hidden; }
 /* a field: its label and state, the handwriting, and the value right under it */
 .fields { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-start; }
 .field { display: grid; grid-template-columns: minmax(9em, max-content); gap: 2px; }
-/* a multi-line value sits beside its handwriting, to compare line by line */
+/* a multi-line value sits beside its handwriting, to compare line by line; under it (.above, set
+   by drawCrop) when the handwriting at the crop scale leaves the value too little room */
 .field.multiline { flex: 1 1 100%; grid-template-columns: max-content minmax(16em, 1fr); gap: 2px 8px; align-items: start; }
 .field.multiline .fhead { grid-column: 1 / -1; }
-.field.multiline:not(:has(.crop)) { grid-template-columns: minmax(0, 1fr); }
+.field.multiline:is(.above, :not(:has(.crop))) { grid-template-columns: minmax(0, 1fr); }
 details.others { margin-top: 6px; }
 details.others > .fields { margin-top: 4px; }
 .fhead { display: flex; gap: 6px; align-items: center; justify-content: space-between; min-height: 18px; }
@@ -319,7 +320,14 @@ form.draft.dirty .bar button[data-action=save] { border-color: var(--warn); colo
 .line { color: var(--muted); }
 .line.bad { color: var(--bad); }
 .crops { display: flex; flex-direction: column; gap: 4px; }
-.crop { display: block; overflow: hidden; border: 1px solid var(--line); border-radius: 3px; background: var(--panel-2); min-height: 18px; line-height: 0; }
+/* a crop: a box as wide as its room, scrolling sideways over the handwriting at its true size */
+.crop { display: block; width: max-content; overflow: auto hidden; border: 1px solid var(--line); border-radius: 3px; background: var(--panel-2);
+  min-height: 18px; line-height: 0; }
+.crop > span { display: block; overflow: hidden; }
+/* its sideways scrollbar thin but always there (an overlay scrollbar would hide that there is more) */
+.crop::-webkit-scrollbar { height: 6px; }
+.crop::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
+@supports not selector(::-webkit-scrollbar) { .crop { scrollbar-width: thin; } }
 .crop img { display: block; max-width: none; }
 .ftag { font-family: system-ui, sans-serif; font-size: 10.5px; }   /* a field read from the printing */
 .evidence.stale > :not(.tag) { opacity: .55; }
