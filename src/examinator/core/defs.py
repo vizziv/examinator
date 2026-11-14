@@ -304,7 +304,7 @@ def split_key(k: str) -> tuple[str, str]:
 
 IDENTITY = '@identity'      # the built-in group of identity fields (question ids never start with '@')
 PRINT_AREA = '@print_area'  # the print area, as a root of the definition (`Exam.roots`)
-ROSTER_FIELDS = ('name', 'id', 'email')     # what a roster row may hold (`core.identity`)
+ROSTER_FIELDS = ('name', 'id', 'email')     # a roster's columns, and the identity fields (`core.identity`)
 # What to ask about a roster column's field, when the exam does not say.
 ASKS = {'name': "the student's full name", 'id': "the student ID number",
         'email': "the student's email address"}

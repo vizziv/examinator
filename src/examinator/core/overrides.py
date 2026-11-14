@@ -519,7 +519,7 @@ def _changed(ws: 'Workspace', scope: str) -> Change:
     if scope != '':         # below the exam: only how fields are read, for some submissions
         return Change(())
     c0 = _hashes(ws.exam)
-    skipped = ws.refresh()
+    skipped = ws.apply_overrides()
     c1 = _hashes(ws.exam)
     return Change(tuple(k for k in c1 if c1[k] != c0.get(k)), tuple(skipped))
 

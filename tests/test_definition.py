@@ -67,7 +67,7 @@ def test_an_override_is_refused_as_the_package_would_be(tmp_path, path, value, b
     assert ws.store.all_overrides() == []
     # stored anyway (say, before the package changed): skipped on opening, with the same reason
     ws.store.set_override(path, value, author='ta')
-    assert [(s.path, s.reason) for s in ws.refresh()] == [(path, str(by_package.value))]
+    assert [(s.path, s.reason) for s in ws.apply_overrides()] == [(path, str(by_package.value))]
     ws.close()
 
 

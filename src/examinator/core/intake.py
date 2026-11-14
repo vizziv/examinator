@@ -172,7 +172,7 @@ def _put(ws, id: str, body: dict, **kw) -> Row:
         raise Conflict("the plan changed", name='', kind=PLAN) from None
 
 
-def page(ws, src: Source, sheet: int, turns: int = 0) -> Image.Image:
+def sheet_image(ws, src: Source, sheet: int, turns: int = 0) -> Image.Image:
     """One sheet, turned."""
     return turn(ws.renderer.page(source_path(ws, src), sheet), turns)
 
@@ -220,7 +220,7 @@ class LandmarkReader:
             hit = ws.store.memo(self.src.id, key)
             if hit is None:
                 if image is None:
-                    image = page(ws, self.src, i, o)
+                    image = sheet_image(ws, self.src, i, o)
                 self.calls += 1
                 complete = functools.partial(self.model.complete, tag=(self.src.id, f'{i}@{o}', 'landmark'))
                 try:
@@ -283,7 +283,7 @@ _EDITS: dict[str, Callable[..., dict]] = {
     'cut': lambda body, sheet, delta: split.cut(body, sheet),
     'join': lambda body, sheet, delta: split.join(body, _first(body, sheet)),
     'drop': lambda body, sheet, delta: split.drop(body, sheet),
-    'restore': lambda body, sheet, delta: split.restore(body, sheet),
+    'restore': lambda body, sheet, delta: split.put_back(body, sheet),
     'extra': lambda body, sheet, delta: split.toggle_extra(body, sheet),
     'missing': lambda body, sheet, delta: split.add_missing(body, sheet),
     'unmissing': lambda body, sheet, delta: split.remove_missing(body, sheet),

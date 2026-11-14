@@ -79,8 +79,8 @@ class Outcome:
         return self.status == 'done'
 
 
-class Services:
-    """What a reader's context reaches: pages and crops from the workspace, and the model."""
+class WorkspaceServices:
+    """`context.Services` from a workspace: what a reader's context reaches: pages and crops from the workspace, and the model."""
 
     def __init__(self, workspace: Workspace, model: Model | None):
         self.ws, self._model = workspace, model
@@ -175,7 +175,7 @@ def to_read(q: Question, values: Mapping[str, Value], gone: AbstractSet[int], *,
 
 
 def read_group(submission: str, q: Question, reader: Any, fields: Sequence[Field],
-               services: Services) -> dict[str, Reading]:
+               services: WorkspaceServices) -> dict[str, Reading]:
     """One reader on some of a question's fields (with this submission's regions):
     `{label: Reading}` for the fields it read (a reader may return plain text).
     Model errors and bad output raise."""
@@ -219,7 +219,7 @@ class Runner:
         self.model = model
         path = workspace.exam.path
         self.pool = pool if pool is not None else (Pool(path) if path else None)
-        self._services = Services(workspace, model)
+        self._services = WorkspaceServices(workspace, model)
 
     def close(self) -> None:
         if self.pool is not None:

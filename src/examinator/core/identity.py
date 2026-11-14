@@ -36,12 +36,11 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
-from .defs import IDENTITY, Field, digest, split_key
+from .defs import IDENTITY, ROSTER_FIELDS, Field, digest, split_key
 from .status import Ledger, Value
 from .store import ANY, Conflict
 
 WHO = 'who'
-COLUMNS = ('name', 'id', 'email')
 
 # --- the roster ---------------------------------------------------------------------
 
@@ -245,7 +244,7 @@ def who(ws, submission: str) -> dict:
     """The person picked for a submission: {'name', 'id', 'email'} ('' when nobody)."""
     a = ws.store.get(submission, '', WHO)
     body = a.body if a is not None and isinstance(a.body, dict) else {}
-    return {c: body.get(c, "") for c in COLUMNS}
+    return {c: body.get(c, "") for c in ROSTER_FIELDS}
 
 
 def typed(text: str) -> dict:
@@ -276,7 +275,7 @@ def pick(ws, sid: str, person: Mapping | None, *, author: str | None, expect_rev
             ws.store.delete(sid, '', WHO, expect_rev=expect_rev)
             rev = None
         else:
-            body = {c: str(person.get(c) or '') for c in COLUMNS}
+            body = {c: str(person.get(c) or '') for c in ROSTER_FIELDS}
             rev = ws.store.write(sid, '', WHO, body, origin=origin, author=author, expect_rev=expect_rev).rev
     except Conflict:
         raise stale(ws, sid) from None
@@ -459,7 +458,7 @@ class Matcher:
         read, 'unread'. Candidates come in the order of the evidence: those
         every column supports, then by how many columns support them, then by
         how alike they are."""
-        cols = [c for c in COLUMNS if read.get(c) and (c == 'name' or self._exact[c])]
+        cols = [c for c in ROSTER_FIELDS if read.get(c) and (c == 'name' or self._exact[c])]
         if not cols:
             return {'doubt': 'unread', 'match': None, 'candidates': []}
         support: dict[str, set[int]] = {}
@@ -582,7 +581,7 @@ def overview(ws, subs: Iterable[str] | None = None, *, cache: dict | None = None
                                 for c, v in got.items()},
                      'doubt': prop['doubt'], 'candidates': cands,
                      'match': roster[prop['match']]['key'] if prop['match'] is not None else None,
-                     'who': ({**{c: body.get(c, "") for c in COLUMNS},
+                     'who': ({**{c: body.get(c, "") for c in ROSTER_FIELDS},
                               'person': roster[link]['key'] if link is not None else None,
                               'twice': link is not None and len(taken[link]) > 1} if body else None),
                      'rev': pick_row.rev if pick_row is not None else None})

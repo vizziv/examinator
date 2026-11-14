@@ -577,7 +577,7 @@ def drop(plan: dict, sheet: int) -> None:
 
 
 @_edit
-def restore(plan: dict, sheet: int) -> None:
+def put_back(plan: dict, sheet: int) -> None:
     """Put a dropped sheet back, into the submission whose run it is in."""
     _say(plan, _pos(plan, sheet), drop=False)
 

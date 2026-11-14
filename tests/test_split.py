@@ -181,7 +181,7 @@ def test_a_submission_is_its_kept_sheets():
     assert split.span(plan, 0) == [0, 1, 2, 3] and split.dropped(plan) == [3]     # in the span before, in no run
     plan = split.drop(split.drop(plan, 4), 5)           # all its sheets: it is gone, no empty submission
     assert split.runs(plan) == [[0, 1, 2], [6, 7, 8], [9]]
-    plan = split.restore(plan, 4)                       # put back: in the run it is in
+    plan = split.put_back(plan, 4)                       # put back: in the run it is in
     assert split.runs(plan) == [[0, 1, 2, 4], [6, 7, 8], [9]]
     plan = split.drop(split.drop(split.drop(plan, 0), 1), 2)
     assert split.runs(plan)[0] == [4]                   # the first kept sheet starts the first submission
@@ -286,7 +286,7 @@ def test_landmarks_propose_the_missing_page_and_the_extra_sheet():
     plan = split.toggle_extra(plan, 7)                  # the person says it is not extra after all
     assert not split.marks(plan)[0] and not split.proposals(plan)[1]
     assert split.doubts(plan, L)[1] == ['long', 'number']
-    assert not split.proposals(split.restore(split.drop(plan, 9), 9))[1]      # and it stays not extra
+    assert not split.proposals(split.put_back(split.drop(plan, 9), 9))[1]      # and it stays not extra
 
 
 def test_no_proposal_without_agreeing_readings():
@@ -345,7 +345,7 @@ def test_guess_never_changes_a_persons_sheets():
     strays = [None, None] + stack(5, 5)
     plan = split.guess(split.new_plan(len(strays), L, anchor=ANCHOR), title(strays))
     assert split.dropped(plan) == [0, 1]
-    plan = split.restore(plan, 1)
+    plan = split.put_back(plan, 1)
     assert split.dropped(split.guess(plan, title(strays))) == [0]
     plan = split.move(split.guess(split.new_plan(len(strays), L, anchor=ANCHOR), title(strays)), 0, -1)
     assert split.dropped(plan) == [0] and split.runs(plan)[0][0] == 1

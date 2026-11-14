@@ -209,7 +209,7 @@ def test_skipped_overrides_are_reported_at_every_scope(tmp_path):
         ws.store.set_override('gone/pages', [1], scope='submission:s2', author='ta')
         ws.store.set_override('@print_area', [5, 5, 4, 4], scope='source:src9', author='ta')
         ws.store.set_override('a/fields/y/region', [9, 0, 0, 10, 10], author='ta')
-        ws.refresh()
+        ws.apply_overrides()
         got = {(s.scope, s.path) for s in ws.skipped_overrides()}
         assert got == {('submission:s1', 'a/fields/x/region'), ('submission:s2', 'gone/pages'),
                        ('source:src9', '@print_area'), ('', 'a/fields/y/region')}

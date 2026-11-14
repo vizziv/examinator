@@ -12,7 +12,7 @@ page. For PDFs handed in already split there is one programmatic way in: a file
 name that carries a roster ID (`identity.by_file`).
 
 A workspace has its own definition, `exam`: the package's with the exam-wide
-overrides stored here (`refresh`). The package's `Exam` is never changed, and
+overrides stored here (`apply_overrides`). The package's `Exam` is never changed, and
 everything reads the definition through the workspace: for one submission,
 through `layers` (its own overrides and its scan's on top).
 """
@@ -31,7 +31,7 @@ from .store import Store, Submission
 class Workspace:
     def __init__(self, root: str | Path, exam: Exam, *, create: bool = False):
         self.root = Path(root)
-        self.exam = exam            # until `refresh` makes the workspace's own
+        self.exam = exam            # until `apply_overrides` makes the workspace's own
         self.pdfs = self.root / 'pdfs'
         if not self.pdfs.is_dir():
             if not create:
@@ -42,9 +42,9 @@ class Workspace:
             (self.root / d).mkdir(exist_ok=True, mode=0o700)
         self.store = Store(self.root / 'exam.sqlite')
         self.renderer = Renderer(self.root / 'cache')
-        self.skipped: list[overrides.Skipped] = self.refresh()
+        self.skipped: list[overrides.Skipped] = self.apply_overrides()
 
-    def refresh(self) -> list[overrides.Skipped]:
+    def apply_overrides(self) -> list[overrides.Skipped]:
         """Make this workspace's definition the package's plus the exam-wide overrides
         stored here: part of opening a workspace, and of every exam-wide edit. Those
         that no longer validate are skipped (`skipped`; every scope's:

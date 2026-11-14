@@ -133,7 +133,7 @@ class Desk:
         else:
             fn = {'confirm': lambda: split.confirm(plan, k), 'move': lambda: split.move(plan, k, d),
                   'cut': lambda: split.cut(plan, sheet), 'join': lambda: split.join(plan, k),
-                  'drop': lambda: split.drop(plan, sheet), 'restore': lambda: split.restore(plan, sheet),
+                  'drop': lambda: split.drop(plan, sheet), 'restore': lambda: split.put_back(plan, sheet),
                   'extra': lambda: split.toggle_extra(plan, sheet), 'missing': lambda: split.add_missing(plan, sheet),
                   'unmissing': lambda: split.remove_missing(plan, sheet), 'shift': lambda: split.shift(plan, sheet, d),
                   'turn': lambda: split.turn(plan, [sheet])}[op]
