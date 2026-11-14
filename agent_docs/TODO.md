@@ -134,6 +134,13 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
 
 ## Left by the cleanup
 
+- **From the review of the cleanup (2026-11-14), not fixed:** the question
+  page registers `region-save-scan`/`region-clear-scan` with no button;
+  `Actions.gate` picks its group from the action name's prefix (an explicit
+  group would be clearer); `Value.__post_init__` silently corrects a
+  contradictory value where raising would show a caller's mistake; a person's
+  unverify of a reader-vouched value is undone by a read of the same text;
+  with no model no reader runs (the `uses_model` hook is gone).
 - **Renames not taken:** `Row` in both `store` and `grid`; `Value` and
   `Table` in `std.fields` against `status.Value` and `result.Table`;
   `groups` (`Question.groups`, `Exam.groups`, `Reads.groups`); `settle`
