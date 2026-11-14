@@ -34,6 +34,7 @@
 {% endmacro %}
 {% block title %}{{ sub.id }} · {{ q.id }}{% endblock %}
 {% block head %}
+<script src="{{ root }}/static/focus.js" defer></script>
 <script src="{{ root }}/static/question.js" defer></script>
 <script src="{{ root }}/static/entries.js" defer></script>
 <script src="{{ root }}/static/rects.js" defer></script>
@@ -57,7 +58,7 @@
 {% endblock %}
 {% block body %}
 <main id="question" data-sub="{{ sub.id }}" data-q="{{ q.id }}" data-ids='{{ ids|tojson }}'>
-<section id="scan" data-scan="{{ scan }}" data-regions='{{ regions|tojson }}' data-print='{{ print_area|tojson }}' data-scopes='{{ scopes|tojson }}'
+<section id="scan" data-regions='{{ regions|tojson }}' data-print='{{ print_area|tojson }}' data-scopes='{{ scopes|tojson }}'
  data-pad="{{ exam.crop_pad }}" data-first="{{ first_page }}" data-pages="{{ count }}">
 {% if regions or count %}
 <div id="rg" class="bar">

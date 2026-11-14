@@ -83,7 +83,6 @@ CSP = ("default-src 'none'; script-src 'self' 'inline-speculation-rules'; style-
 IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 IMMUTABLE = 'private, max-age=31536000, immutable'     # a URL that names its content
 RESTARTED = "the app restarted since this page was loaded: reload"
-# What a person sees of a status: one word per idea (DESIGN.md, Words on screen).
 class Bad(ValueError):
     """Input the grader (or the page's script) should correct: HTTP 400."""
 
@@ -397,9 +396,9 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             return {'facet': f'{q.id}/{name}', 'todo': ' '.join(values)}
         for q in ws.exam.questions.values():
             for c in q.checks:
-                columns.append({'q': q, 'name': q.column(c.name), 'counts': c.points.counts, **todo(q, c.name)})
+                columns.append({'q': q, 'name': q.column(c.name), **todo(q, c.name)})
             if not q.checks:        # no checks: the column shows how its fields stand
-                columns.append({'q': q, 'name': q.id, 'counts': False, **todo(q)})
+                columns.append({'q': q, 'name': q.id, **todo(q)})
         sel = selection(request.query_params.get('focus'))
         table = values() if sel else {}
         rows, started, graded = [], False, ws.exam.questions     # started: anything of a graded question

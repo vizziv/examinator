@@ -51,7 +51,7 @@ const Theme = (() => {
     try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; }
   }
   function accent(key) {
-    const v = read(key, null);       // an older hex value (a string) is dropped: the default applies
+    const v = read(key, null);
     if (!v || typeof v !== 'object' || !isFinite(v.h) || !isFinite(v.c)) return {...DEFAULTS[key]};
     return {h: ((Number(v.h) % 360) + 360) % 360, c: Math.min(MAX_C, Math.max(0, Number(v.c)))};
   }
@@ -71,5 +71,5 @@ const Theme = (() => {
   apply();
   dark.addEventListener('change', apply);
   addEventListener('storage', e => { if (['theme', 'invertScans', 'accent', 'accent2'].includes(e.key)) apply(); });
-  return {apply, accent, color, maxChroma, DEFAULTS, ROLES, MAX_C};
+  return {apply, accent, color, ROLES, MAX_C};
 })();

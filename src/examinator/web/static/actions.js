@@ -255,8 +255,8 @@ const Actions = (() => {
   // Actions every page has.
   register('leave-field', {available: ctx => typing(ctx.target), run: ctx => ctx.target.blur()});
   register('grid', {
-    available: () => !!document.getElementById('home') && !document.getElementById('grid'),
-    run: () => document.getElementById('home').click()});
+    available: () => !!$('home') && !$('grid'),
+    run: () => $('home').click()});
 
   return {register, gate, has, trigger, hints, enable, settings, saveSettings, bindings, rebind,
           comboOf, display, typing, CATALOG};

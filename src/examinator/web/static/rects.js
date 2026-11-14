@@ -70,7 +70,7 @@ const Rects = (() => {
   // They edit `get()` through `put(d)`; `changed(el)` redraws, except the box typed in.
   function numbers(prefix, get, put, changed) {
     const nums = [...document.querySelectorAll(`.${prefix}-n`)];
-    const wh = [document.getElementById(`${prefix}-w`), document.getElementById(`${prefix}-h`)];
+    const wh = [$(`${prefix}-w`), $(`${prefix}-h`)];
     nums.forEach((n, i) => n.addEventListener('input', () => {
       const d = get();
       if (!d || n.value === '') return;

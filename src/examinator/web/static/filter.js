@@ -3,8 +3,8 @@
 // counts (choice) or a search box with matching snippets (text). The selection is
 // the browser's focus (focus.js); the grid and next/previous follow it.
 (() => {
-  const host = document.getElementById('fx-questions');
-  const countLink = document.getElementById('fx-count'), msg = document.getElementById('fx-msg');
+  const host = $('fx-questions');
+  const countLink = $('fx-count'), msg = $('fx-msg');
   const LONG = 12, SNIPPETS = 60;
   let sel = Focus.load(), data = null;
   const lists = [];      // {fid, items: [{value, input, count, label}]}
@@ -120,7 +120,7 @@
     const act = Focus.active(table, sel);
     countLink.textContent = `${shown.length} / ${all.length} submissions`;
     countLink.href = `${ROOT}/${Focus.query(sel)}`;
-    document.getElementById('fx-link').href = location.pathname + Focus.query(sel);
+    $('fx-link').href = location.pathname + Focus.query(sel);
     for (const e of lists) {
       const c = Focus.counts(table, sel, e.fid, all);
       for (const it of e.items) {
@@ -135,7 +135,7 @@
       c.summary.textContent = n ? n : '';
       c.summary.hidden = !n;
     }
-    try { sessionStorage.setItem('order', JSON.stringify(shown)); } catch (e) { /* private mode */ }
+    setSession('order', shown);
   }
 
   Actions.register('clear-filter', {available: () => !!data, run: () => {

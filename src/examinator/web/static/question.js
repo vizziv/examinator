@@ -13,7 +13,7 @@
   const ids = () => JSON.parse(main.dataset.ids);
   let order = ids(), at = order.indexOf(sub);
   whenShown(() => {
-    try { sessionStorage.setItem('gridAt', JSON.stringify({sub, q})); } catch (e) { /* private mode */ }  // the grid's cursor
+    setSession('gridAt', {sub, q});         // the grid's cursor
     order = session('order', null);
     if (!Array.isArray(order)) order = ids();
     at = order.indexOf(sub);
@@ -53,10 +53,7 @@
     $('ed-fields').classList.toggle('dirty', dirty());
     $('ed-fields').querySelector('[data-action=discard]').hidden = !dirty();
     for (const el of inputs()) el.closest('.field').classList.toggle('dirty', isDraft(el));
-    try {
-      if (dirty()) sessionStorage.setItem(draftKey, JSON.stringify(changed().map(el => ({key: el.dataset.key, rev: rev(el), text: el.value}))));
-      else sessionStorage.removeItem(draftKey);
-    } catch (e) { /* private mode */ }
+    setSession(draftKey, dirty() ? changed().map(el => ({key: el.dataset.key, rev: rev(el), text: el.value})) : undefined);
   }
   // Drafts kept over values that changed under them, in one message: what each is now.
   const line = Line('ed-msg');
@@ -156,7 +153,7 @@
   // Save the values changed here (a person who sets a value verifies it); with `all`,
   // verify this question's other values too (`list`: 'waitingOther' for those read from
   // other questions). The answer, or null when something could not be saved or verified (a
-  // conflict, a review marker), so V stays on this submission. `leaving`: the page is left
+  // conflict, a value needing review), so V stays on this submission. `leaving`: the page is left
   // on the answer, so what the save started is not waited for (it runs on the server).
   function save(all, list = 'waiting', leaving = false) {
     const edited = changed().map(el => [el.dataset.key, el.value]);
@@ -296,7 +293,7 @@
     }},
     'toggle-scan': {run: () => { setPref('hideScan', !pref('hideScan', false)); showScan(); }},
     discard: {run: () => {
-      try { sessionStorage.removeItem(draftKey); } catch (e) { /* private mode */ }
+      setSession(draftKey);
       left = true;
       location.reload();
     }},
@@ -330,7 +327,6 @@
     Actions.trigger('decide-number', {el: e.target, target: e.target});
   });
   document.addEventListener('submit', e => e.preventDefault());
-  document.addEventListener('DOMContentLoaded', ready);
   ready();
   inFilter();
 

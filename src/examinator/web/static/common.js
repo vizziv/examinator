@@ -2,6 +2,7 @@
 // Shared by every page: lines, changes and runs, drafts, preferences, crops.
 const meta = name => document.querySelector(`meta[name="${name}"]`)?.content || '';
 const ROOT = meta('root');
+const $ = id => document.getElementById(id);
 
 // A line where a person works (an entry's message, an editor's panel line, a step's status,
 // the header): one message at a time, about one state of what is shown there. A change sent
@@ -14,7 +15,7 @@ function Line(where) {
   if (all.has(where)) return all.get(where);
   let owner = null;
   function say(what, tone, by = null) {
-    const e = typeof where === 'string' ? document.getElementById(where) : where;
+    const e = typeof where === 'string' ? $(where) : where;
     owner = by;
     if (!e) return;
     e.classList.add('line');
@@ -191,8 +192,14 @@ function pref(key, fallback) {
 function setPref(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private mode */ }
 }
+// This tab's state (sessionStorage): `setSession(key)` with no value drops it.
 function session(key, fallback) {
   try { return JSON.parse(sessionStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; }
+}
+function setSession(key, value) {
+  try {
+    if (value === undefined) sessionStorage.removeItem(key); else sessionStorage.setItem(key, JSON.stringify(value));
+  } catch (e) { /* private mode */ }
 }
 
 // A message in the header: a problem (red) stays until the next one there (a change sent
@@ -211,7 +218,7 @@ function ahead(urls, hover) {
   if (!HTMLScriptElement.supports?.('speculationrules')) return;
   const rules = [{source: 'list', urls: [...new Set(urls.filter(Boolean))], eagerness: 'immediate'}];
   if (hover) rules.push({where: {selector_matches: hover}, eagerness: 'moderate'});
-  document.getElementById('ahead')?.remove();
+  $('ahead')?.remove();
   const s = document.createElement('script');
   s.type = 'speculationrules';
   s.id = 'ahead';
@@ -228,7 +235,6 @@ function whenShown(fn) {
   else fn(late());
 }
 
-const $ = id => document.getElementById(id);
 function make(tag, props, ...children) {
   const el = document.createElement(tag);
   Object.assign(el, props || {});
@@ -257,7 +263,7 @@ function setCropScale(value) {
   drawCrops();
 }
 function showCropScale() {
-  const size = document.getElementById('crop-size'), n = document.getElementById('crop-n');
+  const size = $('crop-size'), n = $('crop-n');
   if (size) { size.value = cropScale(); fillRange(size); }
   if (n) n.textContent = cropScale().toFixed(2).replace(/0$/, '') + '×';
 }
@@ -312,7 +318,7 @@ document.addEventListener('DOMContentLoaded', () => {
   sizeHeader();
   document.querySelectorAll('input[type=range]').forEach(fillRange);
   drawCrops();
-  const size = document.getElementById('crop-size');
+  const size = $('crop-size');
   if (size) {
     showCropScale();
     size.addEventListener('input', () => setCropScale(Number(size.value)));

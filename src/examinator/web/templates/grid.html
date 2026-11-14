@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% set nav = 'grid' %}
-{% block head %}<script src="{{ root }}/static/grid.js" defer></script>{% endblock %}
+{% block head %}<script src="{{ root }}/static/focus.js" defer></script>
+<script src="{{ root }}/static/grid.js" defer></script>{% endblock %}
 {% block nav %}
 <input type="search" id="f-text" placeholder="search" aria-label="search">
 <button type="button" data-action="clear-search" title="clear search and sort">×</button>

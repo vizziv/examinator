@@ -9,8 +9,8 @@
 // The rectangles, their coordinates, dragging, the scope buttons and their wording are
 // rects.js's (as on the Names step's boxes); the region boxes follow the print area's draft.
 (() => {
-  const scan = document.getElementById('scan');
-  const on = document.getElementById('rg-on');
+  const scan = $('scan');
+  const on = $('rg-on');
   if (!scan || !on) return;
   const sub = $('question').dataset.sub;
   // Each region, and the print area, at each scope (`levels` in app.py): `own`, `scan`, `all`

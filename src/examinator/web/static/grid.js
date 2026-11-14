@@ -5,7 +5,7 @@
 (() => {
   const body = document.querySelector('#grid tbody');
   const rows = [...body.rows];
-  const text = document.getElementById('f-text');
+  const text = $('f-text');
   const sum = $('filter-sum'), clearFilter = document.querySelector('[data-action=clear-filter]');
   const saved = session('grid', {});
   let sort = saved.sort || null;      // {index, dir}
@@ -35,9 +35,9 @@
 
   // The header lines up with the centred table; id and name stick on sideways scrolling.
   function measure() {
-    const wrap = document.getElementById('grid-wrap'), first = document.querySelector('#grid thead th');
+    const wrap = $('grid-wrap'), first = document.querySelector('#grid thead th');
     document.body.style.setProperty('--page-max', wrap.offsetWidth + 'px');
-    if (first) document.getElementById('grid').style.setProperty('--name-left', first.offsetWidth + 'px');
+    if (first) $('grid').style.setProperty('--name-left', first.offsetWidth + 'px');
   }
 
   // A column's "to do" toggle is the filter on its state facet: exactly the states that do
@@ -80,14 +80,12 @@
       });
       body.append(...visible);
     }
-    document.getElementById('shown').textContent = `${visible.length} / ${rows.length}`;
+    $('shown').textContent = `${visible.length} / ${rows.length}`;
     summary();
     marks();
     measure();
-    try {
-      sessionStorage.setItem('order', JSON.stringify(visible.map(r => r.dataset.id)));
-      sessionStorage.setItem('grid', JSON.stringify({text: text.value, sort}));
-    } catch (e) { /* private mode */ }
+    setSession('order', visible.map(r => r.dataset.id));
+    setSession('grid', {text: text.value, sort});
   }
 
   text.addEventListener('input', apply);
@@ -165,7 +163,7 @@
   // The table's width changes after the first measurement too (late layout, zoom, a search).
   if (window.ResizeObserver) {
     const watch = new ResizeObserver(measure);
-    watch.observe(document.getElementById('grid-wrap'));
+    watch.observe($('grid-wrap'));
     const first = document.querySelector('#grid thead th');
     if (first) watch.observe(first);
   }

@@ -1,11 +1,11 @@
 'use strict';
 // The Read page: what the options would read, shown live; one button reads it.
 (() => {
-  const form = document.getElementById('rd-form'), line = Line('rd-msg');
-  const start = document.getElementById('rd-start'), stop = document.getElementById('rd-stop');
+  const form = $('rd-form'), line = Line('rd-msg');
+  const start = $('rd-start'), stop = $('rd-stop');
   const order = session('order', null);
   let timer = null, planning = null, toRead = 0, running = false, batch = null;     // batch: the one shown, by id
-  document.getElementById('rd-grid-n').textContent = order ? order.length : 0;
+  $('rd-grid-n').textContent = order ? order.length : 0;
   if (!order) form.querySelector('[name=scope][value=grid]').disabled = true;
 
   const checked = name => [...form.querySelectorAll(`[name=${name}]:checked`)].map(i => i.value);
@@ -29,7 +29,7 @@
     const mine = planning = {};
     const r = await Changes.query('/read/plan', selection());
     if (mine !== planning) return;          // a newer change asked again
-    const counts = document.getElementById('rd-counts'), table = document.getElementById('rd-groups');
+    const counts = $('rd-counts'), table = $('rd-groups');
     counts.replaceChildren();
     table.replaceChildren();
     toRead = r.ok ? r.body.counts.read : 0;
@@ -67,14 +67,14 @@
     const r = await Changes.get('/read/status');
     const s = r.body;
     if (!r.ok || s.state === 'idle') return;
-    document.getElementById('rd-progress').hidden = false;
-    const bar = document.getElementById('rd-bar');
+    $('rd-progress').hidden = false;
+    const bar = $('rd-bar');
     bar.max = Math.max(s.total, 1);
     bar.value = s.done;
-    document.getElementById('rd-prog').textContent =
+    $('rd-prog').textContent =
       `${s.done} / ${s.total} · ${s.state}${s.current ? ' · ' + s.current : ''}${s.failed ? ` · ${s.failed} failed` : ''}` +
       `${s.asked ? ` · fields read ${s.got} of ${s.asked}` : ''}${s.error ? ' · ' + s.error : ''}`;
-    const table = document.getElementById('rd-failures');
+    const table = $('rd-failures');
     table.replaceChildren();
     for (const f of s.failures) {
       const link = make('a', {textContent: f.submission,
