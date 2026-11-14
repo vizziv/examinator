@@ -55,6 +55,7 @@
 <span class="sep"></span>
 <button type="button" id="scan-toggle" data-action="toggle-scan" aria-pressed="true" title="show or hide the scanned pages (drag the divider, or pinch or Ctrl+scroll over a page, to resize)">pages</button>
 <label class="dim" title="crop scale (also pinch or Ctrl+scroll over a crop)">crop scale <input type="range" id="crop-size" min="0.4" max="3" step="0.05"> <span id="crop-n"></span></label>
+<label class="dim" title="every field on its own row"><input type="checkbox" id="one-column"> one column</label>
 {% endblock %}
 {% block body %}
 <main id="question" data-sub="{{ sub.id }}" data-q="{{ q.id }}" data-ids='{{ ids|tojson }}'>

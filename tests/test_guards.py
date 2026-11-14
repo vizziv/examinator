@@ -168,6 +168,15 @@ def _registered() -> set[str]:
     return names
 
 
+def test_every_font_size_follows_the_text_size():
+    """One base on <html> (the text size in Settings) sets every font size: the stylesheet
+    names its sizes in rem (or em), never in px, except that base itself."""
+    css = (STATIC / 'app.css').read_text()
+    sizes = re.findall(r'(?:font-size:|font:(?:\s*\d00)?|--fs-[\w-]+:)\s*([\d.]+px)', css)
+    assert sizes == ['14.5px'], sizes            # html { font: 14.5px/1.4 ... }
+    assert "base: 14.5" in (STATIC / 'theme.js').read_text()
+
+
 def test_every_data_action_names_an_action():
     known = set(_catalog()) | _registered()
     used = {(f.name, name) for f in TEMPLATES.glob('*.html')
