@@ -85,7 +85,7 @@
     want = null;
     if (j >= 0) go(j);
   }
-  function go(j) { k = Math.max(0, Math.min(j, order.length)); ci = 0; looking = false; pick.value = ''; hi = 0; valueLine.say(''); moved(); }
+  function go(j) { k = Math.max(0, Math.min(j, order.length)); ci = 0; looking = false; pick.value = ''; hi = 0; valueLine.say(''); Line('flow-msg').say(''); moved(); }
 
   // Naming is said about what is shown, when the key is pressed (or the item clicked): the
   // submission and one of {key} (a roster person), {text} (someone typed in), {restore} (undo)
@@ -377,7 +377,7 @@
       return text === undefined ? {verify: [{key: k, rev}]} : {values: {[k]: {text, rev}}};
     }, {line: valueLine, done: () => load(), redraw: async () => {
       await load();
-      return kept.length ? Changes.kept(kept.map(x => `${brief(x.now)} (${x.el.getAttribute('aria-label')})`).join(', ')) : "shown as it is now";
+      return Changes.keptOver(kept, el => el.getAttribute('aria-label'));
     }});
   }
   function valueBox(r, name) {

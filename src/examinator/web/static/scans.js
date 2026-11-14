@@ -162,7 +162,7 @@
     const typed = text.value, save = $('ro-save');
     return Changes.send('roster', '/scans/roster', () => ({text: typed, rev: save.dataset.rev || null}), {
       line, done: () => location.reload(),
-      redraw: cur => { save.dataset.rev = cur.rev ?? ''; return `${cur.people === 1 ? "1 person" : `${cur.people || 0} people`} saved now · yours kept: save again to replace them`; }});
+      redraw: cur => { save.dataset.rev = cur.rev ?? ''; return Changes.kept(cur.people === 1 ? "1 person" : `${cur.people || 0} people`); }});
   }});
 
   // A link to a submission on Names (#sub=) or a scan on Split (#src=) opens that step, also when it is the link followed last.

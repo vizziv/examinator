@@ -20,7 +20,6 @@ function Line(where) {
     e.classList.add('line');
     e.replaceChildren(...[].concat(what ?? '').filter(x => x !== ''));
     e.classList.toggle('bad', tone === 'bad' && e.childNodes.length > 0);
-    e.hidden = !e.childNodes.length;
   }
   const line = {say, mine: by => owner === by};
   all.set(where, line);
@@ -135,7 +134,10 @@ const Changes = (() => {
   }
   return {send, run, watch, query: (path, body) => call(path, body || {}), get: path => call(path), busy: () => long > 0,
           // a stale refusal over a draft: what is there now, and that the draft stays
-          kept: now => `yours kept over ${now}: save again to overwrite`};
+          kept: now => `yours kept over ${now}: save again to overwrite`,
+          // the same, over the drafts a drawing kept (keepDrafts): what each is now, named by `label(el)`
+          keptOver: (kept, label) => (kept.length ? Changes.kept(kept.map(k => `${brief(k.now)} (${label(k.el)})`).join(', '))
+                                                  : "shown as it is now")};
 })();
 // A value in a message: short.
 const brief = v => {

@@ -61,8 +61,7 @@
   // Drafts kept over values that changed under them, in one message: what each is now.
   const line = Line('ed-msg');
   const label = el => (el.closest('.field')?.querySelector('.flabel') || el.closest('form')?.querySelector('.elabel'))?.textContent.trim();
-  const keptText = kept => (kept.length ? Changes.kept(kept.map(k => `${brief(k.now)} (${label(k.el)})`).join(', '))
-                                        : "shown as it is now");
+  const keptText = kept => Changes.keptOver(kept, label);
   const sayKept = kept => { if (kept.length) line.say(keptText(kept), 'bad'); };
   // The draft left behind in this tab, back on top of the values drawn now.
   function adopt() {

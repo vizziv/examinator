@@ -312,8 +312,10 @@ details.others > .fields { margin-top: 4px; }
 form.draft > .bar { margin-top: 5px; }
 form.draft.dirty .bar button[data-action=save] { border-color: var(--warn); color: var(--warn); }
 .notice { color: var(--bad); }
-/* a line where a person works (Line in common.js): how the last change there went */
+/* a line where a person works (Line in common.js): how the last change there went; one on its
+   own row keeps its height while empty, so a message never pushes what is below it */
 .line { color: var(--muted); }
+p.line { min-height: 1.4em; margin: 0; }
 .line.bad { color: var(--bad); }
 .crops { display: flex; flex-direction: column; gap: 4px; }
 /* a crop: a box as wide as its room, scrolling sideways over the handwriting at its true size */
@@ -488,7 +490,6 @@ label.btn.primary { background: var(--accent); border-color: var(--accent); colo
 .flow button.off { opacity: .5; }
 .flow a { font-size: var(--fs-head); font-weight: 600; padding: 3px 6px; }
 .p-scans #flow-next { margin: 2px 0 0; }
-.p-scans #flow-msg { margin: 0; }
 .p-scans #sp-bar { position: sticky; top: calc(var(--head) + 2px); z-index: 4; }
 .p-scans #sp-length { width: 4.5em; }
 .p-scans #sp-sum { display: inline-flex; gap: 4px; flex-wrap: wrap; }
