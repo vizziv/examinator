@@ -1,14 +1,14 @@
 """The small changes (MODEL.md): everything the app or a batch run does is one
 or more of these.
 
-    field value   read (a reader)  set, verify, unverify (a person)
+    field value   read (a reader)  set, verify, unverify, review, unset (a person)
     result        compute (automatic: `refresh` recomputes what is outdated)
     decision      decide, clear (a person)
 
 What a read reads is one computation (`to_read`), which the read executes,
 the batch plan counts and the question page shows. A read writes only values
-no person verified (unless told to), and a read that yields the same text
-changes nothing: same revision, still verified. Changing
+no person verified (unless told to), and a read of the same text keeps the
+revision and what a person said about the value (`status.Value.read`). Changing
 how a field is read changes no value; reading again is a person's choice. A compute
 runs outside any transaction and is published only if every field it read is
 still at the revision it read. A check that times out, crashes or cannot decide

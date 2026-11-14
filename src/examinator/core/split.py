@@ -41,7 +41,7 @@ Each person's edit says exactly what the person did, on the sheets it names:
     extra, missing   the submission's proposals become the person's, then the mark
 
 **A verified submission is its sheets.** `verified` on a first sheet means a
-person looked at that submission as it is (`look`: its kept sheets in order,
+person looked at that submission as it is (`looks`: its kept sheets in order,
 and which are extra and before which printed pages are missing) and said it
 is these sheets: its first sheet starts one, none of its other sheets does,
 the dropped ones are dropped, and the next kept sheet starts one. Verifying

@@ -46,8 +46,8 @@ stays (values a person verified, decisions, the pick). A removed submission
 is gone; its id is never reused.
 
 Who a submission is stays an attribute: the id is opaque and never changes.
-The roster, the identity fields, and the person a grader picks are
-`core.identity`.
+The identity fields and the person a grader picks are `core.identity`; the
+roster's parsing and matching, `core.roster`.
 """
 from __future__ import annotations
 
