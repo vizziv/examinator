@@ -166,7 +166,7 @@ def site(tmp_path):
     exam = tiny()
     ws = workspace(tmp_path, exam)
     runner = Runner(ws, model=FakeModel(dict(SCRIPT)))
-    yield Site(exam, ws, runner)
+    yield Site(ws, runner)
     runner.close()
     ws.close()
 

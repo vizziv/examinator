@@ -10,7 +10,7 @@
 <pre class="code">{% for line in b.text.split('\n') %}<span class="ln{% if loop.index in b.highlight %} hl{% endif %}" data-n="{{ loop.index }}">{{ line }}</span>
 {% endfor %}</pre>
 {% elif b.type == 'details' %}
-<details{% if b.summary == 'Key' %} class="ev-key"{% endif %}><summary>{{ b.summary }}</summary>{{ render(b.blocks, base) }}</details>
+<details><summary>{{ b.summary }}</summary>{{ render(b.blocks, base) }}</details>
 {% elif b.type == 'image' %}
 <img class="figure" src="{{ base }}/{{ b.digest }}" alt="{{ b.alt }}"{% if b.title %} title="{{ b.title }}"{% endif %}>
 {% endif %}

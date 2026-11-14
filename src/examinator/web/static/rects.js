@@ -70,7 +70,7 @@ const Rects = (() => {
   // They edit `get()` through `put(d)`; `changed(el)` redraws, except the box typed in.
   function numbers(prefix, get, put, changed) {
     const nums = [...document.querySelectorAll(`.${prefix}-n`)];
-    const wh = [document.getElementById(`${prefix}-w`), document.getElementById(`${prefix}-h`)];
+    const wh = [$(`${prefix}-w`), $(`${prefix}-h`)];
     nums.forEach((n, i) => n.addEventListener('input', () => {
       const d = get();
       if (!d || n.value === '') return;
@@ -110,5 +110,41 @@ const Rects = (() => {
     });
   }
 
-  return {back, clamp, same, shift, resize, grips, box, place, area, numbers, arrows};
+  // Dragging on `el`: a press that `grab(e)` takes hold of ({d: the rectangle, kx, ky: pixels to
+  // per-mille, min?}; else nothing happens) moves it, or by a handle (data-h) resizes it; each move
+  // `put`s the new rectangle (`move(hold, dx, dy, e)` when the editor moves it its own way) and
+  // calls `moved()`; letting go calls `dropped()`.
+  function drag(el, {grab, move, put, moved, dropped}) {
+    let hold = null;
+    el.addEventListener('pointerdown', e => {
+      hold = e.button === 0 ? grab(e) : null;
+      if (!hold) return;
+      Object.assign(hold, {h: e.target.dataset.h || '', x: e.clientX, y: e.clientY});
+      el.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    el.addEventListener('pointermove', e => {
+      if (!hold) return;
+      const dx = (e.clientX - hold.x) * hold.kx, dy = (e.clientY - hold.y) * hold.ky;
+      put(hold.h ? resize(hold.d, hold.h, dx, dy, hold.min) : move ? move(hold, dx, dy, e) : shift(hold.d, dx, dy));
+      moved();
+    });
+    const end = () => { if (hold) { hold = null; dropped(); } };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  }
+
+  // What saving or dropping `what` ("region", "print area", "box") at a scope ('own', 'scan',
+  // 'all') says, the same in every editor; `keeps`: what this submission keeps that wins over
+  // the scope saved ("its own").
+  const WHERE = {own: "this submission", scan: "this scan", all: "all submissions"};
+  const said = (what, level, clear, keeps) =>
+    (!clear ? `saved · ${WHERE[level]}` : level === 'all' ? "reverted · all submissions" : `${level === 'own' ? 'own' : "scan's"} ${what} dropped`)
+    + (keeps ? ` · this submission keeps ${keeps}` : '');
+  // Asked before dropping `what` ("region for x", "print area", "boxes") at a scope.
+  const dropping = (level, what) => confirm({own: `Drop this submission's own ${what}?`,
+                                              scan: `Drop this scan's ${what}, for every submission from it?`,
+                                              all: `Back to the package's ${what}, for all submissions?`}[level]);
+
+  return {back, same, shift, resize, box, place, area, numbers, arrows, drag, said, dropping};
 })();

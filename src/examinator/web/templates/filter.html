@@ -1,9 +1,11 @@
 {% extends 'base.html' %}
 {% set nav = 'filter' %}
 {% block title %}Filter · {{ exam.title }}{% endblock %}
-{% block head %}<script src="{{ root }}/static/filter.js" defer></script>{% endblock %}
+{% block head %}<script src="{{ root }}/static/focus.js" defer></script>
+<script src="{{ root }}/static/filter.js" defer></script>{% endblock %}
 {% block body %}
 <main class="narrow" id="filter">
+<h1>Filter</h1>
 <div class="bar">
 <a id="fx-count" href="{{ root }}/" title="open the grid on these submissions">… submissions</a>
 <button type="button" data-action="clear-filter">clear</button>

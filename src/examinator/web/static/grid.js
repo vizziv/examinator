@@ -5,21 +5,18 @@
 (() => {
   const body = document.querySelector('#grid tbody');
   const rows = [...body.rows];
-  const text = document.getElementById('f-text');
+  const text = $('f-text');
   const sum = $('filter-sum'), clearFilter = document.querySelector('[data-action=clear-filter]');
   const saved = session('grid', {});
   let sort = saved.sort || null;      // {index, dir}
   let sel = {}, data = null;
   text.value = saved.text || '';
 
+  // A column's sort key: a cell's or the total's `data-sort` (a number; '' none), else its text.
   function key(row, index, kind) {
     const td = row.cells[index];
-    if (kind === 'num') return Number(td.dataset.n);
-    if (kind === 'cell') {
-      const v = td.dataset.v;
-      return v === '' ? null : v === 't' ? 1 : v === 'f' ? 0 : Number(v);
-    }
-    return td.textContent.trim().toLowerCase();
+    if (kind === 'text') return td.textContent.trim().toLowerCase();
+    return td.dataset.sort === '' ? null : Number(td.dataset.sort);
   }
 
   function summary() {
@@ -38,9 +35,9 @@
 
   // The header lines up with the centred table; id and name stick on sideways scrolling.
   function measure() {
-    const wrap = document.getElementById('grid-wrap'), first = document.querySelector('#grid thead th');
+    const wrap = $('grid-wrap'), first = document.querySelector('#grid thead th');
     document.body.style.setProperty('--page-max', wrap.offsetWidth + 'px');
-    if (first) document.getElementById('grid').style.setProperty('--name-left', first.offsetWidth + 'px');
+    if (first) $('grid').style.setProperty('--name-left', first.offsetWidth + 'px');
   }
 
   // A column's "to do" toggle is the filter on its state facet: exactly the states that do
@@ -83,14 +80,12 @@
       });
       body.append(...visible);
     }
-    document.getElementById('shown').textContent = `${visible.length} / ${rows.length}`;
+    $('shown').textContent = `${visible.length} / ${rows.length}`;
     summary();
     marks();
     measure();
-    try {
-      sessionStorage.setItem('order', JSON.stringify(visible.map(r => r.dataset.id)));
-      sessionStorage.setItem('grid', JSON.stringify({text: text.value, sort}));
-    } catch (e) { /* private mode */ }
+    setSession('order', visible.map(r => r.dataset.id));
+    setSession('grid', {text: text.value, sort});
   }
 
   text.addEventListener('input', apply);
@@ -121,7 +116,7 @@
   async function load() {
     if (Focus.size(sel) && !data) {
       // Until the values arrive, the server's rendering (if a link carried the filter) stands.
-      const r = await request('/focus/values');
+      const r = await Changes.get('/focus/values');
       if (r.ok) data = r.body; else flash('filter: ' + (r.body.error || 'failed to load'));
     }
   }
@@ -168,7 +163,7 @@
   // The table's width changes after the first measurement too (late layout, zoom, a search).
   if (window.ResizeObserver) {
     const watch = new ResizeObserver(measure);
-    watch.observe(document.getElementById('grid-wrap'));
+    watch.observe($('grid-wrap'));
     const first = document.querySelector('#grid thead th');
     if (first) watch.observe(first);
   }

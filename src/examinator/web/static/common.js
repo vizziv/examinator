@@ -1,10 +1,8 @@
 'use strict';
-// Shared by every page: token-carrying requests, job polling, preferences, crops.
+// Shared by every page: lines, changes and runs, drafts, preferences, crops.
 const meta = name => document.querySelector(`meta[name="${name}"]`)?.content || '';
 const ROOT = meta('root');
-
-// Reading: a GET, answered as {status, ok, body}.
-const request = path => Changes.get(path);
+const $ = id => document.getElementById(id);
 
 // A line where a person works (an entry's message, an editor's panel line, a step's status,
 // the header): one message at a time, about one state of what is shown there. A change sent
@@ -17,13 +15,12 @@ function Line(where) {
   if (all.has(where)) return all.get(where);
   let owner = null;
   function say(what, tone, by = null) {
-    const e = typeof where === 'string' ? document.getElementById(where) : where;
+    const e = typeof where === 'string' ? $(where) : where;
     owner = by;
     if (!e) return;
     e.classList.add('line');
     e.replaceChildren(...[].concat(what ?? '').filter(x => x !== ''));
     e.classList.toggle('bad', tone === 'bad' && e.childNodes.length > 0);
-    e.hidden = !e.childNodes.length;
   }
   const line = {say, mine: by => owner === by};
   all.set(where, line);
@@ -42,8 +39,16 @@ Line.els = new WeakMap();
 // page moves on) drops what was pressed behind it on that subject; so does one that does not
 // go through, which says why at its `line` (else the header): the server's reason, then, for
 // a stale one (409), what `redraw(current)` did with the draft, if it returns that.
+//   Changes.run(subject, path, body, {line, each, done})   a run in a slot: sent like a change,
+//                                  then its job watched (below); `done(job, answer)` (job null:
+//                                  the server started none) may say more, ahead of the outcome
+//   Changes.watch(job, {line, each, done})   a job, polled until it ends ('…' on the line while it
+//                                  runs; `each(job)` sees every poll, true stops waiting), then
+//                                  its outcome there, one wording everywhere: nothing when it went
+//                                  well, "N failed (…)" or the job's own failure; `done(job)` first
 //   Changes.query(path, body)      a POST that changes nothing (a preview)
-//   Changes.busy()                 a long change (a model run, Accept) is under way
+//   Changes.get(path)              a GET, answered as {status, ok, body}
+//   Changes.busy()                 a long change (Accept) or a run is under way
 const Changes = (() => {
   const chains = new Map();     // subject -> {tail, n, over}
   let long = 0;
@@ -93,9 +98,47 @@ const Changes = (() => {
     c.tail = mine;
     return mine;
   }
-  return {send, query: (path, body) => call(path, body || {}), get: path => call(path), busy: () => long > 0,
+  const failed = o => (o.status !== 'done' && o.status !== 'skipped') || o.read < o.asked;
+  function outcome(job) {
+    if (job.state === 'running') return '';               // no longer waited for: it goes on
+    if (job.state !== 'done') return `${job.state}${job.error ? ': ' + job.error : ''}`;
+    const bad = (job.outcomes || []).filter(failed);
+    if (!bad.length) return '';
+    const what = bad.slice(0, 3).map(o => [o.submission, o.step, o.status, o.detail].filter(Boolean).join(' '));
+    return `${bad.length} failed (${what.join('; ')}${bad.length > 3 ? '; …' : ''})`;
+  }
+  async function watch(id, {line, each, done} = {}) {
+    if (!id) return null;
+    const me = {}, at = line || Line('flash');
+    busy(1);
+    try {
+      at.say('…', '', me);
+      let job;
+      for (;;) {
+        const r = await call('/jobs/' + encodeURIComponent(id));
+        job = r.ok ? r.body : {state: 'lost', error: r.body.error || "no connection"};
+        if ((each && each(job) === true) || job.state !== 'running') break;
+        await new Promise(go => setTimeout(go, 600));
+      }
+      const said = done ? await done(job) : '', out = outcome(job);
+      if (at.mine(me)) at.say([said, out].filter(Boolean).join(' · '), out ? 'bad' : '', me);
+      return job;
+    } finally { busy(-1); }
+  }
+  function run(subject, path, body, {line, each, done} = {}) {
+    busy(1);
+    return send(subject, path, body, {line, done: async b => {
+      if (b.job) return watch(b.job, {line, each, done: job => done && done(job, b)});
+      const said = done ? await done(null, b) : '';
+      if (said) (line || Line('flash')).say(said);
+    }}).finally(() => busy(-1));
+  }
+  return {send, run, watch, query: (path, body) => call(path, body || {}), get: path => call(path), busy: () => long > 0,
           // a stale refusal over a draft: what is there now, and that the draft stays
-          kept: now => `yours kept over ${now}: save again to overwrite`};
+          kept: now => `yours kept over ${now}: save again to overwrite`,
+          // the same, over the drafts a drawing kept (keepDrafts): what each is now, named by `label(el)`
+          keptOver: (kept, label) => (kept.length ? Changes.kept(kept.map(k => `${brief(k.now)} (${label(k.el)})`).join(', '))
+                                                  : "shown as it is now")};
 })();
 // A value in a message: short.
 const brief = v => {
@@ -112,18 +155,6 @@ function override({path, scope = '', value, clear, sub, rev, take}, {line, done}
   return Changes.send(`override:${scope}:${path}`, clear ? '/exam/clear' : '/exam/set',
     () => ({path, scope, sub, rev: rev(), ...(clear ? {} : {value})}),
     {line, done, redraw: cur => { take(cur); return clear ? `now ${brief(cur.value)}` : Changes.kept(brief(cur.value)); }});
-}
-
-// A background job, polled until it ends: its last state ({state: 'done' | 'failed' |
-// 'lost', ...}; 'lost' when the server no longer knows it). `each(job)` sees every poll;
-// returning true stops waiting.
-async function waitJob(id, each) {
-  for (;;) {
-    const r = await request('/jobs/' + encodeURIComponent(id));
-    const job = r.ok ? r.body : {state: 'lost', error: r.body.error || "no connection"};
-    if ((each && each(job) === true) || job.state !== 'running') return job;
-    await new Promise(go => setTimeout(go, 600));
-  }
 }
 
 // What the server drew, drawn again: `fresh` takes the place of what is under `old`, but the
@@ -161,8 +192,14 @@ function pref(key, fallback) {
 function setPref(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private mode */ }
 }
+// This tab's state (sessionStorage): `setSession(key)` with no value drops it.
 function session(key, fallback) {
   try { return JSON.parse(sessionStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; }
+}
+function setSession(key, value) {
+  try {
+    if (value === undefined) sessionStorage.removeItem(key); else sessionStorage.setItem(key, JSON.stringify(value));
+  } catch (e) { /* private mode */ }
 }
 
 // A message in the header: a problem (red) stays until the next one there (a change sent
@@ -181,7 +218,7 @@ function ahead(urls, hover) {
   if (!HTMLScriptElement.supports?.('speculationrules')) return;
   const rules = [{source: 'list', urls: [...new Set(urls.filter(Boolean))], eagerness: 'immediate'}];
   if (hover) rules.push({where: {selector_matches: hover}, eagerness: 'moderate'});
-  document.getElementById('ahead')?.remove();
+  $('ahead')?.remove();
   const s = document.createElement('script');
   s.type = 'speculationrules';
   s.id = 'ahead';
@@ -198,7 +235,6 @@ function whenShown(fn) {
   else fn(late());
 }
 
-const $ = id => document.getElementById(id);
 function make(tag, props, ...children) {
   const el = document.createElement(tag);
   Object.assign(el, props || {});
@@ -227,7 +263,7 @@ function setCropScale(value) {
   drawCrops();
 }
 function showCropScale() {
-  const size = document.getElementById('crop-size'), n = document.getElementById('crop-n');
+  const size = $('crop-size'), n = $('crop-n');
   if (size) { size.value = cropScale(); fillRange(size); }
   if (n) n.textContent = cropScale().toFixed(2).replace(/0$/, '') + '×';
 }
@@ -282,7 +318,7 @@ document.addEventListener('DOMContentLoaded', () => {
   sizeHeader();
   document.querySelectorAll('input[type=range]').forEach(fillRange);
   drawCrops();
-  const size = document.getElementById('crop-size');
+  const size = $('crop-size');
   if (size) {
     showCropScale();
     size.addEventListener('input', () => setCropScale(Number(size.value)));

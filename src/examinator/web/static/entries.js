@@ -1,7 +1,7 @@
 'use strict';
 // Exam data entries (<form class="entry">): save and revert through /exam/set and /exam/clear.
 // Used on the exam page and in the question page's key panel. A save that outdates
-// grades starts one background recheck; this page shows its progress, and the
+// grades starts one background recompute; this page shows its progress, and the
 // question page hears of it through the 'entry-saved' event.
 (() => {
   const sub = $('question')?.dataset.sub;
@@ -62,27 +62,19 @@
   document.addEventListener('submit', e => { if (e.target.matches('form.entry')) e.preventDefault(); });
   addEventListener('beforeunload', e => { if ([...document.querySelectorAll('form.entry .ev')].some(isDraft)) e.preventDefault(); });
 
-  // --- the exam page: progress of the recheck, copying the change list ---
+  // --- the exam page: progress of the recompute, copying the change list ---
   const panel = $('changes');
   if (!panel) return;
 
-  document.addEventListener('entry-saved', async e => {
-    const b = e.detail, what = `${(b.checks || []).join(', ')} recomputed`;
+  const line = Line('ch-text'), bar = $('ch-bar');
+  document.addEventListener('entry-saved', e => {
+    const b = e.detail;
     panel.hidden = false;
-    $('ch-fail').textContent = (b.skipped || []).map(s => `not applied: ${s.path} (${s.reason})`).join(' ');
-    if (!b.job) { $('ch-text').textContent = "no grades affected"; return; }
-    $('ch-text').textContent = `${b.checks.join(', ')} outdated; recomputing`;
-    const bar = $('ch-bar');
+    $('ch-skipped').textContent = (b.skipped || []).map(s => `not applied: ${s.path} (${s.reason})`).join(' ');
+    if (!b.job) { line.say("no grades affected"); return; }
     bar.hidden = false;
-    const job = await waitJob(b.job, j => {
-      bar.max = j.total || 1;
-      bar.value = j.done || 0;
-      $('ch-text').textContent = `${what} ${j.done || 0}/${j.total || 0}`;
-    });
-    const bad = job.outcomes || [];
-    $('ch-fail').textContent = job.state !== 'done' ? `${job.state}: ${job.error || ''}`
-      : bad.length ? `${bad.length} not done: ` + bad.slice(0, 5).map(o => `${o.submission} ${o.step} ${o.status}`).join('; ') : '';
-    bar.hidden = true;
+    Changes.watch(b.job, {line, each: j => { bar.max = j.total || 1; bar.value = j.done || 0; },
+                          done: () => { bar.hidden = true; return `${b.checks.join(', ')} recomputed`; }});
   });
   // A scan's or a submission's own value: back to what applies to the others.
   Actions.register('scoped-revert', {run: ({el}) => {

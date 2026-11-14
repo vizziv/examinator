@@ -25,7 +25,7 @@
   let current = null;     // the step shown
 
   // The line under the strip: how the last change on the step shown went (a change there replaces it).
-  const line = Line('msg'), say = (text, tone) => line.say(text, tone);
+  const line = Line('flow-msg'), say = (text, tone) => line.say(text, tone);
   const sheet = (i, w) => `${ROOT}/sheet/${encodeURIComponent(plan.id)}/${i}.jpg?o=${plan.turn[i]}&w=${w}`;
   const near = (i, d) => plan.order[plan.order.indexOf(i) + d] ?? -1;     // a neighbour in the pile, else -1
   const reading = i => plan.readings[i] || '';
@@ -35,13 +35,14 @@
 
   // --- the steps: one shown at a time; the strip counts what is left in each ---
   const tabs = [...document.querySelectorAll('[data-tab]')];
-  const PANEL = {add: 'add', split: 'split', roster: 'roster-box', names: 'names'};
+  const panel = name => $('step-' + name);
   function tab(name) {
-    if (!$(PANEL[name])) name = 'add';
+    if (!panel(name)) name = 'add';
     current = name;
     for (const b of tabs) b.setAttribute('aria-selected', String(b.dataset.tab === name));
-    for (const [t, id] of Object.entries(PANEL)) if ($(id)) $(id).hidden = t !== name;
+    for (const b of tabs) if (panel(b.dataset.tab)) panel(b.dataset.tab).hidden = b.dataset.tab !== name;
     setPref('scansTab', name);
+    if (linked() && linked() !== name) history.replaceState(null, '', location.pathname);   // a link to another step: followed
     if (name === 'split' && plan) history.replaceState(null, '', '#src=' + plan.id);
     say('');
     main.dispatchEvent(new CustomEvent('tab', {detail: name}));
@@ -61,13 +62,13 @@
     const all = Object.values(counts);
     const open = all.reduce((a, c) => a + c.open, 0), write = all.reduce((a, c) => a + c.write, 0);
     if (all.length) {
-      $('n-split').textContent = `(${[open ? `${open} unverified` : '', write ? `${write} to write` : ''].filter(Boolean).join(' · ') || 'done'})`;
+      $('flow-n-split').textContent = `(${[open ? `${open} unverified` : '', write ? `${write} to write` : ''].filter(Boolean).join(' · ') || 'all verified'})`;
     }
-    $('n-names').textContent = names && names.n ? `(${names.left ? `${names.left} unverified` : 'done'})` : '';
+    $('flow-n-names').textContent = names && names.n ? `(${names.left ? `${names.left} unverified` : 'all verified'})` : '';
     const off = tabs.find(b => b.dataset.tab === 'names');
     off.classList.toggle('off', !made);
     off.title = made ? 'who wrote each submission' : 'Names needs submissions';
-    $('next').textContent = nextThing(open, write);
+    $('flow-next').textContent = nextThing(open, write);
   }
   function nextThing(open, write) {
     const after = () => (!PEOPLE ? 'next: add a roster' : made ? 'next: Names' : 'next: Split');
@@ -85,7 +86,7 @@
     }
     if (!made) return 'no submissions yet: accept a split first';
     if (!names) return '';
-    if (!names.left) return 'every submission is verified; next: Read';
+    if (!names.left) return 'next: Read';
     const fields = names.fields > 0;
     if (names.unread && fields && MODEL) return 'next: read the name boxes';
     if (!PEOPLE) return 'next: add a roster';
@@ -95,7 +96,7 @@
   }
 
   // --- adding scans ---
-  $('up').addEventListener('change', async e => {
+  $('add-file').addEventListener('change', async e => {
     for (const file of e.target.files) {
       say(`uploading ${file.name}…`);
       let res = null, body = {};
@@ -116,7 +117,7 @@
   }
   function scanCounts() {
     for (const [id, c] of Object.entries(counts)) {
-      const cell = $('sc-' + id);
+      const cell = $('add-n-' + id);
       if (cell) cell.replaceChildren(c.open ? tag('unv', `${c.open} unverified`) : '', ' ',
                                      c.write ? tag('unv', `${c.write} to write`) : tag('', 'all written'));
     }
@@ -124,7 +125,7 @@
 
   // --- the roster: pasted or loaded, read by the server as it is typed (nothing saved) so a
   // wrong paste shows at once: how many people, the first few rows, the lines it could not read ---
-  const text = $('roster-text');
+  const text = $('ro-text');
   let timer = 0, asked = 0, rosterOk = false;
   async function preview() {
     const mine = ++asked;
@@ -135,11 +136,11 @@
   }
   function showRoster(b) {
     const ok = rosterOk = !!b && !b.error && b.people > 0 && !b.problems.length;
-    $('roster-save').disabled = !ok;
+    $('ro-save').disabled = !ok;
     const bad = b && !b.error ? b.problems.length + b.more : 0;
-    $('roster-read').textContent = !b ? '' : b.error || `${b.people} people${bad ? `, ${bad} lines unclear` : ''}`;
-    $('roster-read').className = ok || !b ? 'dim' : 'bad';
-    const sample = $('roster-sample'), problems = $('roster-problems');
+    $('ro-read').textContent = !b ? '' : b.error || `${b.people} people${bad ? `, ${bad} lines unclear` : ''}`;
+    $('ro-read').className = ok || !b ? 'dim' : 'bad';
+    const sample = $('ro-sample'), problems = $('ro-problems');
     sample.hidden = !b || !b.sample || !b.sample.length;
     sample.replaceChildren(...(b && b.sample ? b.sample : []).map(p => make('tr', {},
       make('td', {textContent: p.name}), make('td', {className: 'mono', textContent: p.id}),
@@ -149,7 +150,7 @@
     problems.replaceChildren(...(b && b.problems ? b.problems : []).map(p => make('li', {textContent: p})));
   }
   text.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(preview, 250); });
-  $('roster').addEventListener('change', async e => {
+  $('ro-file').addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
     text.value = await file.text();
@@ -158,16 +159,25 @@
   // Saving replaces the roster the page was drawn with (its revision on the button). Refused
   // as stale, the text stays and the roster saved now is what saving again replaces.
   Actions.register('roster-save', {available: () => rosterOk, run: () => {
-    const typed = text.value, save = $('roster-save');
+    const typed = text.value, save = $('ro-save');
     return Changes.send('roster', '/scans/roster', () => ({text: typed, rev: save.dataset.rev || null}), {
       line, done: () => location.reload(),
-      redraw: cur => { save.dataset.rev = cur.rev ?? ''; return `${cur.people === 1 ? "1 person" : `${cur.people || 0} people`} saved now · yours kept: save again to replace them`; }});
+      redraw: cur => { save.dataset.rev = cur.rev ?? ''; return Changes.kept(cur.people === 1 ? "1 person" : `${cur.people || 0} people`); }});
   }});
 
-  addEventListener('hashchange', () => { if (/sub=/.test(location.hash)) tab('names'); });
-  const pick = $('src');
+  // A link to a submission on Names (#sub=) or a scan on Split (#src=) opens that step, also when it is the link followed last.
+  const linked = () => (/sub=/.test(location.hash) ? 'names' : /src=/.test(location.hash) ? 'split' : null);
+  addEventListener('hashchange', () => { if (linked()) tab(linked()); });
+  document.addEventListener('click', e => {
+    const a = e.target.closest?.('a[href^="#sub="], a[href^="#src="]');
+    if (!a) return;
+    e.preventDefault();
+    history.replaceState(null, '', a.getAttribute('href'));
+    dispatchEvent(new HashChangeEvent('hashchange'));
+  });
+  const pick = $('sp-src');
   if (!pick) {
-    tab(/sub=/.test(location.hash) ? 'names' : pref('scansTab', 'add'));
+    tab(linked() || pref('scansTab', 'add'));
     return;
   }
 
@@ -183,7 +193,7 @@
     peek = null;
   }
   async function load(id) {
-    const r = await request(`/scans/${encodeURIComponent(id)}/plan`);
+    const r = await Changes.get(`/scans/${encodeURIComponent(id)}/plan`);
     if (!r.ok) { say("could not load the scan", 'bad'); return; }
     adopt(r.body);
     if (current === 'split') history.replaceState(null, '', '#src=' + id);
@@ -202,8 +212,8 @@
         if (then) await then(b);
       }});
   }
-  const live = () => !!plan && current === 'split' && !Changes.busy();
-  const register = (name, spec) => Actions.register(name, {...spec, available: ctx => live() && (!spec.available || spec.available(ctx))});
+  Actions.gate('split', () => !!plan && current === 'split' && !Changes.busy());
+  const register = Actions.register;
   const edit = (op, data, then) => send('edit', {op, ...data}, then);
 
   // --- the step-through ---
@@ -215,14 +225,14 @@
     if (i < 0 || i >= plan.n) return;
     const j = plan.entries.findIndex(e => e.start === i);
     if (j >= 0) { k = j; peek = null; } else { peek = i; if (owner(i) >= 0) k = owner(i); }
-    render();
+    moved();
   }
   // Verified: on to the next unverified first page, unless the person has moved on already.
   const first = () => plan.entries[k].start;                   // submission k, as edits name it
   register('split-verify', {available: at, run: () => {
     const was = first();
     return edit('confirm', {sheet: was}, () => {
-      if (peek === null && plan.entries[k]?.start === was) { k = nextOpen(plan.entries, k, open); render(); }
+      if (peek === null && plan.entries[k]?.start === was) { k = nextOpen(plan.entries, k, open); moved(); }
     });
   }});
   // On a first page, A and D move it (edits); on another page they look around (moves: they repeat).
@@ -233,10 +243,10 @@
     run: () => (peek === null ? edit('move', {sheet: first(), delta: 1}) : show(near(peek, 1)))});
   register('split-back', {available: () => (peek !== null ? owner(peek) >= 0 : k > 0), repeat: true, run: () => {
     if (peek !== null) peek = null; else k = Math.min(k, plan.entries.length) - 1;
-    render();
+    moved();
   }});
   register('split-next', {available: () => !done() && k + 1 < plan.entries.length, repeat: true,
-    run: () => { peek = null; k += 1; render(); }});
+    run: () => { peek = null; k += 1; moved(); }});
   register('split-cut', {available: () => peek !== null && !plan.dropped.includes(peek),
     run: () => edit('cut', {sheet: peek})});
   register('split-drop', {available: () => !done() && !plan.dropped.includes(focus()),
@@ -261,17 +271,16 @@
   register('split-turn', {available: () => !done() && (peek === null || owner(peek) >= 0), run: () => edit('turn', {sheet: first()}, turned)});
   register('split-turn-source', {run: () => edit('turn_source', {}, turned)});
   register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {}, whole)});
-  register('split-guess', {run: () => send('propose', {length: $('s-length').value}, whole)});
-  register('split-read', {available: () => MODEL && LANDMARKS, run: () =>
-    send('propose', {check: true, length: $('s-length').value}, async b => {
-      say("reading pages…");
-      const job = await waitJob(b.job);
-      await load(plan.id);
-      say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`, 'bad');      // failed, or lost
-    }, true)});
+  register('split-guess', {run: () => send('propose', {length: $('sp-length').value}, whole)});
+  // Reading the scan's pages: a run, after which the plan is drawn again.
+  register('split-read', {available: () => MODEL && LANDMARKS, run: () => {
+    const id = plan.id;
+    return Changes.run(`read:${id}`, `/scans/${encodeURIComponent(id)}/read`, {length: $('sp-length').value},
+      {line, done: async () => { if (plan.id === id) await load(id); return 'pages read'; }});
+  }});
   // Accept, having said what it would disturb: written submissions it rewrites or removes that
   // a person said something about. The person agrees to exactly those (`allow`).
-  const SAID = {values: 'verified values', decisions: 'decisions', name: 'a name', regions: 'own regions'};
+  const SAID = {values: 'typed, verified or flagged values', decisions: 'decisions', name: 'a name', regions: 'own regions'};
   const AFTER = {rewrite: 'Rewritten: the name, decisions and verified values stay; what was read and own regions go.',
                  remove: 'Removed: the submission and all of it go.'};
   register('split-accept', {run: () => {
@@ -324,61 +333,60 @@
             e.pages.some(i => plan.turn[i]) ? tag('', 'turned', 'some of its pages are turned') : ''];
   }
   // The neighbours in the step view: a click looks at that page.
-  for (const [id, d] of [['st-a', -1], ['st-c', 1]]) {
+  for (const [id, d] of [['sp-a', -1], ['sp-c', 1]]) {
     $(id).addEventListener('click', () => { if (plan && !done()) show(near(focus(), d)); });
   }
   function renderStep() {
     const E = plan.entries, finished = done();
-    $('st-done').hidden = !finished;
-    $('st-pages').hidden = finished;
+    $('sp-done').hidden = !finished;
+    $('sp-pages').hidden = finished;
     const mine = peek === null ? -1 : owner(peek);
-    $('st-k').textContent = finished ? 'done' : peek === null ? `submission ${k + 1} of ${E.length}`
+    $('sp-k').textContent = finished ? 'all verified' : peek === null ? `submission ${k + 1} of ${E.length}`
       : mine < 0 ? 'in no submission' : `submission ${mine + 1} of ${E.length} · its sheet ${E[mine].pages.indexOf(peek) + 1}`;
     const towrite = counts[plan.id].write;
-    $('st-done-sum').textContent = !finished ? '' : towrite ? `Accept writes them (${towrite} to write).` : 'All written.';
+    $('sp-done-sum').textContent = !finished ? '' : towrite ? `next: Accept (writes ${towrite})` : 'all written';
     const tags = [];
     if (!finished) {
       const s = focus();
       if (peek === null) tags.push(...badges(E[k]));
       else tags.push(tag('', 'not a first page'));
-      figure($('st-a'), near(s, -1), MID, 'before');
-      figure($('st-b'), s, LARGE, peek === null ? 'first page?' : 'this page');
-      figure($('st-c'), near(s, 1), MID, 'after');
-      $('st-b').querySelector('figcaption').append(make('a', {href: sheet(s, 0), target: '_blank', rel: 'noopener', textContent: 'full size'}));
+      figure($('sp-a'), near(s, -1), MID, 'before');
+      figure($('sp-b'), s, LARGE, peek === null ? 'first page?' : 'this page');
+      figure($('sp-c'), near(s, 1), MID, 'after');
+      $('sp-b').querySelector('figcaption').append(make('a', {href: sheet(s, 0), target: '_blank', rel: 'noopener', textContent: 'full size'}));
       if (peek === null) preload(k + 1);
     }
     const prev = finished ? E[E.length - 1] : peek !== null ? null : E[k - 1];
-    $('st-tags').replaceChildren(...tags);
-    $('st-prev').textContent = prev ? `submission ${finished ? E.length : k}: ${prev.pages.length} of ${plan.length} pages${prev.doubts.length ? ' · ' + prev.doubts.join(', ') : ''}` : '';
-    $('st-prev').classList.toggle('bad', !!prev && prev.doubts.length > 0);
+    $('sp-tags').replaceChildren(...tags);
+    $('sp-prev').textContent = prev ? `submission ${finished ? E.length : k}: ${prev.pages.length} of ${plan.length} pages${prev.doubts.length ? ' · ' + prev.doubts.join(', ') : ''}` : '';
+    $('sp-prev').classList.toggle('bad', !!prev && prev.doubts.length > 0);
   }
 
-  // --- the overview ---
-  // A plan-changing button in a row: an edit like the keys'.
-  const button = (text, title, fn) => {
-    const b = make('button', {type: 'button', className: 'quiet', textContent: text, title});
-    b.addEventListener('click', () => { if (live()) fn(); });
+  // --- the overview: drawn when the plan changes; its controls are actions on the sheet they carry ---
+  const sheetOf = ctx => Number(ctx.el.dataset.sheet);
+  for (const [name, op] of [['join', 'join'], ['cut', 'cut'], ['drop', 'drop'], ['restore', 'restore'], ['unmissing', 'unmissing']]) {
+    register(`split-row-${name}`, {run: ctx => edit(op, {sheet: sheetOf(ctx)})});
+  }
+  // A small page (or a submission's number): a click shows it large in the step view above.
+  register('split-row-show', {run: ctx => { show(sheetOf(ctx)); $('sp-step').scrollIntoView({block: 'nearest'}); }});
+  const act = (name, sheet, text, title, cls = 'quiet') => {
+    const b = make('button', {type: 'button', className: cls, textContent: text, title});
+    Object.assign(b.dataset, {action: `split-row-${name}`, sheet, hint: 'none'});
     return b;
   };
   function thumb(i, w, buttons, label) {
-    const fig = make('figure', {className: 'sh' + (label === 'extra' ? ' extra' : '')},
-      opener(i, make('img', {src: sheet(i, w), alt: `page ${i + 1}`, loading: 'lazy'})),
+    const open = act('show', i, '', 'show this page large', 'pg');
+    open.append(make('img', {src: sheet(i, w), alt: `page ${i + 1}`, loading: 'lazy'}));
+    const fig = make('figure', {className: 'sh' + (label === 'extra' ? ' extra' : '')}, open,
       make('figcaption', {}, String(i + 1), label ? make('b', {textContent: ' ' + label}) : '',
            reading(i) ? make('span', {className: 'dim', textContent: ' ' + reading(i)}) : ''));
     if (buttons.length) fig.append(make('span', {className: 'acts'}, ...buttons));
     return fig;
   }
-  // A small page: a click shows it large in the step view above.
-  function opener(i, img) {
-    const b = make('button', {type: 'button', className: 'pg', title: 'show this page large'}, img);
-    b.addEventListener('click', () => { show(i); $('step').scrollIntoView({block: 'nearest'}); });
-    return b;
-  }
   // A page the plan says was not scanned; one marked before a sheet can be unmarked.
   function gap(p, before) {
     return make('figure', {className: 'sh gap'}, make('span', {textContent: `missing p${p}`}),
-      before === undefined ? '' : make('span', {className: 'acts'},
-        button('✕', 'not missing after all', () => edit('unmissing', {sheet: before}))));
+      before === undefined ? '' : make('span', {className: 'acts'}, act('unmissing', before, '✕', 'not missing after all')));
   }
   // The submission's name and ID boxes, cut from the sheets that are their printed pages,
   // inside the scan's print area.
@@ -394,51 +402,52 @@
     });
   }
   // The name, read-only: it is given on the Names step, which the link opens on this submission.
-  function nameLink(e) {
-    if (!e.id || e.state === 'new') return '';
-    const a = make('a', {href: '#sub=' + encodeURIComponent(e.id), className: e.name ? '' : 'dim',
-                         textContent: e.name || 'no name', title: 'open on Names'});
-    a.addEventListener('click', ev => {      // also when the link is the one followed last
-      ev.preventDefault();
-      history.replaceState(null, '', a.getAttribute('href'));
-      dispatchEvent(new HashChangeEvent('hashchange'));
-    });
-    return a;
-  }
+  const nameLink = e => (!e.id || e.state === 'new' ? '' : make('a', {href: '#sub=' + encodeURIComponent(e.id),
+    className: e.name ? '' : 'dim', textContent: e.name || 'no name', title: 'open on Names'}));
   function renderRows() {
     const E = plan.entries;
     const order = E.map((e, j) => j);
     const fine = j => (E[j].doubts.length ? -E[j].doubts.length : E[j].verified ? 1 : 0);   // doubtful first, most first; then unverified
-    const here = done() || (peek !== null && owner(peek) < 0) ? -1 : k;
     order.sort((a, b) => fine(a) - fine(b) || a - b);
     const twice = {};
     for (const e of E) if (e.name) twice[e.name] = (twice[e.name] || 0) + 1;
     const rows = order.map(j => {
       const e = E[j];
-      const go = make('button', {type: 'button', className: 'quiet', textContent: `#${j + 1}`, title: 'step through from here'});
-      go.addEventListener('click', () => { k = j; peek = null; render(); $('step').scrollIntoView({block: 'nearest'}); });
-      const head = make('div', {className: 'rhead'}, go,
+      const head = make('div', {className: 'rhead'}, act('show', e.start, `#${j + 1}`, 'step through from here'),
         e.id ? make('code', {textContent: e.id}) : '',
         ...badges(e),
         e.name && twice[e.name] > 1 ? tag('bad', 'name twice') : '',
         make('span', {className: 'grow'}),
         nameLink(e),
-        j + 1 < E.length ? button('join with next', 'this submission and the next are one', () => edit('join', {sheet: e.start})) : '');
+        j + 1 < E.length ? act('join', e.start, 'join with next', 'this submission and the next are one') : '');
       const sheets = make('div', {className: 'sheets'}, ...e.lay.map(([i, p], x) => {
         if (i === null) return gap(p, (e.lay.slice(x).find(([s]) => s !== null) || [])[0]);
         const n = e.pages.indexOf(i);
-        const fig = thumb(i, n ? SMALL : MID, [
-          ...(n ? [button('✂', 'new submission here', () => edit('cut', {sheet: i}))] : []),
-          button('✕', 'drop page', () => edit('drop', {sheet: i}))], p ? `p${p}` : 'extra');
+        const fig = thumb(i, n ? SMALL : MID, [...(n ? [act('cut', i, '✂', 'new submission here')] : []),
+                                               act('drop', i, '✕', 'drop page')], p ? `p${p}` : 'extra');
         if (!n) fig.classList.add('first');
         return fig;
       }), ...nameCrops(e));
-      return make('div', {className: 'srow' + (fine(j) ? '' : ' look') + (j === here ? ' here' : '')}, head, sheets);
+      const row = make('div', {className: 'srow' + (fine(j) ? '' : ' look')}, head, sheets);
+      row.dataset.entry = j;
+      return row;
     });
-    $('rows').replaceChildren(...rows);
-    $('loose').hidden = !plan.dropped.length;
-    $('loose-sheets').replaceChildren(...plan.dropped.map(i => thumb(i, SMALL, [
-      button('put back', 'put the page back', () => edit('restore', {sheet: i}))])));
+    $('sp-rows').replaceChildren(...rows);
+    $('sp-loose').hidden = !plan.dropped.length;
+    $('sp-loose-sheets').replaceChildren(...plan.dropped.map(i => thumb(i, SMALL, [act('restore', i, 'put back', 'put the page back')])));
+  }
+  // The row of the submission shown, marked.
+  function here() {
+    const j = done() || (peek !== null && owner(peek) < 0) ? -1 : k;
+    $('sp-rows').querySelector('.srow.here')?.classList.remove('here');
+    $('sp-rows').querySelector(`.srow[data-entry="${j}"]`)?.classList.add('here');
+  }
+  // A cursor move: the step drawn again and its row marked; nothing else changed.
+  function moved() {
+    renderStep();
+    here();
+    strip();
+    Actions.enable($('sp-step'));
   }
 
   function render() {
@@ -454,18 +463,19 @@
     counts[plan.id] = plan.counts;
     const info = [`${plan.n} pages`, plural(E.length, 'submission')];
     if (plan.checked) info.push('pages read');
-    $('s-info').replaceChildren(info.join(' · '), ' ',
+    $('sp-info').replaceChildren(info.join(' · '), ' ',
       plan.failed ? tag('bad', `${plural(plan.failed, 'page')} not read: model failed`) : '');
-    if (document.activeElement !== $('s-length')) $('s-length').value = plan.length;
+    if (document.activeElement !== $('sp-length')) $('sp-length').value = plan.length;
     const flagged = E.filter(e => e.doubts.length).length, unverified = E.filter(open).length;
     const towrite = counts[plan.id].write;
-    $('s-sum').replaceChildren(
+    $('sp-sum').replaceChildren(
       flagged ? tag('bad', `${flagged} flagged`) : '',
       unverified ? tag('unv', `${unverified} unverified`) : '',
       plan.removed.length ? tag('unv', `${plan.removed.length} to remove: ${plan.removed.join(', ')}`) : '',
       towrite ? tag('unv', `${towrite} to write`) : tag('', 'all written'));
     renderStep();
     renderRows();
+    here();
     scanCounts();
     strip();
     Actions.hints();
@@ -477,7 +487,11 @@
   const want = (location.hash.match(/src=([\w-]+)/) || [])[1];
   const ids = [...pick.options].map(o => o.value);
   pick.value = ids.includes(want) ? want : ids.find(id => counts[id] && (counts[id].open || counts[id].write)) || ids[0];
+  addEventListener('hashchange', () => {
+    const id = (location.hash.match(/src=([\w-]+)/) || [])[1];
+    if (ids.includes(id) && id !== plan?.id) { pick.value = id; load(id); }
+  });
   scanCounts();
-  tab(/sub=/.test(location.hash) ? 'names' : pref('scansTab', 'split'));
+  tab(linked() || pref('scansTab', 'split'));
   load(pick.value);
 })();
