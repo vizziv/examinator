@@ -86,6 +86,7 @@ from examinator.synth import Case
 from examinator.std import readers, math, fields, pseudocode, prompts
 from examinator.std.blocks import Image, Table, Note, Code, Details
 from examinator_kits.stochastic import primitives, fit, checks, plots   # samplers (optional)
+from examinator.core.reading import Reader, reading, json_object   # a reader of your own (§5)
 from examinator.core.runner import try_check                       # in your tests
 ```
 
@@ -126,7 +127,7 @@ Finding coordinates: render a blank page and divide each box's pixels by the
 image size × 1000. Helpers keep rows of boxes short (`boxes()` in
 `exams/exam_03/exam.py`; `inset=` in `exams/exam_01/exam.py` for boxes closer
 than the padding). To check, crop each region from a blank
-(`Layout().crop(Renderer(cache, dpi=100).page(blank_pdf, region.page - 1), region)`)
+(`Layout().crop(Renderer(cache, dpi=100).page(blank_pdf, region.page - 1), region, exam.crop_pad)`)
 or test for ink as `tests/test_exam_01.py` does. In the app, **regions** on a
 question page drags rectangles on a scan; the **Exam data** page lists the
 changes as Python lines to copy into the package.
@@ -203,6 +204,37 @@ question's code is converted once and each field takes its own functions and
 the helpers they call (not another field's functions). `then` rewrites each
 field's source deterministically (`exams/exam_03/huge_constants.py`); the
 rewritten source is the value.
+
+**A reader of your own** is a frozen dataclass subclassing
+`examinator.core.reading.Reader` (anything else is refused when the question
+is added); its fields are its configuration, editable in the app like a
+built-in's. It defines `read(ctx, fields) -> {label: Reading or text}`: a
+label left out is not read. `ctx.pages()` gives the question's pages,
+`ctx.crop(region)` one region, and `ctx.model(prompt, images=, text=,
+expect='json', step=)` asks the model (`step` names the call). Ask for the one
+reply shape, `{"value": ..., "unsure": ...}` per field, and turn it into a
+`Reading` with `reading(json_object(reply))` (`readings(reply, labels)` for an
+object keyed by label): silence stays not read, `unsure` means review.
+Optional: `needs_region = True` (it reads each field's region, not the
+question's pages), `multiline`, `vouches(field, reading)`, `validate(what)`,
+`facets(question)`, and `script(fields, given)`, the replies `{step: reply}`
+that read `given`, so `synth` and `selftest` can script it.
+
+```python
+from dataclasses import dataclass
+from examinator.core.reading import Reader, json_object, reading
+
+@dataclass(frozen=True)
+class Tally(Reader):
+    prompt: str = 'Count the tally marks. Answer with exactly this JSON: {"value": "the count", "unsure": ""}'
+    needs_region = True
+
+    def read(self, ctx, fields):
+        got = {f.label: reading(json_object(ctx.model(self.prompt, images=[ctx.crop(f.region)],
+                                                       expect='json', step=f'tally:{f.label}')))
+               for f in fields}
+        return {label: r for label, r in got.items() if r is not None}
+```
 
 **Prompts.** The defaults are values in `examinator.std.prompts`. Add to them
 with `notes=`; do not rewrite them. Keep notes in `notes.py` and about notation
@@ -399,14 +431,16 @@ MODEL.md's: `unverified` (normal after `run`: a value it read is not verified),
 `review` (a value it read needs review: the model was unsure),
 `to_decide`, `not_run`, `outdated`, `decided`, `decided_outdated`, `graded`.
 
-**`run` reads and checks every time** (the model is asked again; old values go
-to history). Values a person set or verified are skipped unless
-`--include-protected`; `--missing-only` reads only fields with no value and
-runs only checks that are not current.
+**`run` only reads** (the model is asked again for every field it reads; a
+replaced value goes to history); checks recompute by themselves once the reads
+stop. Values a person set or verified are skipped unless
+`--include-protected`; `--missing-only` reads only fields with no value (it
+resumes a read that stopped).
 
 Add `tests/test_<exam>.py` like `tests/test_exam_01.py`: the self-test, the
 definition's shape, checks called directly on values with
-`try_check(exam, 'q2', 'check', {'q2/2.1.m': '1', 'info/...': ...})`, one test
+`try_check(exam, 'q2', 'check', {'q2/2.1.m': '1', 'info/...': ...})` (from
+`examinator.core.runner`), one test
 per tricky key or rule, and the no-key-in-prompt test. Tests that need the
 blanks skip without them.
 
