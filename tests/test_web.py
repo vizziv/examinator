@@ -202,6 +202,31 @@ def test_theme_and_actions_are_static_and_controls_declare_actions(site):
     assert 'class="c cell s-' in grid and 'title="incomplete' in grid
 
 
+WEB = Path(__file__).resolve().parents[1] / 'src' / 'examinator' / 'web'
+
+
+def test_an_id_is_one_pages_and_its_css_says_which():
+    """Ids are one namespace across pages: an id is in one template (or the shared base),
+    and a CSS rule keyed by an id is written under that page's root (`.p-<page>`), so a rule
+    for one page's element never styles another page's (Split was boxed by the question
+    page's divider rule once)."""
+    where: dict[str, set] = {}
+    for f in (WEB / 'templates').glob('*.html'):
+        text = f.read_text()
+        nav = re.search(r"\{% set nav = '(\w+)' %\}", text)
+        for i in re.findall(r'\bid="([^"{]+)"', text):
+            where.setdefault(i, set()).add('' if f.name == 'base.html' else nav.group(1) if nav else f.name)
+    assert {i: p for i, p in where.items() if len(p) > 1} == {}
+    css = re.sub(r'/\*.*?\*/', '', (WEB / 'static' / 'app.css').read_text(), flags=re.S)
+    for chunk in re.findall(r'([^{}]+)\{', css):
+        if chunk.strip().startswith('@'):
+            continue
+        for sel in re.split(r',(?![^()]*\))', chunk):
+            for i in re.findall(r'#([\w-]+)', sel):
+                (page,) = where.get(i, {'?'})
+                assert page == '' or re.search(rf'\.p-{page}\b[^#]*#', sel), sel.strip()
+
+
 def test_a_field_on_a_missing_page_says_so_and_is_not_planned(site):
     from PIL import Image as PILImage
     PILImage.new('RGB', (200, 260), 'white').save(site.ws.pdfs / 's1.pdf', 'PDF')     # s1 lost page 2

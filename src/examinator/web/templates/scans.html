@@ -12,22 +12,22 @@
  data-roster='{{ people|tojson }}'>
 <nav class="flow" role="tablist" aria-label="steps">
 <button type="button" role="tab" data-tab="add" title="add the scanned PDFs">1 Scans <span class="n">({{ sources|length }})</span></button>
-<button type="button" role="tab" data-tab="split" title="{{ 'cut the scans into submissions' if sources else 'add scans first' }}"{% if not sources %} class="off"{% endif %}>2 Split <span class="n" id="n-split"></span></button>
+<button type="button" role="tab" data-tab="split" title="{{ 'cut the scans into submissions' if sources else 'add scans first' }}"{% if not sources %} class="off"{% endif %}>2 Split <span class="n" id="flow-n-split"></span></button>
 <button type="button" role="tab" data-tab="roster" title="who sits the exam">3 Roster <span class="n">({{ people|length }} people)</span></button>
-<button type="button" role="tab" data-tab="names" title="{{ 'who wrote each submission' if made else 'Names needs submissions' }}"{% if not made %} class="off"{% endif %}>4 Names <span class="n" id="n-names"></span></button>
+<button type="button" role="tab" data-tab="names" title="{{ 'who wrote each submission' if made else 'Names needs submissions' }}"{% if not made %} class="off"{% endif %}>4 Names <span class="n" id="flow-n-names"></span></button>
 <span class="dim">→</span>
 <a href="{{ root }}/read">Read</a>
 </nav>
-<p id="next" class="dim"></p>
-<p id="msg" role="status" hidden></p>
+<p id="flow-next" class="dim"></p>
+<p id="flow-msg" role="status" hidden></p>
 
-<section id="add" class="panel" hidden>
+<section id="step-add" class="panel" hidden>
 <div class="bar"><h2>Scans</h2>
-<label class="btn primary" title="scanned PDFs, many submissions each">Add scans <input type="file" id="up" accept="application/pdf,.pdf" multiple hidden></label></div>
+<label class="btn primary" title="scanned PDFs, many submissions each">Add scans <input type="file" id="add-file" accept="application/pdf,.pdf" multiple hidden></label></div>
 {% if sources %}
 <table class="wrows">
 <thead><tr><th>scan</th><th>pages</th><th></th></tr></thead>
-{% for s in sources %}<tr><td><button type="button" class="quiet" data-src="{{ s.id }}" title="split this scan">{{ s.name }}</button></td><td class="dim">{{ s.pages }}</td><td id="sc-{{ s.id }}"></td></tr>{% endfor %}
+{% for s in sources %}<tr><td><button type="button" class="quiet" data-src="{{ s.id }}" title="split this scan">{{ s.name }}</button></td><td class="dim">{{ s.pages }}</td><td id="add-n-{{ s.id }}"></td></tr>{% endfor %}
 </table>
 {% endif %}
 <p class="help">Scanned PDFs, a stack of submissions each, {{ expected }} pages per submission. They are kept unchanged;
@@ -35,48 +35,48 @@ each submission becomes its own PDF when you accept the split.
 {% if handed %}This workspace also has {{ handed }} submissions handed in already split.{% endif %}</p>
 </section>
 
-<section id="roster-box" class="panel" hidden>
+<section id="step-roster" class="panel" hidden>
 <div class="bar"><h2>Roster</h2> <span id="ro-sum"><span class="dim">{{ people|length }} people</span></span>
 {% if people %}<span class="grow"></span><input type="search" id="ro-filter" placeholder="filter: name, ID, email" aria-label="filter the roster" autocomplete="off" spellcheck="false">{% endif %}</div>
 {% if people %}<div id="ro-wrap"><table id="ro-rows" class="wrows"><thead><tr><th>name</th><th>ID</th><th>email</th><th>submission</th></tr></thead><tbody></tbody></table></div>{% endif %}
 <details id="ro-add"{% if not people %} open{% endif %}><summary>{{ 'replace the roster' if people else 'add the roster' }}</summary>
-<textarea id="roster-text" rows="6" spellcheck="false" aria-label="roster"
+<textarea id="ro-text" rows="6" spellcheck="false" aria-label="roster"
  placeholder="one per line: name and ID, comma or tab between, either order&#10;Ada Lovelace, 31415926&#10;or a CSV with a header: Name (or First Name, Last Name), Student ID, Email"></textarea>
 <div class="bar">
-<label class="btn" title="CSV, or plain lines of name and ID">file <input type="file" id="roster" accept=".csv,.tsv,.txt,text/csv,text/plain" hidden></label>
-<span id="roster-read" class="dim"></span>
+<label class="btn" title="CSV, or plain lines of name and ID">file <input type="file" id="ro-file" accept=".csv,.tsv,.txt,text/csv,text/plain" hidden></label>
+<span id="ro-read" class="dim"></span>
 <span class="grow"></span>
-<button type="button" id="roster-save" data-action="roster-save" data-rev="{{ roster_rev }}" class="primary" disabled>Save roster</button>
+<button type="button" id="ro-save" data-action="roster-save" data-rev="{{ roster_rev }}" class="primary" disabled>Save roster</button>
 </div>
-<table id="roster-sample" class="dim" hidden></table>
-<ul id="roster-problems" hidden></ul>
+<table id="ro-sample" class="dim" hidden></table>
+<ul id="ro-problems" hidden></ul>
 </details>
 </section>
 
 {% if sources %}
-<div id="split" hidden>
-<section id="srcbar" class="panel bar">
-<select id="src" aria-label="scan">{% for s in sources %}<option value="{{ s.id }}">{{ s.name }} · {{ s.pages }} pages</option>{% endfor %}</select>
-<span id="s-info" class="dim"></span>
+<div id="step-split" hidden>
+<section id="sp-bar" class="panel bar">
+<select id="sp-src" aria-label="scan">{% for s in sources %}<option value="{{ s.id }}">{{ s.name }} · {{ s.pages }} pages</option>{% endfor %}</select>
+<span id="sp-info" class="dim"></span>
 <span class="sep"></span>
 <button type="button" data-action="split-turn-source" title="every page of this scan, a quarter turn clockwise">turn scan ↻</button>
 <span class="sep"></span>
-<label>pages per submission <input type="number" id="s-length" min="1" max="999"></label>
+<label>pages per submission <input type="number" id="sp-length" min="1" max="999"></label>
 <button type="button" data-action="split-guess" title="guess again every page nobody has spoken for">guess again</button>
 {% if exam.landmarks %}<button type="button" data-action="split-read" title="{{ 'read page landmarks with the model where needed' if model else 'no model' }}">read pages</button>{% endif %}
 <button type="button" data-action="split-undo" class="quiet">undo</button>
 <span class="grow"></span>
-<span id="s-sum"></span>
+<span id="sp-sum"></span>
 <button type="button" data-action="split-accept" class="primary">Accept</button>
 </section>
 
-<section id="step" class="panel">
-<div class="bar"><b id="st-k"></b> <span id="st-tags"></span><span class="grow"></span><span id="st-prev" class="dim"></span></div>
-<div id="st-done" hidden><p>Every submission is verified. <span id="st-done-sum" class="dim"></span></p></div>
-<div id="st-pages">
-<figure class="ctx" id="st-a"><img alt="page before"><figcaption></figcaption></figure>
-<figure class="main" id="st-b"><img alt="first page?"><figcaption></figcaption></figure>
-<figure class="ctx" id="st-c"><img alt="page after"><figcaption></figcaption></figure>
+<section id="sp-step" class="panel">
+<div class="bar"><b id="sp-k"></b> <span id="sp-tags"></span><span class="grow"></span><span id="sp-prev" class="dim"></span></div>
+<div id="sp-done" hidden><p>Every submission is verified. <span id="sp-done-sum" class="dim"></span></p></div>
+<div id="sp-pages">
+<figure class="ctx" id="sp-a"><img alt="page before"><figcaption></figcaption></figure>
+<figure class="main" id="sp-b"><img alt="first page?"><figcaption></figcaption></figure>
+<figure class="ctx" id="sp-c"><img alt="page after"><figcaption></figcaption></figure>
 </div>
 <div class="bar">
 <button type="button" data-action="split-earlier">◀ earlier</button>
@@ -100,16 +100,16 @@ each submission becomes its own PDF when you accept the split.
 </div>
 </section>
 
-<section id="over" class="panel">
+<section id="sp-over" class="panel">
 <div class="bar"><h2>Submissions</h2> <span class="dim">to look at first</span></div>
-<div id="rows"></div>
-<div id="loose" hidden><h2>Dropped</h2><div class="sheets" id="loose-sheets"></div></div>
+<div id="sp-rows"></div>
+<div id="sp-loose" hidden><h2>Dropped</h2><div class="sheets" id="sp-loose-sheets"></div></div>
 </section>
 </div>
 {% endif %}
 
-<div id="names" hidden>
-<section id="w-bar" class="panel bar">
+<div id="step-names" hidden>
+<section class="panel bar">
 <h2>Names</h2> <span id="w-sum"></span>
 <span id="w-read"{% if not fields %} hidden{% endif %}><button type="button" data-action="names-read" title="{{ 'read the name and ID boxes not read yet, with the model' if model else 'no model' }}">read names</button>
 <label title="also read again what no person verified (after moving a box, say)"><input type="checkbox" id="w-again"> again</label></span>

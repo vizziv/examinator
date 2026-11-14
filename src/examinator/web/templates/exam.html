@@ -16,20 +16,20 @@ Regions and the print area are easiest to adjust on a question page (scan, “re
 <span id="ch-fail" class="notice"></span>
 </div>
 
-<details id="active" class="panel"{% if active or skipped %} open{% endif %}>
+<details class="panel"{% if active or skipped %} open{% endif %}>
 <summary>overrides <span class="dim">{{ active|length }}</span>{% if skipped %} <span class="tag bad">{{ skipped|length }} not applied</span>{% endif %}</summary>
 {% for s in skipped %}<p class="notice">not applied ({{ s.where }}): <code>{{ s.path }}</code> — {{ s.reason }}</p>{% endfor %}
 {% if active %}
 <table class="ev">
 <tr><th>path</th><th>by</th><th>at</th></tr>
-{% for o in active %}<tr><td><a href="#{{ o.path }}"><code>{{ o.path }}</code></a></td><td>{{ o.who }}</td><td>{{ o.at }}</td></tr>{% endfor %}
+{% for o in active %}<tr><td><a href="#e-{{ o.path }}"><code>{{ o.path }}</code></a></td><td>{{ o.who }}</td><td>{{ o.at }}</td></tr>{% endfor %}
 </table>
 <div class="bar"><span class="dim">for the exam package</span> <button type="button" data-action="copy-lines">copy</button></div>
 <pre class="code" id="lines">{{ lines|join('\n') }}</pre>
 {% else %}<p class="dim">none: the package's values apply</p>{% endif %}
 </details>
 
-<details id="scoped" class="panel"{% if scoped %} open{% endif %}>
+<details class="panel"{% if scoped %} open{% endif %}>
 <summary>own values <span class="dim">{{ scoped|length }}</span></summary>
 {% if scoped %}
 <table class="ev">
@@ -43,9 +43,9 @@ Regions and the print area are easiest to adjust on a question page (scan, “re
 </details>
 
 {% for q in questions %}
-<section class="qdata" id="{{ q.id }}">
+<section class="qdata" id="q-{{ q.id }}">
 <h2>{{ q.id }}{% if q.title %} <span class="dim">{{ q.title }}</span>{% endif %}</h2>
-{% for e in q.entries %}<div id="{{ e.path }}">{{ ed.entry(e) }}</div>{% endfor %}
+{% for e in q.entries %}<div id="e-{{ e.path }}">{{ ed.entry(e) }}</div>{% endfor %}
 </section>
 {% endfor %}
 </main>

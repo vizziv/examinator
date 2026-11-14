@@ -95,7 +95,7 @@
 <p class="dim">no scan pages</p>
 {% endfor %}
 </section>
-<div id="split" role="separator" aria-orientation="vertical" title="drag to resize"></div>
+<div id="divider" role="separator" aria-orientation="vertical" title="drag to resize"></div>
 <section id="work"{% if keyed %} class="has-key"{% endif %}>
 
 <div id="parts" data-waiting='{{ waiting|tojson }}' data-waiting-other='{{ waiting_other|tojson }}' class="panel">
@@ -167,12 +167,12 @@
 {% for k in keyed %}
 <details class="panel key" id="key-{{ k.check }}">
 <summary>key{% if keyed|length > 1 %} {{ k.check }}{% endif %}{% if k.picked %} <span class="dim">{{ k.picked }}</span>{% endif %}{% if k.edited %} <span class="tag">edited</span>{% endif %}</summary>
-<p class="dim scope">edits apply to all submissions · <a href="{{ root }}/exam#{{ q.id }}">exam data</a></p>
+<p class="dim scope">edits apply to all submissions · <a href="{{ root }}/exam#q-{{ q.id }}">exam data</a></p>
 {% for e in k.entries %}{{ ed.entry(e) }}{% endfor %}
 </details>
 {% endfor %}
 
-<div id="run" class="bar panel">
+<div id="run-bar" class="bar panel">
 <span class="plabel">run</span>
 {% if can_read %}<button type="button" data-action="read"{% if off %} disabled title="no model"{% else %} title="read this question's values again (not those a person verified)"{% endif %}>read</button>
 <label title="also read again what a person set or verified (kept in history)"><input type="checkbox" id="read-all"> verified too</label>{% endif %}

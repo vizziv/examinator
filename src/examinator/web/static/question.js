@@ -204,7 +204,7 @@
   }
 
   // --- the scanned pages: hideable and resizable (both remembered), opening at this question's first page ---
-  const scan = $('scan'), split = $('split');
+  const scan = $('scan'), split = $('divider');
   function scanWidth(px) {
     if (px) setPref('scanWidth', Math.round(Math.min(innerWidth * 0.75, Math.max(200, px))));
     const w = pref('scanWidth', 0), at = scan.scrollTop / (scan.scrollHeight || 1);

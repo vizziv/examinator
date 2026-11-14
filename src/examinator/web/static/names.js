@@ -13,13 +13,13 @@
 // The step is shown by scans.js (the 'tab' event).
 (() => {
   const main = $('scans');
-  if (!main || !$('names')) return;
+  if (!main || !$('step-names')) return;
   let view = null, order = [], k = 0, ci = 0;
   let looking = false;    // on a named submission, the person stepped onto its proposals (W/S)
   let want = null;        // a submission to show once loaded (a link from Split or the roster: #sub=)
   let taken = {};         // roster key -> the submissions picked for that person (derived by the server)
 
-  const live = () => !$('names').hidden && !!view;
+  const live = () => !$('step-names').hidden && !!view;
   const row = () => (view && k < order.length ? view.byId[order[k]] : null);
   // The proposal shown large, which V takes: none on a named submission (it is shown as it is,
   // named) until the person steps onto its proposals.
@@ -77,7 +77,7 @@
     for (const c of view.columns) if (!Actions.has(`names-box-add-${c.name}`)) addAction(c.name);
     if (want) jump();
     render();
-    if (!$('roster-box').hidden) renderRoster();
+    if (!$('step-roster').hidden) renderRoster();
   }
   const first = () => nextOpen(order, -1, s => !verified(view.byId[s]));
   function jump() {
@@ -130,7 +130,7 @@
   S.register('names-type', {available: () => !!row(), run: () => { pick.focus(); pick.select(); }});
   // Reading the boxes, said on the line under the strip: what it reads, then how it went.
   S.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, run: () => {
-    const again = $('w-again').checked, line = Line('msg');
+    const again = $('w-again').checked, line = Line('flow-msg');
     return Changes.send('names-read', '/scans/names/read', {again}, {line, long: true, done: async b => {
       if (!b.job) {
         line.say(!view.left ? "nothing to read: every submission is named"

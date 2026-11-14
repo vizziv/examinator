@@ -6,10 +6,10 @@
 <main class="narrow" id="read">
 <h1>Read</h1>
 <p class="help">Reads fields with the model{% if not model %} (unavailable){% endif %}. Checks need no run: they recompute by themselves, and again after these reads.</p>
-<form id="sel" autocomplete="off">
+<form id="rd-form" autocomplete="off">
 <fieldset><legend>submissions</legend>
 <label><input type="radio" name="scope" value="all" checked> all ({{ total }})</label>
-<label><input type="radio" name="scope" value="grid"> the grid's current filter (<span id="grid-n">0</span>)</label>
+<label><input type="radio" name="scope" value="grid"> the grid's current filter (<span id="rd-grid-n">0</span>)</label>
 </fieldset>
 <fieldset><legend>questions</legend>
 {% for q in questions %}<label><input type="checkbox" name="question" value="{{ q.id }}" checked> {{ q.id }}</label>{% endfor %}
@@ -23,18 +23,18 @@
 <b>Include protected</b> reads again what a person set or verified; the replaced values stay in history.
 Without it, those are skipped. Decisions are never touched.</p>
 </fieldset>
-<p id="counts" aria-live="polite"></p>
-<details id="plan" class="panel"><summary>by question</summary><table class="ev" id="groups"></table></details>
+<p id="rd-counts" aria-live="polite"></p>
+<details id="rd-plan" class="panel"><summary>by question</summary><table class="ev" id="rd-groups"></table></details>
 <div class="bar">
-<button type="button" id="start" data-action="read-start" class="primary" disabled>read</button>
-<button type="button" id="stop" data-action="read-stop" class="danger" disabled>stop</button>
-<span id="msg" role="status"></span>
+<button type="button" id="rd-start" data-action="read-start" class="primary" disabled>read</button>
+<button type="button" id="rd-stop" data-action="read-stop" class="danger" disabled>stop</button>
+<span id="rd-msg" role="status"></span>
 </div>
 </form>
-<section id="progress" class="panel" hidden>
+<section id="rd-progress" class="panel" hidden>
 <h2>Reading</h2>
-<progress id="bar" value="0" max="1"></progress> <span id="prog"></span>
-<table class="ev" id="failures"></table>
+<progress id="rd-bar" value="0" max="1"></progress> <span id="rd-prog"></span>
+<table class="ev" id="rd-failures"></table>
 </section>
 </main>
 {% endblock %}
