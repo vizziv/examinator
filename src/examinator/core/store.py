@@ -89,11 +89,13 @@ class Conflict(Exception):
     (`name`, `kind`) or override (`name`: its path). The message is for a person,
     so it is written where the kind of thing is known, in the page's words
     (`runner`: a field, a decision; `identity`: the name; `intake`: the plan);
-    the store's own says only that something changed."""
+    the store's own says only that something changed. `current` is what is there
+    now, for the page to redraw from (JSON; None: not known here)."""
 
-    def __init__(self, message: str = "changed elsewhere", *, name: str | None = None, kind: str | None = None):
+    def __init__(self, message: str = "changed elsewhere", *, name: str | None = None, kind: str | None = None,
+                 current: Any = None):
         super().__init__(message)
-        self.name, self.kind = name, kind
+        self.name, self.kind, self.current = name, kind, current
 
 
 class _Any:

@@ -79,9 +79,8 @@ class Busy(Conflict):
     """Accepting would change or remove submissions that already have grading work."""
 
     def __init__(self, submissions: list[str]):
-        super().__init__("grading work exists for " + ", ".join(submissions))
+        super().__init__("grading work exists for " + ", ".join(submissions), current={'busy': submissions})
         self.submissions = submissions
-        self.current = {'busy': submissions}
 
 
 def _now() -> str:

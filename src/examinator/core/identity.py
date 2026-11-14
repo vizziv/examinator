@@ -155,9 +155,8 @@ def set_roster(ws, text: str, *, expect_rev: Any = ANY) -> int:
     """Replace the roster, against the revision the person saw (`expect_rev`)."""
     people = parse_roster(text)
     if expect_rev is not ANY and roster_rev(ws) != expect_rev:
-        e = Conflict("the roster changed")
-        e.current = {'rev': roster_rev(ws), 'people': len(ws.store.setting('people', []))}
-        raise e
+        raise Conflict("the roster changed",
+                       current={'rev': roster_rev(ws), 'people': len(ws.store.setting('people', []))})
     ws.store.set_setting('people', people)
     by_file(ws)
     return len(people)

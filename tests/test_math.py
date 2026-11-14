@@ -426,3 +426,9 @@ def test_keyed_check():
     exam.question('r', pages=[1], fields=[Field('x'), Field('z')], check=m.keyed({'x': 'a', 'z': 'b'}, symbols=POS))
     body = try_check(exam, 'r', 'check', {'r/x': 'a'})
     assert body['grade'] == {'value': None, 'flags': [], 'reason': "undecided: z not read"}
+
+
+def test_a_tolerance_is_shown_as_given():
+    assert m.show_entry(Approx(0.05, rel=0.02)) == "0.05 ± 2%"
+    assert m.show_entry(Approx(1.5, tol=0.01)) == "1.5 ± 0.01"
+    assert m.show_entry(Approx(2, tol=0.1, rel=0.05)) == "2 ± 0.1 or 5%"

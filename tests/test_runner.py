@@ -535,3 +535,9 @@ def test_the_plan_counts_exactly_what_the_reads_then_do(tmp_path, monkeypatch):
     finally:
         runner.close()
         ws.close()
+
+
+def test_computing_an_unknown_check_is_blocked_not_an_error(env):
+    exam, ws, runner = env
+    assert [(o.status, o.detail) for o in (runner.compute('s1', 'nope', 'x'), runner.compute('s1', 'a', 'nope'))] \
+        == [('blocked', "no such check")] * 2

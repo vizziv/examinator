@@ -21,6 +21,7 @@ import functools
 from dataclasses import dataclass, replace
 from typing import AbstractSet, Any, Mapping, Protocol, Sequence
 
+from ..model.client import ModelError
 from .context import BadOutput, CheckContext, ReadContext, Unavailable
 from .defs import DEFAULT, Exam, Field, Grade, Question, key, one_line
 from .reading import Reading
@@ -101,7 +102,7 @@ class Services:
 def structural(e: Exception) -> str:
     """A failure as graders may see it: model errors are structural by contract;
     anything else might quote student text, so only its type."""
-    if isinstance(e, (Unavailable, BadOutput)) or type(e).__name__ == 'ModelError':
+    if isinstance(e, (Unavailable, BadOutput, ModelError)):
         return str(e)
     return type(e).__name__
 
@@ -306,8 +307,8 @@ class Runner:
     def compute(self, submission: str, qid: str, check: str) -> Outcome:
         """Run one check on the current values and store its result."""
         exam = self.ws.exam
-        q = exam.questions[qid]
-        c = q.check(check)
+        q = exam.questions.get(qid)
+        c = q.check(check) if q is not None else None
 
         def out(status, detail=""):
             return Outcome(submission, qid, check, status, detail)
