@@ -5,8 +5,8 @@
 {% block body %}
 <main class="narrow" id="settings">
 <h1>Settings</h1>
-<form id="defaults" autocomplete="off">
-<fieldset id="keyboard"><legend>keyboard <span class="dim">(this browser)</span></legend>
+<form autocomplete="off">
+<fieldset><legend>keyboard <span class="dim">(this browser)</span></legend>
 <div class="bar row"><label><input type="checkbox" id="k-single"> single-key shortcuts</label>
 <button type="button" id="k-reset" class="quiet" title="drop your own bindings">reset to defaults</button></div>
 <table id="keymap"><tbody></tbody></table>
@@ -14,7 +14,7 @@
 </fieldset>
 <fieldset><legend>appearance <span class="dim">(this browser)</span></legend>
 <label>theme <select id="theme"><option value="system">follow system</option><option value="light">light</option><option value="dark">dark</option></select></label>
-<div class="picker" id="pk-accent" data-key="accent">
+<div class="picker" data-key="accent">
 <span class="pk-name">accent</span>
 <span class="pk-swatch" title="on light and on dark"><i class="pk-light"><b></b>Aa</i><i class="pk-dark"><b></b>Aa</i></span>
 <label>hue <input type="range" class="pk-h" min="0" max="359" step="1" aria-label="accent hue"></label>
@@ -22,7 +22,7 @@
 <span class="pk-quick" role="group" aria-label="accent: quick hues"></span>
 <button type="button" class="quiet pk-reset">reset</button>
 </div>
-<div class="picker" id="pk-accent2" data-key="accent2">
+<div class="picker" data-key="accent2">
 <span class="pk-name">second accent</span>
 <span class="pk-swatch" title="on light and on dark"><i class="pk-light"><b></b>Aa</i><i class="pk-dark"><b></b>Aa</i></span>
 <label>hue <input type="range" class="pk-h" min="0" max="359" step="1" aria-label="second accent hue"></label>

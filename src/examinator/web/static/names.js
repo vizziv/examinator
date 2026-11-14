@@ -13,13 +13,13 @@
 // The step is shown by scans.js (the 'tab' event).
 (() => {
   const main = $('scans');
-  if (!main || !$('names')) return;
+  if (!main || !$('step-names')) return;
   let view = null, order = [], k = 0, ci = 0;
   let looking = false;    // on a named submission, the person stepped onto its proposals (W/S)
   let want = null;        // a submission to show once loaded (a link from Split or the roster: #sub=)
   let taken = {};         // roster key -> the submissions picked for that person (derived by the server)
 
-  const live = () => !$('names').hidden && !!view;
+  const live = () => !$('step-names').hidden && !!view;
   const row = () => (view && k < order.length ? view.byId[order[k]] : null);
   // The proposal shown large, which V takes: none on a named submission (it is shown as it is,
   // named) until the person steps onto its proposals.
@@ -61,7 +61,7 @@
 
   // `keep`: keep the box drafts (only the saved boxes are taken); `retake`: take the saved boxes as drafts too.
   async function load(keep, retake) {
-    const r = await request('/scans/names');
+    const r = await Changes.get('/scans/names');
     if (!r.ok) { flash('could not load names'); return; }
     view = r.body;
     view.byId = Object.fromEntries(view.rows.map(x => [x.sub, x]));
@@ -77,7 +77,7 @@
     for (const c of view.columns) if (!Actions.has(`names-box-add-${c.name}`)) addAction(c.name);
     if (want) jump();
     render();
-    if (!$('roster-box').hidden) renderRoster();
+    if (!$('step-roster').hidden) renderRoster();
   }
   const first = () => nextOpen(order, -1, s => !verified(view.byId[s]));
   function jump() {
@@ -85,7 +85,7 @@
     want = null;
     if (j >= 0) go(j);
   }
-  function go(j) { k = Math.max(0, Math.min(j, order.length)); ci = 0; looking = false; pick.value = ''; hi = 0; valueLine.say(''); render(); }
+  function go(j) { k = Math.max(0, Math.min(j, order.length)); ci = 0; looking = false; pick.value = ''; hi = 0; valueLine.say(''); Line('flow-msg').say(''); moved(); }
 
   // Naming is said about what is shown, when the key is pressed (or the item clicked): the
   // submission and one of {key} (a roster person), {text} (someone typed in), {restore} (undo)
@@ -111,40 +111,38 @@
   // One line says what was done, with an undo: itself a statement, made now.
   function report(sub, who, before, undoing) {
     const undo = make('button', {type: 'button', className: 'quiet', textContent: 'undo', title: before ? `back to ${before}` : 'unname it'});
-    undo.addEventListener('click', () => {
-      if (live()) name(undoing, false)?.then(b => { if (b) go(order.indexOf(sub)); });
-    });
+    Object.assign(undo.dataset, {action: 'names-undo', ...undoing});
     step.say([`${sub} → ${who || 'nobody'} · `, undo]);
   }
 
-  const S = {register: (name, spec) => Actions.register(name, {...spec,
-    available: ctx => live() && !Changes.busy() && (!spec.available || spec.available(ctx))})};
-  S.register('names-verify', {available: () => !!cand(), run: () => name(about({key: cand().key}))});
+  Actions.gate('names', () => live() && !Changes.busy());
+  Actions.register('names-undo', {run: ({el}) => {
+    const {sub, restore} = el.dataset;
+    return name(restore ? {sub, restore} : {sub}, false)?.then(b => { if (b) go(order.indexOf(sub)); });
+  }});
+  // A row of the table below: a click steps to its submission.
+  Actions.register('names-go', {run: ({el}) => { go(order.indexOf(el.dataset.sub)); $('w-step').scrollIntoView({block: 'nearest'}); }});
+  Actions.register('names-verify', {available: () => !!cand(), run: () => name(about({key: cand().key}))});
   // W / S: the other proposals; on a named submission, the first press shows the first
   const stepping = () => !!row() && row().candidates.length > (row().who && !looking ? 0 : 1);
-  const look = d => { const r = row(); if (r.who && !looking) { looking = true; ci = 0; } else ci += d; render(); };
-  S.register('names-down', {available: stepping, repeat: true, run: () => look(1)});
-  S.register('names-up', {available: stepping, repeat: true, run: () => look(row().candidates.length - 1)});
-  S.register('names-skip', {available: () => k < order.length, repeat: true, run: () => go(k + 1)});
-  S.register('names-back', {available: () => k > 0, repeat: true, run: () => go(k - 1)});
-  S.register('names-type', {available: () => !!row(), run: () => { pick.focus(); pick.select(); }});
+  const look = d => { const r = row(); if (r.who && !looking) { looking = true; ci = 0; } else ci += d; moved(); };
+  Actions.register('names-down', {available: stepping, repeat: true, run: () => look(1)});
+  Actions.register('names-up', {available: stepping, repeat: true, run: () => look(row().candidates.length - 1)});
+  Actions.register('names-skip', {available: () => k < order.length, repeat: true, run: () => go(k + 1)});
+  Actions.register('names-back', {available: () => k > 0, repeat: true, run: () => go(k - 1)});
+  Actions.register('names-type', {available: () => !!row(), run: () => { pick.focus(); pick.select(); }});
   // Reading the boxes, said on the line under the strip: what it reads, then how it went.
-  S.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, run: () => {
-    const again = $('w-again').checked, line = Line('msg');
-    return Changes.send('names-read', '/scans/names/read', {again}, {line, long: true, done: async b => {
-      if (!b.job) {
-        line.say(!view.left ? "nothing to read: every submission is named"
+  Actions.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, run: () => {
+    const again = $('w-again').checked, line = Line('flow-msg');
+    return Changes.run('names-read', '/scans/names/read', {again}, {line, done: async (job, b) => {
+      if (!job) {
+        return !view.left ? "nothing to read: every submission is named"
           : again ? "nothing to read: the unnamed submissions' boxes are verified"
-          : "nothing to read: the unnamed submissions' boxes are read (again: read the unverified ones again)");
-        return;
+          : "nothing to read: the unnamed submissions' boxes are read (again: read the unverified ones again)";
       }
-      line.say(`reading ${b.n} unnamed…`);
-      const job = await waitJob(b.job);
-      const failed = (job.outcomes || []).length;
       order = [];         // new readings: doubtful ones first again
       await load();
-      line.say(job.state !== 'done' ? `read names ${job.state}${job.error ? ': ' + job.error : ''}` : failed ? `read ${b.n} unnamed · ${failed} failed` : `read ${b.n} unnamed`,
-               job.state !== 'done' || failed ? 'bad' : '');
+      return `read ${b.n} unnamed`;
     }});
   }});
 
@@ -219,14 +217,15 @@
   if (want) want = decodeURIComponent(want);
 
   // --- the identity fields' boxes, drawn on the page shown ---
-  // One box per roster column (view.columns): its region for every submission ('value', the
-  // exam's override '<path>' or the package's 'base'; null: not placed), or this submission's
-  // own (row.own). Saved like a region on the question page: for this submission or for all.
+  // One box per roster column (view.columns): for the submission shown, its region at each
+  // scope (row.boxes[name], as the question page's region editor has them: `own`, `scan`,
+  // `all`, each with `<scope>_rev`; `base`, the package's; `value`, the one in force, null: not
+  // placed). Saved like a region on the question page: for this submission or for all.
   const bx = {edit: false, drafts: {}, touched: false, sel: ''};
-  const col = name => view.columns.find(c => c.name === name);
-  const saved = (r, name) => (r && r.own[name] ? r.own[name].value : col(name).value);
-  const savedAll = r => Object.fromEntries(view.columns.map(c => [c.name, saved(r, c.name)]));
-  const boxDirty = name => !Rects.same(bx.drafts[name], saved(row(), name));
+  const lv = (r, name) => r.boxes[name];
+  const every = lv => lv.all ?? lv.base;                  // what every submission has
+  const savedAll = r => Object.fromEntries(view.columns.map(c => [c.name, r ? lv(r, c.name).value : null]));
+  const boxDirty = name => !Rects.same(bx.drafts[name], lv(row(), name).value);
   const bxDirty = () => !!row() && view.columns.some(c => boxDirty(c.name));
   const placed = () => view.columns.filter(c => bx.drafts[c.name]).map(c => c.name);
   const cur = () => (bx.edit && bx.drafts[bx.sel] ? bx.drafts[bx.sel] : null);
@@ -249,12 +248,12 @@
     for (const name of placed()) {
       const d = bx.drafts[name];
       if (d[0] !== p) continue;
-      const el = Rects.box(name + (r.own[name] ? ' (own)' : ''), {sel: name === bx.sel, dirty: boxDirty(name)});
+      const el = Rects.box(name + (lv(r, name).own != null ? ' (own)' : ''), {sel: name === bx.sel, dirty: boxDirty(name)});
       el.dataset.name = name;
       Rects.place(el, d, r.print_area, view.pad);
       sheet.append(el);
     }
-    $('wb-save').classList.toggle('dirty', bxDirty());
+    $('wb').querySelector('[data-action=names-box-save-own]').classList.toggle('dirty', bxDirty());
     Actions.enable($('wb'));
   }
   const fill = Rects.numbers('wb', cur, put, el => { fill(cur(), el); drawBoxes(); });
@@ -269,7 +268,7 @@
     sel.value = bx.sel;
     sel.hidden = !names.length;
     for (const el of document.querySelectorAll('.wb-n, #wb-w, #wb-h')) el.closest('label').hidden = !names.length;
-    for (const b of $('wb-add').querySelectorAll('button')) b.hidden = !!bx.drafts[b.dataset.col];
+    for (const b of $('wb-add').querySelectorAll('button')) b.hidden = !!bx.drafts[b.dataset.box];
     fill(cur());
     drawBoxes();
   }
@@ -278,7 +277,7 @@
   // "+ <column>": a box for a column with none, somewhere visible on the first page.
   function addAction(name) {
     const action = `names-box-add-${name}`;
-    S.register(action, {available: () => bx.edit && !!row() && !bx.drafts[name], run: () => {
+    Actions.register(action, {available: () => bx.edit && !!row() && !bx.drafts[name], run: () => {
       const y = 100 + 120 * view.columns.findIndex(c => c.name === name);
       bx.drafts[name] = [1, 100, y, 700, y + 80];
       bx.touched = true;
@@ -286,91 +285,82 @@
       say('new box: drag it onto the box on the page');
     }});
     const b = make('button', {type: 'button', textContent: `+ ${name}`, title: `a box where the ${name} is written`});
-    Object.assign(b.dataset, {action, col: name});
+    Object.assign(b.dataset, {action, box: name});
     $('wb-add').append(b);
   }
-  S.register('names-boxes', {available: () => !!row(), run: () => { bx.edit = !bx.edit; say(''); render(); }});
-  S.register('names-box-remove', {available: () => bx.edit && !!cur(), run: () => {
+  Actions.register('names-boxes', {available: () => !!row(), run: () => { bx.edit = !bx.edit; say(''); render(); }});
+  Actions.register('names-box-remove', {available: () => bx.edit && !!cur(), run: () => {
     bx.drafts[bx.sel] = null;
     bx.touched = true;
     select(placed()[0] || '');
     say('removed: save for all');
   }});
-  S.register('names-box-undo', {available: () => bx.edit && bxDirty(), run: () => { bx.touched = false; say(''); renderBoxes(); }});
+  Actions.register('names-box-undo', {available: () => bx.edit && bxDirty(), run: () => { bx.touched = false; say(''); renderBoxes(); }});
   // What saving the drafts changes, one override set or cleared per box edited here (a box
   // that differs from what this submission shows): for all submissions, against every
   // submission's region (the package's again: no override); for this one, against what it shows.
   function changes(level) {
     const r = row(), out = [], scope = level === 'own' ? `submission:${r.sub}` : '';
     for (const c of view.columns) {
-      const d = bx.drafts[c.name];
+      const d = bx.drafts[c.name], l = lv(r, c.name), box = {name: c.name, path: c.path, scope};
       if (!boxDirty(c.name)) continue;
       if (level === 'own') {
-        if (!d) continue;
-        const own = r.own[c.name];
-        out.push(Rects.same(d, c.value) && own ? {name: c.name, path: c.path, scope, clear: true}
-          : {name: c.name, path: c.path, scope, value: d});
-      } else {
-        if (Rects.same(d, c.value)) continue;
-        if (Rects.same(d, c.base) && c.rev == null) continue;
-        out.push(Rects.same(d, c.base) ? {name: c.name, path: c.path, scope, clear: true} : {name: c.name, path: c.path, scope, value: d});
+        if (d) out.push(Rects.same(d, every(l)) && l.own != null ? {...box, clear: true} : {...box, value: d});
+      } else if (!Rects.same(d, every(l)) && !(Rects.same(d, l.base) && l.all == null)) {
+        out.push(Rects.same(d, l.base) ? {...box, clear: true} : {...box, value: d});
       }
     }
     return out;
   }
-  const WHERE = {own: 'this submission', all: 'all submissions'};
   // One override per box, each against what the view last drew of it; a refusal keeps the
   // drafts and takes what is saved now (the view loaded again), so saving again overwrites
   // knowingly. When every one is saved, the saved boxes are taken.
-  const savedRev = (sub, c, scope) => (scope ? view.byId[sub]?.own[c.name]?.rev : view.columns.find(x => x.path === c.path)?.rev) ?? null;
-  async function saveBoxes(list, what) {
-    const sub = row().sub, drafts = bx.drafts;
-    const answers = await Promise.all(list.map(c => override({...c, rev: () => savedRev(sub, c, c.scope), take: () => load()},
-                                                             {line: boxLine})));
+  async function saveBoxes(list, level, clear) {
+    const sub = row().sub, drafts = bx.drafts, key = level + '_rev';
+    const answers = await Promise.all(list.map(c => override({...c, rev: () => lv(view.byId[sub], c.name)[key] ?? null,
+                                                              take: () => load()}, {line: boxLine})));
     if (answers.some(b => !b)) return null;
     await load(false, true);
-    const shadowed = list.length && !list[0].scope && view.columns.some(c => view.byId[sub].own[c.name] && drafts[c.name]
-      && !Rects.same(drafts[c.name], view.byId[sub].own[c.name].value));
-    say(`${what}${shadowed ? ' · this submission keeps its own' : ''}`);
+    const keeps = level === 'all' && !clear && view.columns.some(c => {
+      const own = lv(view.byId[sub], c.name).own;
+      return own != null && drafts[c.name] && !Rects.same(drafts[c.name], own);
+    });
+    say(Rects.said('box', level, clear, keeps ? 'its own' : ''));
     return answers;
   }
-  S.register('names-box-save-own', {available: () => bx.edit && changes('own').length > 0,
-    run: () => saveBoxes(changes('own'), `saved · ${WHERE.own}`)});
-  S.register('names-box-save', {available: () => bx.edit && !!row() && changes('all').length > 0,
-    run: () => saveBoxes(changes('all'), `saved · ${WHERE.all}`)});
-  S.register('names-box-drop-own', {available: () => bx.edit && !!row() && !!row().own[bx.sel], run: () => {
-    if (!confirm(`Drop this submission's own box for ${bx.sel}?`)) return;
-    return saveBoxes([{name: bx.sel, path: col(bx.sel).path, scope: `submission:${row().sub}`, clear: true}], 'own box dropped');
+  const stored = level => view.columns.filter(c => lv(row(), c.name)[level] != null);
+  for (const level of ['own', 'all']) {
+    Actions.register(`names-box-save-${level}`, {available: () => bx.edit && !!row() && changes(level).length > 0,
+      run: () => saveBoxes(changes(level), level, false)});
+  }
+  Actions.register('names-box-clear-own', {available: () => bx.edit && !!row() && lv(row(), bx.sel)?.own != null, run: () => {
+    if (!Rects.dropping('own', `box for ${bx.sel}`)) return;
+    return saveBoxes([{name: bx.sel, path: view.columns.find(c => c.name === bx.sel).path, scope: `submission:${row().sub}`, clear: true}],
+                     'own', true);
   }});
-  S.register('names-box-revert', {available: () => bx.edit && view.columns.some(c => c.rev != null), run: () => {
-    if (!confirm("Back to the boxes the exam declares, for all submissions?")) return;
-    return saveBoxes(view.columns.filter(c => c.rev != null).map(c => ({name: c.name, path: c.path, scope: '', clear: true})), 'reverted · all submissions');
+  Actions.register('names-box-clear-all', {available: () => bx.edit && !!row() && stored('all').length > 0, run: () => {
+    if (!Rects.dropping('all', 'boxes')) return;
+    return saveBoxes(stored('all').map(c => ({name: c.name, path: c.path, scope: '', clear: true})), 'all', true);
   }});
   Rects.arrows(() => live() && cur(), put, () => { fill(cur()); drawBoxes(); });
   // dragging: inside a box moves it, a corner resizes it; a click on another box selects it
-  let drag = null;
   const sheetEl = $('wb-sheet');
-  sheetEl.addEventListener('pointerdown', e => {
-    const el = e.target.closest('.rbox');
-    if (e.button !== 0 || !el || !bx.edit) return;
-    if (el.dataset.name !== bx.sel) { select(el.dataset.name); return; }
-    const q = sheetEl.getBoundingClientRect(), [wl, wt, wr, wb] = row().print_area;
-    drag = {h: e.target.dataset.h || '', x: e.clientX, y: e.clientY, d: [...cur()],
-            kx: 1e6 / (q.width * (wr - wl)), ky: 1e6 / (q.height * (wb - wt))};     // pixels -> per-mille of the printed page
-    sheetEl.setPointerCapture(e.pointerId);
-    e.preventDefault();
+  Rects.drag(sheetEl, {
+    grab: e => {
+      const el = e.target.closest('.rbox');
+      if (!el || !bx.edit) return null;
+      if (el.dataset.name !== bx.sel) { select(el.dataset.name); return null; }
+      const q = sheetEl.getBoundingClientRect(), [wl, wt, wr, wb] = row().print_area;
+      return {d: [...cur()], kx: 1e6 / (q.width * (wr - wl)), ky: 1e6 / (q.height * (wb - wt))};   // pixels -> per-mille of the printed page
+    },
+    put: d => {
+      put(d);
+      const el = sheetEl.querySelector('.rbox.sel');
+      if (el) Rects.place(el, cur(), row().print_area, view.pad);
+    },
+    moved: () => fill(cur()),
+    dropped: drawBoxes,
   });
-  sheetEl.addEventListener('pointermove', e => {
-    if (!drag) return;
-    const dx = (e.clientX - drag.x) * drag.kx, dy = (e.clientY - drag.y) * drag.ky;
-    put(drag.h ? Rects.resize(drag.d, drag.h, dx, dy) : Rects.shift(drag.d, dx, dy));
-    const el = sheetEl.querySelector('.rbox.sel');
-    if (el) Rects.place(el, cur(), row().print_area, view.pad);
-    fill(cur());
-  });
-  const drop = () => { if (drag) { drag = null; drawBoxes(); } };
-  sheetEl.addEventListener('pointerup', drop);
-  sheetEl.addEventListener('pointercancel', drop);
   addEventListener('beforeunload', e => { if (bx.edit && bxDirty()) e.preventDefault(); });
 
   // --- an identity field's value: corrected or verified like any field's ---
@@ -387,32 +377,35 @@
       return text === undefined ? {verify: [{key: k, rev}]} : {values: {[k]: {text, rev}}};
     }, {line: valueLine, done: () => load(), redraw: async () => {
       await load();
-      return kept.length ? Changes.kept(kept.map(x => `${brief(x.now)} (${x.el.getAttribute('aria-label')})`).join(', ')) : "shown as it is now";
+      return Changes.keptOver(kept, el => el.getAttribute('aria-label'));
     }});
   }
   function valueBox(r, name) {
     const v = r.values[name];
     const input = make('input', {type: 'text', className: 'mono', defaultValue: v ? v.text : '', spellcheck: false,
-      placeholder: !v && main.dataset.model ? 'not read yet' : '', title: 'Enter: save (verified by you)'});
+      placeholder: !v ? (main.dataset.model ? 'not read yet' : '') : v.text === '' ? 'empty' : '', title: 'Enter: save (verified by you)'});
     Object.assign(input.dataset, {key: `@identity/${name}`, rev: v ? v.rev : ''});
     input.setAttribute('aria-label', name);
-    input.addEventListener('keydown', e => {
-      if (e.key !== 'Enter' || e.isComposing) return;
-      e.preventDefault();
-      if (isDraft(input) && live()) saveValue(r.sub, name, input.value);
-    });
     const out = [make('span', {className: 'dim', textContent: name + ' '}), input];
     if (v && !v.verified) {
       // what is shown is what is verified: a draft is saved (a person who sets a value verifies it)
       const ok = make('button', {type: 'button', className: 'quiet', textContent: '✓', title: 'verify this value'});
-      ok.addEventListener('click', () => {
-        const el = ok.parentElement.querySelector('input');
-        if (live()) saveValue(r.sub, name, isDraft(el) ? el.value : undefined);
-      });
+      ok.dataset.action = 'names-value';
       out.push(' ', v.review != null ? tag('unv', 'review', v.review || 'a person should look') : tag('unv', 'unverified'), ok);
     }
     return out;
   }
+
+  // ✓ saves the draft or, with none, verifies the value shown; Enter in a value saves its draft.
+  Actions.register('names-value', {run: ({el}) => {
+    const input = el.closest('figcaption').querySelector('input');
+    return saveValue(row().sub, input.getAttribute('aria-label'), isDraft(input) ? input.value : undefined);
+  }});
+  $('w-crops').addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.isComposing || !e.target.matches('input') || !isDraft(e.target)) return;
+    e.preventDefault();
+    Actions.trigger('names-value', {el: e.target});
+  });
 
   // --- drawing the step ---
   let whole = !!pref('namesWhole', false);      // the whole first page, not only its top
@@ -435,7 +428,7 @@
     const r = row(), done = !r;
     $('w-done').hidden = !done || !order.length;
     $('w-main').hidden = done;
-    $('w-sub').textContent = done ? (order.length ? 'done' : 'no submissions yet') : r.sub;
+    $('w-sub').textContent = done ? (order.length ? 'all verified' : 'no submissions yet') : r.sub;
     $('w-pos').textContent = done ? '' : `${k + 1} of ${order.length}`;
     $('w-tags').replaceChildren(...(done ? [] : [doubtTag(r), ...whoTags(r)]));
     if (done) return;
@@ -474,7 +467,7 @@
     const rows = order.map((s, j) => {
       const r = view.byId[s], c = r.candidates[0];
       const open = make('button', {type: 'button', className: 'quiet', textContent: s, title: 'step to it'});
-      open.addEventListener('click', () => { go(j); $('w-step').scrollIntoView({block: 'nearest'}); });
+      Object.assign(open.dataset, {action: 'names-go', sub: s});
       const read = r.crops.map(x => r.read[x.name]).filter(Boolean).join(' · ');
       return make('tr', {className: j === k ? 'here' : ''},
         make('td', {}, open), make('td', {}, doubtTag(r)),
@@ -502,22 +495,26 @@
     renderBoxes();
     renderStep();
     renderRows();
-    main.dispatchEvent(new CustomEvent('names', {detail: {n, left, unread, proposal: !!cand(), named: !!(row() && row().who), fields}}));
+    tell();
     Actions.hints();
     Actions.enable(main);
+  }
+  // What the strip says of this step (its count, and what to do next here).
+  const tell = () => main.dispatchEvent(new CustomEvent('names', {detail: {n: view.rows.length, left: view.left, unread: view.unread,
+    proposal: !!cand(), named: !!(row() && row().who), fields: view.boxed}}));
+  // A cursor move: the step drawn again and its row marked; the table stays.
+  function moved() {
+    renderBoxes();
+    renderStep();
+    const rows = [...$('w-rows').tBodies[0].rows];
+    rows.forEach((tr, j) => tr.classList.toggle('here', j === k));
+    tell();
+    Actions.enable($('w-step'));
   }
 
   // --- the Roster step's table: everyone on the roster, and who is named for which submission ---
   const filter = $('ro-filter');
-  function subLink(sub) {
-    const a = make('a', {href: '#sub=' + encodeURIComponent(sub), textContent: sub, title: 'open on Names'});
-    a.addEventListener('click', ev => {
-      ev.preventDefault();
-      history.replaceState(null, '', a.getAttribute('href'));
-      dispatchEvent(new HashChangeEvent('hashchange'));
-    });
-    return a;
-  }
+  const subLink = sub => make('a', {href: '#sub=' + encodeURIComponent(sub), textContent: sub, title: 'open on Names'});
   function renderRoster() {
     if (!filter) return;
     const shown = search(filter.value);

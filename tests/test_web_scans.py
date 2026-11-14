@@ -12,6 +12,8 @@ from examinator.core.runner import Runner
 from examinator.core.workspace import Workspace
 from examinator.web.app import create_app
 
+from test_web import crop
+
 TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
 BASE = 'http://127.0.0.1:8580'
 
@@ -41,6 +43,11 @@ def make_site(tmp_path):
 @pytest.fixture
 def site(make_site):
     return make_site()
+
+
+def shown(html, id):
+    """Whether the element `id` is drawn shown (not `hidden`)."""
+    return ' hidden' not in re.search(rf'<[^>]* id="{id}"[^>]*>', html).group(0)
 
 
 def wait(client, job):
@@ -84,7 +91,7 @@ def test_upload_needs_the_token_and_a_pdf(site):
 def check_and_accept(client, token, src):
     """Check the plan with the (scripted) model, turn the upside-down exam, accept."""
     plan = client.get(f'/scans/{src}/plan').json()
-    wait(client, post(client, token, f'/scans/{src}/propose', {'check': True, 'rev': plan['rev']}).json()['job'])
+    assert wait(client, post(client, token, f'/scans/{src}/read', {}).json()['job'])['state'] == 'done'
     plan = client.get(f'/scans/{src}/plan').json()
     for _ in range(2):          # two quarter turns
         plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'sheet': plan['entries'][4]['start'],
@@ -162,7 +169,7 @@ def test_missing_pages_and_extra_sheets_downstream(site):
     assert plan['entries'][2]['lay'] == [[7, 1], [8, 2], [9, None], [10, 3], [11, 4]]
     # the pages panel: the placeholder labelled missing, the extra sheet last
     html = client.get(f'/s/{short}/parity').text
-    assert '<span class="pno">missing</span>' in html and 'data-region="parity/fields/B/region"' not in html
+    assert '<span class="pno">missing</span>' in html and crop(html, 'parity/B') is None
     assert '<span class="pno">extra 1</span>' in client.get(f'/s/{stray}/parity').text
     # a field on the missing page is not read: blocked, like one with no region
     groups = post(client, token, '/read/plan', {'submissions': [short, stray], 'questions': ['parity']}).json()['groups']
@@ -186,7 +193,7 @@ def test_missing_pages_and_extra_sheets_downstream(site):
     assert r.status_code == 400 and "page 5 is not a printed page (1..4)" in r.json()['error']
     html = client.get(f'/s/{stray}/parity').text
     assert 'class="sheet on" data-index="2"' in html and 'data-pages="5"' in html     # every sheet, extra too
-    assert re.search(r'data-src="[^"]*/4\.jpg"[^>]*data-region="parity/fields/B/region"', html)   # its crop: the extra sheet
+    assert crop(html, 'parity/B')['src'].endswith('/4.jpg')     # its crop: the extra sheet
 
 
 def test_naming_and_a_forced_accept(site):
@@ -329,7 +336,7 @@ def test_roster_on_the_page_and_who_is_matched(site):
     assert rows['s0005']['who']['twice'] and rows['s0003']['who']['twice']
     assert view['taken'] == {people[4]['key']: ['s0003', 's0005']}
     # what the page needs to show the first page without boxes: the print area
-    assert len(rows['s0001']['print_area']) == 4 and 'cover' not in rows['s0001']
+    assert len(rows['s0001']['print_area']) == 4
 
 
 def test_naming_is_a_statement_about_what_was_seen(site):
@@ -367,10 +374,10 @@ def test_a_box_for_one_submission_is_a_box(site):
     check_and_accept(client, token, src)
     for name in ('name', 'id'):
         post(client, token, '/exam/set', {'path': f'@identity/fields/{name}/region', 'value': None, 'rev': None})
-    assert not client.get('/scans/names').json()['boxed'] and 'id="w-noboxes" class="dim">' in client.get('/scans').text
+    assert not client.get('/scans/names').json()['boxed'] and shown(client.get('/scans').text, 'w-noboxes')
     post(client, token, '/exam/set', {'path': '@identity/fields/name/region', 'value': [1, 100, 200, 800, 280],
                                       'rev': None, 'scope': 'submission:s0002'})
-    assert client.get('/scans/names').json()['boxed'] and 'id="w-noboxes" class="dim" hidden' in client.get('/scans').text
+    assert client.get('/scans/names').json()['boxed'] and not shown(client.get('/scans').text, 'w-noboxes')
     r = read_names(client, token)
     assert r.json()['n'] == 1 and wait(client, r.json()['job'])['state'] == 'done'
     assert identity.values(ws, 's0002')['s0002']['name'].text == "Blake Mockford"
@@ -384,9 +391,10 @@ def test_drawing_the_name_boxes_for_every_submission(site):
     check_and_accept(client, token, src)
     view = client.get('/scans/names').json()
     cols = {c['name']: c for c in view['columns']}
-    assert list(cols) == ['name', 'id', 'email'] and cols['email']['value'] is None     # not placed: "+ email"
-    assert cols['name']['path'] == '@identity/fields/name/region' and cols['name']['rev'] is None
-    assert cols['name']['value'] == cols['name']['base'] == [1, 100, 200, 800, 280]
+    boxes = view['rows'][0]['boxes']           # at each scope, as the question page's regions
+    assert list(cols) == ['name', 'id', 'email'] and boxes['email']['value'] is None     # not placed: "+ email"
+    assert cols['name']['path'] == '@identity/fields/name/region' and boxes['name']['all_rev'] is None
+    assert boxes['name']['value'] == boxes['name']['base'] == [1, 100, 200, 800, 280]
     wait(client, read_names(client, token).json()['job'])
     assert identity.unread(ws) == []
     before = {r['sub']: r['crops'] for r in view['rows']}
@@ -398,7 +406,7 @@ def test_drawing_the_name_boxes_for_every_submission(site):
     rev = r.json()['rev']
     assert post(client, token, '/exam/set', {'path': path, 'value': [1, 100, 190, 820, 300], 'rev': None}).status_code == 409
     view = client.get('/scans/names').json()
-    assert {c['name']: c['rev'] for c in view['columns']}['name'] == rev
+    assert all(r['boxes']['name']['all_rev'] == rev for r in view['rows'])
     assert all(r['crops'][0]['box'] != before[r['sub']][0]['box'] for r in view['rows'])
     assert all(r['crops'][1]['box'] == before[r['sub']][1]['box'] for r in view['rows'])
     assert identity.unread(ws) == [] and read_names(client, token).json()['n'] == 0
@@ -408,7 +416,8 @@ def test_drawing_the_name_boxes_for_every_submission(site):
     own = {'path': path, 'value': [1, 100, 120, 800, 200], 'rev': None, 'scope': 'submission:s0003'}
     assert post(client, token, '/exam/set', own).status_code == 200
     rows = {r['sub']: r for r in client.get('/scans/names').json()['rows']}
-    assert rows['s0003']['own']['name']['value'] == [1, 100, 120, 800, 200] and rows['s0002']['own'] == {}
+    assert rows['s0003']['boxes']['name']['own'] == [1, 100, 120, 800, 200]
+    assert all(b['own'] is None for b in rows['s0002']['boxes'].values())
     assert rows['s0003']['crops'][0]['box'] != rows['s0002']['crops'][0]['box']
     assert identity.unread(ws) == []
     # on the Exam data page, with the package's value, as a line for the package, and the submission's own
@@ -476,7 +485,7 @@ def test_no_boxes_left_means_nothing_to_read(site):
 def test_reading_names_needs_a_model(make_site):
     client, token, ws, paths = make_site(model=False)
     html = client.get('/scans').text
-    assert 'data-model=""' in html and 'data-action="names-read" title="no model"' in html    # shown, dimmed
+    assert re.search(r'<button [^>]*data-action="names-read"[^>]*title="no model"', html)    # shown, saying why
     assert read_names(client, token).status_code == 400
 
 

@@ -15,7 +15,7 @@
                                     every submission, one scan's, one submission's
     GET  /scans                     intake: sources, split plans, accept;  GET /scans/{src}/plan (JSON)
     POST /scans/upload?name=        a scanned PDF as the raw request body (streamed to disk)
-    POST /scans/{src}/{action}      edit propose undo accept;  POST /scans/roster(/preview), /scans/who
+    POST /scans/{src}/{action}      edit propose undo accept, read (its pages, a run);  POST /scans/roster(/preview), /scans/who
     GET  /scans/names               who wrote each submission: identity values, proposals, picks (JSON)
     POST /scans/names/read          read the identity fields with the model (a job)
     GET  /sheet/{src}/{index}.jpg   one sheet of a source (?o= quarter turns, ?w= width)
@@ -27,7 +27,7 @@ page drew (`rev`) and answers the new one; a run is refused while its slot runs.
 Every answer is JSON, errors as `{error}`: 403 a token this run of the app did
 not give, 415 not JSON, 413 too large, 404 unknown target, 409 stale revision
 (with `current`, what is there now) or a slot running, 400 input a grader
-should correct. Nothing here keeps module-level state; it all hangs off `app.state`.
+should correct. Nothing here keeps module-level state: it is all inside `create_app`.
 """
 from __future__ import annotations
 
@@ -38,7 +38,6 @@ import os
 import re
 import secrets
 import threading
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -56,11 +55,12 @@ from starlette.staticfiles import StaticFiles
 from ..core import batch, focus, grid, identity, intake, overrides, split, status
 from ..core.context import CheckContext
 from ..core.ask import Printed
-from ..core.defs import IDENTITY, PRINT_AREA, Bool, Check, Exam, Question, key, split_key
+from ..core.defs import IDENTITY, PRINT_AREA, Bool, Check, Exam, Grade, Question, key, split_key
 from ..core.as_python import describe_changes
 from ..core.overrides import EXAM, SOURCE, SUBMISSION
 from ..core.reading import normalize
 from ..core.runner import Runner, to_read
+from ..core.status import Status
 from ..core.store import Conflict
 from ..core.workspace import Workspace
 from ..pdf.layout import Layout
@@ -83,7 +83,6 @@ CSP = ("default-src 'none'; script-src 'self' 'inline-speculation-rules'; style-
 IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 IMMUTABLE = 'private, max-age=31536000, immutable'     # a URL that names its content
 RESTARTED = "the app restarted since this page was loaded: reload"
-# What a person sees of a status: one word per idea (DESIGN.md, Words on screen).
 class Bad(ValueError):
     """Input the grader (or the page's script) should correct: HTTP 400."""
 
@@ -170,17 +169,6 @@ def _rev(data: dict) -> int | str | None:
     return _int(rev, "rev", 0, 2**62)
 
 
-@contextmanager
-def now(current: Callable[[], Any]):
-    """A change refused as stale (Conflict) answers what is there now: `current()`."""
-    try:
-        yield
-    except Conflict as e:
-        if getattr(e, 'current', None) is None:
-            e.current = current()
-        raise
-
-
 def _strings(value: Any, allowed, what: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise Bad(f"{what}: expected a list")
@@ -204,22 +192,43 @@ def selection(text: str | None) -> dict:
             if isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, (str, int, float)) for x in v))}
 
 
-def glyph(st) -> str:
-    """What the grade is, as one glyph. Where it is in the workflow is `st.state`."""
+KINDS = {None: 'n', 'blank': 'b', '✓': 't', '✗': 'f'}         # a grade's kind; else 'num' (points)
+NO_GRADE = {'to_decide': '?', 'unverified': '?', 'review': '!', 'outdated': '·', 'verified': '–'}
+OUTCOMES = {'correct': '✓', 'incorrect': '✗', 'blank': 'blank'}      # a check's judgement of one field
+
+
+def look(st: Status | str) -> dict:
+    """What a person sees of a status: a check's (`Status`), or a state alone (a question
+    without checks: how its fields stand). The grade's `kind` ('t' correct, 'f' incorrect,
+    'b' blank, 'num' points, 'n' none: the CSS's g-<kind>), its `glyph`, its `sort` key (a
+    number, a blank by its value; '' for none) and the state's `title`. Every page draws a
+    status from this alone."""
+    st = Status(st) if isinstance(st, str) else st
     text = focus.grade_text(st)
-    if text is None:
-        return {'to_decide': '?', 'review': '!', 'unverified': '?', 'outdated': '·'}.get(st.state, '')
-    return '∅' if text == 'blank' else text
+    value = st.value
+    return {'kind': KINDS.get(text, 'num'), 'state': st.state, 'title': status.LABELS[st.state],
+            'glyph': NO_GRADE.get(st.state, '') if text is None else '∅' if text == 'blank' else text,
+            'sort': '' if value is None else int(value) if isinstance(value, bool) else value}
 
 
-def value_class(st) -> str:
-    return {None: 'v-n', 'blank': 'v-b', '✓': 'v-t', '✗': 'v-f'}.get(focus.grade_text(st), 'v-num')
+def judged(outcome: str | None) -> dict:
+    """A check's judgement of one field, drawn like a grade: correct, incorrect, blank or undecided."""
+    text = OUTCOMES.get(outcome)
+    return {'kind': KINDS.get(text, 'n'), 'glyph': '?' if text is None else '∅' if text == 'blank' else text}
 
 
-def value_key(st) -> str:
-    """The value as the grid's sort key (a blank sorts by its value)."""
-    text = focus.grade_text(st, blank=False)
-    return {None: '', '✓': 't', '✗': 'f'}.get(text, text)
+# The grid's legend: a sample of each look.
+LEGEND = {'grade': [(Status('graded', Grade(True)), "correct"), (Status('graded', Grade(False)), "incorrect"),
+                    (Status('graded', Grade(0, ('blank',))), "blank"), (Status('graded', Grade(2)), "points"),
+                    (Status('unverified'), "undecided")],
+          'background': [(Status('unverified', Grade(True)), "unverified: a person is asked"),
+                         (Status('graded', Grade(True)), "needs nobody")],
+          'marks': [(Status('outdated', Grade(True)), "outdated")]}
+
+
+def when(at: str) -> str:
+    """A stored time, as a person reads it: 'YYYY-MM-DD HH:MM'."""
+    return at[:16].replace('T', ' ')
 
 
 DIGEST = re.compile(r'[0-9a-f]{64}')
@@ -387,9 +396,9 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             return {'facet': f'{q.id}/{name}', 'todo': ' '.join(values)}
         for q in ws.exam.questions.values():
             for c in q.checks:
-                columns.append({'q': q, 'name': q.column(c.name), 'counts': c.points.counts, **todo(q, c.name)})
+                columns.append({'q': q, 'name': q.column(c.name), **todo(q, c.name)})
             if not q.checks:        # no checks: the column shows how its fields stand
-                columns.append({'q': q, 'name': q.id, 'counts': False, **todo(q)})
+                columns.append({'q': q, 'name': q.id, **todo(q)})
         sel = selection(request.query_params.get('focus'))
         table = values() if sel else {}
         rows, started, graded = [], False, ws.exam.questions     # started: anything of a graded question
@@ -397,39 +406,32 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             cells = []
             started = started or any(split_key(k)[0] in graded for k in (*row.sheet.values, *row.sheet.results))
             for q in ws.exam.questions.values():
-                for c in q.checks:
-                    st = row.status[(q.id, c.name)]
-                    cells.append({'qid': q.id, 'col': q.column(c.name), 'state': st.state,
-                                  'glyph': glyph(st), 'cls': value_class(st), 'v': value_key(st),
-                                  'blank': 'blank' in st.flags, 'counts': st.counts,
-                                  'title': status.LABELS[st.state]})
+                cells += [{'qid': q.id, **look(row.status[(q.id, c.name)])} for c in q.checks]
                 if not q.checks:
-                    state = row.fields[q.id]
-                    cells.append({'qid': q.id, 'col': q.id, 'state': state,
-                                  'glyph': {'verified': '–', 'review': '!', 'unverified': '?'}.get(state, ''),
-                                  'cls': 'v-n', 'v': '', 'blank': False, 'counts': False,
-                                  'title': status.LABELS[state]})
+                    cells.append({'qid': q.id, **look(row.fields[q.id])})
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
                          'complete': row.complete, 'sort': row.points,
                          'hidden': bool(sel) and not focus.matches(table, sel, row.submission.id)})
-        return page('grid.html', rows=rows, columns=columns, focus=focus.active(table, sel), started=started)
+        legend = {part: [(look(st), text) for st, text in samples] for part, samples in LEGEND.items()}
+        return page('grid.html', rows=rows, columns=columns, focus=focus.active(table, sel), started=started,
+                    legend=legend)
 
     # --- focus ---
 
-    cached: dict[str, Any] = {}
+    table_of: dict[str, Any] = {}
     memo: dict = {}             # what facets compute (normal forms), kept between tables
 
     def values() -> dict:
         """The whole values table, recomputed only when stored rows have changed."""
         key_ = store.version()
         with lock:
-            if cached.get('key') == key_:
-                return cached['table']
+            if table_of.get('key') == key_:
+                return table_of['table']
             if len(memo) > 200_000:
                 memo.clear()
         table = focus.values_table(ws.exam, store, memo=memo)
         with lock:
-            cached.update(key=key_, table=table)
+            table_of.update(key=key_, table=table)
         return table
 
     def filter_page(request: Request) -> Response:
@@ -459,10 +461,10 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
 
         gone = ws.missing(sub.id)
 
-        def crop(region, path):
+        def crop(region):
             if region is None or region.page in gone or not 0 < region.page <= count:
                 return None
-            return {'index': region.page - 1, 'box': box(layout, region), 'path': path}
+            return {'index': region.page - 1, 'box': box(layout, region)}
 
         # every sheet of the PDF, to scroll through: the printed pages (a missing one is its
         # placeholder), then the extra sheets; `on` marks this question's pages
@@ -471,7 +473,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                  for i in range(count)]
 
         # the checks: status, proposal, evidence
-        checks, judged = [], {}
+        checks, marks = [], {}       # marks: each field's judgements, by the checks that read it
         for c in q.checks:
             k = key(q.id, c.name)
             st = sheet.status(exam, q, c)
@@ -480,25 +482,20 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             blocks = row.body['blocks'] if row else []
             figures = next((i for i, b in enumerate(blocks) if b['type'] != 'image'), len(blocks))
             for label, j in (stored.fields if stored else {}).items():
-                judged.setdefault(label, []).append({'check': c.name, **j})
+                marks.setdefault(label, []).append({'check': c.name, **j, **judged(j.get('outcome'))})
             spec = c.points
-            checks.append({'name': c.name, 'column': q.column(c.name), 'st': st, 'glyph': glyph(st),
-                           'cls': value_class(st), 'fn': c.fn is not None,
+            checks.append({'name': c.name, 'column': q.column(c.name), 'st': st, 'look': look(st),
+                           'fn': c.fn is not None,
                            'rev': decision.rev if decision else '', 'decided': decision is not None,
                            'bool': isinstance(spec, Bool), 'min': getattr(spec, 'min', None),
                            'max': getattr(spec, 'max', None), 'counts': spec.counts,
                            'step': 1 if getattr(spec, 'type', None) is int else 'any',
-                           'stored': stored,
                            'current': stored is not None and status.current(
                                stored, sheet.values, defn=exam.check_hash(q, c), code=exam.code_hash),
                            'figures': blocks[:figures], 'rest': blocks[figures:]})
 
-        # the fields on the page: its own, then those its checks read elsewhere
-        own = [key(q.id, label) for label in q.labels]
-        keys = own + [k for c in checks if c['stored'] for k in c['stored'].reads if k not in own]
-        keys = list(dict.fromkeys(keys))
         fields, why = [], {}         # why: per question, the fields that cannot be read now
-        for k in keys:
+        for k in runner.page(sub.id, q.id):
             qid, label = split_key(k)
             other = exam.group(qid)
             f = other.field(label) if other else None
@@ -518,12 +515,9 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                 'review': v.review if v else None,
                 'multiline': other.multiline(label),
                 'printed': isinstance(reader, Printed), 'ask': getattr(reader, 'ask', ''),
-                'typed': reader is None, 'default': f.default,
-                'crop': crop(here.field(label).region, overrides.join(qid, 'fields', label, 'region')),
+                'default': f.default, 'crop': crop(here.field(label).region),
                 'blocked': why[qid].get(label),         # 'page missing', 'no region': not read
-                'judged': judged.get(label, []) if qid == q.id else []})
-        for n, f in enumerate(fields):
-            f['n'] = n
+                'judged': marks.get(label, []) if qid == q.id else []})
         # what Verify here may verify: a value that needs review is verified one by one (its ⋯ menu)
         unverified = [f for f in fields if f['read'] and f['verified'] is None and f['review'] is None]
         waiting = [f['key'] for f in unverified if f['own']]           # what Verify here verifies
@@ -534,7 +528,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             for h in store.history(sub.id, f['key'], 'value')[:20]:
                 b = h.body or {}
                 history.append({'field': f['title'], 'key': f['key'], 'rev': h.rev,
-                                'at': h.updated_at[:16].replace('T', ' '), 'who': h.author or "read",
+                                'at': when(h.updated_at), 'who': h.author or "read",
                                 'verified': b.get('verified'), 'text': str(b.get('text', ''))[:300]})
         history.sort(key=lambda h: h['at'], reverse=True)
 
@@ -563,6 +557,8 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             first_page=(q.pages or (1,))[0], ids=[s.id for s in store.submissions()],
             prev_q=qids[i - 1] if i else None, next_q=qids[i + 1] if i is not None and i + 1 < len(qids) else None)
 
+    # --- the question page's changes and runs: each resolves its target from the request ---
+
     def field_of(k: Any, questions: dict | None = None) -> tuple[str, str]:
         """A field of the questions graders work through (or of `questions`), by key."""
         questions = ws.exam.questions if questions is None else questions
@@ -573,85 +569,100 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             raise Bad("unknown field")
         return qid, label
 
-    def value_rev(sid: str, k: str) -> int | None:
-        row = store.get(sid, k, 'value')
+    def field(request: Request, data: dict) -> tuple[str, str, str]:
+        """A field change's target: the submission, and the field `key` names."""
+        sub, _ = target(request)
+        return (sub.id, *field_of(data.get('key')))
+
+    def check(request: Request, data: dict) -> tuple[str, Question, Check]:
+        """A check change's target: the submission, the question, and the check `check` names."""
+        sub, q = target(request)
+        c = q.check(data.get('check')) if isinstance(data.get('check'), str) else None
+        if c is None:
+            raise Bad("unknown check")
+        return sub.id, q, c
+
+    def value_rev(sid: str, k: Any) -> int | None:
+        row = store.get(sid, k, 'value') if isinstance(k, str) else None
         return row.rev if row else None
 
-    def save_values(request, sub, data: dict, questions: dict | None = None) -> tuple[dict, bool]:
-        """Set the values a person changed (each verified by them), then verify
-        the ones listed: 'save', 'save and verify', 'verify all here'. Each names the
-        revision drawn. Their new revisions, and whether any was set."""
+    def decision_rev(request: Request, data: dict) -> int | None:
+        sid, q, c = check(request, data)
+        row = store.get(sid, key(q.id, c.name), 'decision')
+        return row.rev if row else None
+
+    # what a field change, a check change, a save answers when refused as stale: what is there now
+    value_now = lambda request, data: {'rev': value_rev(target(request)[0].id, data.get('key'))}
+    decision_now = lambda request, data: {'rev': decision_rev(request, data)}
+
+    def values_now(request: Request, data: dict) -> dict:
+        sid = target(request, need_question=False)[0].id
+        keys = list(data.get('values') or {}) + [i.get('key') for i in data.get('verify') or [] if isinstance(i, dict)]
+        return {'revs': {k: value_rev(sid, k) for k in keys if isinstance(k, str)}}
+
+    def save(request: Request, data: dict, _, questions: dict | None = None) -> dict:
+        """Set the values a person changed (each verified by them), then verify the ones
+        listed: 'save', 'save and verify', 'verify all here'; each item names the revision
+        drawn. `questions`: whose fields (the graded questions; the Names step: the identity
+        group). Their new revisions; recomputed in the background when any was set."""
+        sub, _ = target(request, need_question=questions is None)
         changed, verify = data.get('values') or {}, data.get('verify') or []
         if not isinstance(changed, dict) or not isinstance(verify, list):
             raise Bad("unexpected content")
         if not changed and not verify:
             raise Bad("nothing to save")
-        keys = list(changed) + [i.get('key') for i in verify if isinstance(i, dict)]
-        author, revs, wrote = who(request), {}, False
-        with now(lambda: {'revs': {k: value_rev(sub.id, k) for k in keys if isinstance(k, str)}}):
-            for k, item in changed.items():
-                qid, label = field_of(k, questions)
-                text = item.get('text') if isinstance(item, dict) else None
-                if not isinstance(text, str) or len(text) > MAX_BODY:
-                    raise Bad("unexpected content")
-                v = runner.set(sub.id, qid, label, text, author=author, expect_rev=_rev(item))
-                revs[k], wrote = v.rev, True
-            for item in verify:
-                k = item.get('key') if isinstance(item, dict) else None
-                qid, label = field_of(k, questions)
-                if k in revs:
-                    continue            # set just now: verified by this person
+        author, revs = who(request), {}
+        for k, item in changed.items():
+            qid, label = field_of(k, questions)
+            text = item.get('text') if isinstance(item, dict) else None
+            if not isinstance(text, str) or len(text) > MAX_BODY:
+                raise Bad("unexpected content")
+            revs[k] = runner.set(sub.id, qid, label, text, author=author, expect_rev=_rev(item)).rev
+        wrote = bool(revs)
+        for item in verify:
+            k = item.get('key') if isinstance(item, dict) else None
+            qid, label = field_of(k, questions)
+            if k not in revs:           # else set just now: verified by this person
                 revs[k] = runner.verify(sub.id, qid, label, author=author, expect_rev=_rev(item)).rev
-        return revs, wrote
-
-    def save(request, data):
-        sub, q = target(request)
-        revs, wrote = save_values(request, sub, data)
         return {'revs': revs, 'job': refresh(sub.id) if wrote else None}
 
-    def names_save(request, data):
-        """The Names step's own save: the identity fields' values, typed or verified."""
-        sub, _ = target(request, need_question=False)
-        revs, wrote = save_values(request, sub, data, {IDENTITY: ws.exam.identity})
-        return {'revs': revs, 'job': refresh(sub.id) if wrote else None}
-
-    def unverify(request, data):
-        sub, q = target(request)
-        qid, label = field_of(data.get('key'))
-        rev = _rev(data)
+    def unverify(request, data, rev):
+        sid, qid, label = field(request, data)
         if rev is None:
             raise Bad("nothing to unverify")
-        with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
-            v = runner.verify(sub.id, qid, label, author=who(request), expect_rev=rev, verified=False)
-        return {'rev': v.rev}
+        return {'rev': runner.verify(sid, qid, label, author=who(request), expect_rev=rev, verified=False).rev}
 
-    def review(request, data):
+    def review(request, data, rev):
         """Flag a value for review (`note`: text, possibly empty) or take the flag off (`note`: null)."""
-        sub, q = target(request)
-        qid, label = field_of(data.get('key'))
-        rev, note = _rev(data), data.get('note')
+        sid, qid, label = field(request, data)
+        note = data.get('note')
         if rev is None:
             raise Bad("nothing to review")
         if note is not None and not isinstance(note, str):
             raise Bad("a note is text")
-        with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
-            v = runner.review(sub.id, qid, label, note=note.strip()[:500] if note is not None else None,
-                              expect_rev=rev)
-        return {'rev': v.rev}
+        return {'rev': runner.review(sid, qid, label, note=note.strip()[:500] if note is not None else None,
+                                     expect_rev=rev).rev}
 
-    def check_of(q: Question, data: dict):
-        c = q.check(data.get('check')) if isinstance(data.get('check'), str) else None
-        if c is None:
-            raise Bad("unknown check")
-        return c
+    def to_default(request, data, rev):
+        """A field back to its default: its stored value dropped."""
+        sid, qid, label = field(request, data)
+        runner.unset(sid, qid, label, expect_rev=rev)
+        return {'rev': None, 'job': refresh(sid)}
 
-    def decision_rev(sid: str, q: Question, c: Check) -> int | None:
-        row = store.get(sid, key(q.id, c.name), 'decision')
-        return row.rev if row else None
+    def restore(request, data, rev):
+        """A field's earlier value (`restore`: its revision in the history) back, set by
+        this person, against the revision drawn (`rev`)."""
+        sid, qid, label = field(request, data)
+        old_rev = _rev({'rev': data.get('restore')})
+        old = next((h for h in store.history(sid, key(qid, label), 'value') if h.rev == old_rev), None)
+        if old is None:
+            raise Bad("no such version")
+        v = runner.set(sid, qid, label, str((old.body or {}).get('text', '')), author=who(request), expect_rev=rev)
+        return {'rev': v.rev, 'job': refresh(sid)}
 
-    def decide(request, data):
-        sub, q = target(request)
-        c = check_of(q, data)
+    def decide(request, data, rev):
+        """A person's grade, made against every field on the page at the revision drawn (`seen`)."""
+        sid, q, c = check(request, data)
         spec, value, flags = c.points, data.get('value'), ()
         if data.get('blank'):
             value, flags = spec.coerce('blank').value, ('blank',)
@@ -661,58 +672,29 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         if not isinstance(seen, dict):
             raise Bad("seen is required")
         seen = {str(k): _rev({'rev': v}) for k, v in seen.items()}
-        with now(lambda: {'rev': decision_rev(sub.id, q, c), 'seen': {k: value_rev(sub.id, k) for k in seen}}):
-            d = runner.decide(sub.id, q.id, c.name, value, author=who(request), flags=flags,
-                              expect_rev=_rev(data), seen=seen)
+        d = runner.decide(sid, q.id, c.name, value, author=who(request), flags=flags, expect_rev=rev, seen=seen)
         return {'rev': d.rev}
 
-    def clear(request, data):
-        sub, q = target(request)
-        c = check_of(q, data)
-        with now(lambda: {'rev': decision_rev(sub.id, q, c)}):
-            runner.clear(sub.id, q.id, c.name, expect_rev=_rev(data))
+    def decide_now(request, data):
+        sid, seen = target(request)[0].id, data.get('seen')
+        return {**decision_now(request, data), 'seen': {k: value_rev(sid, k) for k in seen}}
+
+    def clear(request, data, rev):
+        sid, q, c = check(request, data)
+        runner.clear(sid, q.id, c.name, expect_rev=rev)
         return {'rev': None}
 
     def read(request, data):
-        """Read this question's fields again (not what a person verified, unless asked).
-        A run in this question's slot."""
+        """Read this question's fields again (not what a person verified, unless asked)."""
         sub, q = target(request)
-        if not have_model():
-            raise Bad("model unavailable")
         protected = bool(data.get('include_protected'))
-
-        def work():
-            outs = runner.read(sub.id, q.id, include_protected=protected)
-            return outs + runner.refresh(sub.id)
-        return {'job': jobs.start(work, slot=f'read:{sub.id}/{q.id}')}
+        return start(f'read:{sub.id}/{q.id}',
+                     lambda: runner.read(sub.id, q.id, include_protected=protected) + runner.refresh(sub.id))
 
     def run_check(request, data):
-        """A grader's explicit run of one check (one that timed out, say); a run, as above."""
-        sub, q = target(request)
-        c = check_of(q, data)
-        return {'job': jobs.start(lambda: runner.compute(sub.id, q.id, c.name), slot=f'check:{sub.id}/{q.id}/{c.name}')}
-
-    def to_default(request, data):
-        """A field back to its default: its stored value dropped."""
-        sub, q = target(request)
-        qid, label = field_of(data.get('key'))
-        with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
-            runner.unset(sub.id, qid, label, expect_rev=_rev(data))
-        return {'rev': None, 'job': refresh(sub.id)}
-
-    def restore(request, data):
-        """A field's earlier value (`restore`: its revision in the history) back, set by
-        this person, against the revision drawn (`rev`)."""
-        sub, q = target(request)
-        qid, label = field_of(data.get('key'))
-        old_rev = _rev({'rev': data.get('restore')})
-        old = next((h for h in store.history(sub.id, key(qid, label), 'value') if h.rev == old_rev), None)
-        if old is None:
-            raise Bad("no such version")
-        with now(lambda: {'rev': value_rev(sub.id, key(qid, label))}):
-            v = runner.set(sub.id, qid, label, str((old.body or {}).get('text', '')), author=who(request),
-                           expect_rev=_rev(data))
-        return {'rev': v.rev, 'job': refresh(sub.id)}
+        """A grader's explicit run of one check (one that timed out, say)."""
+        sid, q, c = check(request, data)
+        return start(f'check:{sid}/{q.id}/{c.name}', lambda: runner.compute(sid, q.id, c.name))
 
     def levels(lay, path: str, base, stored: dict) -> dict:
         """One value at each scope, for the scope editor: this submission's own ('own'),
@@ -746,8 +728,12 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             path = ws.scan_page_path(sub.id, index)
         except (KeyError, IndexError, OSError):
             raise HTTPException(404) from None
-        cache = (ws.root / 'cache').resolve()
-        if path.is_symlink() or cache not in path.resolve().parents:
+        return cached(path)
+
+    def cached(path: Path) -> Response:
+        """A JPEG of the render cache, never one a link leads out of: immutable, as its URL
+        names its content (a PDF's render key, a source's digest)."""
+        if path.is_symlink() or (ws.root / 'cache').resolve() not in path.resolve().parents:
             raise HTTPException(404)
         return FileResponse(path, media_type='image/jpeg', headers={'Cache-Control': IMMUTABLE})
 
@@ -803,25 +789,25 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         return current.info() if current else {'id': None, 'state': 'idle'}
 
     def read_start(request, data):
-        """Read what the selection would read now (planned here, at the start). A run:
-        refused while a batch runs."""
+        """Read what the selection would read now (planned here, at the start): a run in the
+        batch's slot, refused while a batch runs."""
         plan = batch_plan(data)
         run = batch.BatchRun(runner, plan, parallel=_int(data.get('parallel', 2), "parallel", 1, 16))
-        with lock:
-            current: Batch | None = request.app.state.batch
-            if current is not None and current.active:
-                raise Conflict("already running")
-            request.app.state.batch = Batch(run)
-            request.app.state.batch.start()
-        return {'total': plan.count('read'), 'id': request.app.state.batch.id}
+        current: Batch | None = app.state.batch
+        if current is not None and current.active:
+            raise Conflict("already running")
+        app.state.batch = Batch(run)
+        app.state.batch.start()
+        return {'total': plan.count('read'), 'id': app.state.batch.id}
 
     def read_status(request: Request) -> Response:
         return JSONResponse(batch_now())
 
-    def read_stop(request, data):
-        """Stop the batch that runs."""
-        current: Batch | None = request.app.state.batch
-        if current is None or not current.active:
+    def read_stop(request, data, rev):
+        """Stop the batch the page shows (`rev`: its id): a change to the batch, refused
+        (with what runs now) when that one is not running."""
+        current: Batch | None = app.state.batch
+        if current is None or not current.active or current.id != str(rev):
             raise Conflict("not running")
         current.run.cancel()
         return {'id': current.id}
@@ -848,7 +834,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             return {EXAM: "all", SOURCE: f"scan {names.get(id_, id_)}", SUBMISSION: f"submission {id_}"}[level]
 
         skipped = [{'path': s.path, 'reason': s.reason, 'where': where(s.scope)} for s in ws.skipped_overrides()]
-        active = [{'path': p, 'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')}
+        active = [{'path': p, 'who': o.author or '?', 'at': when(o.updated_at)}
                   for p, o in stored.items()]
         scoped = []             # what one scan or one submission has of its own
         for o in store.all_overrides():
@@ -867,7 +853,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                                     f'/s/{id_}/{root if root in ws.exam.questions else first}' if first else None)
                            if level == SUBMISSION else None,
                            'path': o.path, 'text': show_value(kind, o.value), 'rev': o.rev,
-                           'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')})
+                           'who': o.author or '?', 'at': when(o.updated_at)})
         return page('exam.html', questions=questions, active=active, skipped=skipped, scoped=scoped,
                     lines=describe_changes(ws.exam, store))
 
@@ -913,30 +899,21 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             out['levels'] = levels(ws.layers(first), path, overrides.entry(ws.exam, path).base, store.overrides())
         return out
 
-    def _conflict(e: Conflict, path: str, scope: str) -> Conflict:
-        """What is saved now, so that saving again overwrites it knowingly."""
-        o = store.overrides(scope).get(path)
+    def override_now(request, data) -> Conflict:
+        """A stale override, said with who saved it, and what is saved now: saving again overwrites it knowingly."""
+        o = store.overrides(_scope(data, False)).get(_path(data))
         e = Conflict(f"changed elsewhere{f' ({o.author})' if o and o.author else ''}")
         e.current = {'rev': o.rev if o else None, 'value': o.value if o else None}
         return e
 
-    def exam_set(request, data):
-        path, rev, scope = _path(data), _rev(data), _scope(data, True)
-        try:
-            with lock:
-                change = overrides.set(ws, path, data.get('value'), scope=scope, author=who(request), expect_rev=rev)
-        except Conflict as e:
-            raise _conflict(e, path, scope) from None
+    def exam_set(request, data, rev):
+        path, scope = _path(data), _scope(data, True)
+        change = overrides.set(ws, path, data.get('value'), scope=scope, author=who(request), expect_rev=rev)
         return _changed(path, scope, change, data)
 
-    def exam_clear(request, data):
-        path, rev, scope = _path(data), _rev(data), _scope(data, False)
-        try:
-            with lock:
-                change = overrides.clear(ws, path, scope=scope, expect_rev=rev)
-        except Conflict as e:
-            raise _conflict(e, path, scope) from None
-        return _changed(path, scope, change, data)
+    def exam_clear(request, data, rev):
+        path, scope = _path(data), _scope(data, False)
+        return _changed(path, scope, overrides.clear(ws, path, scope=scope, expect_rev=rev), data)
 
     # --- intake: scans in, submissions out ---
 
@@ -1034,7 +1011,20 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             tmp.unlink(missing_ok=True)
         return JSONResponse({'ok': True, 'id': src.id, 'new': new, 'pages': src.pages})
 
-    def scans_edit(request, data):
+    def plan_now(request, data) -> dict:
+        """A stale change to a plan (or Accept refused for the work it would disturb): the plan as it is now."""
+        return plan_view(the_source(request))
+
+    def planned(src) -> dict:
+        """After a change to a plan: the plan as it is now, and its revision."""
+        view = plan_view(src)
+        return {'plan': view, 'rev': view['rev']}
+
+    def length_of(data: dict) -> int | None:
+        length = data.get('length')
+        return None if length in (None, '') else _int(length, "pages per submission", 1, 999)
+
+    def scans_edit(request, data, rev):
         src = the_source(request)
         op = data.get('op')
         if op not in intake.EDITS:
@@ -1044,40 +1034,31 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             kw['sheet'] = _int(data['sheet'], "page", 0, src.pages - 1)
         if 'delta' in data:
             kw['delta'] = _int(data['delta'], "move", -1, 1)
-        with now(lambda: plan_view(src)):
-            intake.edit(ws, src.id, op, expect_rev=_rev(data), author=who(request), **kw)
+        intake.edit(ws, src.id, op, expect_rev=rev, author=who(request), **kw)
         return planned(src)
 
-    def scans_propose(request, data):
+    def scans_propose(request, data, rev):
+        """Guess again every page nobody has spoken for."""
         src = the_source(request)
-        length = data.get('length')
-        length = None if length in (None, '') else _int(length, "pages per submission", 1, 999)
-        kw = dict(length=length, author=who(request), expect_rev=_rev(data))
-        with now(lambda: plan_view(src)):
-            if data.get('check'):
-                if not have_model():
-                    raise Bad("model unavailable")
-                if not ws.exam.landmarks:
-                    raise Bad("the exam declares no landmarks")
-                if intake.plan(ws, src.id).rev != kw['expect_rev']:
-                    raise Conflict("the plan changed")
-
-                def work():
-                    intake.reguess(ws, src.id, model=runner.model, **kw)
-                # one reading of a scan's pages at a time: a run in the scan's slot
-                return {'job': jobs.start(work, slot=f'split-read:{src.id}'), 'rev': kw['expect_rev']}
-            intake.reguess(ws, src.id, **kw)
+        intake.reguess(ws, src.id, length=length_of(data), author=who(request), expect_rev=rev)
         return planned(src)
 
-    def planned(src) -> dict:
-        """After a change to a plan: the plan as it is now, and its revision."""
-        view = plan_view(src)
-        return {'plan': view, 'rev': view['rev']}
-
-    def scans_undo(request, data):
+    def scans_read(request, data):
+        """Read the scan's pages with the model, then guess again from what they say: a run
+        in the scan's slot, guessing on the plan as it is when it starts (refused, as the
+        plan changed, if someone edits it meanwhile)."""
         src = the_source(request)
-        with now(lambda: plan_view(src)):
-            intake.undo(ws, src.id, expect_rev=_rev(data))
+        if not ws.exam.landmarks:
+            raise Bad("the exam declares no landmarks")
+        kw = dict(length=length_of(data), author=who(request), expect_rev=intake.plan(ws, src.id).rev)
+
+        def work():             # the plan written; no outcome to report
+            intake.reguess(ws, src.id, model=runner.model, **kw)
+        return start(f'split-read:{src.id}', work)
+
+    def scans_undo(request, data, rev):
+        src = the_source(request)
+        intake.undo(ws, src.id, expect_rev=rev)
         return planned(src)
 
     def _allow(data: dict) -> list[str]:
@@ -1087,15 +1068,10 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             raise Bad("allow: a list of submissions")
         return ids
 
-    def scans_accept(request, data):
+    def scans_accept(request, data, rev):
+        """Write the plan's submissions; refused when stale or when it would disturb work not agreed to (`busy`)."""
         src = the_source(request)
-        try:
-            with lock:
-                report = intake.accept(ws, src.id, author=who(request), allow=_allow(data),
-                                       expect_rev=_rev(data))
-        except Conflict as e:           # stale, or work it would disturb (`busy`): the plan as it is now
-            e.current = plan_view(src)
-            raise
+        report = intake.accept(ws, src.id, author=who(request), allow=_allow(data), expect_rev=rev)
         recompute(report['rewritten'])          # their values read from the old pages are gone
         return {'report': report, **planned(src)}
 
@@ -1113,91 +1089,78 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                 'more': max(0, len(problems) - ROSTER_PROBLEMS),
                 'sample': [{'name': p['name'], 'id': p['id'], 'email': p['email']} for p in people[:ROSTER_SAMPLE]]}
 
-    def scans_roster(request, data):
+    def scans_roster(request, data, rev):
         """Replace the roster, against the one the page showed (`rev`)."""
-        with lock:
-            identity.set_roster(ws, roster_text(data), expect_rev=_rev(data))
-            return {'rev': identity.roster_rev(ws)}
+        identity.set_roster(ws, roster_text(data), expect_rev=rev)
+        return {'rev': identity.roster_rev(ws)}
 
-    def scans_who(request, data):
+    def who_now(request, data) -> dict:
+        sid = str(data.get('sub'))
+        cur = store.get(sid, '', identity.WHO)
+        return {**identity.who(ws, sid), 'rev': cur.rev if cur else None}
+
+    def scans_who(request, data, rev):
         """Name one submission, as the person saw it: `{sub, rev}` and one of `key` (a
         roster person), `text` (someone typed in), `restore` (a revision of the pick:
-        undo), or none of them (unname). `rev` is the pick's revision they saw (null:
-        none); anything else is refused (409, with the pick as it is now)."""
+        undo), or none of them (unname). `rev` is the pick's revision they saw (null: none)."""
         sub = store.submission(str(data.get('sub')))
         if sub is None:
             raise Bad("unknown submission")
-        rev = _rev(data)
-        said = [k for k in ('key', 'text', 'restore') if k in data]
-        if len(said) > 1:
+        if len([k for k in ('key', 'text', 'restore') if k in data]) > 1:
             raise Bad("one of key, text, restore")
-        try:
-            if 'restore' in data:
+        if 'restore' in data:
+            try:
                 w = identity.restore(ws, sub.id, _int(data['restore'], "restore", 0, 2**62), expect_rev=rev)
-                return {'who': w, 'rev': w['rev']}
-            if 'key' in data:
-                person = identity.on_roster(ws, data['key']) if isinstance(data['key'], str) else None
-                if person is None:
-                    raise Bad("not on the roster (it changed?): reload")
-            else:
-                person = identity.typed(data['text']) if 'text' in data else None
-            w = identity.pick(ws, sub.id, person, author=who(request), expect_rev=rev)
+            except KeyError:
+                raise Bad("nothing to undo") from None
             return {'who': w, 'rev': w['rev']}
-        except Conflict as e:
-            cur = store.get(sub.id, '', identity.WHO)
-            e.current = {**identity.who(ws, sub.id), 'rev': cur.rev if cur else None}
-            raise
-        except KeyError:
-            raise Bad("nothing to undo") from None
+        if 'key' in data:
+            person = identity.on_roster(ws, data['key']) if isinstance(data['key'], str) else None
+            if person is None:
+                raise Bad("not on the roster (it changed?): reload")
+        else:
+            person = identity.typed(data['text']) if 'text' in data else None
+        w = identity.pick(ws, sub.id, person, author=who(request), expect_rev=rev)
+        return {'who': w, 'rev': w['rev']}
 
     proposals: dict = {}        # identity.overview's cache: proposals by values and roster
 
     def scans_names(request: Request) -> Response:
         """Every submission's identity values, proposal and pick; where each identity
-        field is (its crop, this submission's own region); and the regions for every
-        submission, for the box editor."""
+        field is (its crop); and, for the box editor, each box at each scope (`levels`, as
+        the question page's region editor has them) and each column's path."""
         with lock:
             ats = {s.id: identity.at(ws, s.id) for s in store.submissions()}
             view = identity.overview(ws, cache=proposals, ats=ats)
         paths = {f.label: overrides.join(IDENTITY, 'fields', f.label, 'region') for f in identity.group(ws).fields}
-        own: dict[str, dict] = {}           # each submission's own boxes, by scope
-        for o in store.all_overrides():
-            if o.path in paths.values():
-                own.setdefault(o.scope, {})[o.path] = o
+        bases, stored = {c: overrides.entry(ws.exam, p).base for c, p in paths.items()}, store.overrides()
         for row in view['rows']:
             sid, a = row['sub'], ats[row['sub']]
             row['crops'] = [{'name': f.label, 'index': f.region.page - 1, 'box': box(a.layout, f.region)}
                             for f in a.fields]
-            mine = own.get(overrides.scope(SUBMISSION, sid), {})
-            row['own'] = {c: {'value': mine[p].value, 'rev': mine[p].rev} for c, p in paths.items() if p in mine}
+            lay = ws.layers(sid)
+            row['boxes'] = {c: levels(lay, p, bases[c], stored) for c, p in paths.items()}
             row['print_area'] = list(a.layout.print_area)     # for the boxes drawn on the page
             row['scan'] = scan_key(sid)                        # in its pages' URLs
-        stored = store.overrides()
         view['nobody'] = [identity.label(p) for p in view['nobody']]
         view['boxed'] = any(a.fields for a in ats.values())
         view['unread'] = len(identity.unread(ws, ats=ats))      # what "read names" reads
-        view['columns'] = []
-        for c, path in paths.items():           # the regions for every submission, for the box editor
-            e = overrides.entry(ws.exam, path)
-            view['columns'].append({'name': c, 'path': path, 'value': e.current, 'base': e.base,
-                                    'rev': stored[path].rev if path in stored else None})
+        view['columns'] = [{'name': c, 'path': p} for c, p in paths.items()]
         view['pad'] = ws.exam.crop_pad
         view['doubts'] = identity.DOUBTS
         view['roster'] = len(identity.people(ws))
         return JSONResponse(view)
 
     def scans_names_read(request, data):
-        """Read the name boxes: a run in its slot."""
-        if not have_model():
-            raise Bad("model unavailable")
+        """Read the name boxes of the unnamed submissions (`again`: also what no person
+        verified); with nothing to read, no run."""
         if not identity.boxed(ws):
             raise Bad("no name or ID boxes: draw them first")
-        again = bool(data.get('again'))       # also read again what no person verified
+        again = bool(data.get('again'))
         subs = identity.unread(ws, again=again)
-        if not subs:                          # nothing to read: no run
+        if not subs:
             return {'job': None, 'n': 0}
-        return {'job': jobs.start_each([(s,) for s in subs], lambda sid: identity.read(runner, sid, again=again),
-                                       slot='names-read'), 'n': len(subs)}
+        return start('names-read', items=[(s,) for s in subs], each=lambda sid: identity.read(runner, sid, again=again))
 
     def sheet_image(request: Request) -> Response:
         """A sheet turned as asked (the page asks for the plan's orientation) and
@@ -1207,8 +1170,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         w, o = request.query_params.get('w', '0'), request.query_params.get('o', '0')
         if not 0 <= index < src.pages or not w.isdigit() or int(w) not in (0, *SHEET_WIDTHS) or o not in ('0', '1', '2', '3'):
             raise HTTPException(404)
-        cache = (ws.root / 'cache').resolve()
-        out = cache / 'sheets' / src.id / f'{index:04d}-{o}-{int(w)}.jpg'
+        out = ws.root / 'cache' / 'sheets' / src.id / f'{index:04d}-{o}-{int(w)}.jpg'
         if not out.exists():
             try:
                 im = ws.renderer.page(intake.source_path(ws, src), index)
@@ -1221,60 +1183,110 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             tmp = out.with_suffix(f'.{os.getpid()}.{threading.get_ident()}.tmp')
             im.convert('RGB').save(tmp, 'JPEG', quality=85)
             os.replace(tmp, out)
-        if out.is_symlink() or cache not in out.resolve().parents:
-            raise HTTPException(404)
-        return FileResponse(out, media_type='image/jpeg', headers={'Cache-Control': IMMUTABLE})     # a source is kept by its digest
+        return cached(out)
 
-    def post(kind: str):
-        """A POST route of a kind: 'change' (to a row: names the revision drawn, refused
-        when stale), 'run' (in a slot: refused while the slot runs) or 'query' (changes
-        nothing: a POST only for its body). The route table says which."""
-        def route(path, fn):
-            endpoint = action(fn)
-            endpoint.kind = kind
-            return Route(path, endpoint, methods=['POST'])
-        return route
-    change, run, query = post('change'), post('run'), post('query')
+    # --- POST routes: each is a change to a row, a run in a slot or a query (DESIGN §13) ---
+    # `exclusive`: under the one app-wide lock, which serializes the changes that check and then
+    # write what no single row's revision covers (an override, validated against the whole layered
+    # exam; Accept, many rows and files; the roster; a batch's start) and the caches beside them (the
+    # facet table, the names overview's proposals). Every other change is guarded by its row's revision.
+
+    def post(kind: str, path: str, fn: Callable[[Request, dict], Any], exclusive: bool) -> Route:
+        def call(request, data):
+            if 'src' in request.path_params:             # what the path names exists (404) before all else
+                the_source(request)
+            elif 'sub' in request.path_params:
+                target(request, need_question='q' in request.path_params)
+            if not exclusive:
+                return fn(request, data)
+            with lock:
+                return fn(request, data)
+        endpoint = action(call)
+        endpoint.kind = kind
+        return Route(path, endpoint, methods=['POST'])
+
+    def change(path, fn, current=None, *, drawn=_rev, exclusive=False) -> Route:
+        """A change to a row: `fn(request, data, rev)` gets the revision drawn (`drawn(data)`:
+        `rev`, required; a save's items carry their own). Refused as stale (Conflict), it
+        answers `current(request, data)`, what is there now (a Conflict instead: that one,
+        better worded); without `current`, what the refusal carries."""
+        def call(request, data):
+            rev = drawn(data)
+            try:
+                return fn(request, data, rev)
+            except Conflict as e:
+                if current is None:
+                    raise
+                now = current(request, data)
+                if isinstance(now, Conflict):
+                    raise now from None
+                e.current = now
+                raise
+        return post('change', path, call, exclusive)
+
+    def run(path, fn, *, model=False, exclusive=False) -> Route:
+        """A run in a slot: `fn(request, data)` starts it (`start`; the batch has its own slot);
+        refused while the slot runs ("already running") and, when it reads with the model, without one."""
+        def call(request, data):
+            if model and not have_model():
+                raise Bad("model unavailable")
+            return fn(request, data)
+        return post('run', path, call, exclusive)
+
+    def start(slot: str, work: Callable[[], Any] | None = None, *, items=None, each=None) -> dict:
+        """Start a run's job in its slot: `work()`, or `each(*item)` over `items`, with progress."""
+        if work is not None:
+            return {'job': jobs.start(work, slot=slot)}
+        return {'job': jobs.start_each(items, each, slot=slot), 'n': len(items)}
+
+    def query(path, fn) -> Route:
+        """A POST that changes nothing: a POST only for its body."""
+        return post('query', path, fn, False)
+
+    def no_rev(data: dict) -> None:
+        return None
 
     routes = [
         Route('/', grid_page),
         Route('/filter', filter_page),
         Route('/focus/values', focus_values),
-        change(f'/s/{{sub}}/{IDENTITY}/save', names_save),        # the Names step's; the rest name graded questions
         Route('/s/{sub}/{q}', question_page),
-        change('/s/{sub}/{q}/save', save),
-        change('/s/{sub}/{q}/unverify', unverify),
-        change('/s/{sub}/{q}/review', review),
-        change('/s/{sub}/{q}/decide', decide),
-        change('/s/{sub}/{q}/clear', clear),
-        run('/s/{sub}/{q}/read', read),
+        change(f'/s/{{sub}}/{IDENTITY}/save', lambda request, data, rev: save(request, data, rev, {IDENTITY: ws.exam.identity}),
+               values_now, drawn=no_rev),       # the Names step's; the other routes name a graded question
+        change('/s/{sub}/{q}/save', save, values_now, drawn=no_rev),
+        change('/s/{sub}/{q}/unverify', unverify, value_now),
+        change('/s/{sub}/{q}/review', review, value_now),
+        change('/s/{sub}/{q}/default', to_default, value_now),
+        change('/s/{sub}/{q}/restore', restore, value_now),
+        change('/s/{sub}/{q}/decide', decide, decide_now),
+        change('/s/{sub}/{q}/clear', clear, decision_now),
+        run('/s/{sub}/{q}/read', read, model=True),
         run('/s/{sub}/{q}/check', run_check),
-        change('/s/{sub}/{q}/default', to_default),
-        change('/s/{sub}/{q}/restore', restore),
         Route('/page/{sub}/{scan}/{index:int}.jpg', page_image),
         Route('/image/{sub}/{q}/{check}/{digest}', evidence_image),
         Route('/jobs/{id}', job),
         Route('/read', read_page),
         query('/read/plan', read_plan),
-        run('/read/start', read_start),
-        run('/read/stop', read_stop),
+        run('/read/start', read_start, exclusive=True),
+        change('/read/stop', read_stop, lambda request, data: batch_now()),
         Route('/read/status', read_status),
         Route('/settings', settings_page),
         Route('/exam', exam_page),
-        change('/exam/set', exam_set),
-        change('/exam/clear', exam_clear),
+        change('/exam/set', exam_set, override_now, exclusive=True),
+        change('/exam/clear', exam_clear, override_now, exclusive=True),
         Route('/scans', scans_page),
         Route('/scans/upload', scans_upload, methods=['POST']),     # a file, kept once by its digest
-        change('/scans/roster', scans_roster),
+        change('/scans/roster', scans_roster, exclusive=True),      # its refusal says what is saved now
         query('/scans/roster/preview', scans_roster_preview),
-        change('/scans/who', scans_who),
+        change('/scans/who', scans_who, who_now),
         Route('/scans/names', scans_names),
-        run('/scans/names/read', scans_names_read),
+        run('/scans/names/read', scans_names_read, model=True),
         Route('/scans/{src}/plan', scans_plan),
-        change('/scans/{src}/edit', scans_edit),
-        change('/scans/{src}/propose', scans_propose),
-        change('/scans/{src}/undo', scans_undo),
-        change('/scans/{src}/accept', scans_accept),
+        change('/scans/{src}/edit', scans_edit, plan_now),
+        change('/scans/{src}/propose', scans_propose, plan_now),
+        change('/scans/{src}/undo', scans_undo, plan_now),
+        change('/scans/{src}/accept', scans_accept, plan_now, exclusive=True),
+        run('/scans/{src}/read', scans_read, model=True),
         Route('/sheet/{src}/{index:int}.jpg', sheet_image),
         Mount('/static', StaticFiles(directory=HERE / 'static'), name='static'),
     ]

@@ -1,11 +1,11 @@
 'use strict';
 // The Read page: what the options would read, shown live; one button reads it.
 (() => {
-  const form = document.getElementById('sel'), line = Line('msg');
-  const start = document.getElementById('start'), stop = document.getElementById('stop');
+  const form = $('rd-form'), line = Line('rd-msg');
+  const start = $('rd-start'), stop = $('rd-stop');
   const order = session('order', null);
-  let timer = null, planning = null, toRead = 0, running = false;
-  document.getElementById('grid-n').textContent = order ? order.length : 0;
+  let timer = null, planning = null, toRead = 0, running = false, batch = null;     // batch: the one shown, by id
+  $('rd-grid-n').textContent = order ? order.length : 0;
   if (!order) form.querySelector('[name=scope][value=grid]').disabled = true;
 
   const checked = name => [...form.querySelectorAll(`[name=${name}]:checked`)].map(i => i.value);
@@ -29,7 +29,7 @@
     const mine = planning = {};
     const r = await Changes.query('/read/plan', selection());
     if (mine !== planning) return;          // a newer change asked again
-    const counts = document.getElementById('counts'), table = document.getElementById('groups');
+    const counts = $('rd-counts'), table = $('rd-groups');
     counts.replaceChildren();
     table.replaceChildren();
     toRead = r.ok ? r.body.counts.read : 0;
@@ -53,28 +53,28 @@
     later();
   }});
 
-  // A batch is a run: Start is refused while one runs; Stop stops the one that runs.
+  // Start is a run, refused while a batch runs; Stop, a change to the batch shown (its id).
   Actions.register('read-start', {available: () => !start.disabled, run: () => {
     if (flag('include_protected') && !confirm("Read again, replacing values a person set or verified?")) return;
     return Changes.send('batch', '/read/start', {...selection(), parallel: Number(form.parallel.value)}, {line, done: poll});
   }});
-  Actions.register('read-stop', {available: () => !stop.disabled, run: () => Changes.send('batch', '/read/stop', {}, {line, done: poll})});
+  Actions.register('read-stop', {available: () => !stop.disabled, run: () => Changes.send('batch', '/read/stop', () => ({rev: batch}), {line, done: poll})});
 
   // The batch's progress, polled while it runs (one poll at a time).
   let next = 0;
   async function poll() {
     clearTimeout(next);
-    const r = await request('/read/status');
+    const r = await Changes.get('/read/status');
     const s = r.body;
     if (!r.ok || s.state === 'idle') return;
-    document.getElementById('progress').hidden = false;
-    const bar = document.getElementById('bar');
+    $('rd-progress').hidden = false;
+    const bar = $('rd-bar');
     bar.max = Math.max(s.total, 1);
     bar.value = s.done;
-    document.getElementById('prog').textContent =
-      `${s.done} / ${s.total} · ${s.state}${s.current ? ' · ' + s.current : ''}${s.failed ? ` · ${s.failed} not done` : ''}` +
+    $('rd-prog').textContent =
+      `${s.done} / ${s.total} · ${s.state}${s.current ? ' · ' + s.current : ''}${s.failed ? ` · ${s.failed} failed` : ''}` +
       `${s.asked ? ` · fields read ${s.got} of ${s.asked}` : ''}${s.error ? ' · ' + s.error : ''}`;
-    const table = document.getElementById('failures');
+    const table = $('rd-failures');
     table.replaceChildren();
     for (const f of s.failures) {
       const link = make('a', {textContent: f.submission,
@@ -82,6 +82,7 @@
       row(table, [link, f.question, f.step, f.status, f.detail]);
     }
     const was = running;
+    batch = s.id;
     running = s.state === 'running';
     stop.disabled = !running;
     ready();

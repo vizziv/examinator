@@ -5,7 +5,6 @@
   const main = $('question');
   const sub = main.dataset.sub, q = main.dataset.q;
   const base = `/s/${encodeURIComponent(sub)}/${encodeURIComponent(q)}`;
-  const busy = $('busy');
   // A revision goes back exactly as the server drew it.
   const rev = el => el?.dataset.rev || null;
 
@@ -14,7 +13,7 @@
   const ids = () => JSON.parse(main.dataset.ids);
   let order = ids(), at = order.indexOf(sub);
   whenShown(() => {
-    try { sessionStorage.setItem('gridAt', JSON.stringify({sub, q})); } catch (e) { /* private mode */ }  // the grid's cursor
+    setSession('gridAt', {sub, q});         // the grid's cursor
     order = session('order', null);
     if (!Array.isArray(order)) order = ids();
     at = order.indexOf(sub);
@@ -39,7 +38,7 @@
   async function inFilter() {
     const sel = Focus.load();
     if (!Focus.size(sel)) return;
-    const r = await request('/focus/values?sub=' + encodeURIComponent(sub));
+    const r = await Changes.get('/focus/values?sub=' + encodeURIComponent(sub));
     if (r.ok) $('unfiltered').hidden = Focus.matches(r.body.values, sel, sub);
   }
 
@@ -54,16 +53,12 @@
     $('ed-fields').classList.toggle('dirty', dirty());
     $('ed-fields').querySelector('[data-action=discard]').hidden = !dirty();
     for (const el of inputs()) el.closest('.field').classList.toggle('dirty', isDraft(el));
-    try {
-      if (dirty()) sessionStorage.setItem(draftKey, JSON.stringify(changed().map(el => ({key: el.dataset.key, rev: rev(el), text: el.value}))));
-      else sessionStorage.removeItem(draftKey);
-    } catch (e) { /* private mode */ }
+    setSession(draftKey, dirty() ? changed().map(el => ({key: el.dataset.key, rev: rev(el), text: el.value})) : undefined);
   }
   // Drafts kept over values that changed under them, in one message: what each is now.
   const line = Line('ed-msg');
   const label = el => (el.closest('.field')?.querySelector('.flabel') || el.closest('form')?.querySelector('.elabel'))?.textContent.trim();
-  const keptText = kept => (kept.length ? Changes.kept(kept.map(k => `${brief(k.now)} (${label(k.el)})`).join(', '))
-                                        : "shown as it is now");
+  const keptText = kept => Changes.keptOver(kept, label);
   const sayKept = kept => { if (kept.length) line.say(keptText(kept), 'bad'); };
   // The draft left behind in this tab, back on top of the values drawn now.
   function adopt() {
@@ -114,6 +109,11 @@
       const f = fresh.querySelector('#' + CSS.escape(d.id));
       if (f) f.open = d.open;
     }
+    // the lines keep what they say (a run under way, how a change went)
+    for (const s of work.querySelectorAll('[role=status][id]')) fresh.querySelector('#' + CSS.escape(s.id))?.replaceWith(s);
+    for (const s of work.querySelectorAll('form.entry .emsg')) {
+      fresh.querySelector(`form.entry[data-path="${CSS.escape(s.closest('form').dataset.path)}"] .emsg`)?.replaceWith(s);
+    }
     const kept = keepDrafts(work, fresh, ident), top = work.scrollTop;
     work.className = fresh.className;
     work.replaceChildren(...fresh.childNodes);
@@ -137,19 +137,10 @@
     return kept;
   }
 
-  // What a background job started: "running…" while any runs, the outcome in the header, then drawn again.
-  let running = 0;
-  function watch(job) {
-    if (!job) return;
-    busy.hidden = !++running;
-    waitJob(job).then(j => {
-      busy.hidden = !--running;
-      const bad = (j.outcomes || []).filter(o => (o.status !== 'done' && o.status !== 'skipped') || o.read < o.asked);
-      if (j.state !== 'done') flash(`${j.state}${j.error ? ': ' + j.error : ''}`);
-      else if (bad.length) flash(bad.map(o => `${o.step}: ${o.status}${o.detail ? ' — ' + o.detail : ''}`).join('; '));
-      refresh();
-    });
-  }
+  // What runs for this page (a read, a check, the recompute a change started) is said on the run
+  // bar's line, and the page drawn again when it ends.
+  const runs = Line('run-msg');
+  const watch = (job, each) => Changes.watch(job, {line: runs, each, done: refresh});
 
   // Every change to this page's rows (values, decisions) is about this submission's question:
   // one subject, so each is sent once the one before it was answered and drawn, against the
@@ -165,7 +156,7 @@
   // Save the values changed here (a person who sets a value verifies it); with `all`,
   // verify this question's other values too (`list`: 'waitingOther' for those read from
   // other questions). The answer, or null when something could not be saved or verified (a
-  // conflict, a review marker), so V stays on this submission. `leaving`: the page is left
+  // conflict, a value needing review), so V stays on this submission. `leaving`: the page is left
   // on the answer, so what the save started is not waited for (it runs on the server).
   function save(all, list = 'waiting', leaving = false) {
     const edited = changed().map(el => [el.dataset.key, el.value]);
@@ -204,7 +195,7 @@
   }
 
   // --- the scanned pages: hideable and resizable (both remembered), opening at this question's first page ---
-  const scan = $('scan'), split = $('split');
+  const scan = $('scan'), split = $('divider');
   function scanWidth(px) {
     if (px) setPref('scanWidth', Math.round(Math.min(innerWidth * 0.75, Math.max(200, px))));
     const w = pref('scanWidth', 0), at = scan.scrollTop / (scan.scrollHeight || 1);
@@ -269,7 +260,7 @@
   const link = name => document.querySelector(`a[data-action="${name}"]`);
   const follow = name => ({available: () => !!link(name), run: () => link(name).click()});
   const hasFields = () => inputs().length > 0;
-  const run = (path, body) => Changes.send(`run:${path}:${body.check || ''}`, `${base}/${path}`, body, {done: b => watch(b.job)});
+  const run = (path, body) => Changes.run(`run:${path}:${body.check || ''}`, `${base}/${path}`, body, {line: runs, done: refresh});
   const actions = {
     'prev-student': {available: () => canGo(-1), run: () => go(-1)},
     'next-student': {available: () => canGo(1), run: () => go(1)},
@@ -305,7 +296,7 @@
     }},
     'toggle-scan': {run: () => { setPref('hideScan', !pref('hideScan', false)); showScan(); }},
     discard: {run: () => {
-      try { sessionStorage.removeItem(draftKey); } catch (e) { /* private mode */ }
+      setSession(draftKey);
       left = true;
       location.reload();
     }},
@@ -339,18 +330,12 @@
     Actions.trigger('decide-number', {el: e.target, target: e.target});
   });
   document.addEventListener('submit', e => e.preventDefault());
-  document.addEventListener('DOMContentLoaded', ready);
   ready();
   inFilter();
 
   // --- an exam-data edit (key panel, regions): this submission is recomputed first ---
   document.addEventListener('entry-saved', async e => {
-    const job = e.detail.job;
     await refresh();
-    if (!job) return;
-    busy.hidden = !++running;
-    await waitJob(job, j => j.done >= 1);
-    busy.hidden = !--running;
-    await refresh();
+    watch(e.detail.job, j => j.done >= 1);
   });
 })();
