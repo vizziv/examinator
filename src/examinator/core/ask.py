@@ -21,10 +21,7 @@ expects is caught where it matters: a check that has no key for it is
 undecided, and says so. A field with no region is not read. Every read asks
 the model; a read happens only when a person asks for one.
 
-A reader is any object with `read(ctx, fields) -> {label: Reading or text}`
-(a label left out is not read); it may also have `vouches(field, reading) -> bool`,
-`needs_region` and, for synthetic workspaces, `script(fields, given) -> {step:
-reply}` (`examinator.synth`).
+A reader is a `core.reading.Reader`.
 """
 from __future__ import annotations
 
@@ -33,7 +30,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
-from .reading import Reading, field_object, json_object, reading
+from .reading import Reader, Reading, field_object, json_object, reading
 
 if TYPE_CHECKING:
     from .context import ReadContext
@@ -60,7 +57,7 @@ other than the printed text in this image."""
 
 
 @dataclass(frozen=True)
-class Ask:
+class Ask(Reader):
     """Read a field's value by asking the model `ask` about its region (see the module)."""
     ask: str
     prompt: str = HANDWRITTEN_PROMPT

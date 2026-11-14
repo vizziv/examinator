@@ -6,6 +6,7 @@ import pytest
 from PIL import Image
 
 from examinator import Check, Exam, Field, Printed, Region, Result
+from examinator.core.reading import Reader
 from examinator.core.runner import Runner
 from examinator.core.store import Submission
 from examinator.core.workspace import Workspace
@@ -17,7 +18,7 @@ PRINTING = fields_.agree(fields_.value('c1', question='p'), fields_.value('c2', 
 
 
 @dataclass(frozen=True)
-class Parse:
+class Parse(Reader):
     """A plain reader: one model call whose JSON reply is the fields' values."""
     notes: str = ""
 

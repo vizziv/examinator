@@ -6,7 +6,7 @@ strings ("values"). The core supplies a few built-in facets for every
 question: from the status rules (each check's grade and state; how a question
 with no checks stands) and the value of each field with a reader of its own (a
 printed field: which printing a submission has). Everything else comes from
-outside: a reader or a check function may have `facets(question) -> [Facet]`,
+outside: a reader's `facets(question) -> [Facet]`, a check function's if it has one,
 and `Exam.question(..., facets=[...])` adds question-level ones.
 
 `values_table` computes every facet's values for the workspace:

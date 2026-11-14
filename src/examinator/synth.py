@@ -315,22 +315,17 @@ def script_for(exam: Exam, case: Case, who: Mapping[str, str | None] | None = No
     script: dict[str, str] = {}
     g = exam.identity
     for reader, fields in g.groups() if who else ():
-        make = getattr(reader, 'script', None)
-        if callable(make):
-            for step, reply in make(fields, {f.label: who.get(f.label) for f in fields}).items():
-                script[f'{g.id}|{step}'] = reply
+        for step, reply in reader.script(fields, {f.label: who.get(f.label) for f in fields}).items():
+            script[f'{g.id}|{step}'] = reply
     for qid, q in exam.questions.items():
         for reader, fields in q.groups():
-            make = getattr(reader, 'script', None)
-            if not callable(make):
-                continue
             if all(f.read is not None for f in fields):       # fields with readers of their own
                 values = case.printed.get(qid, {})
             elif qid in case.answers:
                 values = given(q, case.answers[qid])
             else:
                 continue
-            for step, reply in make(fields, values).items():
+            for step, reply in reader.script(fields, values).items():
                 script[f'{qid}|{step}'] = reply
     return script
 

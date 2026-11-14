@@ -16,8 +16,9 @@ not read. The model transcribes; the program splits: the code reader has the
 question's code converted once, function by function, and each field takes its
 own functions from it (`Code.split`, by its lines: `functions`).
 
-Each reader is a small frozen dataclass, so its configuration (prompts,
-notes) is part of the definition and can be edited in the app. Model calls
+Each reader is a small frozen dataclass (a `core.reading.Reader`), so its
+configuration (prompts, notes) is part of the definition and can be edited in
+the app. Model calls
 are tagged with a step ('transcribe', 'parse') for a scripted model; `script`
 writes the replies that would read given values (`examinator.synth`).
 """
@@ -32,7 +33,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from ..core.context import ReadContext
 from ..core.defs import Field
-from ..core.reading import Reading, field_object, json_object, reading, readings
+from ..core.reading import Reader, Reading, field_object, json_object, reading, readings
 from . import prompts
 
 EMPTY = '(empty)'       # how a transcript says a box is empty (the parse step turns it into "")
@@ -46,7 +47,7 @@ def _prompts(reader: Any, what: str) -> None:
 
 
 @dataclass(frozen=True)
-class Answers:
+class Answers(Reader):
     """Short answers: transcribe the question's pages (or each field's crop),
     then turn the transcript into one value per field."""
     prompt: str = prompts.TRANSCRIBE_ANSWERS
@@ -91,7 +92,7 @@ def answers(*, symbols: Sequence[str] = (), functions: Sequence[str] | None = No
 
 
 @dataclass(frozen=True)
-class Code:
+class Code(Reader):
     """Pseudocode: transcribe the question's pages, convert the transcript once,
     function by function, into the pseudocode language, and give each field its
     own functions (`split`)."""

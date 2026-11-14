@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .ask import Ask
+from .reading import Reader
 
 
 def one_line(text: str) -> str:
@@ -73,7 +74,8 @@ class Field:
     """A named slot for one value read from paper.
 
     `region` is where to look (it may be left unset and given in the app).
-    `read` is a reader for this field alone (`Printed`, say); None, the
+    `read` is a reader (`core.reading.Reader`) for this field alone (`Printed`,
+    say); None, the
     default: the question's reader reads it with the question's other fields,
     and without one a person types it. A value is always text: one line,
     unless the field is `multiline` (None, the default: as its reader says,
@@ -279,7 +281,8 @@ class Question:
         f = self.field(label)
         if f is None or f.multiline is not None:
             return bool(f and f.multiline)
-        return bool(getattr(self.reader_of(label), 'multiline', False))
+        reader = self.reader_of(label)
+        return reader is not None and reader.multiline
 
     def column(self, check: str) -> str:
         """The grid column of one check: the question id when it is the only one."""
@@ -458,12 +461,10 @@ class Exam:
             if f.default is not None and (not isinstance(f.default, str) or (not q.multiline(f.label)
                                                                               and one_line(f.default) != f.default)):
                 raise ValueError(f"{q.id}: field {f.label!r}: a default is text (one line unless multiline)")
-            validate = getattr(f.read, 'validate', None)
-            if callable(validate):
-                validate(f"{q.id}: field {f.label!r}")
-        validate = getattr(q.read, 'validate', None)
-        if callable(validate):
-            validate(q.id)
+            if f.read is not None:
+                _reader(f.read, f"{q.id}: field {f.label!r}").validate(f"{q.id}: field {f.label!r}")
+        if q.read is not None:
+            _reader(q.read, q.id).validate(q.id)
         for c in q.checks:              # a check may check its configuration against the question
             validate = getattr(c.fn, 'validate', None)
             if callable(validate):
@@ -479,6 +480,12 @@ class Exam:
         if hit is None or hit[0] is not c:      # the entry keeps `c` alive, so its id is not reused
             hit = self._hashes[id(c)] = (c, digest(c.fn))
         return hit[1]
+
+
+def _reader(x: Any, what: str) -> Reader:
+    if not isinstance(x, Reader):
+        raise ValueError(f"{what}: a reader is a `Reader` (core.reading), not {type(x).__name__}")
+    return x
 
 
 # --- describing and hashing definitions --------------------------------------

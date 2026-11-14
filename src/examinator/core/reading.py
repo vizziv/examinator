@@ -1,5 +1,6 @@
 """What a model's reply makes of a field: the one rule every reader uses, plus
-small helpers (the normal form of a printed reading).
+small helpers (the normal form of a printed reading); and what a reader is
+(`Reader`).
 
 **A value is what was read; whether a person should look is a status, not
 text.** Every reader asks for one reply shape: per field, a JSON object
@@ -18,7 +19,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 
 @dataclass(frozen=True)
@@ -82,3 +83,36 @@ def normalize(reading: str) -> str:
         s = s[1:-1]
     return s
 
+
+class Reader:
+    """How values get from page images into fields (MODEL.md: a reader). A reader
+    is an instance of a subclass (a frozen dataclass, so its configuration is
+    plain data in the definition); it defines `read`, and the rest default:
+
+    - `read(ctx, fields) -> {label: Reading or text}` (`context.ReadContext`): a
+      label left out is not read.
+    - `vouches(field, reading)`: a person need not verify this reading (never).
+    - `needs_region`: it reads each field's region, not the question's pages (no).
+    - `multiline`: its values may span lines (no).
+    - `validate(what)`: `ValueError` for a configuration that cannot read.
+    - `facets(question)`: filters it offers (`core.focus`; none).
+    - `script(fields, given)`: the replies that read `given`, for a scripted model
+      (`examinator.synth`; none).
+    """
+    needs_region = False
+    multiline = False
+
+    def read(self, ctx, fields) -> Mapping[str, 'Reading | str']:
+        raise NotImplementedError
+
+    def vouches(self, field, reading: Reading) -> bool:
+        return False
+
+    def validate(self, what: str) -> None:
+        pass
+
+    def facets(self, question) -> list:
+        return []
+
+    def script(self, fields, given: Mapping[str, Any]) -> dict[str, str]:
+        return {}

@@ -24,7 +24,7 @@ from typing import AbstractSet, Any, Mapping, Protocol, Sequence
 from ..model.client import ModelError
 from .context import BadOutput, CheckContext, ReadContext, Unavailable
 from .defs import DEFAULT, Exam, Field, Grade, Question, key, one_line
-from .reading import Reading
+from .reading import Reader, Reading
 from .isolate import CheckTimeout, Pool, PoolClosed
 from .result import BadResult, Undecided, settle, undecided
 from .status import Decision, Ledger, Stored, Value, current
@@ -107,11 +107,11 @@ def structural(e: Exception) -> str:
     return type(e).__name__
 
 
-def looks_at(reader: Any, f: Field, pages: Sequence[int]) -> tuple[int, ...]:
+def looks_at(reader: Reader, f: Field, pages: Sequence[int]) -> tuple[int, ...]:
     """The pages reading field `f` with `reader` looks at: its region's page for a
     reader of regions (`needs_region`; none without a region), else all of the
     question's `pages`."""
-    if getattr(reader, 'needs_region', False):
+    if reader.needs_region:
         return (f.region.page,) if f.region is not None else ()
     return tuple(pages)
 
@@ -163,7 +163,7 @@ def to_read(q: Question, values: Mapping[str, Value], gone: AbstractSet[int], *,
                       else PROTECTED if v is not None and v.protected and not include_protected
                       else NO_REGION if not pages           # a question always has pages
                       else PAGE_MISSING if gone.intersection(pages)
-                      else NO_MODEL if not model and getattr(reader, 'uses_model', True)
+                      else NO_MODEL if not model
                       else None)
             if reason is None:
                 mine.append(f)
@@ -266,13 +266,12 @@ class Runner:
             except Exception as e:
                 out('failed', structural(e))
                 continue
-            vouches = getattr(reader, 'vouches', None)
             lost = []
             for f in targets:
                 if f.label not in got:
                     continue
                 r = got[f.label] if q.multiline(f.label) else replace(got[f.label], text=one_line(got[f.label].text))
-                vouched = bool(callable(vouches) and vouches(f, r))
+                vouched = reader.vouches(f, r)
                 if not self._put_read(submission, qid, f.label, r, vouched, include_protected):
                     lost.append(f.label)
             silent = [f.label for f in targets if f.label not in got]
