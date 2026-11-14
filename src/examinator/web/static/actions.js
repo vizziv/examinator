@@ -2,6 +2,7 @@
 // Actions: named things a page can do. A button and a key are two ways to trigger one.
 //
 //   Actions.register(name, {run(ctx), available(ctx)?, repeat?})
+//   Actions.gate(group, test)         every action named '<group>-…' waits on test() too (a tab shown, nothing long running)
 //   <button data-action="verify">     a click triggers the action (ctx.el is the button)
 //   the key map {combo: name}          a key triggers it (ctx.el is null)
 //
@@ -143,19 +144,21 @@ const Actions = (() => {
   const typing = el => !!el?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"], [role="slider"], [role="listbox"]');
 
   // --- registry ---
+  const gates = new Map();       // group -> test
   function register(name, spec) { registry.set(name, spec); }
+  const gate = (group, test) => gates.set(group, test);
   const has = name => registry.has(name);
+  // Whether an action can run now: its group's gate, then its own `available`.
+  function can(name, ctx) {
+    const a = registry.get(name), g = gates.get(name.split('-')[0]);
+    return !!a && (!g || !!g()) && (!a.available || !!a.available(ctx));
+  }
   function trigger(name, ctx) {
-    const a = registry.get(name);
-    ctx = {source: 'code', el: null, event: null, target: document.activeElement, ...ctx};
-    if (!a || (a.available && !a.available(ctx))) return false;
-    a.run(ctx);
+    ctx = {el: null, event: null, target: document.activeElement, ...ctx};
+    if (!can(name, ctx)) return false;
+    registry.get(name).run(ctx);
     return true;
   }
-  const available = (name, ctx) => {
-    const a = registry.get(name);
-    return !!a && (!a.available || !!a.available({source: 'code', el: null, target: document.activeElement, ...ctx}));
-  };
 
   // Held keys and stale clicks, before any page handler sees them.
   const control = el => el?.closest?.('button, [data-action], [role="option"], [role="tab"], input[type="checkbox"], input[type="radio"]');
@@ -187,18 +190,18 @@ const Actions = (() => {
     if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
     const combo = comboOf(e);
     if (!combo) return;
-    const ctx = {source: 'key', el: null, event: e, target: e.target};
+    const ctx = {el: null, event: e, target: e.target};
     if (e.repeat) {
       if (!held || held.combo !== combo) return;      // held since before this page, or typing: the browser's
       e.preventDefault();
       const a = registry.get(held.name);
       const again = typeof a.repeat === 'function' ? a.repeat(ctx) : a.repeat;
-      if (again && (!a.available || a.available(ctx))) a.run(ctx);
+      if (again && can(held.name, ctx)) a.run(ctx);
       return;
     }
     held = null;
     const s = settings();
-    const name = (keymap(s)[combo] || []).find(n => registry.has(n) && (!registry.get(n).available || registry.get(n).available(ctx)));
+    const name = (keymap(s)[combo] || []).find(n => can(n, ctx));
     if (!name) return;
     if (isSingle(combo) && combo !== 'Escape') {
       if (!s.single || typing(e.target)) return;
@@ -214,7 +217,7 @@ const Actions = (() => {
     const el = e.target.closest?.('[data-action]');
     if (!el || el.tagName === 'A' || !registry.has(el.dataset.action)) return;
     e.preventDefault();
-    trigger(el.dataset.action, {source: 'button', el, event: e, target: el});
+    trigger(el.dataset.action, {el, event: e, target: el});
   });
 
   // Hints: each [data-action] control gets a <kbd> with its first active key, and its
@@ -243,7 +246,7 @@ const Actions = (() => {
   // nothing looks it. For pages that call this whenever their state changes.
   function enable(root) {
     for (const el of (root || document).querySelectorAll('button[data-action]')) {
-      if (registry.has(el.dataset.action)) el.disabled = !available(el.dataset.action, {el, target: el});
+      if (registry.has(el.dataset.action)) el.disabled = !can(el.dataset.action, {el, target: el});
     }
   }
   document.addEventListener('DOMContentLoaded', () => hints());
@@ -255,6 +258,6 @@ const Actions = (() => {
     available: () => !!document.getElementById('home') && !document.getElementById('grid'),
     run: () => document.getElementById('home').click()});
 
-  return {register, has, trigger, available, hints, enable, settings, saveSettings, bindings, rebind,
+  return {register, gate, has, trigger, hints, enable, settings, saveSettings, bindings, rebind,
           comboOf, display, typing, CATALOG};
 })();
