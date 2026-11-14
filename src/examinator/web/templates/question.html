@@ -119,8 +119,14 @@
 </div>
 {% set others = fields|rejectattr('own')|list %}
 {% if others %}
-<details class="others" id="others">
-<summary>from other questions <span class="dim">{{ others|length }}</span> <span>{% if waiting_other %}<span class="tag unv">{{ waiting_other|length }} unverified</span>{% endif %}</span></summary>
+{# open when one of them holds a grade here back: where the person resolves it #}
+{% set unread = others|rejectattr('read')|selectattr('default', 'none')|list %}
+{% set review = others|rejectattr('review', 'none')|list %}
+<details class="others" id="others"{% if unread or review %} open{% endif %}>
+<summary>from other questions <span class="dim">{{ others|length }}</span> <span>
+{%- if unread %}<span class="tag">{{ unread|length }} not read</span> {% endif %}
+{%- if review %}<span class="tag unv">{{ review|length }} review</span> {% endif %}
+{%- if waiting_other %}<span class="tag unv">{{ waiting_other|length }} unverified</span>{% endif %}</span></summary>
 <div class="fields">
 {% for f in others %}{{ field_block(f) }}{% endfor %}
 </div>
