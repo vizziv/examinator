@@ -3,7 +3,7 @@
 One list, kept current. Design background is in [`DESIGN.md`](DESIGN.md); its
 §15 says what the core must already provide for later layers.
 
-## Where things stand (2026-11-13)
+## Where things stand (2026-11-14)
 
 For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
 
@@ -70,6 +70,18 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
   - *Evidence:* `result.settle` is the boundary for the whole stored result,
     grade and blocks; images are stored by digest outside the result row. A
     kit figure is a pure function of its arguments, drawn only when shown.
+- **Quality review and cleanup (2026-11-14):** an independent review of core
+  and web, then two cleanups, merged. *Core:* a value's small changes are
+  `Value`'s, and a read never undoes what a person said (verified, or
+  flagged); one loader of stored rows (`status.Ledger`), `Store.version` moves
+  on every write; the evidence block grammar is the block classes, in
+  `core.result`; a reader is a `core.reading.Reader`; roster parsing and
+  matching are `core.roster`; renames and dead surface out. *Web:* element ids
+  are one namespace; `look(st)` draws every status; a POST route's kind (change,
+  run, query) is its mechanism in `create_app`, the app-wide lock marked
+  `exclusive`; a run is `Changes.run`/`Changes.watch` in the browser; the two
+  rectangle editors share shape, drag, words and toolbar; one word per idea.
+  The cleanup itself has not been independently reviewed.
 - **Verified how:** every change passed the whole suite and the four exams'
   self-tests against the instructor blanks on `main` after merging, and most
   were exercised in a browser on synthetic workspaces by the agent that made
@@ -111,22 +123,43 @@ For whoever picks this up next: read MODEL.md, then DESIGN.md, then this file.
   while the page prints the course's placeholder notation; the reader copes
   by matching boxes in order. `fields.table` (std) maps each printed text to a
   version name for exams whose version is told by fields with different
-  texts.
+  texts. Exam 3 uses `readers.code(then=)`, which stores the rewritten code as
+  the value, while the kit's `check_source(ran=)` keeps the value as written
+  and shows what ran: two ways to the same end, pick one. Split uses W/S for
+  previous/next submission where other pages use A/D, and shows 14 controls
+  at once.
+- **Size:** the rework and the cleanup did not make the library smaller:
+  `git diff 9c630bf --shortstat -- src` (2026-11-13 morning to the cleanup)
+  is 5,357 lines in, 4,239 out, about 1,100 more.
 
-## The model (built 2026-11-12)
+## Left by the cleanup
 
-[`MODEL.md`](MODEL.md): fields, readers, checks, questions; values, results,
-decisions; the status table. Built, with one test per row of its two tables.
-Resolved by it: reading is one phase (no stored transcript); a field's region
-for one submission; a decision is outdated when any field on its page changes;
-how a field is read changes no value; a printed
-field's region may be unset in code; one grade per check, any number of checks.
-Overrides have one mechanism at three scopes (exam, source scan, submission;
-`overrides.SCOPES`, `overrides.Layers`): a region, pages and the print area
-all live there, with revisions. A submission maps the exam's
-printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
+- **Renames not taken:** `Row` in both `store` and `grid`; `Value` and
+  `Table` in `std.fields` against `status.Value` and `result.Table`;
+  `groups` (`Question.groups`, `Exam.groups`, `Reads.groups`); `settle`
+  (`result.settle`, `split.settle`); `propose`/`proposals`; `plan` (batch,
+  intake); `unread`; `Made.pages` holding sheets; the store column
+  `submission` holding a source id for split rows; the intake edit-op key
+  'restore' (calls `split.put_back`); `overrides.set`/`split`/`join`/`scope`
+  shadowing builtins, and a scope in three representations (level and id, the
+  stored string, keyword arguments); the 'choice' override kind duck-typing
+  `accepted`; the join that fills `Submission`'s name inside the store.
+- Lower-case factories in std (`readers.answers`, `readers.code`,
+  `math.keyed`, ...) that a dataclass's `__post_init__` could replace.
+- `expect_rev` defaults to ANY in some `Runner` methods (`set`, `unset`,
+  `decide`, `clear`); 48 test call sites rely on it.
+- Core logic still shaped in the web layer: `picked_key`/`key_entries`,
+  `show_value` with entries.js's `readEntry`, `plan_view`, `scans_names`
+  adding keys, the web adding the author to override conflict wording,
+  `intake.accept` setting its own `current`.
+- The two rectangle editors still save differently: Names saves every changed
+  box at once and drops a box equal to the wider scope; the question page
+  saves the selected region at the chosen scope. One editor means choosing one
+  behaviour: the owner's call.
+- The question page's grade buttons are mapped to their actions through a
+  second table of their classes (`GRADES` in question.js).
 
-## Open after the rewrite
+## Open
 
 - **Which grades changed** after a check's code or key changed: results keep
   no history, so this would compare old and new at recompute time. Not built.
@@ -141,8 +174,9 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
   grid); the Read page's live counts and one-click read, field defaults,
   turning on the Split tab and the box editors' save buttons on synthetic
   workspaces (2026-11-13), and on Split extra sheets, missing marks and moving
-  a sheet, with undo, then the placeholder, extras and a pages override with an
-  extra on a question page (synthetic Exam 3 stacks). Never in a browser yet: the restore button, Stop on a run slow enough to stop.
+  a sheet, with undo, then the placeholder and extras on a question page
+  (synthetic Exam 3 stacks). Never in a browser yet: a value's restore
+  button, Stop on a run slow enough to stop.
 
 - **Split marks, what is left:** no drag to a far place in the pile (a sheet
   moves one place per press, stepping over dropped sheets); proposed marks
@@ -150,11 +184,9 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
   placeholder page is shown on the question page as is.
 - **Left from the reviews:** images are deduplicated within a result, not
   across results; a region can be saved for a submission or for all, not for
-  one source scan (only the print area can); `create_app` still takes the
-  exam and should read `ws.exam` per request; the Exam data page shows
-  skipped overrides at exam scope only (`ws.skipped_overrides()` has all);
-  the Read page's "missing only" is unticked by default, which is what a
-  person resuming a stopped batch must tick.
+  one source scan (only the print area can); the Read page's "missing only"
+  is unticked by default, which is what a person resuming a stopped batch
+  must tick.
 - **Names, one page per submission** (an experiment, started and stopped
   2026-11-13, uncommitted in a worktree): would make Names like the question
   page and remove the reload of every submission after each pick
@@ -179,10 +211,9 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
   with the per-submission region override.
 - **Own values of a removed submission** stay in the store (the Exam data page
   marks them "gone", revertible); intake does not clear them.
-- **No full page load between submissions:** today "next submission" loads a
-  new page (actions within a page already swap parts in place). Getting there
-  means the question page's scripts start from a function that can run again
-  on swapped-in HTML; no library needed.
+- **No full page load between submissions** (at odds with "real page loads
+  made fast", which the owner confirmed later; ask before starting): today
+  "next submission" loads a new page, rendered ahead where the browser can.
 - **Numeric grades in the filter:** the Filter page lists distinct values; a
   numeric check wants a range instead.
 - **"Work is present" field:** a field a reader fills with whether there is
@@ -200,7 +231,6 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
 
 ## Known gaps
 
-- Filter page shows raw state names (`to_decide`).
 - A narrow (~900 px) question page can scroll sideways with a wide crop.
 - Never exercised in a browser: uploading scans, a roster from a file,
   Accept's confirmation dialog, the Names tab for PDFs handed in already split.
@@ -209,7 +239,6 @@ printed pages to sheets, with extra sheets and missing pages (DESIGN.md §16).
   box drawn on synthetic stacks has no scripted answer).
 - Picking a person already named for another submission names both (flagged
   "name twice"); it does not offer to move them.
-- No live-model run yet.
 
 ## Declined so far, larger than a cleanup
 
