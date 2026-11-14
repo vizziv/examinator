@@ -1,8 +1,7 @@
 # The model
 
-The model the core implements (built 2026-11-12). Everything here is per exam;
-"stored" means per submission, in the workspace. Where each piece lives is at
-the end.
+The model the core implements. Everything here is per exam; "stored" means
+per submission, in the workspace. Where each piece lives is at the end.
 
 ## In one paragraph
 
@@ -60,9 +59,11 @@ printed word): what was read, never a note about it.
 | **unverified** | Has a value nobody stands behind. Shown with the "unverified" badge. |
 | **verified** | Someone stands behind the value: a person, or the reader that vouched for it. No badge. |
 
-Two attributes: `verified by` (nobody, the reader, or a named person) and
-`review` (none, or a note). That is the whole state (`status.FIELD_STATES`;
-`Value.state`). Choices made here:
+Three attributes: `verified` (nobody, the reader, or a person, named in
+`by`), `review` (none, or a note) and `flagged` (who asked for the review: the
+reader or a person). That is the whole state (`status.FIELD_STATES`;
+`Value.state`). `Value` holds the rule that a value needing review is never
+verified, and its methods are the small changes to a value. The rules:
 
 - **"Typed by a person" and "read, then verified by a person" are the same
   state.** A person who sets a value verifies it. Who wrote a value is history,
@@ -83,8 +84,12 @@ Two attributes: `verified by` (nobody, the reader, or a named person) and
   from the reply, null, the string "null", a reply that is not that shape)
   writes nothing: the field stays not read, and the read says how many fields
   it asked for and how many got a value.
-- **Reading again and getting the same value changes nothing**: same revision,
-  still verified, nothing downstream moves.
+- **What a person said about a value is never undone by a reader.** A read
+  skips a value a person verified (unless asked: `include_protected`). A read
+  of the same text changes nothing a person set (verified, or flagged for
+  review) and keeps the revision, so nothing downstream moves. A read of
+  different text is a new value with the reader's state (for review if unsure,
+  verified by the reader if it vouches, else unverified).
 - **No transcript, no memo.** Whatever a reader does on the way to the value
   is not stored, so every read asks the model again. A read happens only
   when a person asks for one; "missing only" resumes a read that stopped.
@@ -141,7 +146,7 @@ In order; the first that applies:
 | --- | --- | --- |
 | **decided** | A decision exists and its fields are unchanged. | Yes |
 | **decided, outdated** | A decision exists, a field changed since. | No |
-| **to decide** | No check; or the result is current, its fields verified, and the proposal is undecided. | No |
+| **to decide** | The check has no function (`Check(None)`); or the result is current, its fields verified, and the proposal is undecided. | No |
 | **not run** | No result. | No |
 | **outdated** | The result is outdated. | No |
 | **review** | The result is current and some field it read needs review ("x needs review"). The proposal is shown. | No |
@@ -156,10 +161,10 @@ Everything the app or a batch read does is one or more of these.
 
 | On | Change | By |
 | --- | --- | --- |
-| Field value | **read**: a reader sets the value, for review if the model was unsure; verified by the reader if it vouches, else unverified. Writes nothing for a field the reply says nothing about. Skips values a person verified. | run |
+| Field value | **read**: a reader sets the value, for review if the model was unsure; verified by the reader if it vouches, else unverified. Writes nothing for a field the reply says nothing about. Skips values a person verified; the same text keeps what a person said. | run |
 | Field value | **set**: a new value, verified by that person. | person |
 | Field value | **verify**: the value as it stands, now verified by that person (any review cleared). | person |
-| Field value | **review**: flag the value for review, with a note (unverified); or take the flag off. | person |
+| Field value | **review**: flag the value for review, with a note (unverified, flagged by a person); or take the flag off. | person |
 | Field value | **unverify**: back to unverified, value kept. | person |
 | Field value | **unset**: a field with a default back to it (its value dropped). | person |
 | Result | **compute**: run the check on the current values. | automatic |
@@ -170,8 +175,9 @@ Changing how a field is read changes no value. Reading again is asked for
 explicitly; it replaces only values no person verified.
 
 Larger actions are combinations: "verify all here" verifies every unverified
-field on the page (not one that needs review: that is verified one by one); "save and verify" is one set; "read again" is a read of one
-question's fields; a batch read is reads, then computes.
+field on the page (not one that needs review: that is verified one by one);
+"save and verify" is one set; a question's "read" is a read of its fields; a
+batch read is reads, then computes.
 
 ## Changing the exam while grading
 
@@ -188,9 +194,6 @@ exam's code computed it. So the exam package can change under a workspace:
 | How a field is read changes | No value changes. Reading again, when a person asks, replaces what no person verified. |
 | A submission's pages are rewritten (Split's Accept) | Values no person verified are dropped (not read), and so are its own overrides (where things are on its old pages); values a person verified, decisions and the pick stay. |
 
-Two things this asks of the build: a read can fill only the fields that have
-no value yet, and the app can reload the exam package without losing state.
-
 ## What the interface does with it (not part of the model)
 
 - A question's page shows its own fields and the fields its check read from
@@ -198,23 +201,19 @@ no value yet, and the app can reload the exam package without losing state.
 - A field shows a badge only when it needs review or is unverified.
 - The grid shows one cell per check, by the table above.
 
-## What goes away
+## Identity
 
-- Stages with inputs (transcribe, parse, evidence, grade) as stored steps:
-  what remains is field values, results, decisions.
-- The difference between a check's own question and other questions.
-- "Waits on another question", the trusted-fields list, verification per
-  question, and the special no-grade question: it is fields with no check.
-- Identification is a built-in group of ordinary fields plus a pick. The
-  group (`defs.IDENTITY`, '@identity') has one field per roster column (name,
-  ID, email; those the exam maps placed, the others drawn in the app): values,
-  verifying, reads, regions at every scope, all as for any field. It is kept
-  apart from grading: not one of `Exam.questions` (no grid column, total,
-  facet or batch read), reached only by its name; read on the Names step. Who wrote a submission is then one stored
-  pick per submission, a person's choice among proposals computed purely from
-  those values and the roster (`core.identity`). The pick records the person;
-  their place on the roster is derived. Automatic matching acts only on
-  unique evidence; a tie or a conflict is a doubt for a person.
+Who wrote a submission is a built-in group of ordinary fields plus a pick. The
+group (`defs.IDENTITY`, '@identity') has one field per roster column
+(`defs.ROSTER_FIELDS`: name, ID, email; those the exam places, the others
+drawn in the app): values, verifying, reads and regions at every scope, all as
+for any field. It is kept apart from grading: not one of `Exam.questions` (no
+grid column, total, facet or batch read), reached only by its name, read on the
+Names step. The pick is one stored row per submission, a person's choice among
+proposals computed purely from those values and the roster (`core.roster`).
+The pick records the person; their place on the roster is derived. Automatic
+matching acts only on unique evidence; a tie or a conflict is a doubt for a
+person.
 
 ## Open, to settle by trying
 
@@ -234,14 +233,17 @@ no value yet, and the app can reload the exam package without losing state.
 | What a check returns (`Result`, `Judgement`, `Undecided`) | `core/result.py` |
 | `ctx.read` (recorded reads), the reader's context | `core/context.py` |
 | What a read reads, and why not (`to_read`) | `core/runner.py` |
-| Stored value, result, decision; the status table; totals | `core/status.py` |
-| The small changes (read, set, verify, compute, decide, clear) | `core/runner.py` |
+| What a reply says about a field (`Reading`); what a reader is (`Reader`) | `core/reading.py` |
+| Stored value, result, decision; the status table; totals; loading them (`Ledger`) | `core/status.py` |
+| The small changes to a value (`Value.read`, `set`, `verify`, `unverify`, `flag`) | `core/status.py` |
+| The small changes on a workspace (read, set, verify, unverify, review, unset, compute, decide, clear) | `core/runner.py` |
 | Asking about one region (`Ask`, `Printed`); handwriting readers | `core/ask.py`; `std/readers.py` |
 | A workspace's own definition (`Workspace.exam`); overrides at every scope; what applies to one submission (`Layers`: `question`, `layout`) | `core/workspace.py`; `core/overrides.py`; `Workspace.layers` |
 | Batch: reads (counted, stoppable), then the refresh of what was read for | `core/batch.py` |
 | One row table, addressed `(submission, name, kind)` | `core/store.py` |
+| Identity: the pick and the identity fields; the roster and matching | `core/identity.py`; `core/roster.py` |
 
-Choices made while building it:
+Further rules:
 
 - A value's revision changes only with its text; verifying or unverifying keeps
   it (and goes to history). So verifying never outdates a result or a decision.
