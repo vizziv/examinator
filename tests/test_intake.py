@@ -9,7 +9,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from examinator import Exam, Landmark, Region, load_exam, synth
-from examinator.core import identity, intake, overrides, split
+from examinator.core import identity, intake, overrides, roster, split
 from examinator.core.store import Conflict, Made
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
@@ -368,7 +368,7 @@ def test_accept_asks_about_what_a_person_said_and_says_what_goes(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    identity.pick(ws, 's0002', identity.typed("Someone Named"), author='t', expect_rev=None)
+    identity.pick(ws, 's0002', roster.typed("Someone Named"), author='t', expect_rev=None)
     own = overrides.scope(overrides.SUBMISSION, 's0003')
     overrides.set(ws, '@print_area', [100, 100, 900, 900], scope=own, author='t')
     ws.store.write('s0003', 'parity/B', 'value', {'text': 'odd'}, origin='auto')        # read, nobody verified
@@ -424,13 +424,13 @@ def test_roster_and_names(stacked):
     assert ws.store.submission('s0003').name == "Casey Stubbs"
     assert ws.sync() == 0 and ws.store.submission('s0003').email == p['email']
     assert ws.store.submission('s0003').student == p['id']
-    rev = identity.pick(ws, 's0004', identity.typed("Someone Unlisted"), author='t', expect_rev=None)['rev']
+    rev = identity.pick(ws, 's0004', roster.typed("Someone Unlisted"), author='t', expect_rev=None)['rev']
     assert ws.store.submission('s0004').name == "Someone Unlisted"
     identity.pick(ws, 's0004', None, author='t', expect_rev=rev)
     assert ws.store.submission('s0004').name == ""
     with pytest.raises(ValueError):
-        identity.parse_roster("Email\nx@example.invalid\n")
-    assert identity.parse_roster("First Name,Last Name\nAda,Lovelace\n")[0]['name'] == "Ada Lovelace"
+        roster.parse_roster("Email\nx@example.invalid\n")
+    assert roster.parse_roster("First Name,Last Name\nAda,Lovelace\n")[0]['name'] == "Ada Lovelace"
 
 
 def test_handed_pdfs_wait_on_names_unless_the_file_name_carries_an_id(tmp_path, toy):

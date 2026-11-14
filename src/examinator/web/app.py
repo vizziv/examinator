@@ -53,7 +53,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainT
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from ..core import batch, focus, grid, identity, intake, overrides, split, status
+from ..core import batch, focus, grid, identity, intake, overrides, roster, split, status
 from ..core.context import CheckContext
 from ..core.ask import Printed
 from ..core.defs import IDENTITY, PRINT_AREA, Bool, Check, Exam, Question, key, split_key
@@ -1108,7 +1108,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
     def scans_roster_preview(request, data):
         """What a roster text (a CSV file's contents or pasted lines) would read as: how
         many people, the first few, the problems. Changes nothing."""
-        people, problems = identity.read_roster(roster_text(data))
+        people, problems = roster.read_roster(roster_text(data))
         return {'people': len(people), 'problems': problems[:ROSTER_PROBLEMS],
                 'more': max(0, len(problems) - ROSTER_PROBLEMS),
                 'sample': [{'name': p['name'], 'id': p['id'], 'email': p['email']} for p in people[:ROSTER_SAMPLE]]}
@@ -1140,7 +1140,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                 if person is None:
                     raise Bad("not on the roster (it changed?): reload")
             else:
-                person = identity.typed(data['text']) if 'text' in data else None
+                person = roster.typed(data['text']) if 'text' in data else None
             w = identity.pick(ws, sub.id, person, author=who(request), expect_rev=rev)
             return {'who': w, 'rev': w['rev']}
         except Conflict as e:
@@ -1173,7 +1173,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             row['print_area'] = list(a.layout.print_area)     # for the boxes drawn on the page
             row['scan'] = scan_key(sid)                        # in its pages' URLs
         stored = store.overrides()
-        view['nobody'] = [identity.label(p) for p in view['nobody']]
+        view['nobody'] = [roster.label(p) for p in view['nobody']]
         view['boxed'] = any(a.fields for a in ats.values())
         view['unread'] = len(identity.unread(ws, ats=ats))      # what "read names" reads
         view['columns'] = []
@@ -1182,7 +1182,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             view['columns'].append({'name': c, 'path': path, 'value': e.current, 'base': e.base,
                                     'rev': stored[path].rev if path in stored else None})
         view['pad'] = ws.exam.crop_pad
-        view['doubts'] = identity.DOUBTS
+        view['doubts'] = roster.DOUBTS
         view['roster'] = len(identity.people(ws))
         return JSONResponse(view)
 

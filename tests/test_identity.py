@@ -7,7 +7,8 @@ import pytest
 from examinator import load_exam, synth
 from examinator.core import batch, focus, grid, identity, intake, overrides
 from examinator.core.defs import IDENTITY
-from examinator.core.identity import Matcher, distance, name_score, name_tokens, read_roster
+from examinator.core import roster
+from examinator.core.roster import Matcher, distance, name_score, name_tokens, read_roster
 from examinator.core.reading import Reading
 from examinator.core.runner import Runner
 from examinator.core.store import Conflict
@@ -52,7 +53,7 @@ def test_lines_that_cannot_be_read_are_reported():
     assert problems == ["line 1: expected a name and an ID", "line 2: expected a name and an ID",
                         "line 3: expected a name and an ID", "line 5: Alan T <1> cannot be told apart from line 4"]
     with pytest.raises(ValueError, match="line 1"):
-        identity.parse_roster("Ada Lovelace\n")
+        roster.parse_roster("Ada Lovelace\n")
 
 
 def test_a_roster_is_valid_exactly_when_everyone_on_it_is_found_as_themselves():
@@ -381,15 +382,15 @@ def test_picks_confirm_flag_twice_and_name_submissions(written):
     assert "Gray Placeholt" not in {p['name'] for p in view['nobody']}
     assert view['taken'] == {gray['key']: ['s0004', 's0007']}
     # someone not on the roster: typed; "Name, ID" keeps its ID; clearing
-    rev = identity.pick(ws, 's0006', identity.typed("Finley Dummond"), author='t', expect_rev=None)['rev']
+    rev = identity.pick(ws, 's0006', roster.typed("Finley Dummond"), author='t', expect_rev=None)['rev']
     assert ws.store.submission('s0006').name == "Finley Dummond" and ws.store.submission('s0006').student == ''
-    rev = identity.pick(ws, 's0006', identity.typed("Finley Dummond, 95830142"), author='t', expect_rev=rev)['rev']
+    rev = identity.pick(ws, 's0006', roster.typed("Finley Dummond, 95830142"), author='t', expect_rev=rev)['rev']
     assert (ws.store.submission('s0006').name, ws.store.submission('s0006').student) == ("Finley Dummond", "95830142")
-    assert identity.typed("Dummond, Finley")['name'] == "Dummond, Finley"
+    assert roster.typed("Dummond, Finley")['name'] == "Dummond, Finley"
     with pytest.raises(ValueError):
-        identity.typed("  ")
+        roster.typed("  ")
     # typed with a roster person's ID: it is that person, derived like any pick
-    rev = identity.pick(ws, 's0006', identity.typed("G. Placeholt, 96174385"), author='t', expect_rev=rev)['rev']
+    rev = identity.pick(ws, 's0006', roster.typed("G. Placeholt, 96174385"), author='t', expect_rev=rev)['rev']
     assert {r['sub']: r for r in identity.overview(ws)['rows']}['s0006']['who']['person'] == gray['key']
     identity.pick(ws, 's0006', None, author='t', expect_rev=rev)
     assert ws.store.submission('s0006').name == ""
