@@ -14,7 +14,7 @@ The second reply has one shape (`core.reading`): an object of field objects
 (code). A field the reply does not state in that shape is left out: it stays
 not read. The model transcribes; the program splits: the code reader has the
 question's code converted once, function by function, and each field takes its
-own functions from it (`Code.split`).
+own functions from it (`Code.split`, by its lines: `functions`).
 
 Each reader is a small frozen dataclass, so its configuration (prompts,
 notes) is part of the definition and can be edited in the app. Model calls
@@ -23,7 +23,10 @@ writes the replies that would read given values (`examinator.synth`).
 """
 from __future__ import annotations
 
+import ast
 import json
+import re
+import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
@@ -127,7 +130,6 @@ class Code:
         review is theirs. A field with a requested function the reply does not
         state is not read; one whose requested functions are all empty (`pass`,
         comments) is blank."""
-        from .pseudocode import calls, functions, is_empty
         defs = {name: r for name, obj in json_object(out).items()
                 if (r := reading(obj)) is not None and name in functions(r.text)[0]}
         owner = {name: label for label in labels for name in self.wanted(label)}
@@ -156,7 +158,6 @@ class Code:
         """The replies that read `given` ({label: source, None or '' blank}): the
         question's functions in field order, each once, and an empty stub for a
         requested function no field writes."""
-        from .pseudocode import functions
         defs: dict[str, str] = {}
         for f in fields:
             for name, text in functions(given.get(f.label) or '')[0].items():
@@ -183,3 +184,59 @@ def code(entries: Sequence[str] | Mapping[str, Sequence[str]], *, language: Any 
     rewrites each field's source deterministically (it is what is stored)."""
     entries = {k: tuple(v) for k, v in entries.items()} if isinstance(entries, Mapping) else tuple(entries)
     return Code(entries, language, prompt, parse_prompt, notes, then)
+
+
+# --- functions in source, found from its lines (for splitting a question's code) ---
+
+_DEF_LINE = r'def\s+([A-Za-z_]\w*)\s*\('
+_FENCE_LINE = r'\s*```'
+_NAME = r'[A-Za-z_]\w*'
+
+
+def functions(source: str) -> tuple[dict[str, str], str]:
+    """The top-level functions in `source`, found from its lines alone, so code
+    that does not parse still splits: `({name: text}, rest)`. A function is a
+    `def` line at the left margin and the lines after it that are indented,
+    blank or comments; `rest` is every other line that is not blank (a Markdown
+    fence line is dropped). A name defined twice keeps both texts, in order."""
+    defs: dict[str, str] = {}
+    rest, current = [], None
+    for line in source.splitlines():
+        if re.match(_FENCE_LINE, line):
+            continue
+        m = re.match(_DEF_LINE, line)
+        if m:
+            current = m.group(1)
+            defs[current] = f"{defs[current].rstrip()}\n\n{line}" if current in defs else line
+        elif current is not None and (not line.strip() or line[0] in ' \t' or line.startswith('#')):
+            defs[current] += "\n" + line
+        else:
+            current = None
+            if line.strip():
+                rest.append(line)
+    return {name: text.rstrip() + "\n" for name, text in defs.items()}, "\n".join(rest)
+
+
+def calls(text: str, names) -> list:
+    """The `names` that a function's text (from `functions`) mentions outside
+    comments and its own `def` name, in order of first mention."""
+    lines = [line.split('#', 1)[0] for line in text.splitlines()]
+    if lines:
+        lines[0] = re.sub(_DEF_LINE, '(', lines[0], count=1)
+    return [n for n in dict.fromkeys(re.findall(_NAME, "\n".join(lines))) if n in names]
+
+
+def is_empty(text: str) -> bool:
+    """A function's text (from `functions`) that states nothing: after the `def`
+    line only `pass`, `...`, a docstring or comments. Parsed only, never run."""
+    code = [line.split('#', 1)[0].rstrip() for line in text.splitlines()]
+    code = [line for line in code if line.strip()]
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            tree = ast.parse("\n".join(code))
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return len(code) == 1 and code[0].endswith(':')         # a `def` line and nothing else
+    fn = tree.body[0] if len(tree.body) == 1 and type(tree.body[0]) is ast.FunctionDef else None
+    return fn is not None and all(type(s) is ast.Pass or type(s) is ast.Expr and type(s.value) is ast.Constant
+                                  and (s.value.value is Ellipsis or isinstance(s.value.value, str)) for s in fn.body)

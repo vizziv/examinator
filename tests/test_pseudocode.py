@@ -181,31 +181,6 @@ def test_primitive_overrides_student_function():
     assert blank.sample('f', n=1, primitives={'helper': lambda rng: 5}) == [5]
 
 
-def test_select_keeps_only_reachable_helpers():
-    source = '''\
-def a():
-    return b() + 1
-
-def unused():
-    return a()
-
-def b():
-    return c(2)
-
-def c(x):
-    return x * shared
-'''
-    program = parse(source)
-    picked = program.select('a')
-    assert picked.names == ('a', 'b', 'c')
-    assert 'unused' not in picked.source
-    assert picked.sample('a', n=1, constants={'shared': 3}) == [7]
-    assert program.select('c').names == ('c',)
-    assert program.select('unused').names == ('a', 'unused', 'b', 'c')
-    assert program.select('missing').names == ()
-    assert program.names == ('a', 'unused', 'b', 'c')          # the original is unchanged
-
-
 def test_references():
     program = parse(SCALAR, TBASE)
     assert program.references('weibullish', 'huge_constant')
@@ -848,7 +823,7 @@ def test_odd_programs_do_what_they_should():
 
 def test_language_descriptions():
     assert isinstance(BASE, Language) and not BASE.collections and WITH_COLLECTIONS.collections
-    assert BASE.name != WITH_COLLECTIONS.name
+    assert BASE != WITH_COLLECTIONS
     for language in (BASE, WITH_COLLECTIONS, TBASE, TCOLL):
         text = language.description
         for word in ('def name', 'log', 'sqrt', 'range', 'while', 'pi'):
@@ -860,7 +835,7 @@ def test_language_descriptions():
         assert 'unif()' in language.description and 'coin(p)' in language.description
     assert 'append' in WITH_COLLECTIONS.description and 'append' not in BASE.description
     with pytest.raises(Exception):
-        BASE.name = 'other'
+        BASE.collections = True
     program = parse("def f():\n    return 1\n")
     with pytest.raises(Exception):
         program.source = "changed"
@@ -962,43 +937,6 @@ def test_failure_kind_for_entry_and_collections():
         assert info.value.kind == kind, source
 
 
-def test_free_names():
-    program = parse(SCALAR, TBASE)
-    assert program.free_names('weibull') == {'log', 'unif'}
-    assert program.free_names('weibullish') == {'coin', 'huge_constant', 'log', 'unif'}   # helper included
-    assert program.free_names('poisson_dist') == {'log', 'unif'}
-    assert program.free_names('missing') == frozenset()
-    assert isinstance(program.free_names('weibull'), frozenset)
-    needed = program.free_names('weibullish') - program.language.names
-    assert needed == {'huge_constant'}
-    assert program.free_names('weibullish') - BASE.names == {'coin', 'unif', 'huge_constant'}   # no randomness in BASE
-    both = parse(SCALAR + PROCESS, TCOLL)
-    assert both.free_names('poisson_process') == {'range', 'unif', 'sqrt', 'log'}
-    source = '''\
-def f(a):
-    b = a + offset
-    for i in range(3):
-        b += helper(i) + pi
-    return other(b, f(a))
-
-def other(x, y):
-    scale = 2
-    return x * scale + lookup(y)
-
-def unused():
-    return never_needed
-'''
-    program = parse(source)
-    assert program.free_names('f') == {'offset', 'range', 'helper', 'pi', 'lookup'}
-    assert program.free_names('f') - program.language.names == {'offset', 'helper', 'lookup'}
-    assert program.free_names('other') == {'lookup'}
-    assert program.free_names('unused') == {'never_needed'}
-    assert program.select('f').free_names('f') == program.free_names('f')
-    lists = parse("def f(xs):\n    return sorted([x for x in xs if x > cut]) + [len(xs)]\n", TCOLL)
-    assert lists.free_names('f') == {'sorted', 'len', 'cut'}
-    assert lists.free_names('f') - lists.language.names == {'cut'}
-
-
 def test_standard_builtins_match_the_interpreter():
     math_names = {'log', 'ln', 'exp', 'sqrt', 'abs', 'min', 'max', 'floor', 'ceil', 'round', 'sin', 'cos', 'tan',
                   'int', 'float', 'pi', 'e', 'inf'}
@@ -1036,23 +974,12 @@ def vec(source, *args, language=VEC, **kw):
     return one(source, *args, language=language, **kw)
 
 
-def test_language_options_and_names():
-    assert BASE.name == 'base' and WITH_COLLECTIONS.name == 'collections'
+def test_language_options():
     assert (BASE.collections, BASE.vectors, BASE.extra) == (False, False, "")
     assert dict(BASE.builtins) == dict(pseudocode.MATH)
     assert dict(WITH_COLLECTIONS.builtins) == {**pseudocode.MATH, **pseudocode.COLLECTION_FUNCTIONS}
     vec = dataclasses.replace(WITH_COLLECTIONS, vectors=True)
-    assert vec.name == 'collections+vectors'
-    assert dataclasses.replace(vec, vectors=False).name == 'collections'             # re-derived
-    mine = dataclasses.replace(vec, name='course')
-    assert mine.name == 'course' and dataclasses.replace(mine, vectors=False).name == 'course'   # kept
-    assert dataclasses.replace(BASE, extra="- More.").name.startswith('base+extra-')
-    assert TCOLL.name == 'collections+with-coin,die,unif' and TBASE.name == 'base+with-coin,die,unif'
-    assert Language().name.startswith('base+names-')                                  # no builtins at all
-    # deterministic: names and equality do not depend on function identity or order
-    other = {'die': Primitive(lambda rng, n: 1, "rolls", random=True),
-             'coin': Primitive(lambda rng, p: 0, "flips", random=True), 'unif': COIN}
-    assert WITH_COLLECTIONS.with_builtins(**other).name == TCOLL.name
+    # deterministic: equality does not depend on function identity or order
     assert WITH_COLLECTIONS.with_builtins(die=DIE, coin=COIN, **UNIF) == TCOLL
     assert list(TCOLL.builtins)[-3:] == ['unif', 'coin', 'die']                       # order kept
     assert Language(collections=True, builtins=WITH_COLLECTIONS.builtins) == WITH_COLLECTIONS
@@ -1073,8 +1000,6 @@ def test_language_options_and_names():
         vec.vectors = False
     with pytest.raises(TypeError):
         TCOLL.builtins['coin'] = DIE                     # frozen
-    assert TBASE.names == {'range'} | set(pseudocode.MATH) | {'unif', 'coin', 'die'}
-    assert TCOLL.names == TBASE.names | {'sorted', 'list', 'set', 'len', 'sum'}
     assert pseudocode.parse("def f():\n    return 1\n").language is BASE              # the default
 
 
@@ -1129,7 +1054,6 @@ def test_language_builtins_are_described_and_callable():
     assert abs(sum(flips) / 2000 - 0.25) < 0.04
     program = parse("def f():\n    return coin(1), die(1)\n")
     assert program.sample('f', n=2) == [(True, 1), (True, 1)]
-    assert program.free_names('f') - program.language.names == frozenset()
     for name in ('k', 'pi'):                                 # constants are values, not functions
         with pytest.raises(Failure) as info:
             one(f"def f():\n    return {name}(1)\n", language=alone)

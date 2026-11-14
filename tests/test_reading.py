@@ -13,7 +13,7 @@ from examinator.core.reading import Reading, reading
 from examinator.core.runner import Runner
 from examinator.model.fake import FakeModel
 from examinator.std import math, readers
-from examinator.std.pseudocode import calls, functions, is_empty
+from examinator.std.readers import calls, functions, is_empty
 
 from conftest import workspace
 

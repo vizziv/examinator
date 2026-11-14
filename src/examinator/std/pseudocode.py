@@ -29,11 +29,9 @@ import dataclasses
 import inspect
 import math
 import operator
-import re
 import sys
 import time
 import warnings
-import zlib
 from collections.abc import Callable, Mapping
 from dataclasses import KW_ONLY, dataclass, field
 from types import MappingProxyType
@@ -249,10 +247,6 @@ _VECTORS = "- Vectors: a list of numbers is also a point or vector (a tuple of n
 _METHODS_LINE = "- Methods, and no others: `xs.append(v)`, `xs.extend(ys)`, `xs.pop()`, `s.add(v)`."
 _COLLECTION_MISSING = "- Not available: strings, dictionaries, other attributes and methods, lambda, keyword or starred arguments, `print`, `try`, `with`, `global`, `assert`, `del`."
 
-# A name `Language` derives from its options; `dataclasses.replace` re-derives it.
-_DERIVED_NAME = r'(?:base|collections)(?:\+[A-Za-z0-9_,-]+)*'
-
-
 @dataclass(frozen=True)
 class Language:
     """The language a program is written in, as a value.
@@ -272,12 +266,7 @@ class Language:
     - `builtins`: frozen into a read-only mapping (order kept: it orders the
       description). A student function of the same name takes precedence.
     - `extra`: text appended to the description on its own line.
-
-    `name` defaults to one derived from the flags and the builtin names;
-    `dataclasses.replace` (or `with_builtins`) re-derives a derived name and
-    keeps a name of your own.
     """
-    name: str | None = None
     _: KW_ONLY
     collections: bool = False
     vectors: bool = False
@@ -300,23 +289,6 @@ class Language:
             if not isinstance(value, (Primitive, Constant)):
                 raise TypeError(f"builtin {key!r} must be a Primitive or a Constant")
         object.__setattr__(self, 'builtins', MappingProxyType(builtins))
-        if self.name is None or re.fullmatch(_DERIVED_NAME, self.name):
-            object.__setattr__(self, 'name', self._derive_name())
-
-    def _derive_name(self) -> str:
-        parts = ['collections' if self.collections else 'base']
-        if self.vectors:
-            parts.append('vectors')
-        names = set(self.builtins)
-        standard = set(MATH) | (set(COLLECTION_FUNCTIONS) if self.collections else set())
-        if standard <= names:
-            if names - standard:
-                parts.append('with-' + ','.join(sorted(names - standard)))
-        else:
-            parts.append(f"names-{zlib.crc32(','.join(sorted(names)).encode()):08x}")
-        if self.extra:
-            parts.append(f"extra-{zlib.crc32(self.extra.encode()):08x}")
-        return '+'.join(parts)
 
     def with_builtins(self, **more) -> 'Language':
         """This language with more builtins (a later one replaces an earlier one of the same name)."""
@@ -324,11 +296,7 @@ class Language:
 
     @property
     def names(self) -> frozenset:
-        """Every name the language provides: core names and builtins.
-
-        `program.free_names(entry) - program.language.names` is what a caller
-        must supply as `primitives` or `constants`.
-        """
+        """Every name the language provides: core names and builtins."""
         core = CORE_NAMES | (CORE_COLLECTION_NAMES if self.collections else frozenset())
         return core | frozenset(self.builtins)
 
@@ -707,7 +675,7 @@ def parse(source: str, language: Language | None = None) -> 'Program':
 
 @dataclass(frozen=True)
 class Program:
-    """A validated program. Immutable; `select` returns a new Program."""
+    """A validated program. Immutable."""
     source: str
     language: Language
     names: tuple                                   # top-level function names, in source order
@@ -732,34 +700,9 @@ class Program:
                     todo.append(name)
         return [name for name in self.names if name in seen]
 
-    def select(self, entry: str) -> 'Program':
-        """The entry plus every student function it references, transitively.
-
-        A missing entry gives an empty program. Line numbers in the result
-        refer to the result's own `source`.
-        """
-        parts = [ast.get_source_segment(self.source, self._defs[name].node) or ast.unparse(self._defs[name].node)
-                 for name in self._reach(entry)]
-        return parse("\n\n".join(parts) + ("\n" if parts else ""), self.language)
-
     def references(self, entry: str, name: str) -> bool:
         """Does `entry`, or a student function it reaches, mention the free name `name`?"""
         return any(name in self._defs[fn].free for fn in self._reach(entry))
-
-    def free_names(self, entry: str) -> frozenset:
-        """Every name `entry` needs from outside the program.
-
-        The free names (called functions, primitives, constants) of `entry`
-        and of the student functions it reaches, less the functions the
-        program defines. Names the language provides are included: subtract
-        `program.language.names` (core names and the language's builtins) to
-        get what must be supplied.
-        Empty for a missing entry.
-        """
-        found = set()
-        for fn in self._reach(entry):
-            found |= self._defs[fn].free
-        return frozenset(found - set(self._defs))
 
     def _calls(self, name: str) -> list:
         return [c for c in self._defs[name].free if c in self._defs]
@@ -2379,60 +2322,3 @@ def comment_facet(field: str, *, name: str = 'comments', label: str = "comments"
         return ['\n'.join((c.text, *c.context)) for c in comments(view.value(field), context=context)]
 
     return Facet(name, label, values, kind='text', group='code')
-
-
-# --------------------------------------------------------------------------
-# Functions in source, found from its lines (for splitting a question's code)
-# --------------------------------------------------------------------------
-
-_DEF_LINE = r'def\s+([A-Za-z_]\w*)\s*\('
-_FENCE_LINE = r'\s*```'
-_NAME = r'[A-Za-z_]\w*'
-
-
-def functions(source: str) -> tuple[dict[str, str], str]:
-    """The top-level functions in `source`, found from its lines alone, so code
-    that does not parse still splits: `({name: text}, rest)`. A function is a
-    `def` line at the left margin and the lines after it that are indented,
-    blank or comments; `rest` is every other line that is not blank (a Markdown
-    fence line is dropped). A name defined twice keeps both texts, in order."""
-    defs: dict[str, str] = {}
-    rest, current = [], None
-    for line in source.splitlines():
-        if re.match(_FENCE_LINE, line):
-            continue
-        m = re.match(_DEF_LINE, line)
-        if m:
-            current = m.group(1)
-            defs[current] = f"{defs[current].rstrip()}\n\n{line}" if current in defs else line
-        elif current is not None and (not line.strip() or line[0] in ' \t' or line.startswith('#')):
-            defs[current] += "\n" + line
-        else:
-            current = None
-            if line.strip():
-                rest.append(line)
-    return {name: text.rstrip() + "\n" for name, text in defs.items()}, "\n".join(rest)
-
-
-def calls(text: str, names) -> list:
-    """The `names` that a function's text (from `functions`) mentions outside
-    comments and its own `def` name, in order of first mention."""
-    lines = [line.split('#', 1)[0] for line in text.splitlines()]
-    if lines:
-        lines[0] = re.sub(_DEF_LINE, '(', lines[0], count=1)
-    return [n for n in dict.fromkeys(re.findall(_NAME, "\n".join(lines))) if n in names]
-
-
-def is_empty(text: str) -> bool:
-    """A function's text (from `functions`) that states nothing: after the `def`
-    line only `pass`, `...`, a docstring or comments. Parsed only, never run."""
-    code = [line.split('#', 1)[0].rstrip() for line in text.splitlines()]
-    code = [line for line in code if line.strip()]
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            tree = ast.parse("\n".join(code))
-    except (SyntaxError, ValueError, RecursionError, MemoryError):
-        return len(code) == 1 and code[0].endswith(':')         # a `def` line and nothing else
-    fn = tree.body[0] if len(tree.body) == 1 and type(tree.body[0]) is ast.FunctionDef else None
-    return fn is not None and all(_is_filler(s) or _is_docstring(s) for s in fn.body)
