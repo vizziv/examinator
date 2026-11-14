@@ -21,6 +21,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from .ask import Ask
+from .reading import Reader
+
+
 def one_line(text: str) -> str:
     """A value on one line: line breaks become single spaces."""
     if '\n' not in text and '\r' not in text:
@@ -70,7 +74,8 @@ class Field:
     """A named slot for one value read from paper.
 
     `region` is where to look (it may be left unset and given in the app).
-    `read` is a reader for this field alone (`Printed`, say); None, the
+    `read` is a reader (`core.reading.Reader`) for this field alone (`Printed`,
+    say); None, the
     default: the question's reader reads it with the question's other fields,
     and without one a person types it. A value is always text: one line,
     unless the field is `multiline` (None, the default: as its reader says,
@@ -230,13 +235,9 @@ class Check:
 
 @dataclass(frozen=True)
 class Question:
-    """A group: some fields and any number of checks. It has no state.
-
-    `apart`: kept apart from grading (the built-in group of identity fields,
-    `IDENTITY`): not one of `Exam.questions`, so no grid column, total, facets,
-    batch reading or place in the question order; it is reached by its own
-    name (`Exam.identity`, `Exam.group(IDENTITY)`), and its fields are fields
-    like any other."""
+    """A group: some fields and any number of checks. It has no state. (The
+    built-in group of identity fields, `IDENTITY`, is one kept apart from
+    grading: not one of `Exam.questions`; it is reached by its name.)"""
     id: str
     title: str
     pages: tuple[int, ...]                 # printed pages holding the answer
@@ -244,7 +245,6 @@ class Question:
     read: Any = None                       # reads the fields that have no reader of their own
     checks: tuple[Check, ...] = ()
     facets: tuple[Any, ...] = field(default=(), metadata={'describe': False})
-    apart: bool = field(default=False, metadata={'describe': False})
 
     @property
     def labels(self) -> tuple[str, ...]:
@@ -281,7 +281,8 @@ class Question:
         f = self.field(label)
         if f is None or f.multiline is not None:
             return bool(f and f.multiline)
-        return bool(getattr(self.reader_of(label), 'multiline', False))
+        reader = self.reader_of(label)
+        return reader is not None and reader.multiline
 
     def column(self, check: str) -> str:
         """The grid column of one check: the question id when it is the only one."""
@@ -303,7 +304,7 @@ def split_key(k: str) -> tuple[str, str]:
 
 IDENTITY = '@identity'      # the built-in group of identity fields (question ids never start with '@')
 PRINT_AREA = '@print_area'  # the print area, as a root of the definition (`Exam.roots`)
-ROSTER_FIELDS = ('name', 'id', 'email')     # what a roster row may hold (`core.identity`)
+ROSTER_FIELDS = ('name', 'id', 'email')     # a roster's columns, and the identity fields (`core.identity`)
 # What to ask about a roster column's field, when the exam does not say.
 ASKS = {'name': "the student's full name", 'id': "the student ID number",
         'email': "the student's email address"}
@@ -315,7 +316,6 @@ def identity_group(identity: Mapping[str, Field] | None) -> Question:
     handwriting, `core.ask.Ask`, unless it has a reader); any other column is a
     field with no region yet (drawn in the app: then it is read). The exam
     validates it as it does any question (`Exam.validate`)."""
-    from .ask import Ask
     identity = dict(identity or {})
     for col, f in identity.items():
         if col not in ROSTER_FIELDS:
@@ -324,7 +324,7 @@ def identity_group(identity: Mapping[str, Field] | None) -> Question:
             raise ValueError(f"identity: {col!r} maps to a Field labelled {col!r}")
     fields = [identity.get(col) or Field(col) for col in [*identity, *(c for c in ROSTER_FIELDS if c not in identity)]]
     fields = [f if f.read is not None else dataclasses.replace(f, read=Ask(ASKS[f.label])) for f in fields]
-    return Question(IDENTITY, "Names", (1,), tuple(fields), apart=True)
+    return Question(IDENTITY, "Names", (1,), tuple(fields))
 
 
 class Exam:
@@ -461,12 +461,10 @@ class Exam:
             if f.default is not None and (not isinstance(f.default, str) or (not q.multiline(f.label)
                                                                               and one_line(f.default) != f.default)):
                 raise ValueError(f"{q.id}: field {f.label!r}: a default is text (one line unless multiline)")
-            validate = getattr(f.read, 'validate', None)
-            if callable(validate):
-                validate(f"{q.id}: field {f.label!r}")
-        validate = getattr(q.read, 'validate', None)
-        if callable(validate):
-            validate(q.id)
+            if f.read is not None:
+                _reader(f.read, f"{q.id}: field {f.label!r}").validate(f"{q.id}: field {f.label!r}")
+        if q.read is not None:
+            _reader(q.read, q.id).validate(q.id)
         for c in q.checks:              # a check may check its configuration against the question
             validate = getattr(c.fn, 'validate', None)
             if callable(validate):
@@ -482,6 +480,12 @@ class Exam:
         if hit is None or hit[0] is not c:      # the entry keeps `c` alive, so its id is not reused
             hit = self._hashes[id(c)] = (c, digest(c.fn))
         return hit[1]
+
+
+def _reader(x: Any, what: str) -> Reader:
+    if not isinstance(x, Reader):
+        raise ValueError(f"{what}: a reader is a `Reader` (core.reading), not {type(x).__name__}")
+    return x
 
 
 # --- describing and hashing definitions --------------------------------------

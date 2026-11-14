@@ -72,7 +72,7 @@ def grade(exam, qid, answers, printing=None):
 
 def status(runner, sub, qid):
     q = runner.ws.exam.questions[qid]
-    return runner.sheet(sub).status(runner.ws.exam, q, q.check('check'))
+    return runner.ledger(sub).status(runner.ws.exam, q, q.check('check'))
 
 
 # --- the fixtures end to end ----------------------------------------------------------
@@ -152,7 +152,7 @@ def test_field_regions_hold_ink_on_the_blanks(exam, pkg, tmp_path):
     for alt in versions.VERSIONS:
         for q in exam.questions.values():
             for region in [f.region for f in q.fields]:
-                crop = Layout().crop(renderer.page(versions.blank(alt), region.page - 1), region)
+                crop = Layout().crop(renderer.page(versions.blank(alt), region.page - 1), region, exam.crop_pad)
                 assert np.asarray(crop.convert('L')).min() < 128, (alt, q.id, region)
 
 

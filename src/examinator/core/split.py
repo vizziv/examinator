@@ -84,7 +84,7 @@ import copy
 from collections import Counter
 from typing import Any, Callable, Mapping, Sequence
 
-Reader = Callable[[int], 'int | None']
+SheetReader = Callable[[int], 'int | None']
 
 REACH = 3        # how many sheets either side of an expected boundary a proposal looks at
 DOUBTS = {'short': "too few pages", 'long': "too many pages",
@@ -94,7 +94,7 @@ DOUBTS = {'short': "too few pages", 'long': "too many pages",
 
 # --- proposing ------------------------------------------------------------------
 
-def propose(n: int, length: int, read: Reader | None = None, *, anchor: int = 0,
+def propose(n: int, length: int, read: SheetReader | None = None, *, anchor: int = 0,
             fixed_first: bool = False, until: int | None = None) -> list[int]:
     """Starts of the submissions in sheets `0..n-1` (those before `until`).
 
@@ -204,7 +204,7 @@ def readings(plan: Mapping) -> dict[int, int | None]:
     return {int(k): v for k, v in (plan.get('readings') or {}).items()}
 
 
-def _stored(plan: Mapping) -> Reader:
+def _stored(plan: Mapping) -> SheetReader:
     got = plan.get('readings') or {}
     return lambda i: got.get(str(i))
 
@@ -324,7 +324,7 @@ def new_plan(n: int, length: int, *, anchor: int = 0) -> dict:
     return guess({'length': length, 'anchor': anchor, 'readings': {}, 'sheets': [{'i': i} for i in range(n)]})
 
 
-def _reader(plan: dict, read: Reader | None = None) -> Reader:
+def _reader(plan: dict, read: SheetReader | None = None) -> SheetReader:
     """Stored readings first; `read` (if any) for the rest, recorded in the plan."""
     store = plan.setdefault('readings', {})
 
@@ -339,7 +339,7 @@ def _reader(plan: dict, read: Reader | None = None) -> Reader:
     return get
 
 
-def guess(plan: Mapping, read: Reader | None = None) -> dict:
+def guess(plan: Mapping, read: SheetReader | None = None) -> dict:
     """Guess again every start and drop nobody has spoken for, from the stored
     readings and `read` (recorded). Sheets that are `said` are never changed.
 
@@ -430,7 +430,7 @@ def _unverify(plan: dict, before: Mapping[int, tuple]) -> dict:
     return plan
 
 
-def _gap(sheets: Sequence[int], length: int, read: Reader) -> dict | None:
+def _gap(sheets: Sequence[int], length: int, read: SheetReader) -> dict | None:
     """In a submission one sheet short of `length` (or long), the page missing (or
     the sheet extra), found by halves: the first sheet that does not read as its
     position; proposed only if its neighbours' readings agree, and not where the
@@ -577,7 +577,7 @@ def drop(plan: dict, sheet: int) -> None:
 
 
 @_edit
-def restore(plan: dict, sheet: int) -> None:
+def put_back(plan: dict, sheet: int) -> None:
     """Put a dropped sheet back, into the submission whose run it is in."""
     _say(plan, _pos(plan, sheet), drop=False)
 

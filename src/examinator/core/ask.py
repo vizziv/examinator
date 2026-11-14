@@ -21,10 +21,7 @@ expects is caught where it matters: a check that has no key for it is
 undecided, and says so. A field with no region is not read. Every read asks
 the model; a read happens only when a person asks for one.
 
-A reader is any object with `read(ctx, fields) -> {label: Reading or text}`
-(a label left out is not read); it may also have `vouches(field, reading) -> bool`,
-`needs_region` and, for synthetic workspaces, `script(fields, given) -> {step:
-reply}` (`examinator.synth`).
+A reader is a `core.reading.Reader`.
 """
 from __future__ import annotations
 
@@ -33,7 +30,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
-from .reading import Reading, field_object, json_object, reading
+from .reading import Reader, Reading, field_object, json_object, reading
 
 if TYPE_CHECKING:
     from .context import ReadContext
@@ -60,7 +57,7 @@ other than the printed text in this image."""
 
 
 @dataclass(frozen=True)
-class Ask:
+class Ask(Reader):
     """Read a field's value by asking the model `ask` about its region (see the module)."""
     ask: str
     prompt: str = HANDWRITTEN_PROMPT
@@ -88,14 +85,10 @@ class Ask:
         reply states none."""
         return reading(json_object(complete(self.text(), images=[image], expect='json')))
 
-    def call(self, complete: Callable[..., str], image: Any) -> str | None:
-        """The text read (intake's landmarks), or None."""
-        got = self.reading(complete, image)
-        return got.text if got is not None else None
-
     def vouches(self, f: 'Field', got: Reading) -> bool:
-        """A person need not verify this reading."""
-        return not self.verify and bool(got.text.strip()) and got.review is None
+        """A person need not verify this reading (one the model was unsure of needs
+        review whatever a reader says: `status.Value.read`)."""
+        return not self.verify and bool(got.text.strip())
 
     def read(self, ctx: 'ReadContext', fields: Sequence['Field']) -> dict[str, Reading]:
         out = {}

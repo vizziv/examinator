@@ -6,9 +6,8 @@ only when its content changes:
 - a **field value** (`Value`): text, who verified it (nobody, the reader
   that vouched for it, or a person), and whether it needs review (`review`: a
   note, possibly empty, from the reader that was unsure or a person who
-  flagged it). Its states: not read (no row), review, unverified, verified. A
-  value that needs review is never verified: verifying it, or a person's edit,
-  clears the review.
+  flagged it: `flagged`). Its states: not read (no row), review, unverified,
+  verified. The small changes to it are `Value`'s methods.
 - a **result** (`Stored`): a check's proposed grade, its evidence, which
   fields it read at which revisions, and which definition computed it. It is
   current while every field it read is at that revision and the definition
@@ -37,11 +36,15 @@ Pure functions over stored rows; nothing here is derived from evidence.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Mapping
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from .defs import DEFAULT, Check, Exam, Grade, Question, key
+from .reading import Reading
 from .store import Row
+
+if TYPE_CHECKING:
+    from .store import Store
 
 STATES = ('decided', 'decided_outdated', 'to_decide', 'not_run', 'outdated', 'review', 'unverified', 'graded')
 COUNTING = ('decided', 'graded')
@@ -56,18 +59,38 @@ LABELS = {
 
 @dataclass(frozen=True)
 class Value:
-    """One field's stored value."""
+    """One field's stored value, and the small changes to it (MODEL.md), each a pure
+    function to the value that replaces it. The revision is the store's: a change
+    that keeps the text keeps it.
+
+    A value that needs review is never verified (the one place that holds:
+    `__post_init__`). What a person said about a value (verified it, or flagged it)
+    is never undone by a reader: a read of the same text changes nothing a person
+    set; a read of another text is a new value, its state the reader's."""
     text: str
-    rev: int
+    rev: int = 0
     verified: str | None = None       # None, 'reader' or 'person'
     by: str | None = None             # the person who verified it
     author: str | None = None         # who wrote this text (a person), None if a reader
     updated_at: str = ''
     review: str | None = None         # needs review: a note (possibly ''); None if not
+    flagged: str | None = None        # who asked for the review: 'reader' or 'person'
+
+    def __post_init__(self):
+        if self.review is not None and self.verified is not None:
+            object.__setattr__(self, 'verified', None)
+            object.__setattr__(self, 'by', None)
+        if self.review is None and self.flagged is not None:
+            object.__setattr__(self, 'flagged', None)
 
     @property
     def is_verified(self) -> bool:
-        return self.verified in VERIFIERS and self.review is None
+        return self.verified in VERIFIERS
+
+    @property
+    def protected(self) -> bool:
+        """A person verified it: a read leaves it alone unless told otherwise."""
+        return self.verified == 'person'
 
     @property
     def state(self) -> str:
@@ -75,15 +98,44 @@ class Value:
         return 'review' if self.review is not None else 'verified' if self.is_verified else 'unverified'
 
     @staticmethod
+    def read(got: Reading, vouched: bool, cur: 'Value | None' = None) -> 'Value':
+        """A reader's reading of a field whose value is `cur`: for review if the
+        reader was unsure, else verified by the reader if it `vouched`, else
+        unverified. The same text keeps whatever a person said about it."""
+        if cur is not None and cur.text == got.text and (cur.protected or cur.flagged == 'person'):
+            return cur
+        return Value(got.text, verified='reader' if vouched else None, review=got.review,
+                     flagged='reader' if got.review is not None else None)
+
+    @staticmethod
+    def set(text: str, author: str | None) -> 'Value':
+        """A person's value: verified by them."""
+        return Value(text, verified='person', by=author, author=author)
+
+    def verify(self, author: str | None) -> 'Value':
+        """Verified by a person as it stands (any review cleared)."""
+        return replace(self, verified='person', by=author, review=None)
+
+    def unverify(self) -> 'Value':
+        """Nobody stands behind it any more (a review stays)."""
+        return replace(self, verified=None, by=None)
+
+    def flag(self, note: str | None) -> 'Value':
+        """Flagged by a person for review, with a note (possibly ''): unverified. With
+        `note=None`, the flag taken off (it stays unverified)."""
+        return replace(self, review=note, flagged='person' if note is not None else None)
+
+    @staticmethod
     def of(row: Row) -> 'Value':
         b = row.body or {}
         review = b.get('review')
         return Value(str(b.get('text') or ''), row.rev, b.get('verified'), b.get('by'),
                      row.author if row.origin == 'manual' else None, row.updated_at,
-                     str(review) if review is not None else None)
+                     str(review) if review is not None else None, b.get('flagged'))
 
     def body(self) -> dict:
-        return {'text': self.text, 'verified': self.verified, 'by': self.by, 'review': self.review}
+        return {'text': self.text, 'verified': self.verified, 'by': self.by, 'review': self.review,
+                'flagged': self.flagged}
 
 
 @dataclass(frozen=True)
@@ -223,24 +275,37 @@ def total(exam: Exam, statuses: Mapping[tuple[str, str], Status]) -> tuple[float
     return points, complete
 
 
+KINDS = ('value', 'result', 'decision')
+
+
 @dataclass(frozen=True)
-class Sheet:
-    """Everything stored for one submission, typed: what statuses need."""
-    values: dict[str, Value]
-    results: dict[str, Stored]
-    decisions: dict[str, Decision]
+class Ledger:
+    """Everything stored for one submission, typed: what statuses need. Loaded
+    only by `load` (a result without its display blocks)."""
+    values: dict[str, Value] = field(default_factory=dict)
+    results: dict[str, Stored] = field(default_factory=dict)
+    decisions: dict[str, Decision] = field(default_factory=dict)
 
     @staticmethod
-    def of(rows: list[Row]) -> 'Sheet':
-        values, results, decisions = {}, {}, {}
-        for r in rows:
+    def load(store: 'Store', submission: str | None = None, *, kinds: Sequence[str] = KINDS,
+             prefix: str | None = None) -> dict[str, 'Ledger']:
+        """Every submission's ledger (or one's) that has a row, in one query: rows of
+        `kinds` whose name starts with `prefix`."""
+        out: dict[str, Ledger] = {}
+        for r in store.all(kinds=kinds, drop='$.blocks', submission=submission, prefix=prefix):
+            got = out.setdefault(r.submission, Ledger())
             if r.kind == 'value':
-                values[r.name] = Value.of(r)
+                got.values[r.name] = Value.of(r)
             elif r.kind == 'result':
-                results[r.name] = Stored.of(r)
-            elif r.kind == 'decision':
-                decisions[r.name] = Decision.of(r)
-        return Sheet(values, results, decisions)
+                got.results[r.name] = Stored.of(r)
+            else:
+                got.decisions[r.name] = Decision.of(r)
+        return out
+
+    @staticmethod
+    def of(store: 'Store', submission: str, *, kinds: Sequence[str] = KINDS) -> 'Ledger':
+        """One submission's ledger (empty if nothing is stored)."""
+        return Ledger.load(store, submission, kinds=kinds).get(submission) or Ledger()
 
     def status(self, exam: Exam, q: Question, c: Check) -> Status:
         k = key(q.id, c.name)

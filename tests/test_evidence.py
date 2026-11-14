@@ -11,7 +11,8 @@ from examinator.core.result import Judgement
 from examinator.core.result import BadResult, Record, image_digest, settle
 from examinator.core.runner import Runner
 from examinator.core.workspace import Workspace
-from examinator.std.blocks import MAX_EVIDENCE, MAX_IMAGE, Code, Details, Image, Note, Table
+from examinator.core.result import MAX_EVIDENCE, MAX_IMAGE
+from examinator.std.blocks import Code, Details, Image, Note, Table
 
 from conftest import workspace
 

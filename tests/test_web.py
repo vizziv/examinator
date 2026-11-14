@@ -82,7 +82,7 @@ class Site:
 
     def state(self, sub, q, check='check'):
         question = self.exam.questions[q]
-        return self.runner.sheet(sub).status(self.exam, question, question.check(check))
+        return self.runner.ledger(sub).status(self.exam, question, question.check(check))
 
     def run_all(self, sub='s1', verify_printing=True):
         """Read 'p' and 'a' and run a's checks; with `verify_printing`, verify the printing,
@@ -518,7 +518,7 @@ def test_a_region_for_this_submission_only(site):
     assert site.value('s1', 'p/c1').text == 'one'                 # no value changes
     assert site.ws.layers('s2').question('p').field('c1').region == site.exam.questions['p'].fields[0].region
     html = site.get('/s/s1/p').text
-    layout = site.ws.layout('s1')
+    layout = site.ws.layers('s1').layout
     from examinator import Region
     want = ','.join(f'{v:.4f}' for v in Layout(layout.print_area).box(Region(1, 0, 0, 500, 100), 12))
     assert crop(html, 'p/c1')['box'] == want
@@ -627,7 +627,7 @@ def test_one_submissions_own_values(site):
     rev = site.ws.store.overrides(OWN)['a/fields/x/region'].rev
     assert own('a/fields/x/region', None, rev).status_code == 200
     assert own('@print_area', [100, 100, 900, 900]).status_code == 200
-    assert site.ws.layout('s1') == Layout((100, 100, 900, 900)) and site.ws.layout('s2') == Layout((0, 0, 1000, 1000))
+    assert site.ws.layers('s1').layout == Layout((100, 100, 900, 900)) and site.ws.layers('s2').layout == Layout((0, 0, 1000, 1000))
 
 
 def test_print_area_at_each_scope(site):
@@ -660,7 +660,7 @@ def test_print_area_at_each_scope(site):
     assert pa(SCAN, None, scan_rev).status_code == 200
     r = pa('', [5, 5, 995, 995], None)
     assert r.json()['levels']['value'] == [5, 5, 995, 995] and site.exam.print_area == (5, 5, 995, 995)
-    assert site.ws.layout('s2').print_area == (5, 5, 995, 995)
+    assert site.ws.layers('s2').layout.print_area == (5, 5, 995, 995)
     assert pa('', None, r.json()['rev']).json()['levels']['value'] == list(site.exam.base['@print_area'])
     assert pa(OWN, [900, 0, 100, 1000], None).status_code == 400
     assert pa(OWN, [0, 0, 1000], None).status_code == 400

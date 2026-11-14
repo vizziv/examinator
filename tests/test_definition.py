@@ -9,6 +9,8 @@
 from pathlib import Path
 
 import pytest
+
+from examinator.core.reading import Reader
 from PIL import Image
 
 from examinator import Ask, Exam, Field, Printed, Region, cli, load_exam, synth
@@ -65,7 +67,7 @@ def test_an_override_is_refused_as_the_package_would_be(tmp_path, path, value, b
     assert ws.store.all_overrides() == []
     # stored anyway (say, before the package changed): skipped on opening, with the same reason
     ws.store.set_override(path, value, author='ta')
-    assert [(s.path, s.reason) for s in ws.refresh()] == [(path, str(by_package.value))]
+    assert [(s.path, s.reason) for s in ws.apply_overrides()] == [(path, str(by_package.value))]
     ws.close()
 
 
@@ -85,11 +87,13 @@ def test_the_package_goes_through_the_same_validation():
     with pytest.raises(ValueError, match="does not parse"):
         tiny(key="(((")
     # the identity group is a question like any: a reader without `validate` is fine ...
-    class Plain:
+    class Plain(Reader):
         def read(self, ctx, fields):
             return {f.label: "x" for f in fields}
     exam = Exam('t', pages=1, identity={'name': Field('name', Region(1, 0, 0, 10, 10), read=Plain())})
     assert isinstance(exam.identity.field('name').read, Plain)
+    with pytest.raises(ValueError, match="a reader is a `Reader`"):          # what a reader is, stated once
+        Exam('t', pages=1).question('q', pages=[1], fields=[Field('x')], read=lambda ctx, fields: {})
     # ... and the rules for every field hold for it
     with pytest.raises(ValueError, match="@identity: field 'id': a default is text"):
         Exam('t', pages=1, identity={'id': Field('id', default="1\n2")})

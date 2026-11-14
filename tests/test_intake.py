@@ -9,7 +9,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from examinator import Exam, Landmark, Region, load_exam, synth
-from examinator.core import identity, intake, overrides, split
+from examinator.core import identity, intake, overrides, roster, split
 from examinator.core.store import Conflict, Made
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
@@ -368,7 +368,7 @@ def test_accept_asks_about_what_a_person_said_and_says_what_goes(stacked):
     ws, paths, _ = stacked
     one, _ = intake.add_source(ws, paths[0])
     intake.accept(ws, one.id)
-    identity.pick(ws, 's0002', identity.typed("Someone Named"), author='t', expect_rev=None)
+    identity.pick(ws, 's0002', roster.typed("Someone Named"), author='t', expect_rev=None)
     own = overrides.scope(overrides.SUBMISSION, 's0003')
     overrides.set(ws, '@print_area', [100, 100, 900, 900], scope=own, author='t')
     ws.store.write('s0003', 'parity/B', 'value', {'text': 'odd'}, origin='auto')        # read, nobody verified
@@ -386,7 +386,7 @@ def test_accept_asks_about_what_a_person_said_and_says_what_goes(stacked):
         intake.accept(ws, one.id)
     assert e.value.submissions == ['s0002', 's0003']
     intake.accept(ws, one.id, allow=['s0002', 's0003'])
-    assert not ws.store.rows('s0001', 'value')                            # rewritten: read again later
+    assert not ws.store.all(submission='s0001', kinds=['value'])                            # rewritten: read again later
     assert identity.who(ws, 's0002')['name'] == "Someone Named"          # rewritten: the pick stays
     assert not ws.store.overrides(own)                                    # removed: its boxes go
     # a rewrite: its own boxes and what was read go, what a person verified stays
@@ -400,7 +400,7 @@ def test_accept_asks_about_what_a_person_said_and_says_what_goes(stacked):
                                                  'said': ['values', 'name', 'regions']}]     # typed counts too
     assert intake.accept(ws, one.id, allow=['s0002'])['rewritten'] == ['s0002']
     assert not ws.store.overrides(mine)
-    assert set(ws.store.rows('s0002', 'value')) == {'parity/A'}
+    assert {r.name for r in ws.store.all(submission='s0002', kinds=['value'])} == {'parity/A'}
 
 
 def test_ids_are_never_reused(stacked):
@@ -424,13 +424,13 @@ def test_roster_and_names(stacked):
     assert ws.store.submission('s0003').name == "Casey Stubbs"
     assert ws.sync() == 0 and ws.store.submission('s0003').email == p['email']
     assert ws.store.submission('s0003').student == p['id']
-    rev = identity.pick(ws, 's0004', identity.typed("Someone Unlisted"), author='t', expect_rev=None)['rev']
+    rev = identity.pick(ws, 's0004', roster.typed("Someone Unlisted"), author='t', expect_rev=None)['rev']
     assert ws.store.submission('s0004').name == "Someone Unlisted"
     identity.pick(ws, 's0004', None, author='t', expect_rev=rev)
     assert ws.store.submission('s0004').name == ""
     with pytest.raises(ValueError):
-        identity.parse_roster("Email\nx@example.invalid\n")
-    assert identity.parse_roster("First Name,Last Name\nAda,Lovelace\n")[0]['name'] == "Ada Lovelace"
+        roster.parse_roster("Email\nx@example.invalid\n")
+    assert roster.parse_roster("First Name,Last Name\nAda,Lovelace\n")[0]['name'] == "Ada Lovelace"
 
 
 def test_handed_pdfs_wait_on_names_unless_the_file_name_carries_an_id(tmp_path, toy):
@@ -640,17 +640,17 @@ def test_print_area_resolves_submission_scan_exam_package(tmp_path):
     try:
         ws.store.set_made(Made('s1', 'src1', (0,), (0,), 'now', 's1.pdf'))
         ws.store.set_made(Made('s2', 'src1', (1,), (0,), 'now', 's2.pdf'))
-        win = lambda sid: ws.layout(sid).print_area
+        win = lambda sid: ws.layers(sid).layout.print_area
         at = lambda level, id='': overrides.scope(level, id)
         put = lambda value, scope, **kw: overrides.set(ws, '@print_area', value, scope=scope, author=None, **kw)
         assert ws.layers('s1').source == 'src1' and ws.layers('handed').source is None
         assert win('s1') == win('handed') == (10, 20, 990, 980)              # the package's
         put((0, 0, 1000, 1000), '')
         assert win('s1') == win('handed') == (0, 0, 1000, 1000)              # every submission's
-        assert ws.source_layout('src1').print_area == (0, 0, 1000, 1000)
+        assert ws.layers(source='src1').layout.print_area == (0, 0, 1000, 1000)
         put((30, 30, 900, 900), at('source', 'src1'), expect_rev=None)
         assert win('s1') == win('s2') == (30, 30, 900, 900)                  # the scan's, for all from it
-        assert ws.source_layout('src1') == Layout((30, 30, 900, 900))     # and its sheets, for intake
+        assert ws.layers(source='src1').layout == Layout((30, 30, 900, 900))     # and its sheets, for intake
         assert win('handed') == (0, 0, 1000, 1000)                           # no scan: no such level
         put((40, 40, 800, 800), at('submission', 's1'))
         assert win('s1') == (40, 40, 800, 800) and win('s2') == (30, 30, 900, 900)

@@ -21,12 +21,13 @@ import functools
 from dataclasses import dataclass, replace
 from typing import AbstractSet, Any, Mapping, Protocol, Sequence
 
+from ..model.client import ModelError
 from .context import BadOutput, CheckContext, ReadContext, Unavailable
 from .defs import DEFAULT, Exam, Field, Grade, Question, key, one_line
-from .reading import Reading
+from .reading import Reader, Reading
 from .isolate import CheckTimeout, Pool, PoolClosed
 from .result import BadResult, Undecided, settle, undecided
-from .status import Decision, Sheet, Stored, Value, current
+from .status import Decision, Ledger, Stored, Value, current
 from .store import ANY, Conflict
 from .workspace import Workspace
 
@@ -68,18 +69,18 @@ class Outcome:
     submission: str
     question: str
     step: str            # 'read', or a check's name
-    status: str          # 'done' | 'blocked' | 'failed' | 'discarded' | 'skipped'
+    status: str          # 'done' | 'blocked' | 'failed' | 'discarded'
     detail: str = ""
     asked: int = 0       # a read: the fields it asked the reader for ...
     read: int = 0        # ... and how many got a value (the rest stay not read)
 
     @property
     def ok(self) -> bool:
-        return self.status in ('done', 'skipped')
+        return self.status == 'done'
 
 
-class Services:
-    """What a reader's context reaches: pages and crops from the workspace, and the model."""
+class WorkspaceServices:
+    """`context.Services` from a workspace: what a reader's context reaches: pages and crops from the workspace, and the model."""
 
     def __init__(self, workspace: Workspace, model: Model | None):
         self.ws, self._model = workspace, model
@@ -101,16 +102,16 @@ class Services:
 def structural(e: Exception) -> str:
     """A failure as graders may see it: model errors are structural by contract;
     anything else might quote student text, so only its type."""
-    if isinstance(e, (Unavailable, BadOutput)) or type(e).__name__ == 'ModelError':
+    if isinstance(e, (Unavailable, BadOutput, ModelError)):
         return str(e)
     return type(e).__name__
 
 
-def looks_at(reader: Any, f: Field, pages: Sequence[int]) -> tuple[int, ...]:
+def looks_at(reader: Reader, f: Field, pages: Sequence[int]) -> tuple[int, ...]:
     """The pages reading field `f` with `reader` looks at: its region's page for a
     reader of regions (`needs_region`; none without a region), else all of the
     question's `pages`."""
-    if getattr(reader, 'needs_region', False):
+    if reader.needs_region:
         return (f.region.page,) if f.region is not None else ()
     return tuple(pages)
 
@@ -159,10 +160,10 @@ def to_read(q: Question, values: Mapping[str, Value], gone: AbstractSet[int], *,
             pages = looks_at(reader, f, q.pages)
             reason = (NOT_ASKED if labels is not None and f.label not in labels
                       else PRESENT if missing_only and v is not None
-                      else PROTECTED if v is not None and v.verified == 'person' and not include_protected
+                      else PROTECTED if v is not None and v.protected and not include_protected
                       else NO_REGION if not pages           # a question always has pages
                       else PAGE_MISSING if gone.intersection(pages)
-                      else NO_MODEL if not model and getattr(reader, 'uses_model', True)
+                      else NO_MODEL if not model
                       else None)
             if reason is None:
                 mine.append(f)
@@ -173,8 +174,8 @@ def to_read(q: Question, values: Mapping[str, Value], gone: AbstractSet[int], *,
     return Reads(q, tuple(groups), why)
 
 
-def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields: Sequence[Field],
-               services: Services) -> dict[str, Reading]:
+def read_group(submission: str, q: Question, reader: Any, fields: Sequence[Field],
+               services: WorkspaceServices) -> dict[str, Reading]:
     """One reader on some of a question's fields (with this submission's regions):
     `{label: Reading}` for the fields it read (a reader may return plain text).
     Model errors and bad output raise."""
@@ -200,7 +201,7 @@ def try_check(exam: Exam, qid: str, check: str, values: Mapping[str, str]) -> di
     result; anything else raises (`BadResult` for evidence that does not fit)."""
     q = exam.questions[qid]
     c = q.check(check)
-    ctx = CheckContext(submission='test', question=q, check=check,
+    ctx = CheckContext(question=q, check=check,
                        values={k: (i + 1, v) for i, (k, v) in enumerate(values.items())}, fields=exam.fields())
     try:
         out = settle(c.points, c.fn(ctx))
@@ -218,7 +219,7 @@ class Runner:
         self.model = model
         path = workspace.exam.path
         self.pool = pool if pool is not None else (Pool(path) if path else None)
-        self._services = Services(workspace, model)
+        self._services = WorkspaceServices(workspace, model)
 
     def close(self) -> None:
         if self.pool is not None:
@@ -226,11 +227,11 @@ class Runner:
 
     # --- what is stored -------------------------------------------------------
 
-    def sheet(self, submission: str) -> Sheet:
-        return Sheet.of(self.store.all(submission=submission, kinds=('value', 'result', 'decision'), drop='$.blocks'))
+    def ledger(self, submission: str) -> Ledger:
+        return Ledger.of(self.store, submission)
 
     def values(self, submission: str) -> dict[str, Value]:
-        return {k: Value.of(r) for k, r in self.store.rows(submission, 'value').items()}
+        return Ledger.of(self.store, submission, kinds=('value',)).values
 
     # --- read -------------------------------------------------------------------
 
@@ -261,17 +262,16 @@ class Runner:
         q = plan.question
         for reader, targets in plan.groups:
             try:
-                got = read_group(self.ws, submission, q, reader, targets, self._services)
+                got = read_group(submission, q, reader, targets, self._services)
             except Exception as e:
                 out('failed', structural(e))
                 continue
-            vouches = getattr(reader, 'vouches', None)
             lost = []
             for f in targets:
                 if f.label not in got:
                     continue
                 r = got[f.label] if q.multiline(f.label) else replace(got[f.label], text=one_line(got[f.label].text))
-                vouched = bool(callable(vouches) and vouches(f, r))
+                vouched = reader.vouches(f, r)
                 if not self._put_read(submission, qid, f.label, r, vouched, include_protected):
                     lost.append(f.label)
             silent = [f.label for f in targets if f.label not in got]
@@ -286,30 +286,28 @@ class Runner:
         k = key(qid, label)
         row = self.store.get(submission, k, 'value')
         cur = Value.of(row) if row is not None else None
-        if cur is not None and cur.verified == 'person' and not include_protected:
+        if cur is not None and cur.protected and not include_protected:
             return True
-        verified = 'reader' if vouched and got.review is None else None
         try:
-            if cur is not None and cur.text == got.text:       # the same value: same revision
-                if cur.verified == 'person' and cur.review is None:
-                    return True
-                self.store.write(submission, k, 'value',
-                                 replace(cur, verified=verified, by=None, review=got.review).body(),
-                                 origin='auto', expect_rev=cur.rev, keep_rev=True)
-            else:
-                self.store.write(submission, k, 'value', Value(got.text, 0, verified, review=got.review).body(),
-                                 origin='auto', expect_rev=cur.rev if cur else None)
+            self._write(submission, k, cur, Value.read(got, vouched, cur), origin='auto',
+                        expect_rev=cur.rev if cur else None)
         except Conflict:
             return False
         return True
+
+    def _write(self, submission: str, k: str, cur: Value | None, new: Value, *, origin: str,
+               author: str | None = None, expect_rev: Any) -> Value:
+        """Store a field's new value; it keeps the revision while its text is unchanged."""
+        return Value.of(self.store.write(submission, k, 'value', new.body(), origin=origin, author=author,
+                                         expect_rev=expect_rev, keep_rev=cur is not None and cur.text == new.text))
 
     # --- compute ----------------------------------------------------------------
 
     def compute(self, submission: str, qid: str, check: str) -> Outcome:
         """Run one check on the current values and store its result."""
         exam = self.ws.exam
-        q = exam.questions[qid]
-        c = q.check(check)
+        q = exam.questions.get(qid)
+        c = q.check(check) if q is not None else None
 
         def out(status, detail=""):
             return Outcome(submission, qid, check, status, detail)
@@ -324,10 +322,10 @@ class Runner:
         try:
             if c.isolate and self.pool is not None:
                 got = self.pool.call(qid, check, {
-                    'submission': submission, 'values': {k: list(v) for k, v in values.items()},
+                    'values': {k: list(v) for k, v in values.items()},
                     'overrides': exam.overrides}, timeout, reads)
             else:
-                ctx = CheckContext(submission=submission, question=q, check=check, values=values,
+                ctx = CheckContext(question=q, check=check, values=values,
                                    fields=exam.fields(), reads=reads)
                 got = settle(c.points, c.fn(ctx))
         except (Undecided, BadResult) as e:
@@ -356,17 +354,17 @@ class Runner:
         question has a value (stored, or its default). So a check is 'not run' only
         while its question has a field not read. Never touches a value or a decision.
         Called after anything that may leave such a check (`refresh` in MODEL.md)."""
-        sheet, exam = self.sheet(submission), self.ws.exam
+        ledger, exam = self.ledger(submission), self.ws.exam
         outs = []
         for q in exam.questions.values():
             for c in q.checks:
                 if c.fn is None:
                     continue
-                stored = sheet.results.get(key(q.id, c.name))
+                stored = ledger.results.get(key(q.id, c.name))
                 if stored is None:
-                    if not all(key(q.id, f.label) in sheet.values or f.default is not None for f in q.fields):
+                    if not all(key(q.id, f.label) in ledger.values or f.default is not None for f in q.fields):
                         continue
-                elif current(stored, sheet.values, defn=exam.check_hash(q, c), code=exam.code_hash):
+                elif current(stored, ledger.values, defn=exam.check_hash(q, c), code=exam.code_hash):
                     continue
                 outs.append(self.compute(submission, q.id, c.name))
         return outs
@@ -395,11 +393,8 @@ class Runner:
         if not self.ws.exam.group(qid).multiline(label):
             text = one_line(text)
         row = self.store.get(submission, k, 'value')
-        cur = Value.of(row) if row is not None else None
-        keep = cur is not None and cur.text == text
-        new = Value(text, 0, 'person', author)
-        return Value.of(self.store.write(submission, k, 'value', new.body(), origin='manual', author=author,
-                                         expect_rev=expect_rev, keep_rev=keep))
+        return self._write(submission, k, Value.of(row) if row is not None else None, Value.set(text, author),
+                           origin='manual', author=author, expect_rev=expect_rev)
 
     @_in_words
     def unset(self, submission: str, qid: str, label: str, *, expect_rev: Any = ANY) -> None:
@@ -414,20 +409,16 @@ class Runner:
         """Verify the value as it stands, which clears any review (or, `verified=False`,
         unverify it). Same revision."""
         cur, row = self._current(submission, qid, label, expect_rev)
-        new = replace(cur, verified='person' if verified else None, by=author if verified else None,
-                      review=None if verified else cur.review)
-        return Value.of(self.store.write(submission, row.name, 'value', new.body(), origin=row.origin,
-                                         author=row.author, expect_rev=expect_rev, keep_rev=True))
+        return self._write(submission, row.name, cur, cur.verify(author) if verified else cur.unverify(),
+                           origin=row.origin, author=row.author, expect_rev=expect_rev)
 
     @_in_words
     def review(self, submission: str, qid: str, label: str, *, note: str | None, expect_rev: int) -> Value:
         """Flag the value for review with a note (possibly ''), which unverifies it; or,
         `note=None`, take the flag off (it stays unverified). Same revision."""
         cur, row = self._current(submission, qid, label, expect_rev)
-        new = replace(cur, review=note, verified=None if note is not None else cur.verified,
-                      by=None if note is not None else cur.by)
-        return Value.of(self.store.write(submission, row.name, 'value', new.body(), origin=row.origin,
-                                         author=row.author, expect_rev=expect_rev, keep_rev=True))
+        return self._write(submission, row.name, cur, cur.flag(note), origin=row.origin, author=row.author,
+                           expect_rev=expect_rev)
 
     def _current(self, submission, qid, label, expect_rev):
         self._field(qid, label)

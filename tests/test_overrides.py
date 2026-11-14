@@ -6,7 +6,7 @@ import pytest
 from examinator import Check, Exam, Field, Printed, Region, load_exam
 from examinator.core import overrides
 from examinator.core.defs import IDENTITY
-from examinator.core.as_python import describe_changes
+from examinator.core.overrides import describe_changes
 from examinator.core.runner import Runner
 from examinator.core.store import Conflict
 from examinator.core.workspace import Workspace
@@ -58,7 +58,7 @@ def kenv(tmp_path):
 
 def status(runner, sid, qid, check='check'):
     q = runner.ws.exam.questions[qid]
-    st = runner.sheet(sid).status(runner.ws.exam, q, q.check(check))
+    st = runner.ledger(sid).status(runner.ws.exam, q, q.check(check))
     return st.state, st.value
 
 
@@ -209,7 +209,7 @@ def test_skipped_overrides_are_reported_at_every_scope(tmp_path):
         ws.store.set_override('gone/pages', [1], scope='submission:s2', author='ta')
         ws.store.set_override('@print_area', [5, 5, 4, 4], scope='source:src9', author='ta')
         ws.store.set_override('a/fields/y/region', [9, 0, 0, 10, 10], author='ta')
-        ws.refresh()
+        ws.apply_overrides()
         got = {(s.scope, s.path) for s in ws.skipped_overrides()}
         assert got == {('submission:s1', 'a/fields/x/region'), ('submission:s2', 'gone/pages'),
                        ('source:src9', '@print_area'), ('', 'a/fields/y/region')}
@@ -446,7 +446,7 @@ def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
     with pytest.raises(ValueError):
         put('a/fields/x/region', [1, 2, 2, 8, 8], SRC)
     # the print area: the submission's, its scan's, the exam's, the package's
-    layout = lambda sid: ws.layout(sid).print_area
+    layout = lambda sid: ws.layers(sid).layout.print_area
     assert layout('s1') == layout('s2') == (0, 0, 1000, 1000)
     put('@print_area', [5, 5, 995, 995], '')
     assert layout('s1') == layout('s2') == (5, 5, 995, 995)

@@ -23,6 +23,10 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from .context import CheckContext
+from .defs import load_exam
+from .overrides import apply
+from .result import BadResult, Record, Undecided, settle
 
 LOAD_TIMEOUT = 120.0     # seconds for a new worker to import the exam package
 
@@ -94,7 +98,7 @@ class Pool:
         """Run one check in a worker and return its stored form (`result.settle`,
         settled in the worker; it crosses the pipe as `Record.to_json`).
 
-        `payload` holds the context: submission, values ({key: [rev, text]})
+        `payload` holds the context: values ({key: [rev, text]})
         and the exam's applied `overrides`. What the check read is
         added to `reads`, whatever the outcome. Raises `CheckTimeout`,
         `CheckCrash`, `Undecided` or `BadResult`.
@@ -123,7 +127,6 @@ class Pool:
         reads.update(reply.get('reads') or {})
         if 'error' in reply:
             raise CheckCrash(reply['error'], reply.get('detail', ""))
-        from .result import BadResult, Record, Undecided
         if 'undecided' in reply:
             raise Undecided(reply['undecided'])
         if 'bad' in reply:
@@ -140,10 +143,6 @@ class Pool:
 
 
 def _worker(exam_path: str) -> None:
-    from .context import CheckContext
-    from .defs import load_exam
-    from .overrides import apply
-    from .result import BadResult, Undecided, settle
 
     out = os.fdopen(os.dup(sys.stdout.fileno()), 'wb')
     sys.stdout = sys.stderr            # stray prints must not corrupt the protocol
@@ -163,7 +162,7 @@ def _worker(exam_path: str) -> None:
                 live, _ = apply(exam, applied)
             q = live.questions[req['question']]
             c = q.check(req['check'])
-            ctx = CheckContext(submission=req['submission'], question=q, check=c.name,
+            ctx = CheckContext(question=q, check=c.name,
                                values={k: tuple(v) for k, v in (req.get('values') or {}).items()},
                                fields=live.fields())
             reply = {'record': settle(c.points, c.fn(ctx)).to_json()}

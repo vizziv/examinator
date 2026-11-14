@@ -7,7 +7,8 @@ import pytest
 from examinator import load_exam, synth
 from examinator.core import batch, focus, grid, identity, intake, overrides
 from examinator.core.defs import IDENTITY
-from examinator.core.identity import Matcher, distance, name_score, name_tokens, propose, read_roster
+from examinator.core import roster
+from examinator.core.roster import Matcher, distance, name_score, name_tokens, read_roster
 from examinator.core.reading import Reading
 from examinator.core.runner import Runner
 from examinator.core.store import Conflict
@@ -52,7 +53,7 @@ def test_lines_that_cannot_be_read_are_reported():
     assert problems == ["line 1: expected a name and an ID", "line 2: expected a name and an ID",
                         "line 3: expected a name and an ID", "line 5: Alan T <1> cannot be told apart from line 4"]
     with pytest.raises(ValueError, match="line 1"):
-        identity.parse_roster("Ada Lovelace\n")
+        roster.parse_roster("Ada Lovelace\n")
 
 
 def test_a_roster_is_valid_exactly_when_everyone_on_it_is_found_as_themselves():
@@ -79,8 +80,8 @@ def test_a_roster_is_valid_exactly_when_everyone_on_it_is_found_as_themselves():
         assert all(m.find(p) == i for i, p in enumerate(people)) and len(people) + len(problems) == len(lines)
     # and should a roster hold such people anyway, an ID two people have singles out nobody
     twins = [{'name': "Ada Lovelace", 'id': "31415926", 'key': 'a'}, {'name': "Ada King", 'id': "31415926", 'key': 'b'}]
-    assert propose({'id': "31415926"}, twins)['doubt'] == 'tie'
-    assert propose({'id': "31415926", 'name': "Ada King"}, twins)['doubt'] == 'agree'
+    assert Matcher(twins).propose({'id': "31415926"})['doubt'] == 'tie'
+    assert Matcher(twins).propose({'id': "31415926", 'name': "Ada King"})['doubt'] == 'agree'
     assert Matcher(twins).find({'name': "Ada King", 'id': "31415926"}) is None
 
 
@@ -106,36 +107,36 @@ def top(result):
 
 
 def test_clean_read_both_agree():
-    r = propose({'name': "Ada Lovelace", 'id': "31415926"}, ROSTER)
+    r = Matcher(ROSTER).propose({'name': "Ada Lovelace", 'id': "31415926"})
     assert r['doubt'] == 'agree' and top(r) == 'ada'
     assert r['candidates'][0]['why'] == "ID exact, name exact"
 
 
 def test_names_ignore_order_case_accents_and_punctuation():
     for written in ("LOVELACE, ada", "lovelace ada.", "Ada  Lovelace"):
-        r = propose({'name': written}, ROSTER)
+        r = Matcher(ROSTER).propose({'name': written})
         assert r['doubt'] == 'name' and top(r) == 'ada' and r['candidates'][0]['why'] == "name exact"
-    assert top(propose({'name': "Emile Borel"}, ROSTER)) == 'emile'
+    assert top(Matcher(ROSTER).propose({'name': "Emile Borel"})) == 'emile'
     assert name_tokens("O'Brien-Smith, Zoë") == ['obrien', 'smith', 'zoe']
 
 
 def test_an_id_misread_by_a_character_or_two():
-    r = propose({'name': "Alan Turing", 'id': "27182819"}, ROSTER)
+    r = Matcher(ROSTER).propose({'name': "Alan Turing", 'id': "27182819"})
     assert r['doubt'] == 'agree' and top(r) == 'alan' and r['candidates'][0]['why'] == "ID 1 off, name exact"
-    r = propose({'id': "27128818"}, ROSTER)          # two digits swapped: one edit
+    r = Matcher(ROSTER).propose({'id': "27128818"})          # two digits swapped: one edit
     assert r['doubt'] == 'id' and top(r) == 'alan' and r['candidates'][0]['why'] == "ID 1 off"
-    r = propose({'id': "2718281O"}, ROSTER)          # a wrong last character
+    r = Matcher(ROSTER).propose({'id': "2718281O"})          # a wrong last character
     assert top(r) == 'alan'
-    r = propose({'id': "2718281B"}, ROSTER)          # a letter B for an eight
+    r = Matcher(ROSTER).propose({'id': "2718281B"})          # a letter B for an eight
     assert top(r) == 'alan' and r['candidates'][0]['why'] == "ID look-alike"
-    r = propose({'id': "99182811"}, ROSTER)          # three off: nobody
+    r = Matcher(ROSTER).propose({'id': "99182811"})          # three off: nobody
     assert r['doubt'] == 'nobody' and r['candidates'] == []
 
 
 def test_ids_of_letters_and_digits():
     roster = [{'key': k, 'name': n, 'id': i} for k, n, i in (
         ('a', "Ada Lovelace", 'al815'), ('b', "Alan Turing", 'amt54'), ('c', "Kim Park", 'kp7'))]
-    look = lambda id: propose({'id': id}, roster)
+    look = lambda id: Matcher(roster).propose({'id': id})
     r = look("AL815")
     assert top(r) == 'a' and r['candidates'][0]['why'] == "ID exact"
     for written in ("a1815", "alb15", "al8l5", "AL81S"):        # look-alikes, either way round
@@ -145,12 +146,12 @@ def test_ids_of_letters_and_digits():
     assert top(r) == 'b' and r['candidates'][0]['why'] == "ID 1 off"
     assert look("axt99")['doubt'] == 'nobody'                   # but not two
     assert top(look("kp7")) == 'c' and look("kp1")['doubt'] == 'nobody'     # a short ID: exact or nothing
-    r = propose({'name': "Alan Turing", 'id': "al815"}, roster)             # an exact ID outranks a name
+    r = Matcher(roster).propose({'name': "Alan Turing", 'id': "al815"})             # an exact ID outranks a name
     assert r['doubt'] == 'disagree' and top(r) == 'a'
 
 
 def test_a_misread_name_with_the_id_unread():
-    r = propose({'name': "Grase Hoper", 'id': None}, ROSTER)
+    r = Matcher(ROSTER).propose({'name': "Grase Hoper", 'id': None})
     assert r['doubt'] == 'name' and top(r) == 'grace' and r['candidates'][0]['why'] == "name close"
 
 
@@ -158,55 +159,55 @@ def test_a_proposal_is_one_computation_of_who_and_in_what_order():
     """Who the evidence singles out (`match`), the doubt and the order come from one place:
     the people every column read supports first; a column that supports nobody is a conflict."""
     roster = [{'key': 'ada', 'name': "Ada Lovelace", 'id': "11111111"}, {'key': 'bob', 'name': "Bob Stone", 'id': "22222222"}]
-    r = propose({'name': "Bobby Stane", 'id': "11111199"}, roster)     # the ID, two off, is Ada's; the name nobody's
+    r = Matcher(roster).propose({'name': "Bobby Stane", 'id': "11111199"})     # the ID, two off, is Ada's; the name nobody's
     assert r['doubt'] == 'disagree' and r['match'] is None and top(r) == 'ada'
-    r = propose({'name': "Ada Lovelace", 'id': "99999999"}, roster)    # an ID that fits nobody is evidence
+    r = Matcher(roster).propose({'name': "Ada Lovelace", 'id': "99999999"})    # an ID that fits nobody is evidence
     assert r['doubt'] == 'disagree' and r['match'] is None
-    r = propose({'name': "Bob Ston", 'id': "11111111"}, roster)
+    r = Matcher(roster).propose({'name': "Bob Ston", 'id': "11111111"})
     assert r['doubt'] == 'disagree' and [c['key'] for c in r['candidates']] == ['ada', 'bob']
     for read in ({'name': "Ada Lovelace", 'id': "11111111"}, {'id': "11111112"}, {'name': "Lovelace Ada"}):
-        r = propose(read, roster)
+        r = Matcher(roster).propose(read)
         assert roster[r['match']]['key'] == top(r) == 'ada' and r['doubt'] in ('agree', 'id', 'name')
     rng = random.Random(4580)
     for _ in range(300):                # whenever there is a match, it is the first candidate
         read = {'name': rng.choice([None, "Ada Lovelace", "Bob Stone", "Ada Stone", "Bobby Lovelace"]),
                 'id': rng.choice([None, "11111111", "22222222", "11111122", "12121212", "99999999"])}
-        r = propose(read, roster)
+        r = Matcher(roster).propose(read)
         assert (r['match'] is not None) == (r['doubt'] in ('agree', 'id', 'name'))
         assert r['match'] is None or roster[r['match']]['key'] == top(r)
 
 
 def test_id_and_name_point_at_different_people():
-    r = propose({'name': "Grace Hopper", 'id': "31415926"}, ROSTER)
+    r = Matcher(ROSTER).propose({'name': "Grace Hopper", 'id': "31415926"})
     assert r['doubt'] == 'disagree'
     assert [c['key'] for c in r['candidates'][:2]] == ['ada', 'grace']      # an exact ID ranks first
     assert r['candidates'][0]['why'] == "ID exact"
 
 
 def test_nobody_close_and_nothing_read():
-    r = propose({'name': "Finley Dummond", 'id': "95830142"}, ROSTER)
+    r = Matcher(ROSTER).propose({'name': "Finley Dummond", 'id': "95830142"})
     assert r['doubt'] == 'nobody' and r['candidates'] == []
-    assert propose({'name': None, 'id': ''}, ROSTER) == {'doubt': 'unread', 'match': None, 'candidates': []}
+    assert Matcher(ROSTER).propose({'name': None, 'id': ''}) == {'doubt': 'unread', 'match': None, 'candidates': []}
 
 
 def test_names_too_alike_are_a_tie_and_all_are_candidates():
-    r = propose({'name': "Kim Park"}, ROSTER)                           # two people of one name
+    r = Matcher(ROSTER).propose({'name': "Kim Park"})                           # two people of one name
     assert r['doubt'] == 'tie'
     assert [c['key'] for c in r['candidates'][:2]] == ['kim1', 'kim2']
-    r = propose({'name': "Kim Park", 'id': "44444444"}, ROSTER)         # the ID settles it
+    r = Matcher(ROSTER).propose({'name': "Kim Park", 'id': "44444444"})         # the ID settles it
     assert r['doubt'] == 'agree' and top(r) == 'kim2'
-    r = propose({'name': "John Smith"}, ROSTER)                         # one letter apart is apart enough
+    r = Matcher(ROSTER).propose({'name': "John Smith"})                         # one letter apart is apart enough
     assert r['doubt'] == 'name' and [c['key'] for c in r['candidates'][:2]] == ['john', 'jon']
 
 
 def test_a_name_that_fits_others_than_the_id_is_a_disagreement():
     roster = ROSTER + [{'name': "Ada Lovelace", 'id': "55555555", 'key': 'ada2'}]
-    r = propose({'name': "Ada Lovelace", 'id': "27182818"}, roster)     # two Adas, and Turing's ID
+    r = Matcher(roster).propose({'name': "Ada Lovelace", 'id': "27182818"})     # two Adas, and Turing's ID
     assert r['doubt'] == 'disagree' and top(r) == 'alan'
-    r = propose({'name': "Ada Lovelace", 'id': "31415926"}, roster)     # the ID picks one of them
+    r = Matcher(roster).propose({'name': "Ada Lovelace", 'id': "31415926"})     # the ID picks one of them
     assert r['doubt'] == 'agree' and top(r) == 'ada'
-    assert propose({'name': "Ada Lovelace"}, roster)['doubt'] == 'tie'
-    assert propose({'id': "31415926", 'email': "x@example.invalid"}, roster)['doubt'] == 'id'
+    assert Matcher(roster).propose({'name': "Ada Lovelace"})['doubt'] == 'tie'
+    assert Matcher(roster).propose({'id': "31415926", 'email': "x@example.invalid"})['doubt'] == 'id'
 
 
 def test_finding_a_pick_on_a_roster():
@@ -231,14 +232,8 @@ def test_distance_and_name_score():
 
 def test_short_ids_tolerate_less():
     roster = [{'name': "A", 'id': "12", 'key': 'a'}, {'name': "B", 'id': "1234", 'key': 'b'}]
-    assert propose({'id': "13"}, roster)['candidates'] == []
-    assert top(propose({'id': "1235"}, roster)) == 'b'
-
-
-def test_a_prepared_roster_gives_the_same_answers():
-    m = Matcher(ROSTER)
-    for read in ({'name': "Ada Lovelace"}, {'id': "16180338"}, {'name': "x", 'id': "y"}):
-        assert m.propose(read) == propose(read, ROSTER)
+    assert Matcher(roster).propose({'id': "13"})['candidates'] == []
+    assert top(Matcher(roster).propose({'id': "1235"})) == 'b'
 
 
 # --- reading, storing, picking: the synthetic stacks end to end ---
@@ -329,7 +324,7 @@ def test_the_group_is_kept_apart_from_grading(written):
     identity.read(runner, 's0001')
     exam = ws.exam
     row = next(r for r in grid.load(exam, ws.store) if r.submission.id == 's0001')
-    assert '@identity/name' in row.sheet.values
+    assert '@identity/name' in row.ledger.values
     assert all(q != IDENTITY for q, _ in row.status) and IDENTITY not in row.fields
     assert IDENTITY not in {d['id'] for d in focus.describe_facets(exam)}
     assert not any(k.startswith(IDENTITY) for k in focus.values_table(exam, ws.store))
@@ -387,15 +382,15 @@ def test_picks_confirm_flag_twice_and_name_submissions(written):
     assert "Gray Placeholt" not in {p['name'] for p in view['nobody']}
     assert view['taken'] == {gray['key']: ['s0004', 's0007']}
     # someone not on the roster: typed; "Name, ID" keeps its ID; clearing
-    rev = identity.pick(ws, 's0006', identity.typed("Finley Dummond"), author='t', expect_rev=None)['rev']
+    rev = identity.pick(ws, 's0006', roster.typed("Finley Dummond"), author='t', expect_rev=None)['rev']
     assert ws.store.submission('s0006').name == "Finley Dummond" and ws.store.submission('s0006').student == ''
-    rev = identity.pick(ws, 's0006', identity.typed("Finley Dummond, 95830142"), author='t', expect_rev=rev)['rev']
+    rev = identity.pick(ws, 's0006', roster.typed("Finley Dummond, 95830142"), author='t', expect_rev=rev)['rev']
     assert (ws.store.submission('s0006').name, ws.store.submission('s0006').student) == ("Finley Dummond", "95830142")
-    assert identity.typed("Dummond, Finley")['name'] == "Dummond, Finley"
+    assert roster.typed("Dummond, Finley")['name'] == "Dummond, Finley"
     with pytest.raises(ValueError):
-        identity.typed("  ")
+        roster.typed("  ")
     # typed with a roster person's ID: it is that person, derived like any pick
-    rev = identity.pick(ws, 's0006', identity.typed("G. Placeholt, 96174385"), author='t', expect_rev=rev)['rev']
+    rev = identity.pick(ws, 's0006', roster.typed("G. Placeholt, 96174385"), author='t', expect_rev=rev)['rev']
     assert {r['sub']: r for r in identity.overview(ws)['rows']}['s0006']['who']['person'] == gray['key']
     identity.pick(ws, 's0006', None, author='t', expect_rev=rev)
     assert ws.store.submission('s0006').name == ""

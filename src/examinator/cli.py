@@ -45,10 +45,10 @@ def status_table(exam: Exam, ws: Workspace) -> str:
 
 
 def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
-    from .core import identity, intake, split
+    from .core import identity, intake, roster, split
     if args.roster:
         n = identity.set_roster(ws, Path(args.roster).read_text(encoding='utf-8-sig'))
-        print(f"roster: {n} people; first: " + "; ".join(identity.label(p) for p in identity.people(ws)[:3]))
+        print(f"roster: {n} people; first: " + "; ".join(roster.label(p) for p in identity.people(ws)[:3]))
     added = []
     for name in args.pdf:
         src, new = intake.add_source(ws, Path(name))
@@ -94,7 +94,7 @@ def intake_cmd(args, exam: Exam, ws: Workspace) -> int:
             for row in view['rows']:
                 if row['who'] is None:
                     match = next((c['label'] for c in row['candidates'] if c['key'] == row['match']), "-")
-                    print(f"  {row['sub']}: {identity.DOUBTS[row['doubt']]}: {match}")
+                    print(f"  {row['sub']}: {roster.DOUBTS[row['doubt']]}: {match}")
     if not args.accept:
         fake = " --fake" if args.fake else ""
         print(f"review and accept: examinator serve {args.exam} -w {args.workspace}{fake}   (Scans page)")

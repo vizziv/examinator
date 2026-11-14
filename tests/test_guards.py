@@ -108,7 +108,7 @@ def test_isolated_checks_time_out_and_crash_as_undecided(tmp_path):
 
         def st(qid):
             q = exam.questions[qid]
-            return runner.sheet('s').status(exam, q, q.check('check'))
+            return runner.ledger('s').status(exam, q, q.check('check'))
 
         assert (st('slow').state, st('slow').value) == ('to_decide', None)
         assert 'timed out' in st('slow').reason

@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from .runner import PROTECTED, Outcome, Runner, to_read
-from .status import Sheet
+from .status import Ledger
 from .workspace import Workspace
 
 ACTIONS = ('read', 'skip_protected', 'skip_present', 'blocked')
@@ -69,7 +69,7 @@ def plan(ws: Workspace, selection: Selection, *, model_available: bool) -> Plan:
             raise KeyError(qid)
     items: list[Item] = []
     for sub in selection.submissions:
-        values = Sheet.of(store.all(submission=sub, kinds=('value',))).values
+        values = Ledger.of(store, sub, kinds=('value',)).values
         gone, lay = ws.missing(sub), ws.layers(sub)
         for qid in selection.questions:
             r = to_read(lay.question(qid), values, gone, missing_only=selection.missing_only,
@@ -93,7 +93,7 @@ class BatchRun:
     done: int = 0                    # reads finished
     asked: int = 0                   # fields the finished reads asked for ...
     got: int = 0                     # ... and those that got a value (the rest stay not read)
-    state: str = 'ready'             # 'ready' | 'running' | 'done' | 'cancelled'
+    state: str = 'running'           # 'running' | 'done' | 'cancelled'
     current: str = ''                # in progress: 'reading', then 'recomputing'
 
     def __post_init__(self):
@@ -107,7 +107,6 @@ class BatchRun:
     def run(self) -> list[Outcome]:
         """Execute the plan. Blocks until the reads are finished or cancelled and the
         submissions read for are refreshed."""
-        self.state = 'running'
         sel = self.plan.selection
         read_for: set[str] = set()
 

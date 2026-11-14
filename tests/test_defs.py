@@ -52,7 +52,7 @@ def test_identity_maps_roster_columns_to_ordinary_fields():
                     {'email': Field('email', None, read=Printed("the printed email")), 'name': Field('name')}):
         exam = Exam('t', pages=1, identity=mapping)
         g = exam.identity
-        assert g.id == IDENTITY and g.apart and g.checks == () and exam.group(IDENTITY) is g
+        assert g.id == IDENTITY and g.checks == () and exam.group(IDENTITY) is g
         assert list(exam.questions) == [] and list(exam.groups()) == [IDENTITY]     # reached by name only
         mapped = list(mapping or {})
         assert list(g.labels) == mapped + [c for c in ('name', 'id', 'email') if c not in mapped]

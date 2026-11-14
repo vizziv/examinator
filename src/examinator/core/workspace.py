@@ -6,14 +6,13 @@
       pdfs/        PDFs handed in already split, one per submission: ID.pdf (`sync`)
       exam.sqlite
       cache/       rendered pages
-      exports/
 
 Every submission is named by its pick (`core.identity`), made on the scans
 page. For PDFs handed in already split there is one programmatic way in: a file
 name that carries a roster ID (`identity.by_file`).
 
 A workspace has its own definition, `exam`: the package's with the exam-wide
-overrides stored here (`refresh`). The package's `Exam` is never changed, and
+overrides stored here (`apply_overrides`). The package's `Exam` is never changed, and
 everything reads the definition through the workspace: for one submission,
 through `layers` (its own overrides and its scan's on top).
 """
@@ -23,30 +22,29 @@ from pathlib import Path
 
 from PIL import Image
 
-from ..pdf.layout import Layout
 from ..pdf.render import Renderer
-from . import overrides
-from .defs import PRINT_AREA, Exam, Region
+from . import identity, overrides
+from .defs import Exam, Region
 from .store import Store, Submission
 
 
 class Workspace:
     def __init__(self, root: str | Path, exam: Exam, *, create: bool = False):
         self.root = Path(root)
-        self.exam = exam            # until `refresh` makes the workspace's own
+        self.exam = exam            # until `apply_overrides` makes the workspace's own
         self.pdfs = self.root / 'pdfs'
         if not self.pdfs.is_dir():
             if not create:
                 raise FileNotFoundError(f"no pdfs/ folder in {self.root}")
             self.pdfs.mkdir(parents=True, mode=0o700)
         self.made = self.root / 'made'
-        for d in ('cache', 'exports', 'made'):
+        for d in ('cache', 'made'):
             (self.root / d).mkdir(exist_ok=True, mode=0o700)
         self.store = Store(self.root / 'exam.sqlite')
         self.renderer = Renderer(self.root / 'cache')
-        self.skipped: list[overrides.Skipped] = self.refresh()
+        self.skipped: list[overrides.Skipped] = self.apply_overrides()
 
-    def refresh(self) -> list[overrides.Skipped]:
+    def apply_overrides(self) -> list[overrides.Skipped]:
         """Make this workspace's definition the package's plus the exam-wide overrides
         stored here: part of opening a workspace, and of every exam-wide edit. Those
         that no longer validate are skipped (`skipped`; every scope's:
@@ -70,10 +68,9 @@ class Workspace:
         """Record every PDF in `pdfs/` as a submission (handed in already split), and name
         by file name those it can (`identity.by_file`). What intake wrote is in `made/`,
         recorded already; an id of its is never a file's here."""
-        from . import identity
         made = self.store.made()
         pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink() and p.stem not in made]
-        self.store.put_submissions([Submission(p.stem, "", "", p.name) for p in pdfs])
+        self.store.put_submissions([Submission(p.stem, p.name) for p in pdfs])
         identity.by_file(self)
         return len(pdfs)
 
@@ -87,14 +84,6 @@ class Workspace:
         (its regions: one may sit on the submission's extra sheets, numbered on from
         the exam's last page), `layout`."""
         return overrides.Layers(self, submission=submission, source=source)
-
-    def layout(self, submission: str) -> Layout:
-        """This submission's print area."""
-        return self.layers(submission).layout
-
-    def source_layout(self, source: str | None) -> Layout:
-        """A source scan's sheets, with its print area."""
-        return self.layers(source=source).layout
 
     def missing(self, submission: str) -> set[int]:
         """The printed pages this submission's PDF does not have: intake wrote a
@@ -142,4 +131,4 @@ class Workspace:
 
     def crop(self, submission: str, region: Region, pad: int | None = None) -> Image.Image:
         pad = self.exam.crop_pad if pad is None else pad
-        return self.layout(submission).crop(self.page_image(submission, region.page), region, pad)
+        return self.layers(submission).layout.crop(self.page_image(submission, region.page), region, pad)

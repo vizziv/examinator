@@ -97,7 +97,7 @@ def test_question_facets(tmp_path):
     exam = _facets_exam()
     assert [f.name for f in focus.facets(exam.questions['q'])] == ['grade', 'state', 'size', 'words']
     store = Store(tmp_path / 's.sqlite')
-    store.put_submissions([Submission(s, s, '', '') for s in ('s1', 's2')])
+    store.put_submissions([Submission(s) for s in ('s1', 's2')])
     store.write('s1', 'q/x', 'value', {'text': '12'}, origin='auto')
     store.write('s1', 'q/y', 'value', {'text': 'b a b'}, origin='auto')
     table = focus.values_table(exam, store)
@@ -117,7 +117,7 @@ def test_facet_names_are_checked():
 def test_the_table_is_one_query_and_never_loads_blocks(tmp_path):
     exam = _facets_exam()
     store = Store(tmp_path / 's.sqlite')
-    store.put_submissions([Submission(s, s, '', '') for s in ('s1', 's2', 's3')])
+    store.put_submissions([Submission(s) for s in ('s1', 's2', 's3')])
     for s in ('s1', 's2', 's3'):
         store.write(s, 'q/check', 'result', {'grade': {'value': True}, 'blocks': [{'type': 'image'}]}, origin='auto')
     seen = []
@@ -177,7 +177,7 @@ def test_answer_facet_over_the_keyed_check(tmp_path):
     assert [f.name for f in focus.facets(exam.questions['q'])][-2:] == ['answer/a', 'answer/b']
     store = Store(tmp_path / 's.sqlite')
     answers = {'s1': {'a': '2x', 'b': 'Yes.'}, 's2': {'a': 'x+x', 'b': ''}, 's3': {'a': 'x ??', 'b': 'no'}}
-    store.put_submissions([Submission(s, s, '', '') for s in [*answers, 's4']])
+    store.put_submissions([Submission(s) for s in [*answers, 's4']])
     for s, a in answers.items():
         for label, text in a.items():
             store.write(s, f'q/{label}', 'value', {'text': text}, origin='auto')

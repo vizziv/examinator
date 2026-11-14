@@ -52,11 +52,11 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainT
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from ..core import batch, focus, grid, identity, intake, overrides, split, status
+from ..core import batch, focus, grid, identity, intake, overrides, roster, split, status
 from ..core.context import CheckContext
 from ..core.ask import Printed
 from ..core.defs import IDENTITY, PRINT_AREA, Bool, Check, Exam, Grade, Question, key, split_key
-from ..core.as_python import describe_changes
+from ..core.overrides import describe_changes
 from ..core.overrides import EXAM, SOURCE, SUBMISSION
 from ..core.reading import normalize
 from ..core.runner import Runner, to_read
@@ -64,7 +64,7 @@ from ..core.status import Status
 from ..core.store import Conflict
 from ..core.workspace import Workspace
 from ..pdf.layout import Layout
-from ..std.blocks import MEDIA_TYPES
+from ..core.result import MEDIA_TYPES
 from ..pdf import orient
 from .jobs import Batch, Jobs
 
@@ -271,7 +271,7 @@ def picked_key(exam: Exam, q: Question, c: Check, values: dict) -> str | None:
     by, key_ = getattr(c.fn, 'by', None), getattr(c.fn, 'key', None)
     if by is None or not isinstance(key_, dict):
         return None
-    ctx = CheckContext(submission='', question=q, check=c.name, values={k: (v.rev, v.text) for k, v in values.items()},
+    ctx = CheckContext(question=q, check=c.name, values={k: (v.rev, v.text) for k, v in values.items()},
                        fields=exam.fields())
     try:
         value = normalize(str(by(ctx)))
@@ -371,7 +371,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                 out = await run_in_threadpool(fn, request, data)
             except Conflict as e:
                 return JSONResponse({'error': str(e) or "changed elsewhere", 'conflict': True,
-                                     'current': getattr(e, 'current', None)}, 409)
+                                     'current': e.current}, 409)
             except ValueError as e:
                 return JSONResponse({'error': str(e)[:300]}, 400)
             return JSONResponse({'ok': True, **(out or {})})
@@ -404,7 +404,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         rows, started, graded = [], False, ws.exam.questions     # started: anything of a graded question
         for row in grid.load(ws.exam, store):
             cells = []
-            started = started or any(split_key(k)[0] in graded for k in (*row.sheet.values, *row.sheet.results))
+            started = started or any(split_key(k)[0] in graded for k in (*row.ledger.values, *row.ledger.results))
             for q in ws.exam.questions.values():
                 cells += [{'qid': q.id, **look(row.status[(q.id, c.name)])} for c in q.checks]
                 if not q.checks:
@@ -452,7 +452,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
     def question_page(request: Request) -> Response:
         sub, q = target(request)
         exam, lay = ws.exam, ws.layers(sub.id)          # the definition, as it is for this submission
-        sheet = runner.sheet(sub.id)
+        sheet = runner.ledger(sub.id)
         layout = lay.layout
         try:
             count = ws.scan_page_count(sub.id)
@@ -960,7 +960,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
 
     def idboxes(source: str | None) -> list[dict]:
         """Where the identity fields are on a sheet of a source, by printed page."""
-        layout = ws.source_layout(source)
+        layout = ws.layers(source=source).layout
         return [{'name': f.label, 'offset': f.region.page - 1, 'box': box(layout, f.region)}
                 for f in identity.placed(ws)]
 
@@ -1084,7 +1084,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
     def scans_roster_preview(request, data):
         """What a roster text (a CSV file's contents or pasted lines) would read as: how
         many people, the first few, the problems. Changes nothing."""
-        people, problems = identity.read_roster(roster_text(data))
+        people, problems = roster.read_roster(roster_text(data))
         return {'people': len(people), 'problems': problems[:ROSTER_PROBLEMS],
                 'more': max(0, len(problems) - ROSTER_PROBLEMS),
                 'sample': [{'name': p['name'], 'id': p['id'], 'email': p['email']} for p in people[:ROSTER_SAMPLE]]}
@@ -1119,7 +1119,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             if person is None:
                 raise Bad("not on the roster (it changed?): reload")
         else:
-            person = identity.typed(data['text']) if 'text' in data else None
+            person = roster.typed(data['text']) if 'text' in data else None
         w = identity.pick(ws, sub.id, person, author=who(request), expect_rev=rev)
         return {'who': w, 'rev': w['rev']}
 
@@ -1132,7 +1132,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         with lock:
             ats = {s.id: identity.at(ws, s.id) for s in store.submissions()}
             view = identity.overview(ws, cache=proposals, ats=ats)
-        paths = {f.label: overrides.join(IDENTITY, 'fields', f.label, 'region') for f in identity.group(ws).fields}
+        paths = {f.label: overrides.join(IDENTITY, 'fields', f.label, 'region') for f in ws.exam.identity.fields}
         bases, stored = {c: overrides.entry(ws.exam, p).base for c, p in paths.items()}, store.overrides()
         for row in view['rows']:
             sid, a = row['sub'], ats[row['sub']]
@@ -1142,12 +1142,12 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             row['boxes'] = {c: levels(lay, p, bases[c], stored) for c, p in paths.items()}
             row['print_area'] = list(a.layout.print_area)     # for the boxes drawn on the page
             row['scan'] = scan_key(sid)                        # in its pages' URLs
-        view['nobody'] = [identity.label(p) for p in view['nobody']]
+        view['nobody'] = [roster.label(p) for p in view['nobody']]
         view['boxed'] = any(a.fields for a in ats.values())
         view['unread'] = len(identity.unread(ws, ats=ats))      # what "read names" reads
         view['columns'] = [{'name': c, 'path': p} for c, p in paths.items()]
         view['pad'] = ws.exam.crop_pad
-        view['doubts'] = identity.DOUBTS
+        view['doubts'] = roster.DOUBTS
         view['roster'] = len(identity.people(ws))
         return JSONResponse(view)
 

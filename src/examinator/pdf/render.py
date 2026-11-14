@@ -50,8 +50,7 @@ class Renderer:
     def page_path(self, pdf: str | Path, index: int) -> Path:
         """Path of the cached image of one scanned page (0-based), making it if needed."""
         pdf = Path(pdf)
-        # 'i' marks the scheme that takes a scan's own image (entries from older schemes differ).
-        out = self.cache_dir / self.key(pdf) / f'p{index:03d}-{self.dpi}i.jpg'
+        out = self.cache_dir / self.key(pdf) / f'p{index:03d}-{self.dpi}.jpg'
         if out.exists():
             return out
         import pypdfium2

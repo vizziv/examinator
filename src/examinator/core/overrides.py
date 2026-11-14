@@ -58,6 +58,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
+from ..pdf.layout import Layout
 from .defs import PRINT_AREA, Check, Exam, Field, Region
 from .store import ANY
 
@@ -384,14 +385,6 @@ def kind(exam: Exam, path: str) -> str:
     return _locate(exam, path).kind
 
 
-def package_value(exam: Exam, path: str, value: Any) -> tuple[Any, Any]:
-    """(the package's object at `path`, the object `value` (JSON) stands for); `ValueError`
-    if nothing editable is there or the value has another shape."""
-    loc = _locate(exam, path)
-    base = _get(exam.base[loc.root], loc.segs)
-    return base, _decode(loc.kind, value, base)
-
-
 # --- listing and applying ------------------------------------------------------------
 
 def editable(exam: Exam, root: str | None = None) -> list[Entry]:
@@ -473,7 +466,6 @@ class Layers:
     @property
     def layout(self):
         """The print area here."""
-        from ..pdf.layout import Layout
         return Layout(self.root(PRINT_AREA))
 
     def check(self) -> list[Skipped]:
@@ -515,11 +507,11 @@ def _hashes(exam: Exam) -> dict:
     return {(qid, c.name): exam.check_hash(q, c) for qid, q in exam.questions.items() for c in q.checks}
 
 
-def _changed(ws: 'Workspace', path: str, scope: str) -> Change:
+def _changed(ws: 'Workspace', scope: str) -> Change:
     if scope != '':         # below the exam: only how fields are read, for some submissions
         return Change(())
     c0 = _hashes(ws.exam)
-    skipped = ws.refresh()
+    skipped = ws.apply_overrides()
     c1 = _hashes(ws.exam)
     return Change(tuple(k for k in c1 if c1[k] != c0.get(k)), tuple(skipped))
 
@@ -534,11 +526,27 @@ def set(ws: 'Workspace', path: str, value: Any, *, scope: str = '', author: str 
     else:
         value = ws.layers(**{level: id}).candidate(path, value, level)
     ws.store.set_override(path, value, scope=scope, author=author, expect_rev=expect_rev)
-    return _changed(ws, path, scope)
+    return _changed(ws, scope)
 
 
 def clear(ws: 'Workspace', path: str, *, scope: str = '', expect_rev: Any = ANY) -> Change:
     """Remove one override: back to the next scope's value."""
     parse_scope(scope)
     ws.store.clear_override(path, scope=scope, expect_rev=expect_rev)
-    return _changed(ws, path, scope)
+    return _changed(ws, scope)
+
+
+def describe_changes(exam: Exam, store) -> list[str]:
+    """The exam-wide overrides as Python, for whoever maintains the package: one line
+    per override, `path: old -> new  (who, date)`, the package's value and the new
+    one each as the package writes it (its `repr`)."""
+    lines = []
+    for path, o in store.overrides().items():
+        try:
+            loc = _locate(exam, path)
+            base = _get(exam.base[loc.root], loc.segs)
+            old, new = repr(base), repr(_decode(loc.kind, o.value, base))
+        except (ValueError, KeyError):
+            old, new = "(no longer in the package)", repr(o.value)
+        lines.append(f"{path}: {old} -> {new}  ({o.author or '?'}, {o.updated_at[:10]})")
+    return lines

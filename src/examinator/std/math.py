@@ -543,7 +543,8 @@ def show_entry(entry: Any) -> str:
     if accepted:
         return " | ".join(accepted)
     if isinstance(entry, Approx):
-        return f"{entry.value} ± {entry.tol}" if entry.tol is not None else f"{entry.value} ± {entry.rel:.0%}"
+        within = [f"{entry.tol:g}"] if entry.tol > 1e-9 or not entry.rel else []
+        return f"{entry.value:g} ± {' or '.join(within + ([f'{entry.rel * 100:g}%'] if entry.rel else []))}"
     return getattr(entry, '__name__', type(entry).__name__)
 
 

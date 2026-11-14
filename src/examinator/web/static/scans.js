@@ -280,7 +280,7 @@
   }});
   // Accept, having said what it would disturb: written submissions it rewrites or removes that
   // a person said something about. The person agrees to exactly those (`allow`).
-  const SAID = {values: 'verified values', decisions: 'decisions', name: 'a name', regions: 'own regions'};
+  const SAID = {values: 'typed, verified or flagged values', decisions: 'decisions', name: 'a name', regions: 'own regions'};
   const AFTER = {rewrite: 'Rewritten: the name, decisions and verified values stay; what was read and own regions go.',
                  remove: 'Removed: the submission and all of it go.'};
   register('split-accept', {run: () => {

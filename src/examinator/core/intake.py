@@ -68,7 +68,8 @@ from ..pdf.orient import turn
 from . import identity, overrides, split
 from .ask import Printed
 from .defs import Landmark, digest
-from .reading import normalize, region_key
+from .reading import normalize
+from .status import Value
 from .store import ANY, Row, Conflict, Made, Source, Submission
 
 PLAN = 'split'
@@ -78,9 +79,8 @@ class Busy(Conflict):
     """Accepting would change or remove submissions that already have grading work."""
 
     def __init__(self, submissions: list[str]):
-        super().__init__("grading work exists for " + ", ".join(submissions))
+        super().__init__("grading work exists for " + ", ".join(submissions), current={'busy': submissions})
         self.submissions = submissions
-        self.current = {'busy': submissions}
 
 
 def _now() -> str:
@@ -172,9 +172,16 @@ def _put(ws, id: str, body: dict, **kw) -> Row:
         raise Conflict("the plan changed", name='', kind=PLAN) from None
 
 
-def page(ws, src: Source, sheet: int, turns: int = 0) -> Image.Image:
+def sheet_image(ws, src: Source, sheet: int, turns: int = 0) -> Image.Image:
     """One sheet, turned."""
     return turn(ws.renderer.page(source_path(ws, src), sheet), turns)
+
+
+def memo_key(lm: Landmark, layout, *where: Any) -> str:
+    """The memo key of reading a landmark: its name, a digest of its definition, the
+    print area (where on the sheet it is cropped), and anything else the crop
+    depends on (`where`: the sheet's orientation, its index)."""
+    return ':'.join(str(x) for x in ('landmark', lm.name, digest(lm), list(layout.print_area), *where))
 
 
 def page_of(lm: Landmark, text: str | None) -> int | None:
@@ -188,24 +195,17 @@ def page_of(lm: Landmark, text: str | None) -> int | None:
     return int(digits) if digits and len(digits) <= 4 else None
 
 
-def ask(lm: Landmark) -> Printed:
-    """How a landmark is read: printed text, asked about like a printed field."""
-    return Printed(lm.ask)
-
-
 class LandmarkReader:
     """Reads one sheet's position from the exam's landmarks (first that answers
-    wins), through the model (`Ask.call`, as for a printed field), memoised per
-    source, sheet, landmark, orientation and print area (the source's, else the
-    exam's). A failed call is no reading and is not remembered: the sheets it
-    left unread are `failed`; `calls` counts the calls made."""
+    wins), asked like a printed field (`Printed`), memoised per source, sheet,
+    landmark, orientation and print area (the source's, else the exam's:
+    `memo_key`). A failed call is no reading and is not remembered: the sheets it
+    left unread are `failed`."""
 
     def __init__(self, ws, src: Source, body: Mapping, model):
         self.ws, self.src, self.body, self.model = ws, src, body, model
-        self.layout = ws.source_layout(src.id)
+        self.layout = ws.layers(source=src.id).layout
         self.turns = split.turns(body)
-        self.calls = 0                  # model calls made (memoised answers aside)
-        self.failures = 0               # calls that failed
         self.failed: set[int] = set()   # sheets left unread by a failed call
 
     def __call__(self, i: int) -> int | None:
@@ -214,20 +214,18 @@ class LandmarkReader:
         image = None
         failed = False
         for lm in exam.landmarks:
-            key = region_key('landmark', lm.name, digest(lm), self.layout, o, i)
+            key = memo_key(lm, self.layout, o, i)
             hit = ws.store.memo(self.src.id, key)
             if hit is None:
                 if image is None:
-                    image = page(ws, self.src, i, o)
-                self.calls += 1
+                    image = sheet_image(ws, self.src, i, o)
                 complete = functools.partial(self.model.complete, tag=(self.src.id, f'{i}@{o}', 'landmark'))
                 try:
-                    got = ask(lm).call(complete, self.layout.crop(image, lm.region, exam.crop_pad))
+                    got = Printed(lm.ask).reading(complete, self.layout.crop(image, lm.region, exam.crop_pad))
                 except Exception:
-                    self.failures += 1
                     failed = True
                     continue
-                hit = json.dumps(got)
+                hit = json.dumps(got.text if got is not None else None)
                 ws.store.set_memo(self.src.id, key, hit)
             p = page_of(lm, json.loads(hit))
             if p is not None:
@@ -235,17 +233,6 @@ class LandmarkReader:
         if failed:
             self.failed.add(i)
         return None
-
-    @property
-    def all_failed(self) -> bool:
-        return self.calls > 0 and self.failures == self.calls
-
-
-def reader(ws, src: Source, body: Mapping, model) -> LandmarkReader | None:
-    """The landmark reader for a source's sheets; None when there is no model or no landmark."""
-    if model is None or not ws.exam.landmarks:
-        return None
-    return LandmarkReader(ws, src, body, model)
 
 
 def reguess(ws, id: str, *, model=None, length: int | None = None,
@@ -264,7 +251,7 @@ def reguess(ws, id: str, *, model=None, length: int | None = None,
     if resized:
         body['length'] = int(length)
     body['anchor'] = anchor(ws)
-    read = reader(ws, src, body, model)
+    read = LandmarkReader(ws, src, body, model) if model is not None and ws.exam.landmarks else None
     # Readings are positions within a submission: a new length makes them meaningless,
     # and a check reads every sheet again (cheaply: the model's answers are memoised).
     if resized or read is not None:
@@ -288,7 +275,7 @@ _EDITS: dict[str, Callable[..., dict]] = {
     'cut': lambda body, sheet, delta: split.cut(body, sheet),
     'join': lambda body, sheet, delta: split.join(body, _first(body, sheet)),
     'drop': lambda body, sheet, delta: split.drop(body, sheet),
-    'restore': lambda body, sheet, delta: split.restore(body, sheet),
+    'restore': lambda body, sheet, delta: split.put_back(body, sheet),
     'extra': lambda body, sheet, delta: split.toggle_extra(body, sheet),
     'missing': lambda body, sheet, delta: split.add_missing(body, sheet),
     'unmissing': lambda body, sheet, delta: split.remove_missing(body, sheet),
@@ -407,14 +394,14 @@ def disturbed(ws, rows, gone) -> list[dict]:
     """The written submissions accepting (`outline`) would rewrite or remove that a
     person said something about, which a rewrite takes or leaves standing on pages
     it no longer has: `{'id', 'change': 'rewrite' | 'remove', 'said'}`, `said`
-    naming (`SAID`) values a person typed or verified, decisions, the name (the
+    naming (`SAID`) values a person typed, verified or flagged, decisions, the name (the
     pick) and its own regions or print area (overrides at its scope). What a reader
     read and the results computed from it are not asked about."""
     out = []
     for sid, change in [(r['id'], 'rewrite') for r in rows if r['state'] == 'changed'] + [(s, 'remove') for s in gone]:
         rows_ = ws.store.all(submission=sid, kinds=('value', 'decision'))
         said = [what for what, there in zip(SAID, (
-            any(r.kind == 'value' and (r.origin == 'manual' or (r.body or {}).get('verified') == 'person')
+            any(r.kind == 'value' and (r.origin == 'manual' or Value.of(r).protected or Value.of(r).flagged == 'person')
                 for r in rows_),
             any(r.kind == 'decision' for r in rows_),
             ws.store.get(sid, '', identity.WHO) is not None,
@@ -430,7 +417,7 @@ def repaged(ws, sid: str) -> None:
     regions, print area). Values a person verified, decisions and the pick stay:
     they are about the student."""
     for r in ws.store.all(kinds=['value'], submission=sid):
-        if (r.body or {}).get('verified') != 'person':
+        if not Value.of(r).protected:
             ws.store.delete(sid, r.name, 'value')
     scope = overrides.scope(overrides.SUBMISSION, sid)
     for path in ws.store.overrides(scope):
@@ -485,7 +472,7 @@ def accept(ws, id: str, *, author: str | None = None, allow: Collection[str] = (
             for r in writes:
                 sid = r['id']
                 ws.store.set_made(Made(sid, id, tuple(r['pages']), tuple(r['orient']), now, r['file']))
-                ws.store.put_submissions([Submission(sid, '', '', '')])      # its file is `made`'s
+                ws.store.put_submissions([Submission(sid)])      # its file is `made`'s
                 if r['state'] == 'changed':
                     repaged(ws, sid)
             for sid in gone:

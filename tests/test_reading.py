@@ -13,7 +13,7 @@ from examinator.core.reading import Reading, reading
 from examinator.core.runner import Runner
 from examinator.model.fake import FakeModel
 from examinator.std import math, readers
-from examinator.std.pseudocode import calls, functions, is_empty
+from examinator.std.readers import calls, functions, is_empty
 
 from conftest import workspace
 
@@ -144,16 +144,16 @@ def test_unsure_flags_a_value_until_a_person_verifies_it(tmp_path):
         assert (values['q/n'].review, values['q/n'].verified) == ("faint", None)     # never vouched
         runner.verify('s1', 'q', 'y', author='ta', expect_rev=runner.values('s1')['q/y'].rev)
         runner.refresh('s1')
-        st = runner.sheet('s1').status(ws.exam, q, q.check('check'))
+        st = runner.ledger('s1').status(ws.exam, q, q.check('check'))
         assert (st.state, st.counts, st.reason) == ('review', False, "x needs review")
         runner.verify('s1', 'q', 'x', author='ta', expect_rev=runner.values('s1')['q/x'].rev)
-        st = runner.sheet('s1').status(ws.exam, q, q.check('check'))
+        st = runner.ledger('s1').status(ws.exam, q, q.check('check'))
         assert st.counts and runner.values('s1')['q/x'].review is None
         # a person flags it again (the ⋯ menu): it waits for a person again, same revision
         v = runner.values('s1')['q/x']
         flagged = runner.review('s1', 'q', 'x', note="", expect_rev=v.rev)
         assert (flagged.rev, flagged.state) == (v.rev, 'review')
-        assert runner.sheet('s1').status(ws.exam, q, q.check('check')).state == 'review'
+        assert runner.ledger('s1').status(ws.exam, q, q.check('check')).state == 'review'
     finally:
         runner.close()
         ws.close()

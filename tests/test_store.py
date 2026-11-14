@@ -59,7 +59,7 @@ def test_rows_all_and_dropping_large_parts(store):
     store.write('s', 'q/x', 'value', {'text': '1'}, origin='auto')
     store.write('s', 'q/c', 'result', {'grade': {'value': True}, 'blocks': [list(range(100))]}, origin='auto')
     store.write('t', 'q/x', 'value', {'text': '2'}, origin='auto')
-    assert set(store.rows('s', 'value')) == {'q/x'}
+    assert [r.name for r in store.all(submission='s', kinds=['value'])] == ['q/x']
     small = store.all(kinds=['result'], drop='$.blocks')
     assert [r.body for r in small] == [{'grade': {'value': True}}]
     assert {r.submission for r in store.all(kinds=['value'])} == {'s', 't'}
@@ -90,3 +90,21 @@ def test_settings_and_memo(store):
     assert store.memo('s', 'k') is None
     store.set_memo('s', 'k', "v")
     assert store.memo('s', 'k') == "v"
+
+
+def test_the_version_changes_with_every_write(store):
+    """`version` keys caches of what is computed from the store: every kind of write moves it."""
+    from examinator.core.store import Made, Source, Submission
+    writes = [lambda: store.write('s', 'q/x', 'value', {'text': '1'}, origin='auto'),
+              lambda: store.put_submissions([Submission('s', 's.pdf')]),
+              lambda: store.add_source(Source('src', 'src.pdf', 'scan', 'abc', 2, 'now')),
+              lambda: store.set_made(Made('s', 'src', (0, 1), (0, 0), 'now', 'f.pdf')),
+              lambda: store.delete_made('s'),
+              lambda: store.set_setting('people', []),
+              lambda: store.set_memo('src', 'k', "v"),
+              lambda: store.set_override('q/x', 1, author=None),
+              lambda: store.delete_submission('s')]
+    for write in writes:
+        before = store.version()
+        write()
+        assert store.version() != before
