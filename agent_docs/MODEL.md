@@ -84,7 +84,8 @@ verified, and its methods are the small changes to a value. The rules:
   from the reply, null, the string "null", a reply that is not that shape)
   writes nothing: the field stays not read, and the read says how many fields
   it asked for and how many got a value.
-- **What a person said about a value is never undone by a reader.** A read
+- **A reader never undoes a person's verifying or flagging of a value while
+  its text stands.** A read
   skips a value a person verified (unless asked: `include_protected`). A read
   of the same text changes nothing a person set (verified, or flagged for
   review) and keeps the revision, so nothing downstream moves. A read of

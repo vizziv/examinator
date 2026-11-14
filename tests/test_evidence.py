@@ -188,3 +188,14 @@ def test_an_isolated_check_passes_the_same_shape(tmp_path):
     finally:
         runner.close()
         ws.close()
+
+
+def test_a_block_takes_any_iterable_of_items():
+    """Rows from a zip, a generator, a range or an array are stored as lists; text is not rows."""
+    blocks = settle(POINTS, Result(None, blocks=[
+        Table(['a', 'b'], zip(np.arange(2), ['x', 'y'])), Code("a\nb", range(1, 3)),
+        Table(('n',), np.array([[1], [2]])), Details("d", Note("n"))])).body['blocks']
+    assert blocks[0]['rows'] == [[0, 'x'], [1, 'y']] and blocks[1]['highlight'] == [1, 2]
+    assert blocks[2]['rows'] == [[1], [2]] and blocks[3]['blocks'][0]['text'] == "n"
+    with pytest.raises(BadResult, match="table rows"):
+        settle(POINTS, Result(None, blocks=[Table(['a'], "abc")]))

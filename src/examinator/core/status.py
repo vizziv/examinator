@@ -64,8 +64,8 @@ class Value:
     that keeps the text keeps it.
 
     A value that needs review is never verified (the one place that holds:
-    `__post_init__`). What a person said about a value (verified it, or flagged it)
-    is never undone by a reader: a read of the same text changes nothing a person
+    `__post_init__`). A person's verifying or flagging of a value is never
+    undone by a reader while its text stands: a read of the same text changes nothing a person
     set; a read of another text is a new value, its state the reader's."""
     text: str
     rev: int = 0

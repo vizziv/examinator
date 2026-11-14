@@ -256,9 +256,13 @@ def _cell(x: Any) -> Any:
 
 
 def _list(x: Any, what: str) -> list:
-    if not isinstance(x, (list, tuple)):
+    """Any iterable of items (a list, a zip, a generator, an array), but not text or a mapping."""
+    if isinstance(x, (str, bytes, Mapping)):
         raise _bad(what, x)
-    return list(x)
+    try:
+        return list(x)
+    except TypeError:
+        raise _bad(what, x) from None
 
 
 def _blocks(blocks: Any, images: dict, depth: int) -> list[dict]:

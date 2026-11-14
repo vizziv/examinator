@@ -83,12 +83,12 @@ class View:
 
 # --- built-in facets: from the status rules, never from evidence contents ---------
 
-def grade_text(st: Status, *, blank: bool = True) -> str | None:
-    """What a grade is, as text: None (undecided), 'blank' (unless `blank` is
-    False), '✓', '✗' or the number. Every other rendering of a grade is built on this."""
+def grade_text(st: Status) -> str | None:
+    """What a grade is, as text: None (undecided), 'blank', '✓', '✗' or the number.
+    Every other rendering of a grade is built on this."""
     if st.value is None:
         return None
-    if blank and 'blank' in st.flags:
+    if 'blank' in st.flags:
         return 'blank'
     if isinstance(st.value, bool):
         return '✓' if st.value else '✗'

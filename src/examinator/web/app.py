@@ -807,7 +807,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         """Stop the batch the page shows (`rev`: its id): a change to the batch, refused
         (with what runs now) when that one is not running."""
         current: Batch | None = app.state.batch
-        if current is None or not current.active or current.id != str(rev):
+        if current is None or not current.active or current.id != str(data.get('rev')):   # as sent: an all-digit id is not a number
             raise Conflict("not running")
         current.run.cancel()
         return {'id': current.id}
