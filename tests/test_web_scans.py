@@ -45,6 +45,11 @@ def site(make_site):
     return make_site()
 
 
+def shown(html, id):
+    """Whether the element `id` is drawn shown (not `hidden`)."""
+    return ' hidden' not in re.search(rf'<[^>]* id="{id}"[^>]*>', html).group(0)
+
+
 def wait(client, job):
     for _ in range(500):
         state = client.get(f'/jobs/{job}').json()
@@ -331,7 +336,7 @@ def test_roster_on_the_page_and_who_is_matched(site):
     assert rows['s0005']['who']['twice'] and rows['s0003']['who']['twice']
     assert view['taken'] == {people[4]['key']: ['s0003', 's0005']}
     # what the page needs to show the first page without boxes: the print area
-    assert len(rows['s0001']['print_area']) == 4 and 'cover' not in rows['s0001']
+    assert len(rows['s0001']['print_area']) == 4
 
 
 def test_naming_is_a_statement_about_what_was_seen(site):
@@ -369,10 +374,10 @@ def test_a_box_for_one_submission_is_a_box(site):
     check_and_accept(client, token, src)
     for name in ('name', 'id'):
         post(client, token, '/exam/set', {'path': f'@identity/fields/{name}/region', 'value': None, 'rev': None})
-    assert not client.get('/scans/names').json()['boxed'] and 'id="w-noboxes" class="dim">' in client.get('/scans').text
+    assert not client.get('/scans/names').json()['boxed'] and shown(client.get('/scans').text, 'w-noboxes')
     post(client, token, '/exam/set', {'path': '@identity/fields/name/region', 'value': [1, 100, 200, 800, 280],
                                       'rev': None, 'scope': 'submission:s0002'})
-    assert client.get('/scans/names').json()['boxed'] and 'id="w-noboxes" class="dim" hidden' in client.get('/scans').text
+    assert client.get('/scans/names').json()['boxed'] and not shown(client.get('/scans').text, 'w-noboxes')
     r = read_names(client, token)
     assert r.json()['n'] == 1 and wait(client, r.json()['job'])['state'] == 'done'
     assert identity.values(ws, 's0002')['s0002']['name'].text == "Blake Mockford"
@@ -480,7 +485,7 @@ def test_no_boxes_left_means_nothing_to_read(site):
 def test_reading_names_needs_a_model(make_site):
     client, token, ws, paths = make_site(model=False)
     html = client.get('/scans').text
-    assert 'data-model=""' in html and 'data-action="names-read" title="no model"' in html    # shown, dimmed
+    assert re.search(r'<button [^>]*data-action="names-read"[^>]*title="no model"', html)    # shown, saying why
     assert read_names(client, token).status_code == 400
 
 

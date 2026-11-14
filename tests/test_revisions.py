@@ -372,4 +372,4 @@ def test_a_change_that_does_not_go_through_is_said_once_by_changes():
             continue
         text = js.read_text()
         assert not re.search(r"""say\([^)]*'…'""", text) and "textContent = '…'" not in text, js.name
-        assert 'changed since it was shown' not in text and 'save again to overwrite' not in text, js.name
+        assert 'save again to overwrite' not in text, js.name

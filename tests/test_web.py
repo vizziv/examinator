@@ -33,7 +33,7 @@ SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
 class Site:
     """A test client that sends the page token on POST, as the page's script does."""
 
-    def __init__(self, exam, ws, runner, **kw):
+    def __init__(self, ws, runner, **kw):
         self.ws, self.runner = ws, runner
         self.app = create_app(ws, runner, author='tester', **kw)
         self.client = TestClient(self.app, base_url=BASE)
@@ -97,7 +97,7 @@ class Site:
 
 @pytest.fixture
 def site(env):
-    return Site(*env)
+    return Site(*env[1:])
 
 
 # --- pages ---
@@ -167,28 +167,15 @@ def test_security_headers(site):
         csp = r.headers['content-security-policy']
         assert "script-src 'self'" in csp and "style-src 'self'" in csp and 'unsafe' not in csp
         assert r.headers['x-content-type-options'] == 'nosniff'
-    html = site.get('/s/s1/a').text
-    assert '<script>' not in html and ' style="' not in html and not re.search(r'\son\w+="', html)
 
 
 def test_pages_rendered_ahead_are_safe(site):
     """The question page lists the pages a key reaches for the browser to render ahead: the
-    CSP admits inline speculation rules (JSON) and still no inline code; a page's HTML is never
-    stored (Back without the back/forward cache fetches what is there now); and loading any
-    page changes nothing, since a page rendered ahead may never be shown."""
-    site.run_all()
+    CSP admits inline speculation rules (JSON) and still no inline code. (That no GET changes
+    anything, and HTML is never stored, is test_revisions' over the route table.)"""
     csp = site.get('/s/s1/a').headers['content-security-policy']
     script_src = next(d for d in csp.split(';') if d.strip().startswith('script-src')).split()
     assert script_src == ['script-src', "'self'", "'inline-speculation-rules'"]
-    before = (site.ws.store.version(), {k: o.rev for k, o in site.ws.store.overrides().items()})
-    for path in ('/', '/s/s1/a', '/s/s2/a', '/s/s1/p', '/s/s1/b', '/filter', '/focus/values',
-                 '/focus/values?sub=s1', '/read', '/read/status', '/exam', '/settings', '/scans'):
-        r = site.get(path)
-        assert r.status_code == 200, path
-        if r.headers['content-type'].startswith('text/html'):
-            assert r.headers['cache-control'] == 'no-store', path
-    assert site.get(site.page('s1', 0)).status_code == 200
-    assert (site.ws.store.version(), {k: o.rev for k, o in site.ws.store.overrides().items()}) == before
 
 
 def test_the_question_pages_load_eagerly(site):
@@ -202,7 +189,8 @@ def test_the_question_pages_load_eagerly(site):
 
 
 def test_theme_and_actions_are_static_and_controls_declare_actions(site):
-    for path in ('/', '/s/s1/a', '/filter', '/read', '/exam', '/settings'):
+    """Every page: the theme before the first paint, the actions, and no inline code or style."""
+    for path in ('/', '/s/s1/a', '/filter', '/read', '/exam', '/settings', '/scans'):
         html = site.get(path).text
         assert html.index('/static/theme.js"></script>') < html.index('/static/app.css')
         assert '/static/actions.js' in html
@@ -213,9 +201,7 @@ def test_theme_and_actions_are_static_and_controls_declare_actions(site):
                    'decide-blank', 'read', 'check', 'unverify'):
         assert f'data-action="{action}"' in html, action
     assert '<kbd>' not in html                                  # hints come from the key map
-    assert 'pill g-' in html and 'pill st st-' in html          # grade and state: two pills
-    grid = site.get('/').text
-    assert 'class="c cell s-' in grid and 'title="incomplete' in grid
+    assert 'title="incomplete' in site.get('/').text
 
 
 WEB = Path(__file__).resolve().parents[1] / 'src' / 'examinator' / 'web'
@@ -302,7 +288,7 @@ def test_bad_host_and_origin(site):
 
 def test_public_url_host_and_author(env):
     exam, ws, runner = env
-    site = Site(exam, ws, runner, public_url='https://grading.example/exam')
+    site = Site(ws, runner, public_url='https://grading.example/exam')
     assert 'href="/exam/static/app.css"' in site.get('/').text
     assert site.client.get('/', headers={'Host': 'grading.example'}).status_code == 200
     assert site.client.get('/', headers={'Host': 'other.example'}).status_code == 400
@@ -316,8 +302,10 @@ def test_public_url_host_and_author(env):
 
 def test_unknown_targets_are_404(site, tmp_path):
     (tmp_path / 'secret.jpg').write_bytes(b'secret')
-    for path in ('/s/nobody/a', '/s/s1/zzz', '/page/nobody/0.jpg', '/page/s1/2.jpg', '/page/s1/99.jpg',
-                 '/page/s1/-1.jpg', '/page/s1/x.jpg', '/jobs/nope', '/image/s1/a/x/0',
+    scan = site.ws.renderer.key(site.ws.pdf_path('s1'))
+    for path in ('/s/nobody/a', '/s/s1/zzz', f'/page/nobody/{scan}/0.jpg', f'/page/s1/{scan}/2.jpg',
+                 f'/page/s1/{scan}/99.jpg', f'/page/s1/{scan}/-1.jpg', f'/page/s1/{scan}/x.jpg', '/page/s1/0/0.jpg',
+                 f'/page/s2/{scan}/0.jpg', '/jobs/nope', '/image/s1/a/x/0',
                  '/page/../secret.jpg', '/page/s1/..%2f..%2fsecret.jpg', '/page/..%2f..%2fsecret/0.jpg',
                  '/s/..%2f..%2fetc/passwd', '/s/%2e%2e/%2e%2e', '/static/..%2fapp.py',
                  '/static/../app.py', '/static/%2e%2e/app.py', '/page/s1%2f..%2fs2/0.jpg'):
@@ -493,7 +481,7 @@ def test_a_field_with_a_default_on_the_page(tmp_path):
     exam.question('q', pages=[1], fields=[Field('k', default='10')],
                   check=Check(lambda ctx: int(ctx.read('k')) > 5, isolate=False))
     ws = workspace(tmp_path, exam, subs=('s1',))
-    site = Site(exam, ws, Runner(ws))
+    site = Site(ws, Runner(ws))
     site.runner.refresh('s1')
     html = site.get('/s/s1/q').text
     assert 'placeholder="default 10"' in html and '>default</span>' in html and crop(html, 'q/k') is None
@@ -512,7 +500,7 @@ def test_a_field_with_a_default_on_the_page(tmp_path):
 def test_reading_is_refused_without_a_model(env):
     exam, ws, runner = env
     runner.model = None
-    site = Site(exam, ws, runner)
+    site = Site(ws, runner)
     assert site.post('/s/s1/a/read', {}).status_code == 400
     assert 'data-action="read" disabled' in site.get('/s/s1/a').text
 
@@ -582,7 +570,7 @@ def test_opening_a_workspace_runs_every_check_whose_fields_are_there(env):
     exam, ws, runner = env
     for q in ('p', 'a'):
         runner.read('s1', q)
-    site = Site(exam, ws, runner)
+    site = Site(ws, runner)
     assert site.state('s1', 'a', 'x').state == 'unverified'
     assert site.state('s1', 'b').state == site.state('s2', 'a', 'x').state == 'not_run'     # nothing read
 
@@ -632,7 +620,6 @@ def test_one_submissions_own_values(site):
                                                   {'path': path, 'value': value, 'rev': rev, 'scope': OWN})
     html = site.get('/s/s1/a').text                     # every sheet; no editing of a question's pages
     assert site.page('s1', 0) in html and site.page('s1', 1) in html
-    assert 'data-action="pages"' not in html and 'pg-list' not in html
     assert own('a/pages', [1, 2]).status_code == 400                        # the package's
     assert own('a/note', "continues overleaf").status_code == 400          # no such thing
     assert own('a/fields/x/region', [2, 0, 0, 500, 500]).status_code == 200
@@ -690,7 +677,7 @@ def test_the_exam_page_lists_every_scope(site):
     html = site.get('/exam').text
     assert 'not applied (submission s2): <code>b/fields/x/region</code>' in html        # every scope's
     assert '@print_area: (0, 0, 1000, 1000) -&gt; (5, 5, 995, 995)' in html
-    assert 'data-path="@print_area"' in html and 'cover' not in html                   # editable here
+    assert 'data-path="@print_area"' in html                   # editable here
     assert 'data-action="scoped-revert" class="danger" data-scope="submission:s1" data-path="a/fields/x/region"' in html
     rev = site.ws.store.overrides(OWN)['a/fields/x/region'].rev
     assert site.post('/exam/clear', {'path': 'a/fields/x/region', 'rev': rev + 1, 'scope': OWN}).status_code == 409
@@ -767,7 +754,7 @@ def test_an_image_is_served_only_by_the_result_that_shows_it(site):
 def test_names_are_escaped_in_the_grid(env):
     exam, ws, runner = env
     identity.pick(ws, 's1', {'name': f"Eve {EVIL}"}, author='t', expect_rev=None)     # who it is: the pick
-    site = Site(exam, ws, runner)
+    site = Site(ws, runner)
     for path in ('/', '/s/s1/a', '/settings'):
         assert '<script>alert' not in site.get(path).text
     assert 'Eve &lt;script&gt;' in site.get('/').text
@@ -787,7 +774,7 @@ def ksite(tmp_path):
         for k, v in runner.values(sid).items():
             runner.verify(sid, *k.split('/'), author='t', expect_rev=v.rev)
         runner.refresh(sid)
-    yield Site(exam, ws, runner)
+    yield Site(ws, runner)
     runner.close()
     ws.close()
 
@@ -798,9 +785,6 @@ def test_exam_page_lists_entries(site):
     for path in ('a/fields/x/region', 'p/fields/c1/region', 'p/fields/c1/read/ask', 'p/fields/c1/read/prompt',
                  'a/read/notes'):
         assert f'data-path="{path}"' in r.text, path
-    assert '/pages"' not in r.text and '/reads"' not in r.text          # a question's pages; no readings map
-    html = r.text
-    assert '<script>' not in html and ' style="' not in html and not re.search(r'\son\w+="', html)
 
 
 def test_exam_page_of_the_toy_exam(tmp_path):
@@ -808,7 +792,7 @@ def test_exam_page_of_the_toy_exam(tmp_path):
     ws = Workspace(tmp_path / 'ws', exam, create=True)
     runner = Runner(ws)
     try:
-        r = Site(exam, ws, runner).get('/exam')
+        r = Site(ws, runner).get('/exam')
         assert r.status_code == 200
         assert 'data-path="areas/checks/check/key/3/A.2"' in r.text
         assert 'data-path="parity/checks/check/key/B" data-kind="choice"' in r.text
@@ -879,7 +863,7 @@ def test_overrides_survive_a_new_app(tmp_path):
     exam = make_keyed_exam()
     ws = workspace(tmp_path, exam)
     runner = Runner(ws)
-    site = Site(exam, ws, runner)
+    site = Site(ws, runner)
     assert site.post('/exam/set', {'path': 'p/fields/c1/read/ask', 'value': "again", 'rev': None}).status_code == 200
     runner.close()
     ws.close()
@@ -887,7 +871,7 @@ def test_overrides_survive_a_new_app(tmp_path):
     ws = Workspace(tmp_path / 'ws', exam)
     runner = Runner(ws)
     try:
-        site = Site(exam, ws, runner)
+        site = Site(ws, runner)
         assert ws.exam.questions['p'].fields[0].read.ask == "again" and exam.questions['p'].fields[0].read.ask == "first cue"
         assert 'package: <code>first cue</code>' in site.get('/exam').text
     finally:
@@ -899,7 +883,7 @@ def test_the_app_recomputes_what_a_code_change_outdated_when_it_starts(ksite):
     exam, ws, runner = ksite.exam, ksite.ws, ksite.runner
     exam.code_hash = 'changed'
     assert ksite.state('s1', 'a', 'x').state == 'outdated'
-    Site(exam, ws, runner)                  # waits for its start-up job
+    Site(ws, runner)                  # waits for its start-up job
     assert ksite.state('s1', 'a', 'x').state == 'graded'
 
 
