@@ -111,6 +111,9 @@
     }
     // the lines keep what they say (a run under way, how a change went)
     for (const s of work.querySelectorAll('[role=status][id]')) fresh.querySelector('#' + CSS.escape(s.id))?.replaceWith(s);
+    for (const s of work.querySelectorAll('form.entry .emsg')) {
+      fresh.querySelector(`form.entry[data-path="${CSS.escape(s.closest('form').dataset.path)}"] .emsg`)?.replaceWith(s);
+    }
     const kept = keepDrafts(work, fresh, ident), top = work.scrollTop;
     work.className = fresh.className;
     work.replaceChildren(...fresh.childNodes);
