@@ -200,14 +200,12 @@ class LandmarkReader:
     wins), asked like a printed field (`Printed`), memoised per source, sheet,
     landmark, orientation and print area (the source's, else the exam's:
     `memo_key`). A failed call is no reading and is not remembered: the sheets it
-    left unread are `failed`; `calls` counts the calls made."""
+    left unread are `failed`."""
 
     def __init__(self, ws, src: Source, body: Mapping, model):
         self.ws, self.src, self.body, self.model = ws, src, body, model
         self.layout = ws.layers(source=src.id).layout
         self.turns = split.turns(body)
-        self.calls = 0                  # model calls made (memoised answers aside)
-        self.failures = 0               # calls that failed
         self.failed: set[int] = set()   # sheets left unread by a failed call
 
     def __call__(self, i: int) -> int | None:
@@ -221,12 +219,10 @@ class LandmarkReader:
             if hit is None:
                 if image is None:
                     image = sheet_image(ws, self.src, i, o)
-                self.calls += 1
                 complete = functools.partial(self.model.complete, tag=(self.src.id, f'{i}@{o}', 'landmark'))
                 try:
                     got = Printed(lm.ask).reading(complete, self.layout.crop(image, lm.region, exam.crop_pad))
                 except Exception:
-                    self.failures += 1
                     failed = True
                     continue
                 hit = json.dumps(got.text if got is not None else None)
@@ -237,10 +233,6 @@ class LandmarkReader:
         if failed:
             self.failed.add(i)
         return None
-
-    @property
-    def all_failed(self) -> bool:
-        return self.calls > 0 and self.failures == self.calls
 
 
 def reguess(ws, id: str, *, model=None, length: int | None = None,

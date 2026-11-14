@@ -30,7 +30,7 @@ import hashlib
 import json
 import math
 import numbers
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any, Mapping, Sequence
 
 from .defs import Grade
@@ -39,10 +39,6 @@ OUTCOMES = ('correct', 'incorrect', 'blank', None)
 
 # --- evidence blocks -------------------------------------------------------------
 
-# The block grammar: each type's keys besides 'type'. A stored image block has
-# 'digest' in place of 'data'.
-SHAPES = {'note': {'text', 'tone'}, 'table': {'columns', 'rows'}, 'code': {'text', 'highlight'},
-          'details': {'summary', 'blocks'}, 'image': {'media_type', 'data', 'alt', 'title'}}
 # What an <img> shows safely (an SVG there runs no script and loads nothing).
 MEDIA_TYPES = ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml')
 TONES = ('info', 'good', 'bad', 'warn')
@@ -51,46 +47,42 @@ MAX_EVIDENCE = 8 << 20      # bytes per result: all its images and text together
 MAX_DEPTH = 8               # details within details
 
 
+class _Block:
+    def to_json(self) -> dict:
+        return {'type': type(self).__name__.lower(), **{f.name: getattr(self, f.name) for f in fields(self)}}
+
+
 @dataclass
-class Note:
+class Note(_Block):
     text: str
     tone: str = 'info'      # one of TONES
 
-    def to_json(self) -> dict:
-        return {'type': 'note', 'text': self.text, 'tone': self.tone}
-
 
 @dataclass
-class Table:
+class Table(_Block):
     columns: Sequence[str]
     rows: Sequence[Sequence[Any]]       # cells: text, a number, a bool or None
 
-    def to_json(self) -> dict:
-        return {'type': 'table', 'columns': list(self.columns), 'rows': [list(r) for r in self.rows]}
-
 
 @dataclass
-class Code:
+class Code(_Block):
     text: str
     highlight: Sequence[int] = ()       # line numbers, 1-based
 
-    def to_json(self) -> dict:
-        return {'type': 'code', 'text': self.text, 'highlight': list(self.highlight)}
 
-
-class Details:
+@dataclass(init=False)
+class Details(_Block):
     """Collapsed by default: `Details("Samples", Table(...), Note(...))`."""
+    summary: str
+    blocks: Sequence[Any]
 
     def __init__(self, summary: str, *blocks: Any):
         self.summary = summary
         self.blocks = blocks[0] if len(blocks) == 1 and isinstance(blocks[0], (list, tuple)) else blocks
 
-    def to_json(self) -> dict:
-        return {'type': 'details', 'summary': self.summary, 'blocks': list(self.blocks)}
-
 
 @dataclass(eq=False)
-class Image:
+class Image(_Block):
     """An image file's bytes, shown with an <img>: `Image(png)`. Light
     backgrounds are inverted in dark mode, as scans are."""
     data: bytes
@@ -98,9 +90,10 @@ class Image:
     alt: str = ""
     title: str = ""
 
-    def to_json(self) -> dict:
-        return {'type': 'image', 'media_type': self.media_type, 'data': self.data,
-                'alt': self.alt, 'title': self.title}
+
+# The block grammar, from the classes: each type's keys besides 'type'. A stored
+# image block has 'digest' in place of 'data'.
+SHAPES = {c.__name__.lower(): {f.name for f in fields(c)} for c in (Note, Table, Code, Details, Image)}
 
 
 # --- what a check returns -----------------------------------------------------------

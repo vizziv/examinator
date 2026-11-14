@@ -385,14 +385,6 @@ def kind(exam: Exam, path: str) -> str:
     return _locate(exam, path).kind
 
 
-def package_value(exam: Exam, path: str, value: Any) -> tuple[Any, Any]:
-    """(the package's object at `path`, the object `value` (JSON) stands for); `ValueError`
-    if nothing editable is there or the value has another shape."""
-    loc = _locate(exam, path)
-    base = _get(exam.base[loc.root], loc.segs)
-    return base, _decode(loc.kind, value, base)
-
-
 # --- listing and applying ------------------------------------------------------------
 
 def editable(exam: Exam, root: str | None = None) -> list[Entry]:
@@ -551,7 +543,9 @@ def describe_changes(exam: Exam, store) -> list[str]:
     lines = []
     for path, o in store.overrides().items():
         try:
-            old, new = map(repr, package_value(exam, path, o.value))
+            loc = _locate(exam, path)
+            base = _get(exam.base[loc.root], loc.segs)
+            old, new = repr(base), repr(_decode(loc.kind, o.value, base))
         except (ValueError, KeyError):
             old, new = "(no longer in the package)", repr(o.value)
         lines.append(f"{path}: {old} -> {new}  ({o.author or '?'}, {o.updated_at[:10]})")
