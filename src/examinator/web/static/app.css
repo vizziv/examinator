@@ -169,22 +169,21 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 .st-review, .st-unverified, .st-to_decide { color: var(--unv-ink); background: var(--unv-bg); border-color: transparent; }
 .st-outdated, .st-decided_outdated { border-color: var(--stale); border-style: dashed; }
 
-/* grade glyphs outside the grid (decide buttons) */
+/* grade glyphs outside the grid (decide buttons, a field's judgements): v-<kind> */
 .v-t { color: var(--ok-ink); } .v-f { color: var(--no-ink); } .v-b { color: var(--blank); } .v-n { color: var(--ask); }
-.v-num { color: var(--fg); }
 
-/* grid cells (and the legend's samples): .cell with data-v (t, f, a number, or empty),
-   data-b (blank) and s-{state} */
+/* grid cells (and the legend's samples): .cell with data-k, the grade's kind (t, f, b, num, n:
+   look() in app.py), and s-{state} */
 .cell { --tint: transparent; --ink: var(--muted); background-color: var(--tint); position: relative; }
-.cell > a, .cell > a[class] { color: var(--ink); font-weight: 700; }
+.cell > a { color: var(--ink); font-weight: 700; }
 /* glyph: the grade */
-.cell[data-v=t] { --ink: var(--ok-ink); }
-.cell[data-v=f] { --ink: var(--no-ink); }
-.cell:where([data-v]:not([data-v=t], [data-v=f], [data-v=""])) { --ink: var(--fg); }
-.cell[data-b] { --ink: var(--blank-faded); }
-.cell[data-b] > a { font-weight: 400; }
-.cell.s-review[data-v=""], .cell.s-unverified[data-v=""], .cell.s-to_decide[data-v=""] { --ink: var(--ask); }
-.cell.s-review[data-v=""] > a, .cell.s-unverified[data-v=""] > a, .cell.s-to_decide[data-v=""] > a { font-weight: 900; }
+.cell[data-k=t] { --ink: var(--ok-ink); }
+.cell[data-k=f] { --ink: var(--no-ink); }
+.cell[data-k=num] { --ink: var(--fg); }
+.cell[data-k=b] { --ink: var(--blank-faded); }
+.cell[data-k=b] > a { font-weight: 400; }
+.cell:is(.s-review, .s-unverified, .s-to_decide)[data-k=n] { --ink: var(--ask); }
+.cell:is(.s-review, .s-unverified, .s-to_decide)[data-k=n] > a { font-weight: 900; }
 /* background: yellow when a person is asked (unverified, needs review); else plain */
 .cell.s-review, .cell.s-unverified, .cell.s-to_decide { --tint: var(--unv-bg); }
 /* mark: outdated (does not count until rechecked) */
@@ -228,7 +227,7 @@ details.panel[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var
 .p-grid #grid td.c { text-align: center; min-width: 30px; }
 .p-grid #grid td.c a { display: block; padding: 0 6px; line-height: 20px; font-size: 13.5px; font-weight: 600; text-decoration: none; }
 /* ? stands out: heavier and a little larger than the other glyphs (the row keeps its height) */
-.p-grid #grid td.cell.s-review[data-v=""] a, .p-grid #grid td.cell.s-unverified[data-v=""] a, .p-grid #grid td.cell.s-to_decide[data-v=""] a { font-weight: 900; font-size: 15px; line-height: 18px; }
+.p-grid #grid td.cell:is(.s-review, .s-unverified, .s-to_decide)[data-k=n] a { font-weight: 900; font-size: 15px; line-height: 18px; }
 .p-grid #grid td.c a:hover { outline: 2px solid var(--ring); outline-offset: -2px; }
 .p-grid #grid td.c { border-left: 1px solid var(--panel); }     /* a hairline between tinted squares */
 .p-grid #grid td.total { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -302,8 +301,6 @@ details.others > .fields { margin-top: 4px; }
 .field.elsewhere .flabel a { color: var(--muted); }               /* read by a check, from another question */
 .fstate { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 .judged { font-weight: 700; font-size: 12px; }
-.judged.o-correct { color: var(--ok-ink); } .judged.o-incorrect { color: var(--no-ink); }
-.judged.o-none { color: var(--ask); } .judged.o-blank { color: var(--blank); }
 .jnote { font-weight: 400; color: var(--muted); }
 .fmenu { position: relative; }
 .fmenu > summary { list-style: none; padding: 0 4px; border-radius: 4px; line-height: 16px; }

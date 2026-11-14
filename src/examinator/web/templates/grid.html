@@ -10,12 +10,11 @@
 <details class="legend">
 <summary title="what the cells mean">legend</summary>
 <div class="legend-body">
-<h3>glyph: the grade</h3>
-<span class="lrow"><span class="sw cell" data-v="t"><a>✓</a></span>correct <span class="sw cell" data-v="f"><a>✗</a></span>incorrect <span class="sw cell" data-v="0" data-b="1"><a>∅</a></span>blank <span class="sw cell" data-v="2"><a>2</a></span>points <span class="sw cell s-unverified" data-v=""><a>?</a></span>undecided</span>
-<h3>background</h3>
-<span class="lrow"><span class="sw cell s-unverified" data-v="t"><a>✓</a></span>unverified: a person is asked <span class="sw cell s-graded" data-v="t"><a>✓</a></span>needs nobody</span>
-<h3>marks</h3>
-<span class="lrow"><span class="sw cell s-outdated" data-v="t"><a>✓</a></span>outdated <span class="sw">12…</span>total so far</span>
+{% for part, samples in legend.items() %}
+<h3>{{ {'grade': "glyph: the grade"}.get(part, part) }}</h3>
+<span class="lrow">{% for l, text in samples %}<span class="sw cell s-{{ l.state }}" data-k="{{ l.kind }}"><a>{{ l.glyph }}</a></span>{{ text }} {% endfor %}
+{% if loop.last %}<span class="sw">12…</span>total so far{% endif %}</span>
+{% endfor %}
 </div>
 </details>
 {% endblock %}
@@ -26,18 +25,18 @@
 <table id="grid"{% if not rows %} hidden{% endif %}>
 <thead><tr>
 <th data-sort="text">id</th><th data-sort="text">name</th>
-{% for c in columns %}<th data-sort="cell" data-col="{{ c.name }}" title="{{ c.q.title }}">{{ c.name }}<button type="button" class="todo" data-facet="{{ c.facet }}" data-todo="{{ c.todo }}" title="only submissions still to do here" aria-pressed="false">•</button></th>
+{% for c in columns %}<th data-sort="cell" title="{{ c.q.title }}">{{ c.name }}<button type="button" class="todo" data-facet="{{ c.facet }}" data-todo="{{ c.todo }}" title="only submissions still to do here" aria-pressed="false">•</button></th>
 {% endfor %}
-<th data-sort="num">total</th>
+<th data-sort="total">total</th>
 </tr></thead>
 <tbody>
 {% for r in rows %}
 <tr data-id="{{ r.sub.id }}"{% if r.hidden %} hidden{% endif %}>
 <td class="id">{{ r.sub.id }}</td><td class="name"{% if r.sub.student %} title="{{ r.sub.student }}" data-student="{{ r.sub.student }}"{% endif %}>{{ r.sub.name }}</td>
 {% for c in r.cells %}
-<td class="c cell s-{{ c.state }}" data-q="{{ c.qid }}" data-col="{{ c.col }}" data-s="{{ c.state }}" data-v="{{ c.v }}"{% if c.blank %} data-b="1"{% endif %}{% if c.counts %} data-c="1"{% endif %}><a class="{{ c.cls }}" href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ c.title }}">{{ c.glyph }}</a></td>
+<td class="c cell s-{{ c.state }}" data-q="{{ c.qid }}" data-k="{{ c.kind }}" data-sort="{{ c.sort }}"><a href="{{ root }}/s/{{ r.sub.id|urlencode }}/{{ c.qid|urlencode }}" title="{{ c.title }}">{{ c.glyph }}</a></td>
 {% endfor %}
-<td class="total{% if not r.complete %} open{% endif %}" data-n="{{ r.sort }}">{{ r.points }}{% if not r.complete %}<span class="dim" title="incomplete: some grades do not count yet">…</span>{% endif %}</td>
+<td class="total" data-sort="{{ r.sort }}">{{ r.points }}{% if not r.complete %}<span class="dim" title="incomplete: some grades do not count yet">…</span>{% endif %}</td>
 </tr>
 {% endfor %}
 </tbody>

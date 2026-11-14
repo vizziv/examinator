@@ -102,17 +102,33 @@ def site(env):
 
 # --- pages ---
 
+def grid_cells(html):
+    """The grid as a person sees it: {submission: [(state, glyph, title), ...]}, one per column."""
+    rows = {}
+    for sub, row in re.findall(r'<tr data-id="([^"]+)"[^>]*>(.*?)</tr>', html, re.S):
+        rows[sub] = re.findall(r'<td class="c cell s-(\w+)"[^>]*><a [^>]*title="([^"]*)">([^<]*)</a>', row)
+        rows[sub] = [(state, glyph, title) for state, title, glyph in rows[sub]]
+    return rows
+
+
+def crop(html, k):
+    """The crop beside field `k` as the page's script reads it: its page image (`src`) and
+    where it is on it (`box`); None without one."""
+    field = re.search(rf'<div class="field[^"]*" data-key="{re.escape(k)}">(.*?)</div>', html, re.S)
+    m = field and re.search(r'class="crop" data-src="([^"]+)" data-box="([^"]+)"', field.group(1))
+    return {'src': m.group(1), 'box': m.group(2)} if m else None
+
+
 def test_grid_lists_every_submission(site):
     site.run_all()
     r = site.get('/')
     assert r.status_code == 200
-    assert 'data-id="s1"' in r.text and 'data-id="s2"' in r.text
-    for column in ('p', 'a.x', 'a.y', 'b'):       # 'p' has no checks: its column says how its fields stand
-        assert f'data-col="{column}"' in r.text
+    heads = re.findall(r'<th data-sort="cell"[^>]*>([^<]+)<button', r.text)
+    assert heads == ['p', 'a.x', 'a.y', 'b']       # 'p' has no checks: its column says how its fields stand
+    cells = grid_cells(r.text)
+    assert cells['s1'][0] == ('verified', '–', "verified") and cells['s2'][0] == ('not_read', '', "not read")
+    assert cells['s1'][1] == ('unverified', '✓', "unverified") and cells['s2'][1][0] == 'not_run'
     assert 'href="/s/s1/a"' in r.text
-    assert 'data-q="p" data-col="p" data-s="verified"' in r.text and 'href="/s/s1/p" title="verified"' in r.text
-    assert 'data-q="p" data-col="p" data-s="not_read"' in r.text       # s2: not read yet
-    assert 'data-s="unverified"' in r.text and 'data-s="not_run"' in r.text
     # each column's "to do" toggle names its state facet and the states that do not count yet
     assert 'data-facet="a/state:y" data-todo="decided_outdated to_decide not_run outdated review unverified"' in r.text
     assert 'data-facet="b/state"' in r.text and 'data-facet="p/state" data-todo="not_read review unverified"' in r.text
@@ -131,7 +147,7 @@ def test_question_page_before_and_after_reading(site):
     assert 'data-key="p/c1"' in r.text and 'href="/s/s1/p"' in r.text
     printing = site.get('/s/s1/p').text                        # no checks: values to verify, no grade
     assert 'data-key="p/c1"' in printing and 'value="one"' in printing and '<span class="ftag">printed</span>' in printing
-    assert 'title="printed: first cue"' in printing and 'data-region="p/fields/c1/region"' in printing
+    assert 'title="printed: first cue"' in printing and crop(printing, 'p/c1')
     assert 'no grade' in printing and 'data-action="decide"' not in printing
     assert site.get('/s/s1/b').status_code == 200
     for path in ('/read', '/settings'):
@@ -141,8 +157,8 @@ def test_question_page_before_and_after_reading(site):
 def test_evidence_beside_each_field_and_blocks_below(site):
     site.run_all()
     html = site.get('/s/s1/a').text
-    assert re.search(r'class="judged o-correct" title="x: correct', html)
-    assert re.search(r'class="judged o-correct" title="y: correct', html)
+    assert re.search(r'class="judged [^"]*" title="x: correct[^"]*">✓', html)
+    assert re.search(r'class="judged [^"]*" title="y: correct[^"]*">✓', html)
 
 
 def test_security_headers(site):
@@ -480,7 +496,7 @@ def test_a_field_with_a_default_on_the_page(tmp_path):
     site = Site(exam, ws, Runner(ws))
     site.runner.refresh('s1')
     html = site.get('/s/s1/q').text
-    assert 'placeholder="default 10"' in html and '>default</span>' in html and 'data-region="' not in html
+    assert 'placeholder="default 10"' in html and '>default</span>' in html and crop(html, 'q/k') is None
     assert site.state('s1', 'q').state == 'graded'                  # nobody need verify a default
     r = site.post('/s/s1/q/save', {'values': {'q/k': {'text': '3', 'rev': None}}})
     site.wait(r.json()['job'])
@@ -517,7 +533,7 @@ def test_a_region_for_this_submission_only(site):
     layout = site.ws.layout('s1')
     from examinator import Region
     want = ','.join(f'{v:.4f}' for v in Layout(layout.print_area).box(Region(1, 0, 0, 500, 100), 12))
-    assert f'data-box="{want}" data-region="p/fields/c1/region"' in html
+    assert crop(html, 'p/c1')['box'] == want
     r = site.post('/exam/clear', {'path': path, 'rev': r.json()['rev'], 'scope': OWN, 'sub': 's1'})
     assert r.status_code == 200 and r.json()['levels']['own'] is None and r.json()['rev'] is None
     assert r.json()['levels']['value'] == [1, 0, 0, 1000, 200]
@@ -777,11 +793,6 @@ def ksite(tmp_path):
     ws.close()
 
 
-def crop_box(html, path):
-    m = re.search(rf'data-box="([^"]+)" data-region="{re.escape(path)}"', html)
-    return m and m.group(1)
-
-
 def test_exam_page_lists_entries(site):
     r = site.get('/exam')
     assert r.status_code == 200
@@ -837,11 +848,11 @@ def test_set_validation_conflict_and_token(site):
 
 def test_region_override_moves_the_crop_and_changes_no_value(ksite):
     path = 'a/fields/x/region'
-    before = crop_box(ksite.get('/s/s1/a').text, path)
+    before = crop(ksite.get('/s/s1/a').text, 'a/x')['box']
     assert before
     r = ksite.post('/exam/set', {'path': path, 'value': [1, 100, 300, 600, 450], 'rev': None, 'sub': 's1'})
     assert r.status_code == 200 and r.json()['job'] is None
-    after = crop_box(ksite.get('/s/s1/a').text, path)
+    after = crop(ksite.get('/s/s1/a').text, 'a/x')['box']
     assert after != before
     assert ksite.state('s1', 'a', 'x').state == 'graded'
 

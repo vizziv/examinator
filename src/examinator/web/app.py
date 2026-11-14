@@ -56,11 +56,12 @@ from starlette.staticfiles import StaticFiles
 from ..core import batch, focus, grid, identity, intake, overrides, split, status
 from ..core.context import CheckContext
 from ..core.ask import Printed
-from ..core.defs import IDENTITY, PRINT_AREA, Bool, Check, Exam, Question, key, split_key
+from ..core.defs import IDENTITY, PRINT_AREA, Bool, Check, Exam, Grade, Question, key, split_key
 from ..core.as_python import describe_changes
 from ..core.overrides import EXAM, SOURCE, SUBMISSION
 from ..core.reading import normalize
 from ..core.runner import Runner, to_read
+from ..core.status import Status
 from ..core.store import Conflict
 from ..core.workspace import Workspace
 from ..pdf.layout import Layout
@@ -204,22 +205,43 @@ def selection(text: str | None) -> dict:
             if isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, (str, int, float)) for x in v))}
 
 
-def glyph(st) -> str:
-    """What the grade is, as one glyph. Where it is in the workflow is `st.state`."""
+KINDS = {None: 'n', 'blank': 'b', '✓': 't', '✗': 'f'}         # a grade's kind; else 'num' (points)
+NO_GRADE = {'to_decide': '?', 'unverified': '?', 'review': '!', 'outdated': '·', 'verified': '–'}
+OUTCOMES = {'correct': '✓', 'incorrect': '✗', 'blank': 'blank'}      # a check's judgement of one field
+
+
+def look(st: Status | str) -> dict:
+    """What a person sees of a status: a check's (`Status`), or a state alone (a question
+    without checks: how its fields stand). The grade's `kind` ('t' correct, 'f' incorrect,
+    'b' blank, 'num' points, 'n' none: the CSS's g-<kind>), its `glyph`, its `sort` key (a
+    number, a blank by its value; '' for none) and the state's `title`. Every page draws a
+    status from this alone."""
+    st = Status(st) if isinstance(st, str) else st
     text = focus.grade_text(st)
-    if text is None:
-        return {'to_decide': '?', 'review': '!', 'unverified': '?', 'outdated': '·'}.get(st.state, '')
-    return '∅' if text == 'blank' else text
+    value = st.value
+    return {'kind': KINDS.get(text, 'num'), 'state': st.state, 'title': status.LABELS[st.state],
+            'glyph': NO_GRADE.get(st.state, '') if text is None else '∅' if text == 'blank' else text,
+            'sort': '' if value is None else int(value) if isinstance(value, bool) else value}
 
 
-def value_class(st) -> str:
-    return {None: 'v-n', 'blank': 'v-b', '✓': 'v-t', '✗': 'v-f'}.get(focus.grade_text(st), 'v-num')
+def judged(outcome: str | None) -> dict:
+    """A check's judgement of one field, drawn like a grade: correct, incorrect, blank or undecided."""
+    text = OUTCOMES.get(outcome)
+    return {'kind': KINDS.get(text, 'n'), 'glyph': '?' if text is None else '∅' if text == 'blank' else text}
 
 
-def value_key(st) -> str:
-    """The value as the grid's sort key (a blank sorts by its value)."""
-    text = focus.grade_text(st, blank=False)
-    return {None: '', '✓': 't', '✗': 'f'}.get(text, text)
+# The grid's legend: a sample of each look.
+LEGEND = {'grade': [(Status('graded', Grade(True)), "correct"), (Status('graded', Grade(False)), "incorrect"),
+                    (Status('graded', Grade(0, ('blank',))), "blank"), (Status('graded', Grade(2)), "points"),
+                    (Status('unverified'), "undecided")],
+          'background': [(Status('unverified', Grade(True)), "unverified: a person is asked"),
+                         (Status('graded', Grade(True)), "needs nobody")],
+          'marks': [(Status('outdated', Grade(True)), "outdated")]}
+
+
+def when(at: str) -> str:
+    """A stored time, as a person reads it: 'YYYY-MM-DD HH:MM'."""
+    return at[:16].replace('T', ' ')
 
 
 DIGEST = re.compile(r'[0-9a-f]{64}')
@@ -397,39 +419,32 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             cells = []
             started = started or any(split_key(k)[0] in graded for k in (*row.sheet.values, *row.sheet.results))
             for q in ws.exam.questions.values():
-                for c in q.checks:
-                    st = row.status[(q.id, c.name)]
-                    cells.append({'qid': q.id, 'col': q.column(c.name), 'state': st.state,
-                                  'glyph': glyph(st), 'cls': value_class(st), 'v': value_key(st),
-                                  'blank': 'blank' in st.flags, 'counts': st.counts,
-                                  'title': status.LABELS[st.state]})
+                cells += [{'qid': q.id, **look(row.status[(q.id, c.name)])} for c in q.checks]
                 if not q.checks:
-                    state = row.fields[q.id]
-                    cells.append({'qid': q.id, 'col': q.id, 'state': state,
-                                  'glyph': {'verified': '–', 'review': '!', 'unverified': '?'}.get(state, ''),
-                                  'cls': 'v-n', 'v': '', 'blank': False, 'counts': False,
-                                  'title': status.LABELS[state]})
+                    cells.append({'qid': q.id, **look(row.fields[q.id])})
             rows.append({'sub': row.submission, 'cells': cells, 'points': f'{row.points:g}',
                          'complete': row.complete, 'sort': row.points,
                          'hidden': bool(sel) and not focus.matches(table, sel, row.submission.id)})
-        return page('grid.html', rows=rows, columns=columns, focus=focus.active(table, sel), started=started)
+        legend = {part: [(look(st), text) for st, text in samples] for part, samples in LEGEND.items()}
+        return page('grid.html', rows=rows, columns=columns, focus=focus.active(table, sel), started=started,
+                    legend=legend)
 
     # --- focus ---
 
-    cached: dict[str, Any] = {}
+    table_of: dict[str, Any] = {}
     memo: dict = {}             # what facets compute (normal forms), kept between tables
 
     def values() -> dict:
         """The whole values table, recomputed only when stored rows have changed."""
         key_ = store.version()
         with lock:
-            if cached.get('key') == key_:
-                return cached['table']
+            if table_of.get('key') == key_:
+                return table_of['table']
             if len(memo) > 200_000:
                 memo.clear()
         table = focus.values_table(ws.exam, store, memo=memo)
         with lock:
-            cached.update(key=key_, table=table)
+            table_of.update(key=key_, table=table)
         return table
 
     def filter_page(request: Request) -> Response:
@@ -459,10 +474,10 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
 
         gone = ws.missing(sub.id)
 
-        def crop(region, path):
+        def crop(region):
             if region is None or region.page in gone or not 0 < region.page <= count:
                 return None
-            return {'index': region.page - 1, 'box': box(layout, region), 'path': path}
+            return {'index': region.page - 1, 'box': box(layout, region)}
 
         # every sheet of the PDF, to scroll through: the printed pages (a missing one is its
         # placeholder), then the extra sheets; `on` marks this question's pages
@@ -471,7 +486,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                  for i in range(count)]
 
         # the checks: status, proposal, evidence
-        checks, judged = [], {}
+        checks, marks = [], {}       # marks: each field's judgements, by the checks that read it
         for c in q.checks:
             k = key(q.id, c.name)
             st = sheet.status(exam, q, c)
@@ -480,25 +495,20 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             blocks = row.body['blocks'] if row else []
             figures = next((i for i, b in enumerate(blocks) if b['type'] != 'image'), len(blocks))
             for label, j in (stored.fields if stored else {}).items():
-                judged.setdefault(label, []).append({'check': c.name, **j})
+                marks.setdefault(label, []).append({'check': c.name, **j, **judged(j.get('outcome'))})
             spec = c.points
-            checks.append({'name': c.name, 'column': q.column(c.name), 'st': st, 'glyph': glyph(st),
-                           'cls': value_class(st), 'fn': c.fn is not None,
+            checks.append({'name': c.name, 'column': q.column(c.name), 'st': st, 'look': look(st),
+                           'fn': c.fn is not None,
                            'rev': decision.rev if decision else '', 'decided': decision is not None,
                            'bool': isinstance(spec, Bool), 'min': getattr(spec, 'min', None),
                            'max': getattr(spec, 'max', None), 'counts': spec.counts,
                            'step': 1 if getattr(spec, 'type', None) is int else 'any',
-                           'stored': stored,
                            'current': stored is not None and status.current(
                                stored, sheet.values, defn=exam.check_hash(q, c), code=exam.code_hash),
                            'figures': blocks[:figures], 'rest': blocks[figures:]})
 
-        # the fields on the page: its own, then those its checks read elsewhere
-        own = [key(q.id, label) for label in q.labels]
-        keys = own + [k for c in checks if c['stored'] for k in c['stored'].reads if k not in own]
-        keys = list(dict.fromkeys(keys))
         fields, why = [], {}         # why: per question, the fields that cannot be read now
-        for k in keys:
+        for k in runner.page(sub.id, q.id):
             qid, label = split_key(k)
             other = exam.group(qid)
             f = other.field(label) if other else None
@@ -518,12 +528,9 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                 'review': v.review if v else None,
                 'multiline': other.multiline(label),
                 'printed': isinstance(reader, Printed), 'ask': getattr(reader, 'ask', ''),
-                'typed': reader is None, 'default': f.default,
-                'crop': crop(here.field(label).region, overrides.join(qid, 'fields', label, 'region')),
+                'default': f.default, 'crop': crop(here.field(label).region),
                 'blocked': why[qid].get(label),         # 'page missing', 'no region': not read
-                'judged': judged.get(label, []) if qid == q.id else []})
-        for n, f in enumerate(fields):
-            f['n'] = n
+                'judged': marks.get(label, []) if qid == q.id else []})
         # what Verify here may verify: a value that needs review is verified one by one (its ⋯ menu)
         unverified = [f for f in fields if f['read'] and f['verified'] is None and f['review'] is None]
         waiting = [f['key'] for f in unverified if f['own']]           # what Verify here verifies
@@ -534,7 +541,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             for h in store.history(sub.id, f['key'], 'value')[:20]:
                 b = h.body or {}
                 history.append({'field': f['title'], 'key': f['key'], 'rev': h.rev,
-                                'at': h.updated_at[:16].replace('T', ' '), 'who': h.author or "read",
+                                'at': when(h.updated_at), 'who': h.author or "read",
                                 'verified': b.get('verified'), 'text': str(b.get('text', ''))[:300]})
         history.sort(key=lambda h: h['at'], reverse=True)
 
@@ -746,8 +753,12 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             path = ws.scan_page_path(sub.id, index)
         except (KeyError, IndexError, OSError):
             raise HTTPException(404) from None
-        cache = (ws.root / 'cache').resolve()
-        if path.is_symlink() or cache not in path.resolve().parents:
+        return cached(path)
+
+    def cached(path: Path) -> Response:
+        """A JPEG of the render cache, never one a link leads out of: immutable, as its URL
+        names its content (a PDF's render key, a source's digest)."""
+        if path.is_symlink() or (ws.root / 'cache').resolve() not in path.resolve().parents:
             raise HTTPException(404)
         return FileResponse(path, media_type='image/jpeg', headers={'Cache-Control': IMMUTABLE})
 
@@ -848,7 +859,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             return {EXAM: "all", SOURCE: f"scan {names.get(id_, id_)}", SUBMISSION: f"submission {id_}"}[level]
 
         skipped = [{'path': s.path, 'reason': s.reason, 'where': where(s.scope)} for s in ws.skipped_overrides()]
-        active = [{'path': p, 'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')}
+        active = [{'path': p, 'who': o.author or '?', 'at': when(o.updated_at)}
                   for p, o in stored.items()]
         scoped = []             # what one scan or one submission has of its own
         for o in store.all_overrides():
@@ -867,7 +878,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
                                     f'/s/{id_}/{root if root in ws.exam.questions else first}' if first else None)
                            if level == SUBMISSION else None,
                            'path': o.path, 'text': show_value(kind, o.value), 'rev': o.rev,
-                           'who': o.author or '?', 'at': o.updated_at[:16].replace('T', ' ')})
+                           'who': o.author or '?', 'at': when(o.updated_at)})
         return page('exam.html', questions=questions, active=active, skipped=skipped, scoped=scoped,
                     lines=describe_changes(ws.exam, store))
 
@@ -1207,8 +1218,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         w, o = request.query_params.get('w', '0'), request.query_params.get('o', '0')
         if not 0 <= index < src.pages or not w.isdigit() or int(w) not in (0, *SHEET_WIDTHS) or o not in ('0', '1', '2', '3'):
             raise HTTPException(404)
-        cache = (ws.root / 'cache').resolve()
-        out = cache / 'sheets' / src.id / f'{index:04d}-{o}-{int(w)}.jpg'
+        out = ws.root / 'cache' / 'sheets' / src.id / f'{index:04d}-{o}-{int(w)}.jpg'
         if not out.exists():
             try:
                 im = ws.renderer.page(intake.source_path(ws, src), index)
@@ -1221,9 +1231,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
             tmp = out.with_suffix(f'.{os.getpid()}.{threading.get_ident()}.tmp')
             im.convert('RGB').save(tmp, 'JPEG', quality=85)
             os.replace(tmp, out)
-        if out.is_symlink() or cache not in out.resolve().parents:
-            raise HTTPException(404)
-        return FileResponse(out, media_type='image/jpeg', headers={'Cache-Control': IMMUTABLE})     # a source is kept by its digest
+        return cached(out)
 
     def post(kind: str):
         """A POST route of a kind: 'change' (to a row: names the revision drawn, refused

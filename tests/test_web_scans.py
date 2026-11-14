@@ -12,6 +12,8 @@ from examinator.core.runner import Runner
 from examinator.core.workspace import Workspace
 from examinator.web.app import create_app
 
+from test_web import crop
+
 TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
 BASE = 'http://127.0.0.1:8580'
 
@@ -162,7 +164,7 @@ def test_missing_pages_and_extra_sheets_downstream(site):
     assert plan['entries'][2]['lay'] == [[7, 1], [8, 2], [9, None], [10, 3], [11, 4]]
     # the pages panel: the placeholder labelled missing, the extra sheet last
     html = client.get(f'/s/{short}/parity').text
-    assert '<span class="pno">missing</span>' in html and 'data-region="parity/fields/B/region"' not in html
+    assert '<span class="pno">missing</span>' in html and crop(html, 'parity/B') is None
     assert '<span class="pno">extra 1</span>' in client.get(f'/s/{stray}/parity').text
     # a field on the missing page is not read: blocked, like one with no region
     groups = post(client, token, '/read/plan', {'submissions': [short, stray], 'questions': ['parity']}).json()['groups']
@@ -186,7 +188,7 @@ def test_missing_pages_and_extra_sheets_downstream(site):
     assert r.status_code == 400 and "page 5 is not a printed page (1..4)" in r.json()['error']
     html = client.get(f'/s/{stray}/parity').text
     assert 'class="sheet on" data-index="2"' in html and 'data-pages="5"' in html     # every sheet, extra too
-    assert re.search(r'data-src="[^"]*/4\.jpg"[^>]*data-region="parity/fields/B/region"', html)   # its crop: the extra sheet
+    assert crop(html, 'parity/B')['src'].endswith('/4.jpg')     # its crop: the extra sheet
 
 
 def test_naming_and_a_forced_accept(site):

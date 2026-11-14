@@ -12,14 +12,11 @@
   let sel = {}, data = null;
   text.value = saved.text || '';
 
+  // A column's sort key: a cell's or the total's `data-sort` (a number; '' none), else its text.
   function key(row, index, kind) {
     const td = row.cells[index];
-    if (kind === 'num') return Number(td.dataset.n);
-    if (kind === 'cell') {
-      const v = td.dataset.v;
-      return v === '' ? null : v === 't' ? 1 : v === 'f' ? 0 : Number(v);
-    }
-    return td.textContent.trim().toLowerCase();
+    if (kind === 'text') return td.textContent.trim().toLowerCase();
+    return td.dataset.sort === '' ? null : Number(td.dataset.sort);
   }
 
   function summary() {
