@@ -253,6 +253,13 @@
   document.addEventListener('click', e => {
     for (const m of document.querySelectorAll('.fmenu[open]')) if (!m.contains(e.target)) m.open = false;
   });
+  // One field per row: on <html> before first paint (theme.js), so a page rendered ahead opens
+  // in the same layout; the box follows what is applied.
+  const oneColumn = $('one-column');
+  const showOneColumn = () => { oneColumn.checked = document.documentElement.dataset.oneColumn === 'on'; };
+  oneColumn.addEventListener('change', () => { setPref('oneColumn', oneColumn.checked); Theme.apply(); oneColumn.blur(); });
+  for (const [on, name] of [[window, 'storage'], [document, 'prerenderingchange']]) on.addEventListener(name, showOneColumn);
+  showOneColumn();
   document.addEventListener('toggle', e => { if (e.target.id === 'others') drawCrops(e.target); }, true);
 
   // --- actions: buttons (data-action) and keys trigger the same ones ---

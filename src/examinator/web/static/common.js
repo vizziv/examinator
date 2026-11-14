@@ -254,8 +254,9 @@ function nextOpen(list, from, open) {
 // It is drawn at the region's own size times the grader's crop scale (1 shows a page 1000 px
 // wide), or at its own data-width, and never shrunk to fit. In the fields panel a crop wider
 // than the panel scrolls sideways inside a box the panel's width, and a multi-line value's crop
-// sits beside the value only when both fit (the value keeps TEXT_MIN), else above it.
-const CROP_SCALE = 1.2, CROP_MIN = 0.4, CROP_MAX = 3, TEXT_MIN = 16;   // em
+// sits beside the value only when both fit (the value keeps --text-min ems of its own size,
+// app.css), else above it.
+const CROP_SCALE = 1.2, CROP_MIN = 0.4, CROP_MAX = 3;
 const cropScale = () => Math.min(CROP_MAX, Math.max(CROP_MIN, Number(pref('cropScale', CROP_SCALE)) || CROP_SCALE));
 function setCropScale(value) {
   setPref('cropScale', Math.min(CROP_MAX, Math.max(CROP_MIN, value)));
@@ -291,10 +292,10 @@ function drawCrop(crop) {
   view.style.width = width + 'px';
   view.style.height = (b - t) * h * k + 'px';
   const box = width + crop.offsetWidth - crop.clientWidth, room = crop.closest('.fields')?.clientWidth;
-  const field = crop.closest('.field.multiline');
-  if (field && room) {
-    const style = getComputedStyle(field);
-    field.classList.toggle('above', box + parseFloat(style.columnGap) + TEXT_MIN * parseFloat(style.fontSize) > room);
+  const field = crop.closest('.field.multiline'), value = field?.querySelector('textarea');
+  if (value && room) {
+    const style = getComputedStyle(field), min = parseFloat(style.getPropertyValue('--text-min'));
+    field.classList.toggle('above', box + parseFloat(style.columnGap) + min * parseFloat(getComputedStyle(value).fontSize) > room);
   }
   crop.style.maxWidth = room ? room + 'px' : '';
 }
@@ -312,6 +313,8 @@ function fillRange(el) {
   el.style.setProperty('--fill', ((Number(el.value) - min) / (max - min || 1)) * 100 + '%');
 }
 document.addEventListener('input', e => { if (e.target.matches?.('input[type=range]')) fillRange(e.target); });
+// The text size changed in another tab (theme.js applied it): a multi-line value's room changed.
+addEventListener('storage', e => { if (e.key === 'textSize') drawCrops(); });
 // A choice made in a select gives the keys back (single keys are off while a field has focus).
 document.addEventListener('change', e => { if (e.target.matches?.('select')) e.target.blur(); });
 document.addEventListener('DOMContentLoaded', () => {

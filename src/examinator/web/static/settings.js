@@ -7,6 +7,18 @@
   const invert = $('invert-scans');
   invert.checked = pref('invertScans', true) !== false;
   invert.addEventListener('change', () => { setPref('invertScans', invert.checked); Theme.apply(); });
+  // The text size: the base of every font size (theme.js), applied as it moves.
+  const size = $('text-size'), sizeN = $('text-n');
+  Object.assign(size, {min: Theme.TEXT.min, max: Theme.TEXT.max, step: Theme.TEXT.step});
+  function showSize() { size.value = Theme.textSize(); sizeN.textContent = Theme.textSize() + ' px'; fillRange(size); }
+  size.addEventListener('input', () => { setPref('textSize', Number(size.value)); Theme.apply(); showSize(); });
+  $('text-reset').addEventListener('click', () => {
+    try { localStorage.removeItem('textSize'); } catch (err) { /* private mode */ }
+    Theme.apply();
+    showSize();
+  });
+  addEventListener('storage', e => { if (e.key === 'textSize') showSize(); });
+  showSize();
   // Accents as OKLCH hue + chroma; the lightness is per theme and role (theme.js).
   for (const box of document.querySelectorAll('.picker')) {
     const key = box.dataset.key, two = key === 'accent2';

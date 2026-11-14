@@ -1,17 +1,20 @@
 'use strict';
-// Loaded synchronously in <head> so the saved theme and accents apply before first paint.
-// Per browser (localStorage):
+// Loaded synchronously in <head> so the saved look applies before first paint (and again when a
+// page rendered ahead is shown, in case it changed meanwhile). Per browser (localStorage):
 //   'theme'               "system" (default) | "light" | "dark"
 //   'invertScans'         true (default) | false: show scans inverted when the theme is dark
 //   'accent', 'accent2'   {h, c}: an OKLCH hue (degrees) and chroma. Lightness is not
 //                         chosen: each theme derives it per role (fill, link, ring…),
 //                         so one choice reads well on light and on dark surfaces.
+//   'textSize'            px: the base every font size is in rem of (TEXT: range, default)
+//   'oneColumn'           true | false (default): a question's fields one per row
 // Each role's colour is set on <html> as a custom property; chroma is capped to what
 // sRGB can show at that lightness and hue, so no colour clips. Without oklch() support
 // the same colours are set as hex.
 const Theme = (() => {
   const DEFAULTS = {accent: {h: 194, c: 0.11}, accent2: {h: 68, c: 0.15}};
   const MAX_C = 0.25;
+  const TEXT = {min: 12, max: 17, step: 0.5, base: 14.5};     // the base in app.css
   // Lightness per role and theme. The soft and line shades derive in CSS (color-mix).
   const ROLES = {
     light: {accent: ['accent', 0.52], 'accent-hover': ['accent', 0.45], link: ['accent', 0.47], ring: ['accent', 0.55],
@@ -56,6 +59,11 @@ const Theme = (() => {
     return {h: ((Number(v.h) % 360) + 360) % 360, c: Math.min(MAX_C, Math.max(0, Number(v.c)))};
   }
 
+  function textSize() {
+    const v = Number(read('textSize', TEXT.base));
+    return isFinite(v) ? Math.min(TEXT.max, Math.max(TEXT.min, v)) : TEXT.base;
+  }
+
   const dark = matchMedia('(prefers-color-scheme: dark)');
   function apply() {
     const html = document.documentElement;
@@ -63,6 +71,9 @@ const Theme = (() => {
     const theme = mode === 'dark' || (mode !== 'light' && dark.matches) ? 'dark' : 'light';
     html.dataset.theme = theme;
     html.dataset.invertImages = read('invertScans', true) === false ? 'off' : 'on';
+    const size = textSize();
+    if (size === TEXT.base) html.style.removeProperty('font-size'); else html.style.fontSize = size + 'px';
+    html.dataset.oneColumn = read('oneColumn', false) === true ? 'on' : 'off';
     const picks = {accent: accent('accent'), accent2: accent('accent2')};
     for (const [role, [key, L]] of Object.entries(ROLES[theme])) {
       html.style.setProperty('--' + role, color(L, picks[key].c, picks[key].h));
@@ -70,6 +81,7 @@ const Theme = (() => {
   }
   apply();
   dark.addEventListener('change', apply);
-  addEventListener('storage', e => { if (['theme', 'invertScans', 'accent', 'accent2'].includes(e.key)) apply(); });
-  return {apply, accent, color, ROLES, MAX_C};
+  document.addEventListener('prerenderingchange', apply);
+  addEventListener('storage', e => { if (['theme', 'invertScans', 'accent', 'accent2', 'textSize', 'oneColumn'].includes(e.key)) apply(); });
+  return {apply, accent, color, textSize, ROLES, MAX_C, TEXT};
 })();

@@ -603,7 +603,8 @@ Screens:
   verifies it), **Verify, next** (V).
 - **Read:** scope, options, what they would read (live counts, the breakdown
   collapsed), one read button, progress, stop.
-- **Settings:** per-browser keys and appearance. Exam data (the print area
+- **Settings:** per-browser keys and appearance (theme, accents, text size: every font
+  size is in rem of one base, spacing and images stay put). Exam data (the print area
   for all, too) is on the Exam data page, which also lists what a
   scan or a submission has of its own, each revertible.
 
@@ -613,7 +614,8 @@ separate PDF window that follows the current student and question; drafts that
 are never silently discarded; an adjustable crop scale (header slider; pinch or
 Ctrl+scroll over a crop). A crop is drawn at that scale everywhere, never shrunk to fit:
 wider than its room, it scrolls sideways, and a multi-line value's crop goes above the
-value instead of beside it. Pinch or Ctrl+scroll over anything but an image is the
+value instead of beside it. The value under a crop is set larger than the rest, near the
+size of the handwriting; "one column" puts each field on its own row. Pinch or Ctrl+scroll over anything but an image is the
 browser's own zoom.
 
 ### Words and colours on screen
