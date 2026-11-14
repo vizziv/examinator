@@ -4,7 +4,7 @@
   const form = document.getElementById('rd-form'), line = Line('rd-msg');
   const start = document.getElementById('rd-start'), stop = document.getElementById('rd-stop');
   const order = session('order', null);
-  let timer = null, planning = null, toRead = 0, running = false;
+  let timer = null, planning = null, toRead = 0, running = false, batch = null;     // batch: the one shown, by id
   document.getElementById('rd-grid-n').textContent = order ? order.length : 0;
   if (!order) form.querySelector('[name=scope][value=grid]').disabled = true;
 
@@ -53,12 +53,12 @@
     later();
   }});
 
-  // A batch is a run: Start is refused while one runs; Stop stops the one that runs.
+  // Start is a run, refused while a batch runs; Stop, a change to the batch shown (its id).
   Actions.register('read-start', {available: () => !start.disabled, run: () => {
     if (flag('include_protected') && !confirm("Read again, replacing values a person set or verified?")) return;
     return Changes.send('batch', '/read/start', {...selection(), parallel: Number(form.parallel.value)}, {line, done: poll});
   }});
-  Actions.register('read-stop', {available: () => !stop.disabled, run: () => Changes.send('batch', '/read/stop', {}, {line, done: poll})});
+  Actions.register('read-stop', {available: () => !stop.disabled, run: () => Changes.send('batch', '/read/stop', () => ({rev: batch}), {line, done: poll})});
 
   // The batch's progress, polled while it runs (one poll at a time).
   let next = 0;
@@ -82,6 +82,7 @@
       row(table, [link, f.question, f.step, f.status, f.detail]);
     }
     const was = running;
+    batch = s.id;
     running = s.state === 'running';
     stop.disabled = !running;
     ready();

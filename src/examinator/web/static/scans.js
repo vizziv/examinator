@@ -263,7 +263,7 @@
   register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {}, whole)});
   register('split-guess', {run: () => send('propose', {length: $('sp-length').value}, whole)});
   register('split-read', {available: () => MODEL && LANDMARKS, run: () =>
-    send('propose', {check: true, length: $('sp-length').value}, async b => {
+    send('read', {length: $('sp-length').value}, async b => {
       say("reading pages…");
       const job = await waitJob(b.job);
       await load(plan.id);

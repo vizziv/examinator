@@ -19,7 +19,7 @@ from examinator.core.store import Conflict
 from examinator.core.workspace import Workspace
 from examinator.model.fake import FakeModel
 from examinator.web.app import create_app
-from examinator.web.jobs import Jobs
+from examinator.web.jobs import Batch, Jobs
 
 from conftest import SCRIPT, Parse, exact, workspace, yes
 
@@ -80,7 +80,7 @@ def sites(tmp_path):
     src = s.client.post('/scans/upload?name=a.pdf', content=paths[0].read_bytes(),
                         headers={'Content-Type': 'application/pdf', 'X-Token': s.token}).json()['id']
     plan = s.get(f'/scans/{src}/plan').json()
-    s.wait(s.post(f'/scans/{src}/propose', {'check': True, 'rev': plan['rev']}).json()['job'])
+    s.wait(s.post(f'/scans/{src}/read', {}).json()['job'])
     plan = s.get(f'/scans/{src}/plan').json()
     for _ in range(2):
         plan = s.post(f'/scans/{src}/edit', {'op': 'turn', 'sheet': plan['entries'][4]['start'], 'rev': plan['rev']}).json()['plan']
@@ -140,20 +140,42 @@ CHANGES = {
     '/scans/{src}/edit': ('s', lambda s: (f'/scans/{s.src}/edit', {'op': 'drop', 'sheet': 23, 'rev': plan_rev(s)})),
     '/scans/{src}/propose': ('s', lambda s: (f'/scans/{s.src}/propose', {'rev': plan_rev(s)})),
     '/scans/{src}/undo': ('s', lambda s: (f'/scans/{s.src}/undo', {'rev': plan_rev(s)})),
-    '/scans/{src}/accept': ('s', lambda s: (f'/scans/{s.src}/accept', {'rev': plan_rev(s), 'force': True})),
+    '/scans/{src}/accept': ('s', lambda s: (f'/scans/{s.src}/accept', {'rev': plan_rev(s)})),
+    '/read/stop': ('q', lambda q: ('/read/stop', {'rev': running_batch(q)})),
 }
 # route -> (which site, the URL, the body as the page sends it: the same every time)
 RUNS = {
     '/s/{sub}/{q}/read': ('q', '/s/s2/a/read', {'include_protected': False}),
     '/s/{sub}/{q}/check': ('q', '/s/s1/a/check', {'check': 'x'}),
     '/read/start': ('q', '/read/start', {'submissions': ['s2'], 'questions': ['b'], 'parallel': 1}),
-    '/read/stop': ('q', '/read/stop', {}),
     '/scans/names/read': ('s', '/scans/names/read', {'again': True}),
+    '/scans/{src}/read': ('s', None, {'length': 4}),
 }
 QUERIES = {
     '/read/plan': ('q', {}),
     '/scans/roster/preview': ('s', {'text': "Ada Lovelace, 31415926\n"}),
 }
+
+
+class Waiting:
+    """A batch run that goes on until it is stopped."""
+    outcomes, done, total, current, asked, got, state = [], 0, 1, '', 0, 0, 'stopped'
+
+    def __init__(self):
+        self.stopped = threading.Event()
+
+    def run(self):
+        self.stopped.wait(10)
+
+    def cancel(self):
+        self.stopped.set()
+
+
+def running_batch(q):
+    """A batch running on the app, as the Read page shows it: its id."""
+    q.app.state.batch = Batch(Waiting())
+    q.app.state.batch.start()
+    return q.app.state.batch.id
 
 
 def post_routes(app):
@@ -214,9 +236,8 @@ def test_a_run_is_the_same_request_every_time(sites):
     its slot has finished: a run names no revision (the page cannot convert one wrongly)."""
     q, s = sites
     for route, (which, path, body) in RUNS.items():
-        if route == '/read/stop':
-            continue
         site = q if which == 'q' else s
+        path = path or route.format(src=s.src)
         for _ in range(2):
             r = site.post(path, body)
             assert r.status_code == 200, (route, r.json())
@@ -224,8 +245,6 @@ def test_a_run_is_the_same_request_every_time(sites):
                 site.wait(r.json()['job'])
             while site.get('/read/status').json()['state'] == 'running':
                 time.sleep(0.02)
-    r = q.post('/read/stop', RUNS['/read/stop'][2])
-    assert r.status_code == 409 and r.json()['error'] == "not running"
 
 
 def test_a_slot_runs_one_thing_at_a_time():

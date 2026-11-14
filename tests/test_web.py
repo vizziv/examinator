@@ -608,7 +608,7 @@ def test_batch_plan_run_status(site):
         assert site.post('/read/start', bad).status_code == 400
     one = site.post('/read/plan', {'submissions': ['s2'], 'questions': ['b']}).json()
     assert one['counts']['read'] == 1 and one['groups'][0]['submissions'] == ['s2']
-    r = site.post('/read/stop', {})
+    r = site.post('/read/stop', {'rev': info['id']})
     assert r.status_code == 409 and r.json()['error'] == "not running"       # nothing to stop
 
 
