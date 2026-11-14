@@ -69,14 +69,14 @@ class Outcome:
     submission: str
     question: str
     step: str            # 'read', or a check's name
-    status: str          # 'done' | 'blocked' | 'failed' | 'discarded' | 'skipped'
+    status: str          # 'done' | 'blocked' | 'failed' | 'discarded'
     detail: str = ""
     asked: int = 0       # a read: the fields it asked the reader for ...
     read: int = 0        # ... and how many got a value (the rest stay not read)
 
     @property
     def ok(self) -> bool:
-        return self.status in ('done', 'skipped')
+        return self.status == 'done'
 
 
 class Services:
@@ -174,7 +174,7 @@ def to_read(q: Question, values: Mapping[str, Value], gone: AbstractSet[int], *,
     return Reads(q, tuple(groups), why)
 
 
-def read_group(ws: Workspace, submission: str, q: Question, reader: Any, fields: Sequence[Field],
+def read_group(submission: str, q: Question, reader: Any, fields: Sequence[Field],
                services: Services) -> dict[str, Reading]:
     """One reader on some of a question's fields (with this submission's regions):
     `{label: Reading}` for the fields it read (a reader may return plain text).
@@ -201,7 +201,7 @@ def try_check(exam: Exam, qid: str, check: str, values: Mapping[str, str]) -> di
     result; anything else raises (`BadResult` for evidence that does not fit)."""
     q = exam.questions[qid]
     c = q.check(check)
-    ctx = CheckContext(submission='test', question=q, check=check,
+    ctx = CheckContext(question=q, check=check,
                        values={k: (i + 1, v) for i, (k, v) in enumerate(values.items())}, fields=exam.fields())
     try:
         out = settle(c.points, c.fn(ctx))
@@ -262,7 +262,7 @@ class Runner:
         q = plan.question
         for reader, targets in plan.groups:
             try:
-                got = read_group(self.ws, submission, q, reader, targets, self._services)
+                got = read_group(submission, q, reader, targets, self._services)
             except Exception as e:
                 out('failed', structural(e))
                 continue
@@ -323,10 +323,10 @@ class Runner:
         try:
             if c.isolate and self.pool is not None:
                 got = self.pool.call(qid, check, {
-                    'submission': submission, 'values': {k: list(v) for k, v in values.items()},
+                    'values': {k: list(v) for k, v in values.items()},
                     'overrides': exam.overrides}, timeout, reads)
             else:
-                ctx = CheckContext(submission=submission, question=q, check=check, values=values,
+                ctx = CheckContext(question=q, check=check, values=values,
                                    fields=exam.fields(), reads=reads)
                 got = settle(c.points, c.fn(ctx))
         except (Undecided, BadResult) as e:

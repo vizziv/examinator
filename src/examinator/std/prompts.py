@@ -15,8 +15,6 @@ from __future__ import annotations
 from typing import Iterable, Mapping
 
 from ..core.defs import Question
-from ..core.ask import HANDWRITTEN_PROMPT, PRINTED_PROMPT  # noqa: F401  (re-exported)
-from ..model.client import PREAMBLE  # noqa: F401  (re-exported)
 
 TRANSCRIBE_ANSWERS = """\
 Transcribe only the final answers for the named question. Write one line per \

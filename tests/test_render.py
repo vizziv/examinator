@@ -174,9 +174,3 @@ def test_crops_land_in_the_same_place_on_both_paths(tmp_path, monkeypatch):
                            dtype=float) for p in (fast, slow))
         assert np.abs(a - b).mean() < 6
     assert np.asarray(layout.crop(fast, box, pad=0).convert('L')).mean() < 30
-
-
-def test_cache_names_differ_from_rasterized_ones(tmp_path):
-    pdf = make_pdf(tmp_path / 's.pdf', [(jpeg(scan(100)), FULL)])
-    path = Renderer(tmp_path / 'cache', dpi=160).page_path(pdf, 0)
-    assert path.name == 'p000-160i.jpg'

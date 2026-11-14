@@ -233,13 +233,9 @@ class Check:
 
 @dataclass(frozen=True)
 class Question:
-    """A group: some fields and any number of checks. It has no state.
-
-    `apart`: kept apart from grading (the built-in group of identity fields,
-    `IDENTITY`): not one of `Exam.questions`, so no grid column, total, facets,
-    batch reading or place in the question order; it is reached by its own
-    name (`Exam.identity`, `Exam.group(IDENTITY)`), and its fields are fields
-    like any other."""
+    """A group: some fields and any number of checks. It has no state. (The
+    built-in group of identity fields, `IDENTITY`, is one kept apart from
+    grading: not one of `Exam.questions`; it is reached by its name.)"""
     id: str
     title: str
     pages: tuple[int, ...]                 # printed pages holding the answer
@@ -247,7 +243,6 @@ class Question:
     read: Any = None                       # reads the fields that have no reader of their own
     checks: tuple[Check, ...] = ()
     facets: tuple[Any, ...] = field(default=(), metadata={'describe': False})
-    apart: bool = field(default=False, metadata={'describe': False})
 
     @property
     def labels(self) -> tuple[str, ...]:
@@ -326,7 +321,7 @@ def identity_group(identity: Mapping[str, Field] | None) -> Question:
             raise ValueError(f"identity: {col!r} maps to a Field labelled {col!r}")
     fields = [identity.get(col) or Field(col) for col in [*identity, *(c for c in ROSTER_FIELDS if c not in identity)]]
     fields = [f if f.read is not None else dataclasses.replace(f, read=Ask(ASKS[f.label])) for f in fields]
-    return Question(IDENTITY, "Names", (1,), tuple(fields), apart=True)
+    return Question(IDENTITY, "Names", (1,), tuple(fields))
 
 
 class Exam:

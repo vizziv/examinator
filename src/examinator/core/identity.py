@@ -36,7 +36,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
-from .defs import IDENTITY, Field, Question, digest, split_key
+from .defs import IDENTITY, Field, digest, split_key
 from .status import Ledger, Value
 from .store import ANY, Conflict
 
@@ -179,14 +179,9 @@ def label(person: Mapping) -> str:
 
 # --- the identity fields: ordinary fields of the built-in group ------------------------
 
-def group(ws) -> Question:
-    """The built-in group of identity fields (`defs.IDENTITY`), live."""
-    return ws.exam.identity
-
-
 def placed(ws, sid: str | None = None) -> tuple[Field, ...]:
     """The identity fields with a region: every submission's (or this submission's)."""
-    g = group(ws) if sid is None else ws.layers(sid).question(IDENTITY)
+    g = ws.exam.identity if sid is None else ws.layers(sid).question(IDENTITY)
     return tuple(f for f in g.fields if f.region is not None)
 
 
@@ -520,11 +515,6 @@ class Matcher:
     def lost(self) -> list[int]:
         """The people on the roster not found as themselves: none, for a valid roster."""
         return [i for i, p in enumerate(self.roster) if self.find(p) != i]
-
-
-def propose(read: Mapping[str, str | None], roster: Sequence[Mapping], *, limit: int = 5) -> dict:
-    """`Matcher(roster).propose(...)`: see there."""
-    return Matcher(roster).propose(read, limit=limit)
 
 
 # --- everything at once, for the page and the command line ----------------------------

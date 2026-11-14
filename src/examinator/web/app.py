@@ -57,7 +57,7 @@ from ..core import batch, focus, grid, identity, intake, overrides, split, statu
 from ..core.context import CheckContext
 from ..core.ask import Printed
 from ..core.defs import IDENTITY, PRINT_AREA, Bool, Check, Exam, Question, key, split_key
-from ..core.as_python import describe_changes
+from ..core.overrides import describe_changes
 from ..core.overrides import EXAM, SOURCE, SUBMISSION
 from ..core.reading import normalize
 from ..core.runner import Runner, to_read
@@ -262,7 +262,7 @@ def picked_key(exam: Exam, q: Question, c: Check, values: dict) -> str | None:
     by, key_ = getattr(c.fn, 'by', None), getattr(c.fn, 'key', None)
     if by is None or not isinstance(key_, dict):
         return None
-    ctx = CheckContext(submission='', question=q, check=c.name, values={k: (v.rev, v.text) for k, v in values.items()},
+    ctx = CheckContext(question=q, check=c.name, values={k: (v.rev, v.text) for k, v in values.items()},
                        fields=exam.fields())
     try:
         value = normalize(str(by(ctx)))
@@ -983,7 +983,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
 
     def idboxes(source: str | None) -> list[dict]:
         """Where the identity fields are on a sheet of a source, by printed page."""
-        layout = ws.source_layout(source)
+        layout = ws.layers(source=source).layout
         return [{'name': f.label, 'offset': f.region.page - 1, 'box': box(layout, f.region)}
                 for f in identity.placed(ws)]
 
@@ -1159,7 +1159,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         with lock:
             ats = {s.id: identity.at(ws, s.id) for s in store.submissions()}
             view = identity.overview(ws, cache=proposals, ats=ats)
-        paths = {f.label: overrides.join(IDENTITY, 'fields', f.label, 'region') for f in identity.group(ws).fields}
+        paths = {f.label: overrides.join(IDENTITY, 'fields', f.label, 'region') for f in ws.exam.identity.fields}
         own: dict[str, dict] = {}           # each submission's own boxes, by scope
         for o in store.all_overrides():
             if o.path in paths.values():

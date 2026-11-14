@@ -6,7 +6,6 @@
       pdfs/        PDFs handed in already split, one per submission: ID.pdf (`sync`)
       exam.sqlite
       cache/       rendered pages
-      exports/
 
 Every submission is named by its pick (`core.identity`), made on the scans
 page. For PDFs handed in already split there is one programmatic way in: a file
@@ -23,10 +22,9 @@ from pathlib import Path
 
 from PIL import Image
 
-from ..pdf.layout import Layout
 from ..pdf.render import Renderer
 from . import identity, overrides
-from .defs import PRINT_AREA, Exam, Region
+from .defs import Exam, Region
 from .store import Store, Submission
 
 
@@ -40,7 +38,7 @@ class Workspace:
                 raise FileNotFoundError(f"no pdfs/ folder in {self.root}")
             self.pdfs.mkdir(parents=True, mode=0o700)
         self.made = self.root / 'made'
-        for d in ('cache', 'exports', 'made'):
+        for d in ('cache', 'made'):
             (self.root / d).mkdir(exist_ok=True, mode=0o700)
         self.store = Store(self.root / 'exam.sqlite')
         self.renderer = Renderer(self.root / 'cache')
@@ -86,14 +84,6 @@ class Workspace:
         (its regions: one may sit on the submission's extra sheets, numbered on from
         the exam's last page), `layout`."""
         return overrides.Layers(self, submission=submission, source=source)
-
-    def layout(self, submission: str) -> Layout:
-        """This submission's print area."""
-        return self.layers(submission).layout
-
-    def source_layout(self, source: str | None) -> Layout:
-        """A source scan's sheets, with its print area."""
-        return self.layers(source=source).layout
 
     def missing(self, submission: str) -> set[int]:
         """The printed pages this submission's PDF does not have: intake wrote a
@@ -141,4 +131,4 @@ class Workspace:
 
     def crop(self, submission: str, region: Region, pad: int | None = None) -> Image.Image:
         pad = self.exam.crop_pad if pad is None else pad
-        return self.layout(submission).crop(self.page_image(submission, region.page), region, pad)
+        return self.layers(submission).layout.crop(self.page_image(submission, region.page), region, pad)

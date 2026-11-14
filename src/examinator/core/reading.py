@@ -1,6 +1,5 @@
 """What a model's reply makes of a field: the one rule every reader uses, plus
-small helpers (the normal form of a printed reading, the memo key of reading a
-landmark region, which intake re-reads whenever it plans a split).
+small helpers (the normal form of a printed reading).
 
 **A value is what was read; whether a person should look is a status, not
 text.** Every reader asks for one reply shape: per field, a JSON object
@@ -83,10 +82,3 @@ def normalize(reading: str) -> str:
         s = s[1:-1]
     return s
 
-
-def region_key(kind: str, name: str, defn: str, layout: Any, *where: Any) -> str:
-    """The memo key of reading one region under a scan layout (`pdf.layout.Layout`):
-    what is read (`kind`, `name`), a digest of its definition, the layout's print
-    area (where on the page it is cropped), and anything else the crop depends on
-    (`where`: a sheet's orientation, its index)."""
-    return ':'.join(str(x) for x in (kind, name, defn, list(layout.print_area), *where))

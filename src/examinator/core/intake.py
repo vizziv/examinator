@@ -68,7 +68,7 @@ from ..pdf.orient import turn
 from . import identity, overrides, split
 from .ask import Printed
 from .defs import Landmark, digest
-from .reading import normalize, region_key
+from .reading import normalize
 from .status import Value
 from .store import ANY, Row, Conflict, Made, Source, Submission
 
@@ -177,6 +177,13 @@ def page(ws, src: Source, sheet: int, turns: int = 0) -> Image.Image:
     return turn(ws.renderer.page(source_path(ws, src), sheet), turns)
 
 
+def memo_key(lm: Landmark, layout, *where: Any) -> str:
+    """The memo key of reading a landmark: its name, a digest of its definition, the
+    print area (where on the sheet it is cropped), and anything else the crop
+    depends on (`where`: the sheet's orientation, its index)."""
+    return ':'.join(str(x) for x in ('landmark', lm.name, digest(lm), list(layout.print_area), *where))
+
+
 def page_of(lm: Landmark, text: str | None) -> int | None:
     """The printed page a landmark reading points to."""
     if text is None:
@@ -188,21 +195,16 @@ def page_of(lm: Landmark, text: str | None) -> int | None:
     return int(digits) if digits and len(digits) <= 4 else None
 
 
-def ask(lm: Landmark) -> Printed:
-    """How a landmark is read: printed text, asked about like a printed field."""
-    return Printed(lm.ask)
-
-
 class LandmarkReader:
     """Reads one sheet's position from the exam's landmarks (first that answers
-    wins), through the model (`Ask.call`, as for a printed field), memoised per
-    source, sheet, landmark, orientation and print area (the source's, else the
-    exam's). A failed call is no reading and is not remembered: the sheets it
+    wins), asked like a printed field (`Printed`), memoised per source, sheet,
+    landmark, orientation and print area (the source's, else the exam's:
+    `memo_key`). A failed call is no reading and is not remembered: the sheets it
     left unread are `failed`; `calls` counts the calls made."""
 
     def __init__(self, ws, src: Source, body: Mapping, model):
         self.ws, self.src, self.body, self.model = ws, src, body, model
-        self.layout = ws.source_layout(src.id)
+        self.layout = ws.layers(source=src.id).layout
         self.turns = split.turns(body)
         self.calls = 0                  # model calls made (memoised answers aside)
         self.failures = 0               # calls that failed
@@ -214,7 +216,7 @@ class LandmarkReader:
         image = None
         failed = False
         for lm in exam.landmarks:
-            key = region_key('landmark', lm.name, digest(lm), self.layout, o, i)
+            key = memo_key(lm, self.layout, o, i)
             hit = ws.store.memo(self.src.id, key)
             if hit is None:
                 if image is None:
@@ -222,12 +224,12 @@ class LandmarkReader:
                 self.calls += 1
                 complete = functools.partial(self.model.complete, tag=(self.src.id, f'{i}@{o}', 'landmark'))
                 try:
-                    got = ask(lm).call(complete, self.layout.crop(image, lm.region, exam.crop_pad))
+                    got = Printed(lm.ask).reading(complete, self.layout.crop(image, lm.region, exam.crop_pad))
                 except Exception:
                     self.failures += 1
                     failed = True
                     continue
-                hit = json.dumps(got)
+                hit = json.dumps(got.text if got is not None else None)
                 ws.store.set_memo(self.src.id, key, hit)
             p = page_of(lm, json.loads(hit))
             if p is not None:
@@ -239,13 +241,6 @@ class LandmarkReader:
     @property
     def all_failed(self) -> bool:
         return self.calls > 0 and self.failures == self.calls
-
-
-def reader(ws, src: Source, body: Mapping, model) -> LandmarkReader | None:
-    """The landmark reader for a source's sheets; None when there is no model or no landmark."""
-    if model is None or not ws.exam.landmarks:
-        return None
-    return LandmarkReader(ws, src, body, model)
 
 
 def reguess(ws, id: str, *, model=None, length: int | None = None,
@@ -264,7 +259,7 @@ def reguess(ws, id: str, *, model=None, length: int | None = None,
     if resized:
         body['length'] = int(length)
     body['anchor'] = anchor(ws)
-    read = reader(ws, src, body, model)
+    read = LandmarkReader(ws, src, body, model) if model is not None and ws.exam.landmarks else None
     # Readings are positions within a submission: a new length makes them meaningless,
     # and a check reads every sheet again (cheaply: the model's answers are memoised).
     if resized or read is not None:

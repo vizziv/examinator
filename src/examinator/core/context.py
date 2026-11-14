@@ -35,7 +35,6 @@ class BadOutput(RuntimeError):
 
 @dataclass
 class CheckContext:
-    submission: str
     question: Question
     check: str
     # every field's stored value in this submission: {'question/label': (rev, text)}
@@ -74,24 +73,19 @@ class Services(Protocol):
 class ReadContext:
     submission: str
     question: Question
-    services: Services | None = None
+    services: Services
 
     def pages(self) -> list['Image']:
         """Rendered images of the question's selected pages for this submission."""
-        return self._services().pages(self.submission, self.question)
+        return self.services.pages(self.submission, self.question)
 
     def crop(self, region: Region) -> 'Image':
         """One rendered region, mapped through the scan layout."""
-        return self._services().crop(self.submission, region)
+        return self.services.crop(self.submission, region)
 
     def model(self, prompt: str, *, images: Sequence['Image'] = (), text: str | None = None,
               expect: str = 'text', step: str = 'read') -> str:
         """Call the loopback model. `expect` is 'text', 'json' or 'code'; `step`
         names the call (it tags it, for a scripted model and for diagnostics)."""
-        return self._services().model(
+        return self.services.model(
             prompt, images=images, text=text, expect=expect, tag=(self.submission, self.question.id, step))
-
-    def _services(self) -> Services:
-        if self.services is None:
-            raise Unavailable("no pages or model here")
-        return self.services

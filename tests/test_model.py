@@ -11,7 +11,7 @@ from PIL import Image
 from examinator.model import client as client_module
 from examinator.model.client import Client, ModelError, probe, strip_fence, unavailable
 from examinator.model.fake import Call, FakeModel
-from examinator.std.prompts import PREAMBLE
+from examinator.model.client import PREAMBLE
 
 SENTINEL_PROMPT = "ZEBRA-PROMPT-SENTINEL-7391"
 SENTINEL_REPLY = "QUOKKA-REPLY-SENTINEL-2846"

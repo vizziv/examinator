@@ -253,7 +253,7 @@ def test_printing_reads_bits(exam, pkg):
     every = exam.fields()
 
     def context(body):
-        return CheckContext(submission=S, question=q, check='check', fields=every,
+        return CheckContext(question=q, check='check', fields=every,
                             values={k: (1, text) for k, text in values(exam, 'q4', {}, body=body).items()})
 
     for alt in v.VERSIONS:

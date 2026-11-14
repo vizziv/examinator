@@ -98,7 +98,7 @@ class Pool:
         """Run one check in a worker and return its stored form (`result.settle`,
         settled in the worker; it crosses the pipe as `Record.to_json`).
 
-        `payload` holds the context: submission, values ({key: [rev, text]})
+        `payload` holds the context: values ({key: [rev, text]})
         and the exam's applied `overrides`. What the check read is
         added to `reads`, whatever the outcome. Raises `CheckTimeout`,
         `CheckCrash`, `Undecided` or `BadResult`.
@@ -162,7 +162,7 @@ def _worker(exam_path: str) -> None:
                 live, _ = apply(exam, applied)
             q = live.questions[req['question']]
             c = q.check(req['check'])
-            ctx = CheckContext(submission=req['submission'], question=q, check=c.name,
+            ctx = CheckContext(question=q, check=c.name,
                                values={k: tuple(v) for k, v in (req.get('values') or {}).items()},
                                fields=live.fields())
             reply = {'record': settle(c.points, c.fn(ctx)).to_json()}

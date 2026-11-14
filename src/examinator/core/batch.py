@@ -93,7 +93,7 @@ class BatchRun:
     done: int = 0                    # reads finished
     asked: int = 0                   # fields the finished reads asked for ...
     got: int = 0                     # ... and those that got a value (the rest stay not read)
-    state: str = 'ready'             # 'ready' | 'running' | 'done' | 'cancelled'
+    state: str = 'running'           # 'running' | 'done' | 'cancelled'
     current: str = ''                # in progress: 'reading', then 'recomputing'
 
     def __post_init__(self):
@@ -107,7 +107,6 @@ class BatchRun:
     def run(self) -> list[Outcome]:
         """Execute the plan. Blocks until the reads are finished or cancelled and the
         submissions read for are refreshed."""
-        self.state = 'running'
         sel = self.plan.selection
         read_for: set[str] = set()
 

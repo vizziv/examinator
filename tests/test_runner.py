@@ -496,8 +496,8 @@ def test_the_plan_counts_exactly_what_the_reads_then_do(tmp_path, monkeypatch):
     runner = Runner(ws, model=model)
     given: list[tuple[str, str, tuple[str, ...]]] = []
     real = runner_mod.read_group
-    monkeypatch.setattr(runner_mod, 'read_group', lambda ws_, sub, q, reader, fields, services: (
-        given.append((sub, q.id, tuple(f.label for f in fields))), real(ws_, sub, q, reader, fields, services))[1])
+    monkeypatch.setattr(runner_mod, 'read_group', lambda sub, q, reader, fields, services: (
+        given.append((sub, q.id, tuple(f.label for f in fields))), real(sub, q, reader, fields, services))[1])
     rng = random.Random(4580)
     subs = [s.id for s in ws.store.submissions()]
     seen = set()

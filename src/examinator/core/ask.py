@@ -88,11 +88,6 @@ class Ask:
         reply states none."""
         return reading(json_object(complete(self.text(), images=[image], expect='json')))
 
-    def call(self, complete: Callable[..., str], image: Any) -> str | None:
-        """The text read (intake's landmarks), or None."""
-        got = self.reading(complete, image)
-        return got.text if got is not None else None
-
     def vouches(self, f: 'Field', got: Reading) -> bool:
         """A person need not verify this reading (one the model was unsure of needs
         review whatever a reader says: `status.Value.read`)."""

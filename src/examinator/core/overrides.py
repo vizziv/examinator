@@ -515,7 +515,7 @@ def _hashes(exam: Exam) -> dict:
     return {(qid, c.name): exam.check_hash(q, c) for qid, q in exam.questions.items() for c in q.checks}
 
 
-def _changed(ws: 'Workspace', path: str, scope: str) -> Change:
+def _changed(ws: 'Workspace', scope: str) -> Change:
     if scope != '':         # below the exam: only how fields are read, for some submissions
         return Change(())
     c0 = _hashes(ws.exam)
@@ -534,11 +534,25 @@ def set(ws: 'Workspace', path: str, value: Any, *, scope: str = '', author: str 
     else:
         value = ws.layers(**{level: id}).candidate(path, value, level)
     ws.store.set_override(path, value, scope=scope, author=author, expect_rev=expect_rev)
-    return _changed(ws, path, scope)
+    return _changed(ws, scope)
 
 
 def clear(ws: 'Workspace', path: str, *, scope: str = '', expect_rev: Any = ANY) -> Change:
     """Remove one override: back to the next scope's value."""
     parse_scope(scope)
     ws.store.clear_override(path, scope=scope, expect_rev=expect_rev)
-    return _changed(ws, path, scope)
+    return _changed(ws, scope)
+
+
+def describe_changes(exam: Exam, store) -> list[str]:
+    """The exam-wide overrides as Python, for whoever maintains the package: one line
+    per override, `path: old -> new  (who, date)`, the package's value and the new
+    one each as the package writes it (its `repr`)."""
+    lines = []
+    for path, o in store.overrides().items():
+        try:
+            old, new = map(repr, package_value(exam, path, o.value))
+        except (ValueError, KeyError):
+            old, new = "(no longer in the package)", repr(o.value)
+        lines.append(f"{path}: {old} -> {new}  ({o.author or '?'}, {o.updated_at[:10]})")
+    return lines

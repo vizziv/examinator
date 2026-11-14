@@ -36,7 +36,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .core.ask import Printed
 from .core.reading import Reading
-from .core.defs import IDENTITY as NAMES, Exam, Question, Region
+from .core.defs import IDENTITY, Exam, Question, Region
 from .core.runner import Runner
 from .core.workspace import Workspace
 from .pdf.render import Renderer
@@ -341,28 +341,24 @@ def generate(exam: Exam, root: str | Path, cases: list[Case]) -> Path:
     root = Path(root)
     check_cases(exam, cases)
     with _Building(root):
-        return _generate(exam, root, cases)
-
-
-def _generate(exam: Exam, root: Path, cases: list[Case]) -> Path:
-    pdfs = root / 'pdfs'
-    pdfs.mkdir(mode=0o700)
-    renderer = Renderer(root / 'cache' / 'blanks', dpi=100)
-    script = {}
-    with (root / 'roster.csv').open('w', newline='') as fh:
-        w = csv.writer(fh)
-        w.writerow(['Name', 'Student ID', 'Email'])
-        for i, case in enumerate(cases, 1):
-            printed = _printed_pages(exam, case, renderer)
-            _draw_answers(exam, case, printed)
-            _draw_identity(exam, printed, person(i))
-            scan = _scan(exam, printed)
-            scan[0].save(pdfs / f'{case.name}.pdf', 'PDF', save_all=True,
-                         append_images=scan[1:], resolution=100.0)
-            w.writerow([person(i)['name'], person(i)['id'], person(i)['email']])
-            script[case.name] = script_for(exam, case, person(i))
-    (root / SCRIPT).write_text(json.dumps(script, indent=1))
-    return root
+        pdfs = root / 'pdfs'
+        pdfs.mkdir(mode=0o700)
+        renderer = Renderer(root / 'cache' / 'blanks', dpi=100)
+        script = {}
+        with (root / 'roster.csv').open('w', newline='') as fh:
+            w = csv.writer(fh)
+            w.writerow(['Name', 'Student ID', 'Email'])
+            for i, case in enumerate(cases, 1):
+                printed = _printed_pages(exam, case, renderer)
+                _draw_answers(exam, case, printed)
+                _draw_identity(exam, printed, person(i))
+                scan = _scan(exam, printed)
+                scan[0].save(pdfs / f'{case.name}.pdf', 'PDF', save_all=True,
+                             append_images=scan[1:], resolution=100.0)
+                w.writerow([person(i)['name'], person(i)['id'], person(i)['email']])
+                script[case.name] = script_for(exam, case, person(i))
+        (root / SCRIPT).write_text(json.dumps(script, indent=1))
+        return root
 
 
 class NoScript(FileNotFoundError):
@@ -411,7 +407,7 @@ def fake_model(root: str | Path):
             return next((v for ask, v in entry.items() if ask in call.prompt), None)
         if entry is None and submission not in script:
             stacked, replies = student(submission)
-            if stacked and not replies and question == NAMES:
+            if stacked and not replies and question == IDENTITY:
                 return json.dumps({'value': None})
             entry = replies.get(f'{question}|{step}')
         return entry
@@ -483,68 +479,64 @@ def stacks(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> lis
     root = Path(root)
     check_cases(exam, cases)
     with _Building(root):
-        return _stacks(exam, root, cases)
+        from .pdf.orient import turn
+        (root / 'incoming').mkdir(mode=0o700)
+        renderer = Renderer(root / 'cache' / 'blanks', dpi=100)
+        names = [name for name, _ in STACK_PEOPLE]
 
+        def student(k: int) -> list[tuple[Image.Image, int | None]]:
+            case = cases[k % len(cases)]
+            printed = _printed_pages(exam, case, renderer)
+            _draw_answers(exam, case, printed)
+            _draw_identity(exam, printed, {'name': names[k], 'id': STACK_PEOPLE[k][1]})
+            sheets = _scan(exam, printed)
+            return list(zip(sheets, range(1, len(sheets) + 1)))
 
-def _stacks(exam: Exam, root: Path, cases: list[Case]) -> list[Path]:
-    from .pdf.orient import turn
-    (root / 'incoming').mkdir(mode=0o700)
-    renderer = Renderer(root / 'cache' / 'blanks', dpi=100)
-    names = [name for name, _ in STACK_PEOPLE]
+        def without(sheets, printed_page):
+            return [x for x in sheets if x[1] != printed_page]
 
-    def student(k: int) -> list[tuple[Image.Image, int | None]]:
-        case = cases[k % len(cases)]
-        printed = _printed_pages(exam, case, renderer)
-        _draw_answers(exam, case, printed)
-        _draw_identity(exam, printed, {'name': names[k], 'id': STACK_PEOPLE[k][1]})
-        sheets = _scan(exam, printed)
-        return list(zip(sheets, range(1, len(sheets) + 1)))
+        def stray(sheets, after):
+            i = next(j for j, x in enumerate(sheets) if x[1] == after) + 1
+            return sheets[:i] + [(Image.new('RGB', PAGE, 'white'), None)] + sheets[i:]
 
-    def without(sheets, printed_page):
-        return [x for x in sheets if x[1] != printed_page]
+        def turned(sheets, o, k):
+            return [(turn(im, o), p, o, k) for im, p in sheets]
 
-    def stray(sheets, after):
-        i = next(j for j, x in enumerate(sheets) if x[1] == after) + 1
-        return sheets[:i] + [(Image.new('RGB', PAGE, 'white'), None)] + sheets[i:]
-
-    def turned(sheets, o, k):
-        return [(turn(im, o), p, o, k) for im, p in sheets]
-
-    one = (turned(student(0), 0, 0) + turned(without(student(1), 3), 0, 1)
-           + turned(stray(student(2), 2), 0, 2) + turned(student(3), 0, 3)
-           + turned(student(4), 2, 4) + turned(student(5), 0, 5))
-    two = [x for k in (6, 7, 8) for x in turned(student(k), 2, k)] + turned(student(9), 2, 9)[:2]
-    script: dict[str, Any] = {STACKS: {}}
-    for k in range(len(STACK_PEOPLE)):
-        script[f'{STUDENT}{k}'] = script_for(exam, cases[k % len(cases)], STACK_READS[k])
-    out = []
-    for name, sheets in (('stack-1.pdf', one), ('stack-2.pdf', two)):
-        path = root / 'incoming' / name
-        images = [im for im, _, _, _ in sheets]
-        images[0].save(path, 'PDF', save_all=True, append_images=images[1:], resolution=100.0)
-        import hashlib
-        sid = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
-        replies, whose = {}, {}
-        for i, (_, page, o, k) in enumerate(sheets):
-            # the model reads a sheet only when it is shown the right way up: undoing `o`
-            up = -o % 4
-            replies[f'{i}@{up}|landmark'] = {
-                lm.ask: json.dumps({'quote': "synthetic", 'value': landmark_text(lm, page) if page else None})
-                for lm in exam.landmarks}
-            if up:      # shown as scanned, it reads as nothing
-                replies[f'{i}@0|landmark'] = {lm.ask: json.dumps({'quote': "", 'value': None})
-                                              for lm in exam.landmarks}
-            whose[f'{i}@{up}'] = k
-        script[sid] = replies
-        script[STACKS][sid] = whose
-        out.append(path)
-    (root / SCRIPT).write_text(json.dumps(script, indent=1))
-    with (root / 'roster.csv').open('w', newline='') as fh:
-        w = csv.writer(fh)
-        w.writerow(['Name', 'Email', 'Student ID'])
-        for k, (n, id) in enumerate(STACK_ROSTER, 1):
-            w.writerow([n, f"synthetic{k:02d}@example.invalid", id])
-    return out
+        one = (turned(student(0), 0, 0) + turned(without(student(1), 3), 0, 1)
+               + turned(stray(student(2), 2), 0, 2) + turned(student(3), 0, 3)
+               + turned(student(4), 2, 4) + turned(student(5), 0, 5))
+        two = [x for k in (6, 7, 8) for x in turned(student(k), 2, k)] + turned(student(9), 2, 9)[:2]
+        script: dict[str, Any] = {STACKS: {}}
+        for k in range(len(STACK_PEOPLE)):
+            script[f'{STUDENT}{k}'] = script_for(exam, cases[k % len(cases)], STACK_READS[k])
+        out = []
+        for name, sheets in (('stack-1.pdf', one), ('stack-2.pdf', two)):
+            path = root / 'incoming' / name
+            images = [im for im, _, _, _ in sheets]
+            images[0].save(path, 'PDF', save_all=True, append_images=images[1:], resolution=100.0)
+            import hashlib
+            sid = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+            replies, whose = {}, {}
+            for i, (_, page, o, k) in enumerate(sheets):
+                # the model reads a sheet only when it is shown the right way up: undoing `o`
+                up = -o % 4
+                replies[f'{i}@{up}|landmark'] = {
+                    lm.ask: json.dumps({'quote': "synthetic", 'value': landmark_text(lm, page) if page else None})
+                    for lm in exam.landmarks}
+                if up:      # shown as scanned, it reads as nothing
+                    replies[f'{i}@0|landmark'] = {lm.ask: json.dumps({'quote': "", 'value': None})
+                                                  for lm in exam.landmarks}
+                whose[f'{i}@{up}'] = k
+            script[sid] = replies
+            script[STACKS][sid] = whose
+            out.append(path)
+        (root / SCRIPT).write_text(json.dumps(script, indent=1))
+        with (root / 'roster.csv').open('w', newline='') as fh:
+            w = csv.writer(fh)
+            w.writerow(['Name', 'Email', 'Student ID'])
+            for k, (n, id) in enumerate(STACK_ROSTER, 1):
+                w.writerow([n, f"synthetic{k:02d}@example.invalid", id])
+        return out
 
 
 # Who the students in the synthetic stacks are (name, ID), in stack order ...

@@ -640,17 +640,17 @@ def test_print_area_resolves_submission_scan_exam_package(tmp_path):
     try:
         ws.store.set_made(Made('s1', 'src1', (0,), (0,), 'now', 's1.pdf'))
         ws.store.set_made(Made('s2', 'src1', (1,), (0,), 'now', 's2.pdf'))
-        win = lambda sid: ws.layout(sid).print_area
+        win = lambda sid: ws.layers(sid).layout.print_area
         at = lambda level, id='': overrides.scope(level, id)
         put = lambda value, scope, **kw: overrides.set(ws, '@print_area', value, scope=scope, author=None, **kw)
         assert ws.layers('s1').source == 'src1' and ws.layers('handed').source is None
         assert win('s1') == win('handed') == (10, 20, 990, 980)              # the package's
         put((0, 0, 1000, 1000), '')
         assert win('s1') == win('handed') == (0, 0, 1000, 1000)              # every submission's
-        assert ws.source_layout('src1').print_area == (0, 0, 1000, 1000)
+        assert ws.layers(source='src1').layout.print_area == (0, 0, 1000, 1000)
         put((30, 30, 900, 900), at('source', 'src1'), expect_rev=None)
         assert win('s1') == win('s2') == (30, 30, 900, 900)                  # the scan's, for all from it
-        assert ws.source_layout('src1') == Layout((30, 30, 900, 900))     # and its sheets, for intake
+        assert ws.layers(source='src1').layout == Layout((30, 30, 900, 900))     # and its sheets, for intake
         assert win('handed') == (0, 0, 1000, 1000)                           # no scan: no such level
         put((40, 40, 800, 800), at('submission', 's1'))
         assert win('s1') == (40, 40, 800, 800) and win('s2') == (30, 30, 900, 900)

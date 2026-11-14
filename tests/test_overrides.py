@@ -6,7 +6,7 @@ import pytest
 from examinator import Check, Exam, Field, Printed, Region, load_exam
 from examinator.core import overrides
 from examinator.core.defs import IDENTITY
-from examinator.core.as_python import describe_changes
+from examinator.core.overrides import describe_changes
 from examinator.core.runner import Runner
 from examinator.core.store import Conflict
 from examinator.core.workspace import Workspace
@@ -446,7 +446,7 @@ def test_each_kind_resolves_submission_then_scan_then_exam_then_package(scoped):
     with pytest.raises(ValueError):
         put('a/fields/x/region', [1, 2, 2, 8, 8], SRC)
     # the print area: the submission's, its scan's, the exam's, the package's
-    layout = lambda sid: ws.layout(sid).print_area
+    layout = lambda sid: ws.layers(sid).layout.print_area
     assert layout('s1') == layout('s2') == (0, 0, 1000, 1000)
     put('@print_area', [5, 5, 995, 995], '')
     assert layout('s1') == layout('s2') == (5, 5, 995, 995)
