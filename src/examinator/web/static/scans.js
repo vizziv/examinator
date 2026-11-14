@@ -183,7 +183,7 @@
     peek = null;
   }
   async function load(id) {
-    const r = await request(`/scans/${encodeURIComponent(id)}/plan`);
+    const r = await Changes.get(`/scans/${encodeURIComponent(id)}/plan`);
     if (!r.ok) { say("could not load the scan", 'bad'); return; }
     adopt(r.body);
     if (current === 'split') history.replaceState(null, '', '#src=' + id);
@@ -262,13 +262,12 @@
   register('split-turn-source', {run: () => edit('turn_source', {}, turned)});
   register('split-undo', {available: ctx => plan.undo && !Actions.typing(ctx.target), run: () => send('undo', {}, whole)});
   register('split-guess', {run: () => send('propose', {length: $('sp-length').value}, whole)});
-  register('split-read', {available: () => MODEL && LANDMARKS, run: () =>
-    send('read', {length: $('sp-length').value}, async b => {
-      say("reading pages…");
-      const job = await waitJob(b.job);
-      await load(plan.id);
-      say(job.state === 'done' ? '' : `read pages ${job.state}${job.error ? ': ' + job.error : ''}`, 'bad');      // failed, or lost
-    }, true)});
+  // Reading the scan's pages: a run, after which the plan is drawn again.
+  register('split-read', {available: () => MODEL && LANDMARKS, run: () => {
+    const id = plan.id;
+    return Changes.run(`read:${id}`, `/scans/${encodeURIComponent(id)}/read`, {length: $('sp-length').value},
+      {line, done: async () => { if (plan.id === id) await load(id); return 'pages read'; }});
+  }});
   // Accept, having said what it would disturb: written submissions it rewrites or removes that
   // a person said something about. The person agrees to exactly those (`allow`).
   const SAID = {values: 'verified values', decisions: 'decisions', name: 'a name', regions: 'own regions'};

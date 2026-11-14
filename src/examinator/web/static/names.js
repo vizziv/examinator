@@ -61,7 +61,7 @@
 
   // `keep`: keep the box drafts (only the saved boxes are taken); `retake`: take the saved boxes as drafts too.
   async function load(keep, retake) {
-    const r = await request('/scans/names');
+    const r = await Changes.get('/scans/names');
     if (!r.ok) { flash('could not load names'); return; }
     view = r.body;
     view.byId = Object.fromEntries(view.rows.map(x => [x.sub, x]));
@@ -131,20 +131,15 @@
   // Reading the boxes, said on the line under the strip: what it reads, then how it went.
   S.register('names-read', {available: () => !!main.dataset.model && !!view && view.boxed, run: () => {
     const again = $('w-again').checked, line = Line('flow-msg');
-    return Changes.send('names-read', '/scans/names/read', {again}, {line, long: true, done: async b => {
-      if (!b.job) {
-        line.say(!view.left ? "nothing to read: every submission is named"
+    return Changes.run('names-read', '/scans/names/read', {again}, {line, done: async (job, b) => {
+      if (!job) {
+        return !view.left ? "nothing to read: every submission is named"
           : again ? "nothing to read: the unnamed submissions' boxes are verified"
-          : "nothing to read: the unnamed submissions' boxes are read (again: read the unverified ones again)");
-        return;
+          : "nothing to read: the unnamed submissions' boxes are read (again: read the unverified ones again)";
       }
-      line.say(`reading ${b.n} unnamed…`);
-      const job = await waitJob(b.job);
-      const failed = (job.outcomes || []).length;
       order = [];         // new readings: doubtful ones first again
       await load();
-      line.say(job.state !== 'done' ? `read names ${job.state}${job.error ? ': ' + job.error : ''}` : failed ? `read ${b.n} unnamed · ${failed} failed` : `read ${b.n} unnamed`,
-               job.state !== 'done' || failed ? 'bad' : '');
+      return `read ${b.n} unnamed`;
     }});
   }});
 

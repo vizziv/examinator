@@ -86,7 +86,7 @@ def test_upload_needs_the_token_and_a_pdf(site):
 def check_and_accept(client, token, src):
     """Check the plan with the (scripted) model, turn the upside-down exam, accept."""
     plan = client.get(f'/scans/{src}/plan').json()
-    wait(client, post(client, token, f'/scans/{src}/read', {}).json()['job'])
+    assert wait(client, post(client, token, f'/scans/{src}/read', {}).json()['job'])['state'] == 'done'
     plan = client.get(f'/scans/{src}/plan').json()
     for _ in range(2):          # two quarter turns
         plan = post(client, token, f'/scans/{src}/edit', {'op': 'turn', 'sheet': plan['entries'][4]['start'],

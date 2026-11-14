@@ -12,8 +12,8 @@ Moving a region or the print area changes no value.
 Regions and the print area are easiest to adjust on a question page (scan, “regions”, “print area”).</p>
 
 <div id="changes" class="panel" hidden>
-<span id="ch-text"></span> <progress id="ch-bar" hidden></progress>
-<span id="ch-fail" class="notice"></span>
+<span id="ch-text" role="status"></span> <progress id="ch-bar" hidden></progress>
+<span id="ch-skipped" class="bad"></span>
 </div>
 
 <details class="panel"{% if active or skipped %} open{% endif %}>

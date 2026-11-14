@@ -80,7 +80,7 @@ def sites(tmp_path):
     src = s.client.post('/scans/upload?name=a.pdf', content=paths[0].read_bytes(),
                         headers={'Content-Type': 'application/pdf', 'X-Token': s.token}).json()['id']
     plan = s.get(f'/scans/{src}/plan').json()
-    s.wait(s.post(f'/scans/{src}/read', {}).json()['job'])
+    assert s.wait(s.post(f'/scans/{src}/read', {}).json()['job'])['state'] == 'done'
     plan = s.get(f'/scans/{src}/plan').json()
     for _ in range(2):
         plan = s.post(f'/scans/{src}/edit', {'op': 'turn', 'sheet': plan['entries'][4]['start'], 'rev': plan['rev']}).json()['plan']
@@ -351,8 +351,16 @@ def test_the_page_scripts_post_only_through_the_one_path():
             assert posts == 1 and '/scans/upload' in text, js.name
         else:
             assert posts == 0, js.name
-        # `request` only reads: a body handed to it would be dropped, so none is written
-        assert not re.search(r'\brequest\([^()]*(\([^()]*\))?[^()]*,', text), js.name
+        # `Changes.get` only reads: a body handed to it would be dropped, so none is written
+        assert not re.search(r"Changes\.get\([^()]*(\([^()]*\))?[^()]*,", text), js.name
+
+
+def test_a_run_is_watched_in_one_place():
+    """A run (or the job a change started) is waited for, marked pending and said in one
+    wording by `Changes.run` / `Changes.watch`: no page polls a job or counts runs itself."""
+    for js in STATIC.glob('*.js'):
+        if js.name != 'common.js':
+            assert '/jobs/' not in js.read_text() and 'waitJob' not in js.read_text(), js.name
 
 
 def test_a_change_that_does_not_go_through_is_said_once_by_changes():

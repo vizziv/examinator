@@ -54,7 +54,6 @@
 <span class="sep"></span>
 <button type="button" id="scan-toggle" data-action="toggle-scan" aria-pressed="true" title="show or hide the scanned pages (drag the divider, or pinch or Ctrl+scroll over a page, to resize)">pages</button>
 <label class="dim" title="crop scale (also pinch or Ctrl+scroll over a crop)">crop scale <input type="range" id="crop-size" min="0.4" max="3" step="0.05"> <span id="crop-n"></span></label>
-<span id="busy" hidden>running…</span>
 {% endblock %}
 {% block body %}
 <main id="question" data-sub="{{ sub.id }}" data-q="{{ q.id }}" data-ids='{{ ids|tojson }}'>
@@ -177,6 +176,7 @@
 {% if can_read %}<button type="button" data-action="read"{% if off %} disabled title="no model"{% else %} title="read this question's values again (not those a person verified)"{% endif %}>read</button>
 <label title="also read again what a person set or verified (kept in history)"><input type="checkbox" id="read-all"> verified too</label>{% endif %}
 {% for c in checks %}{% if c.fn %}<button type="button" data-action="check" data-check="{{ c.name }}" title="run the check again (checks recompute by themselves after a change; this is for one that timed out, say)">{{ c.name if checks|length > 1 else 'check' }}</button>{% endif %}{% endfor %}
+<span id="run-msg" role="status"></span>
 </div>
 
 <details id="history" class="panel">

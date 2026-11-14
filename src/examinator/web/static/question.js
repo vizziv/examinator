@@ -5,7 +5,6 @@
   const main = $('question');
   const sub = main.dataset.sub, q = main.dataset.q;
   const base = `/s/${encodeURIComponent(sub)}/${encodeURIComponent(q)}`;
-  const busy = $('busy');
   // A revision goes back exactly as the server drew it.
   const rev = el => el?.dataset.rev || null;
 
@@ -39,7 +38,7 @@
   async function inFilter() {
     const sel = Focus.load();
     if (!Focus.size(sel)) return;
-    const r = await request('/focus/values?sub=' + encodeURIComponent(sub));
+    const r = await Changes.get('/focus/values?sub=' + encodeURIComponent(sub));
     if (r.ok) $('unfiltered').hidden = Focus.matches(r.body.values, sel, sub);
   }
 
@@ -114,6 +113,8 @@
       const f = fresh.querySelector('#' + CSS.escape(d.id));
       if (f) f.open = d.open;
     }
+    // the lines keep what they say (a run under way, how a change went)
+    for (const s of work.querySelectorAll('[role=status][id]')) fresh.querySelector('#' + CSS.escape(s.id))?.replaceWith(s);
     const kept = keepDrafts(work, fresh, ident), top = work.scrollTop;
     work.className = fresh.className;
     work.replaceChildren(...fresh.childNodes);
@@ -137,19 +138,10 @@
     return kept;
   }
 
-  // What a background job started: "running…" while any runs, the outcome in the header, then drawn again.
-  let running = 0;
-  function watch(job) {
-    if (!job) return;
-    busy.hidden = !++running;
-    waitJob(job).then(j => {
-      busy.hidden = !--running;
-      const bad = (j.outcomes || []).filter(o => (o.status !== 'done' && o.status !== 'skipped') || o.read < o.asked);
-      if (j.state !== 'done') flash(`${j.state}${j.error ? ': ' + j.error : ''}`);
-      else if (bad.length) flash(bad.map(o => `${o.step}: ${o.status}${o.detail ? ' — ' + o.detail : ''}`).join('; '));
-      refresh();
-    });
-  }
+  // What runs for this page (a read, a check, the recompute a change started) is said on the run
+  // bar's line, and the page drawn again when it ends.
+  const runs = Line('run-msg');
+  const watch = (job, each) => Changes.watch(job, {line: runs, each, done: refresh});
 
   // Every change to this page's rows (values, decisions) is about this submission's question:
   // one subject, so each is sent once the one before it was answered and drawn, against the
@@ -269,7 +261,7 @@
   const link = name => document.querySelector(`a[data-action="${name}"]`);
   const follow = name => ({available: () => !!link(name), run: () => link(name).click()});
   const hasFields = () => inputs().length > 0;
-  const run = (path, body) => Changes.send(`run:${path}:${body.check || ''}`, `${base}/${path}`, body, {done: b => watch(b.job)});
+  const run = (path, body) => Changes.run(`run:${path}:${body.check || ''}`, `${base}/${path}`, body, {line: runs, done: refresh});
   const actions = {
     'prev-student': {available: () => canGo(-1), run: () => go(-1)},
     'next-student': {available: () => canGo(1), run: () => go(1)},
@@ -345,12 +337,7 @@
 
   // --- an exam-data edit (key panel, regions): this submission is recomputed first ---
   document.addEventListener('entry-saved', async e => {
-    const job = e.detail.job;
     await refresh();
-    if (!job) return;
-    busy.hidden = !++running;
-    await waitJob(job, j => j.done >= 1);
-    busy.hidden = !--running;
-    await refresh();
+    watch(e.detail.job, j => j.done >= 1);
   });
 })();

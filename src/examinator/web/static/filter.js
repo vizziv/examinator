@@ -151,7 +151,7 @@
   }});
 
   (async () => {
-    const r = await request('/focus/values');
+    const r = await Changes.get('/focus/values');
     if (!r.ok) { msg.textContent = r.body.error || 'failed to load'; return; }
     data = r.body;
     msg.textContent = '';

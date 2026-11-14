@@ -64,7 +64,7 @@
   let next = 0;
   async function poll() {
     clearTimeout(next);
-    const r = await request('/read/status');
+    const r = await Changes.get('/read/status');
     const s = r.body;
     if (!r.ok || s.state === 'idle') return;
     document.getElementById('rd-progress').hidden = false;
@@ -72,7 +72,7 @@
     bar.max = Math.max(s.total, 1);
     bar.value = s.done;
     document.getElementById('rd-prog').textContent =
-      `${s.done} / ${s.total} · ${s.state}${s.current ? ' · ' + s.current : ''}${s.failed ? ` · ${s.failed} not done` : ''}` +
+      `${s.done} / ${s.total} · ${s.state}${s.current ? ' · ' + s.current : ''}${s.failed ? ` · ${s.failed} failed` : ''}` +
       `${s.asked ? ` · fields read ${s.got} of ${s.asked}` : ''}${s.error ? ' · ' + s.error : ''}`;
     const table = document.getElementById('rd-failures');
     table.replaceChildren();

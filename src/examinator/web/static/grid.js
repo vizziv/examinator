@@ -118,7 +118,7 @@
   async function load() {
     if (Focus.size(sel) && !data) {
       // Until the values arrive, the server's rendering (if a link carried the filter) stands.
-      const r = await request('/focus/values');
+      const r = await Changes.get('/focus/values');
       if (r.ok) data = r.body; else flash('filter: ' + (r.body.error || 'failed to load'));
     }
   }

@@ -136,7 +136,6 @@ nav.top .sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var
 nav.top button { padding: 1px 7px; }
 #flash { color: var(--muted); }
 #flash.bad { color: var(--bad); }
-.p-question #busy { color: var(--warn); font-weight: 600; }
 
 /* --- pills: plain = information and finished, .unv = waits on a person, .bad = a problem --- */
 .tag { display: inline-block; font-size: 11px; line-height: 1.5; padding: 0 7px; border-radius: 9px; white-space: nowrap;

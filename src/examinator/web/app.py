@@ -1052,7 +1052,10 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         if not ws.exam.landmarks:
             raise Bad("the exam declares no landmarks")
         kw = dict(length=length_of(data), author=who(request), expect_rev=intake.plan(ws, src.id).rev)
-        return start(f'split-read:{src.id}', lambda: intake.reguess(ws, src.id, model=runner.model, **kw))
+
+        def work():             # the plan written; no outcome to report
+            intake.reguess(ws, src.id, model=runner.model, **kw)
+        return start(f'split-read:{src.id}', work)
 
     def scans_undo(request, data, rev):
         src = the_source(request)
