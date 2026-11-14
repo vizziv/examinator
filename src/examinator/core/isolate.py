@@ -23,6 +23,10 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from .context import CheckContext
+from .defs import load_exam
+from .overrides import apply
+from .result import BadResult, Record, Undecided, settle
 
 LOAD_TIMEOUT = 120.0     # seconds for a new worker to import the exam package
 
@@ -123,7 +127,6 @@ class Pool:
         reads.update(reply.get('reads') or {})
         if 'error' in reply:
             raise CheckCrash(reply['error'], reply.get('detail', ""))
-        from .result import BadResult, Record, Undecided
         if 'undecided' in reply:
             raise Undecided(reply['undecided'])
         if 'bad' in reply:
@@ -140,10 +143,6 @@ class Pool:
 
 
 def _worker(exam_path: str) -> None:
-    from .context import CheckContext
-    from .defs import load_exam
-    from .overrides import apply
-    from .result import BadResult, Undecided, settle
 
     out = os.fdopen(os.dup(sys.stdout.fileno()), 'wb')
     sys.stdout = sys.stderr            # stray prints must not corrupt the protocol

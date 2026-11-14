@@ -64,7 +64,7 @@ from ..core.runner import Runner, to_read
 from ..core.store import Conflict
 from ..core.workspace import Workspace
 from ..pdf.layout import Layout
-from ..std.blocks import MEDIA_TYPES
+from ..core.result import MEDIA_TYPES
 from ..pdf import orient
 from .jobs import Batch, Jobs
 

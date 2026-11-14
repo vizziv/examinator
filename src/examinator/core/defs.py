@@ -21,6 +21,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from .ask import Ask
+
+
 def one_line(text: str) -> str:
     """A value on one line: line breaks become single spaces."""
     if '\n' not in text and '\r' not in text:
@@ -315,7 +318,6 @@ def identity_group(identity: Mapping[str, Field] | None) -> Question:
     handwriting, `core.ask.Ask`, unless it has a reader); any other column is a
     field with no region yet (drawn in the app: then it is read). The exam
     validates it as it does any question (`Exam.validate`)."""
-    from .ask import Ask
     identity = dict(identity or {})
     for col, f in identity.items():
         if col not in ROSTER_FIELDS:

@@ -58,6 +58,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
+from ..pdf.layout import Layout
 from .defs import PRINT_AREA, Check, Exam, Field, Region
 from .store import ANY
 
@@ -473,7 +474,6 @@ class Layers:
     @property
     def layout(self):
         """The print area here."""
-        from ..pdf.layout import Layout
         return Layout(self.root(PRINT_AREA))
 
     def check(self) -> list[Skipped]:

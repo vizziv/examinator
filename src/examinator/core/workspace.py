@@ -25,7 +25,7 @@ from PIL import Image
 
 from ..pdf.layout import Layout
 from ..pdf.render import Renderer
-from . import overrides
+from . import identity, overrides
 from .defs import PRINT_AREA, Exam, Region
 from .store import Store, Submission
 
@@ -70,7 +70,6 @@ class Workspace:
         """Record every PDF in `pdfs/` as a submission (handed in already split), and name
         by file name those it can (`identity.by_file`). What intake wrote is in `made/`,
         recorded already; an id of its is never a file's here."""
-        from . import identity
         made = self.store.made()
         pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink() and p.stem not in made]
         self.store.put_submissions([Submission(p.stem, p.name) for p in pdfs])

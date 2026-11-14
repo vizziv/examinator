@@ -11,7 +11,15 @@ computes from it):
 - `fields`: per field of the check's own question that it judged, an outcome
   ('correct', 'incorrect', 'blank' or None) and optionally the expected answer
   and a short note; shown beside the field.
-- `blocks`: an ordered list of things to show (`examinator.std.blocks`).
+- `blocks`: an ordered list of things to show. The app renders them; exams
+  never write layout. A block is one of the classes below (`Note`, `Table`,
+  `Code`, `Details`, `Image`, re-exported as `examinator.std.blocks`) or the
+  plain dict its `to_json()` gives; `SHAPES` is the grammar, the constants
+  below its limits. `settle` checks every block against both and stores it:
+  an image's bytes are kept apart, named by their digest. What breaks the
+  grammar or the limits is a check error, never a stored block. Top-level
+  images are stored first and shown as a row of figures above the rest; an
+  image inside `Details` stays there.
 
 A check may also return a bare grade, or raise `Undecided("a few words")`.
 """
@@ -25,9 +33,77 @@ import numbers
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
-from ..std.blocks import MAX_DEPTH, MAX_EVIDENCE, MAX_IMAGE, MEDIA_TYPES, TONES
+from .defs import Grade
 
 OUTCOMES = ('correct', 'incorrect', 'blank', None)
+
+# --- evidence blocks -------------------------------------------------------------
+
+# The block grammar: each type's keys besides 'type'. A stored image block has
+# 'digest' in place of 'data'.
+SHAPES = {'note': {'text', 'tone'}, 'table': {'columns', 'rows'}, 'code': {'text', 'highlight'},
+          'details': {'summary', 'blocks'}, 'image': {'media_type', 'data', 'alt', 'title'}}
+# What an <img> shows safely (an SVG there runs no script and loads nothing).
+MEDIA_TYPES = ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml')
+TONES = ('info', 'good', 'bad', 'warn')
+MAX_IMAGE = 2 << 20         # bytes per image: evidence at a glance, not a data dump
+MAX_EVIDENCE = 8 << 20      # bytes per result: all its images and text together
+MAX_DEPTH = 8               # details within details
+
+
+@dataclass
+class Note:
+    text: str
+    tone: str = 'info'      # one of TONES
+
+    def to_json(self) -> dict:
+        return {'type': 'note', 'text': self.text, 'tone': self.tone}
+
+
+@dataclass
+class Table:
+    columns: Sequence[str]
+    rows: Sequence[Sequence[Any]]       # cells: text, a number, a bool or None
+
+    def to_json(self) -> dict:
+        return {'type': 'table', 'columns': list(self.columns), 'rows': [list(r) for r in self.rows]}
+
+
+@dataclass
+class Code:
+    text: str
+    highlight: Sequence[int] = ()       # line numbers, 1-based
+
+    def to_json(self) -> dict:
+        return {'type': 'code', 'text': self.text, 'highlight': list(self.highlight)}
+
+
+class Details:
+    """Collapsed by default: `Details("Samples", Table(...), Note(...))`."""
+
+    def __init__(self, summary: str, *blocks: Any):
+        self.summary = summary
+        self.blocks = blocks[0] if len(blocks) == 1 and isinstance(blocks[0], (list, tuple)) else blocks
+
+    def to_json(self) -> dict:
+        return {'type': 'details', 'summary': self.summary, 'blocks': list(self.blocks)}
+
+
+@dataclass(eq=False)
+class Image:
+    """An image file's bytes, shown with an <img>: `Image(png)`. Light
+    backgrounds are inverted in dark mode, as scans are."""
+    data: bytes
+    media_type: str = 'image/png'       # one of MEDIA_TYPES
+    alt: str = ""
+    title: str = ""
+
+    def to_json(self) -> dict:
+        return {'type': 'image', 'media_type': self.media_type, 'data': self.data,
+                'alt': self.alt, 'title': self.title}
+
+
+# --- what a check returns -----------------------------------------------------------
 
 
 class Undecided(Exception):
@@ -121,8 +197,8 @@ def settle(points: Any, out: Any) -> Record:
     (`BadResult` for anything that does not fit, with a structural message):
     the grade is one its points accept (a bool, or a finite number in their
     range; `points.coerce`), its flags are text and its reason text or None;
-    each judgement has its shape (`judgement`); every block, a `std.blocks`
-    object or a plain dict, fits the block grammar and limits. Top-level
+    each judgement has its shape (`judgement`); every block, a block object
+    or a plain dict, fits the block grammar and limits. Top-level
     images go first."""
     if not isinstance(out, Result):
         out = Result(out)
@@ -148,7 +224,6 @@ def settle(points: Any, out: Any) -> Record:
 
 def _grade(points: Any, x: Any):
     """`x` as a grade of `points`, its parts checked."""
-    from .defs import Grade
     try:
         grade = points.coerce(x)
     except (ValueError, TypeError):
@@ -198,9 +273,6 @@ def _blocks(blocks: Any, images: dict, depth: int) -> list[dict]:
         raise BadResult(f"the check returned details nested deeper than {MAX_DEPTH}")
     return [_block(b, images, depth) for b in _list(blocks, "blocks")]
 
-
-SHAPES = {'note': {'text', 'tone'}, 'table': {'columns', 'rows'}, 'code': {'text', 'highlight'},
-          'details': {'summary', 'blocks'}, 'image': {'media_type', 'data', 'alt', 'title'}}
 
 
 def _block(b: Any, images: dict, depth: int) -> dict:
