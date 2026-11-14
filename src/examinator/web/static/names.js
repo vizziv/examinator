@@ -383,7 +383,7 @@
   function valueBox(r, name) {
     const v = r.values[name];
     const input = make('input', {type: 'text', className: 'mono', defaultValue: v ? v.text : '', spellcheck: false,
-      placeholder: !v && main.dataset.model ? 'not read yet' : '', title: 'Enter: save (verified by you)'});
+      placeholder: !v ? (main.dataset.model ? 'not read yet' : '') : v.text === '' ? 'empty' : '', title: 'Enter: save (verified by you)'});
     Object.assign(input.dataset, {key: `@identity/${name}`, rev: v ? v.rev : ''});
     input.setAttribute('aria-label', name);
     const out = [make('span', {className: 'dim', textContent: name + ' '}), input];
@@ -428,7 +428,7 @@
     const r = row(), done = !r;
     $('w-done').hidden = !done || !order.length;
     $('w-main').hidden = done;
-    $('w-sub').textContent = done ? (order.length ? 'done' : 'no submissions yet') : r.sub;
+    $('w-sub').textContent = done ? (order.length ? 'all verified' : 'no submissions yet') : r.sub;
     $('w-pos').textContent = done ? '' : `${k + 1} of ${order.length}`;
     $('w-tags').replaceChildren(...(done ? [] : [doubtTag(r), ...whoTags(r)]));
     if (done) return;

@@ -186,7 +186,7 @@ a.tag:hover { text-decoration: none; filter: brightness(.97); }
 .cell:is(.s-review, .s-unverified, .s-to_decide)[data-k=n] > a { font-weight: 900; }
 /* background: yellow when a person is asked (unverified, needs review); else plain */
 .cell.s-review, .cell.s-unverified, .cell.s-to_decide { --tint: var(--unv-bg); }
-/* mark: outdated (does not count until rechecked) */
+/* mark: outdated (does not count until recomputed) */
 .cell.s-outdated > a, .cell.s-decided_outdated > a { text-decoration: line-through; text-decoration-thickness: 1px; }
 .cell.s-outdated::after, .cell.s-decided_outdated::after { content: ''; position: absolute; top: 0; right: 0;
   border-style: solid; border-width: 0 7px 7px 0; border-color: transparent var(--stale) transparent transparent; }

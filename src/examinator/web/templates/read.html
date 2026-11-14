@@ -17,16 +17,16 @@
 </fieldset>
 <fieldset><legend>options</legend>
 <label><input type="checkbox" name="missing_only"> missing only</label>
-<label><input type="checkbox" name="include_protected"> include protected</label>
+<label title="also read again what a person set or verified (kept in history)"><input type="checkbox" name="include_protected"> verified too</label>
 <label>parallel <input type="number" name="parallel" value="2" min="1" max="16"></label>
 <p class="help"><b>Missing only</b> reads only fields with no value.
-<b>Include protected</b> reads again what a person set or verified; the replaced values stay in history.
+<b>Verified too</b> reads again what a person set or verified; the replaced values stay in history.
 Without it, those are skipped. Decisions are never touched.</p>
 </fieldset>
 <p id="rd-counts" aria-live="polite"></p>
 <details id="rd-plan" class="panel"><summary>by question</summary><table class="ev" id="rd-groups"></table></details>
 <div class="bar">
-<button type="button" id="rd-start" data-action="read-start" class="primary" disabled>read</button>
+<button type="button" id="rd-start" data-action="read-start" class="primary" disabled>Read</button>
 <button type="button" id="rd-stop" data-action="read-stop" class="danger" disabled>stop</button>
 <span id="rd-msg" role="status"></span>
 </div>

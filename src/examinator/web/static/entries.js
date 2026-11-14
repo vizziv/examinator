@@ -1,7 +1,7 @@
 'use strict';
 // Exam data entries (<form class="entry">): save and revert through /exam/set and /exam/clear.
 // Used on the exam page and in the question page's key panel. A save that outdates
-// grades starts one background recheck; this page shows its progress, and the
+// grades starts one background recompute; this page shows its progress, and the
 // question page hears of it through the 'entry-saved' event.
 (() => {
   const sub = $('question')?.dataset.sub;
@@ -62,7 +62,7 @@
   document.addEventListener('submit', e => { if (e.target.matches('form.entry')) e.preventDefault(); });
   addEventListener('beforeunload', e => { if ([...document.querySelectorAll('form.entry .ev')].some(isDraft)) e.preventDefault(); });
 
-  // --- the exam page: progress of the recheck, copying the change list ---
+  // --- the exam page: progress of the recompute, copying the change list ---
   const panel = $('changes');
   if (!panel) return;
 

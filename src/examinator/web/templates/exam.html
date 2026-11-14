@@ -5,11 +5,10 @@
 {% block head %}<script src="{{ root }}/static/entries.js" defer></script>{% endblock %}
 {% block body %}
 <main class="narrow" id="exam-data">
-<p class="help">Changes here apply to <b>all submissions</b>, but where a scan or a submission has its own
-(listed under “own values”). Saving a key or prompt outdates the grades
-that used it and rechecks them in the background; manual grades are kept and marked outdated.
-Moving a region or the print area changes no value.
-Regions and the print area are easiest to adjust on a question page (scan, “regions”, “print area”).</p>
+<h1>Exam data</h1>
+<p class="help">For <b>all submissions</b>, but a scan's or a submission's own (under “own values”).
+A key or prompt saved: the grades it used are outdated and recompute; decided grades stay, outdated.
+A region or the print area moved: no value changes (easiest on a question page: “regions”, “print area”).</p>
 
 <div id="changes" class="panel" hidden>
 <span id="ch-text" role="status"></span> <progress id="ch-bar" hidden></progress>

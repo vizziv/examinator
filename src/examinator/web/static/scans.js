@@ -62,9 +62,9 @@
     const all = Object.values(counts);
     const open = all.reduce((a, c) => a + c.open, 0), write = all.reduce((a, c) => a + c.write, 0);
     if (all.length) {
-      $('flow-n-split').textContent = `(${[open ? `${open} unverified` : '', write ? `${write} to write` : ''].filter(Boolean).join(' · ') || 'done'})`;
+      $('flow-n-split').textContent = `(${[open ? `${open} unverified` : '', write ? `${write} to write` : ''].filter(Boolean).join(' · ') || 'all verified'})`;
     }
-    $('flow-n-names').textContent = names && names.n ? `(${names.left ? `${names.left} unverified` : 'done'})` : '';
+    $('flow-n-names').textContent = names && names.n ? `(${names.left ? `${names.left} unverified` : 'all verified'})` : '';
     const off = tabs.find(b => b.dataset.tab === 'names');
     off.classList.toggle('off', !made);
     off.title = made ? 'who wrote each submission' : 'Names needs submissions';
@@ -86,7 +86,7 @@
     }
     if (!made) return 'no submissions yet: accept a split first';
     if (!names) return '';
-    if (!names.left) return 'every submission is verified; next: Read';
+    if (!names.left) return 'next: Read';
     const fields = names.fields > 0;
     if (names.unread && fields && MODEL) return 'next: read the name boxes';
     if (!PEOPLE) return 'next: add a roster';
@@ -341,10 +341,10 @@
     $('sp-done').hidden = !finished;
     $('sp-pages').hidden = finished;
     const mine = peek === null ? -1 : owner(peek);
-    $('sp-k').textContent = finished ? 'done' : peek === null ? `submission ${k + 1} of ${E.length}`
+    $('sp-k').textContent = finished ? 'all verified' : peek === null ? `submission ${k + 1} of ${E.length}`
       : mine < 0 ? 'in no submission' : `submission ${mine + 1} of ${E.length} · its sheet ${E[mine].pages.indexOf(peek) + 1}`;
     const towrite = counts[plan.id].write;
-    $('sp-done-sum').textContent = !finished ? '' : towrite ? `Accept writes them (${towrite} to write).` : 'All written.';
+    $('sp-done-sum').textContent = !finished ? '' : towrite ? `next: Accept (writes ${towrite})` : 'all written';
     const tags = [];
     if (!finished) {
       const s = focus();
