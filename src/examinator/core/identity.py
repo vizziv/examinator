@@ -231,7 +231,7 @@ def unread(ws, *, again: bool = False, ats: Mapping[str, At] | None = None) -> l
     def to_read(sid: str) -> bool:
         a, have = (ats or {}).get(sid) or at(ws, sid), got.get(sid, {})
         return bool(a.unread(have)) or again and any(
-            have[f.label].verified != 'person' for f in a.fields if f.label in have)
+            not have[f.label].protected for f in a.fields if f.label in have)
     return [s.id for s in ws.store.submissions() if s.id not in named and to_read(s.id)]
 
 

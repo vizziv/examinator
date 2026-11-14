@@ -435,7 +435,7 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
             for qid in exam.questions:
                 runner.read(case.name, qid)
             for k, v in runner.values(case.name).items():
-                if not v.is_verified and v.review is None:
+                if v.state == 'unverified':
                     qid, label = k.split('/', 1)
                     runner.verify(case.name, qid, label, author='selftest', expect_rev=v.rev)
             runner.refresh(case.name)

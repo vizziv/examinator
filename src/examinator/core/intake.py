@@ -69,6 +69,7 @@ from . import identity, overrides, split
 from .ask import Printed
 from .defs import Landmark, digest
 from .reading import normalize, region_key
+from .status import Value
 from .store import ANY, Row, Conflict, Made, Source, Submission
 
 PLAN = 'split'
@@ -407,14 +408,14 @@ def disturbed(ws, rows, gone) -> list[dict]:
     """The written submissions accepting (`outline`) would rewrite or remove that a
     person said something about, which a rewrite takes or leaves standing on pages
     it no longer has: `{'id', 'change': 'rewrite' | 'remove', 'said'}`, `said`
-    naming (`SAID`) values a person typed or verified, decisions, the name (the
+    naming (`SAID`) values a person typed, verified or flagged, decisions, the name (the
     pick) and its own regions or print area (overrides at its scope). What a reader
     read and the results computed from it are not asked about."""
     out = []
     for sid, change in [(r['id'], 'rewrite') for r in rows if r['state'] == 'changed'] + [(s, 'remove') for s in gone]:
         rows_ = ws.store.all(submission=sid, kinds=('value', 'decision'))
         said = [what for what, there in zip(SAID, (
-            any(r.kind == 'value' and (r.origin == 'manual' or (r.body or {}).get('verified') == 'person')
+            any(r.kind == 'value' and (r.origin == 'manual' or Value.of(r).protected or Value.of(r).flagged == 'person')
                 for r in rows_),
             any(r.kind == 'decision' for r in rows_),
             ws.store.get(sid, '', identity.WHO) is not None,
@@ -430,7 +431,7 @@ def repaged(ws, sid: str) -> None:
     regions, print area). Values a person verified, decisions and the pick stay:
     they are about the student."""
     for r in ws.store.all(kinds=['value'], submission=sid):
-        if (r.body or {}).get('verified') != 'person':
+        if not Value.of(r).protected:
             ws.store.delete(sid, r.name, 'value')
     scope = overrides.scope(overrides.SUBMISSION, sid)
     for path in ws.store.overrides(scope):

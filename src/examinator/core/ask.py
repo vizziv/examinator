@@ -94,8 +94,9 @@ class Ask:
         return got.text if got is not None else None
 
     def vouches(self, f: 'Field', got: Reading) -> bool:
-        """A person need not verify this reading."""
-        return not self.verify and bool(got.text.strip()) and got.review is None
+        """A person need not verify this reading (one the model was unsure of needs
+        review whatever a reader says: `status.Value.read`)."""
+        return not self.verify and bool(got.text.strip())
 
     def read(self, ctx: 'ReadContext', fields: Sequence['Field']) -> dict[str, Reading]:
         out = {}

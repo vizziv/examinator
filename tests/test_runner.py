@@ -8,6 +8,7 @@ from examinator import Check, Exam, Field, Printed, Region
 from examinator.core import overrides
 from examinator.core.reading import Reading
 from examinator.core.runner import Runner
+from examinator.core.status import Value
 from examinator.core.store import Conflict
 from examinator.model.fake import FakeModel
 
@@ -18,7 +19,6 @@ TOY = Path(__file__).resolve().parents[1] / 'exams' / 'toy_exam'
 
 
 def value(ws, sub, k):
-    from examinator.core.status import Value
     row = ws.store.get(sub, k, 'value')
     return Value.of(row) if row else None
 
@@ -54,7 +54,8 @@ def test_a_printed_reading_is_vouched_for_unless_flagged_and_handwriting_never()
     f = Field('c', Region(1, 0, 0, 10, 10))
     printed = Printed("the printed number")
     assert printed.vouches(f, Reading("30"))
-    assert not printed.vouches(f, Reading("3", "smudged"))                # unsure: a person looks
+    unsure = Reading("3", "smudged")
+    assert Value.read(unsure, printed.vouches(f, unsure)).state == 'review'      # unsure: a person looks
     assert not printed.vouches(f, Reading(""))                            # a blank is never vouched for
     assert not Printed("the printed number", verify=True).vouches(f, Reading("30"))
     assert not Ask("the student's name").vouches(f, Reading("Ann"))      # handwriting: a person verifies
@@ -97,6 +98,40 @@ def test_reading_again_the_same_text_changes_nothing(env):
     assert all(o.ok for o in runner.read('s1', 'a', include_protected=True))
     after = value(ws, 's1', 'a/x')
     assert (after.rev, after.verified) == (before.rev, 'person') and ws.store.version() == version
+
+
+def test_a_read_never_undoes_what_a_person_said_about_a_value(env):
+    """A person's flag survives a read of the same text (and a read never verifies it);
+    a read of another text is a new value, its state the reader's."""
+    exam, ws, runner = env
+    read_all(runner, 's1')
+    v = runner.review('s1', 'a', 'x', note="1 or 7?", expect_rev=value(ws, 's1', 'a/x').rev)
+    runner.read('s1', 'a')
+    after = value(ws, 's1', 'a/x')
+    assert (after.rev, after.review, after.flagged, after.state) == (v.rev, "1 or 7?", 'person', 'review')
+    ws.store.write('s1', 'a/x', 'value', Value('7').body(), origin='auto', expect_rev=v.rev)
+    runner.review('s1', 'a', 'x', note="", expect_rev=value(ws, 's1', 'a/x').rev)
+    runner.read('s1', 'a')
+    assert (value(ws, 's1', 'a/x').text, value(ws, 's1', 'a/x').state) == ('1', 'unverified')
+
+
+def test_the_small_changes_to_a_value():
+    """Each change as `Value` states it; needing review and being verified exclude each other."""
+    sure, unsure = Reading("1"), Reading("1", "1 or 7?")
+    read = Value.read(sure, True)
+    assert (read.verified, read.state) == ('reader', 'verified')
+    flagged = Value.read(unsure, True)
+    assert (flagged.verified, flagged.flagged, flagged.state) == (None, 'reader', 'review')
+    assert Value.read(sure, True, flagged).state == 'verified'                 # the reader's own flag: its to drop
+    mine = read.flag("why?")
+    assert (mine.flagged, mine.verified) == ('person', None)
+    assert Value.read(sure, True, mine) is mine                                # a person's flag: kept
+    assert Value.read(Reading("7"), False, mine).state == 'unverified'         # another text: a new value
+    v = mine.verify('ta')
+    assert (v.verified, v.by, v.review, v.flagged) == ('person', 'ta', None, None) and v.protected
+    assert Value.read(Reading("1", "hmm"), False, v) is v
+    assert not v.unverify().protected and v.flag(None) == v
+    assert Value.set("2", 'ta').protected and Value('2', verified='person', review='').state == 'review'
 
 
 def test_a_read_never_replaces_what_a_person_verified_unless_told(env):

@@ -159,7 +159,7 @@ def to_read(q: Question, values: Mapping[str, Value], gone: AbstractSet[int], *,
             pages = looks_at(reader, f, q.pages)
             reason = (NOT_ASKED if labels is not None and f.label not in labels
                       else PRESENT if missing_only and v is not None
-                      else PROTECTED if v is not None and v.verified == 'person' and not include_protected
+                      else PROTECTED if v is not None and v.protected and not include_protected
                       else NO_REGION if not pages           # a question always has pages
                       else PAGE_MISSING if gone.intersection(pages)
                       else NO_MODEL if not model and getattr(reader, 'uses_model', True)
@@ -286,22 +286,20 @@ class Runner:
         k = key(qid, label)
         row = self.store.get(submission, k, 'value')
         cur = Value.of(row) if row is not None else None
-        if cur is not None and cur.verified == 'person' and not include_protected:
+        if cur is not None and cur.protected and not include_protected:
             return True
-        verified = 'reader' if vouched and got.review is None else None
         try:
-            if cur is not None and cur.text == got.text:       # the same value: same revision
-                if cur.verified == 'person' and cur.review is None:
-                    return True
-                self.store.write(submission, k, 'value',
-                                 replace(cur, verified=verified, by=None, review=got.review).body(),
-                                 origin='auto', expect_rev=cur.rev, keep_rev=True)
-            else:
-                self.store.write(submission, k, 'value', Value(got.text, 0, verified, review=got.review).body(),
-                                 origin='auto', expect_rev=cur.rev if cur else None)
+            self._write(submission, k, cur, Value.read(got, vouched, cur), origin='auto',
+                        expect_rev=cur.rev if cur else None)
         except Conflict:
             return False
         return True
+
+    def _write(self, submission: str, k: str, cur: Value | None, new: Value, *, origin: str,
+               author: str | None = None, expect_rev: Any) -> Value:
+        """Store a field's new value; it keeps the revision while its text is unchanged."""
+        return Value.of(self.store.write(submission, k, 'value', new.body(), origin=origin, author=author,
+                                         expect_rev=expect_rev, keep_rev=cur is not None and cur.text == new.text))
 
     # --- compute ----------------------------------------------------------------
 
@@ -395,11 +393,8 @@ class Runner:
         if not self.ws.exam.group(qid).multiline(label):
             text = one_line(text)
         row = self.store.get(submission, k, 'value')
-        cur = Value.of(row) if row is not None else None
-        keep = cur is not None and cur.text == text
-        new = Value(text, 0, 'person', author)
-        return Value.of(self.store.write(submission, k, 'value', new.body(), origin='manual', author=author,
-                                         expect_rev=expect_rev, keep_rev=keep))
+        return self._write(submission, k, Value.of(row) if row is not None else None, Value.set(text, author),
+                           origin='manual', author=author, expect_rev=expect_rev)
 
     @_in_words
     def unset(self, submission: str, qid: str, label: str, *, expect_rev: Any = ANY) -> None:
@@ -414,20 +409,16 @@ class Runner:
         """Verify the value as it stands, which clears any review (or, `verified=False`,
         unverify it). Same revision."""
         cur, row = self._current(submission, qid, label, expect_rev)
-        new = replace(cur, verified='person' if verified else None, by=author if verified else None,
-                      review=None if verified else cur.review)
-        return Value.of(self.store.write(submission, row.name, 'value', new.body(), origin=row.origin,
-                                         author=row.author, expect_rev=expect_rev, keep_rev=True))
+        return self._write(submission, row.name, cur, cur.verify(author) if verified else cur.unverify(),
+                           origin=row.origin, author=row.author, expect_rev=expect_rev)
 
     @_in_words
     def review(self, submission: str, qid: str, label: str, *, note: str | None, expect_rev: int) -> Value:
         """Flag the value for review with a note (possibly ''), which unverifies it; or,
         `note=None`, take the flag off (it stays unverified). Same revision."""
         cur, row = self._current(submission, qid, label, expect_rev)
-        new = replace(cur, review=note, verified=None if note is not None else cur.verified,
-                      by=None if note is not None else cur.by)
-        return Value.of(self.store.write(submission, row.name, 'value', new.body(), origin=row.origin,
-                                         author=row.author, expect_rev=expect_rev, keep_rev=True))
+        return self._write(submission, row.name, cur, cur.flag(note), origin=row.origin, author=row.author,
+                           expect_rev=expect_rev)
 
     def _current(self, submission, qid, label, expect_rev):
         self._field(qid, label)
