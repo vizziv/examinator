@@ -1,15 +1,22 @@
 # Examiner rewrite: brief for the lead agent
 
+*The original brief, kept as history (some of it, such as PDF exports, has
+since been dropped). The project as it is: [`MODEL.md`](MODEL.md),
+[`DESIGN.md`](DESIGN.md), [`WRITING_AN_EXAM.md`](WRITING_AN_EXAM.md) and
+[`TODO.md`](TODO.md).*
+
 Start here. You are starting a new project from an empty repository. This folder
 is everything you inherit: there is no existing code to extend.
 
 | File | What it is |
 | --- | --- |
 | `README.md` | This brief: goal, decisions, constraints, how to run the work, milestones. |
-| [`DESIGN.md`](DESIGN.md) | The proposed architecture and API. |
+| [`MODEL.md`](MODEL.md) | The model the core implements: fields, checks, values, results, decisions, statuses. |
+| [`DESIGN.md`](DESIGN.md) | The architecture and API as built. |
 | [`LESSONS.md`](LESSONS.md) | What three earlier hand-built graders taught us. Read before designing anything. |
 | [`EXAM3.md`](EXAM3.md) | A real exam, described in full, and how it would be written in the new library. It is the acceptance target, not the template. |
 | [`WRITING_AN_EXAM.md`](WRITING_AN_EXAM.md) | How to write an exam package against the library as it is now. |
+| [`TODO.md`](TODO.md) | Where things stand, and what is next. |
 
 ## Goal
 

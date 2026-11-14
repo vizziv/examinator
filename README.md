@@ -82,14 +82,14 @@ at a page or joined with the next. A submission's sheets, less the extra ones, w
 the missing pages, are the exam's pages in order; sheets past the last page are
 extra and pages past the last sheet are missing (and flagged), until you say otherwise.
 
-**Accept** writes one PDF per submission into `pdfs/`, named by an opaque id
+**Accept** writes one PDF per submission into `made/`, under an opaque id
 (`s0001`, ...) that never changes, with pages upright (turned pages are written
 as new single-image pages; others are copied untouched): the exam's pages in
 order, a blank "missing page" placeholder for one not scanned, then the extra
 sheets. On a question page the pages panel shows them so ("missing", "extra 1");
-nothing on a missing page is read, and a question's pages for one submission
-may name its extra sheets (pages after the exam's last: the first extra is
-the exam's pages + 1). Accepting again after
+nothing on a missing page is read, and a field's region for one submission
+may sit on one of its extra sheets (pages after the exam's last: the first
+extra is the exam's pages + 1). Accepting again after
 a fix rewrites only the submissions whose pages or turning changed; one that already
 has grading work is not changed unless you insist.
 
@@ -105,7 +105,7 @@ and any line it could not read, before you save.
 If the exam declares where students write who they are
 (`Exam(identity={'name': Field('name', Region(...)), 'id': Field('id', Region(...))})`,
 or boxes drawn on the Names tab, for every submission or for one), **read names**
-asks the model what is written in each box (once per submission; reading again is free) and each submission gets
+asks the model what is written in each box (once per submission; "again" also reads what no person verified) and each submission gets
 ranked proposals from the roster, with why ("ID exact, name close", "ID 1
 off") and how sure: *both agree*, *ID only*, *name only*, *they disagree*,
 *nobody close*, *empty*, *not read yet*. Nothing is named until a person verifies it. One
@@ -146,9 +146,10 @@ uv run examinator serve exams/toy_exam -w /tmp/st --fake
 
 ## PDFs already split
 
-A workspace can instead be handed `ID.pdf` scans and one roster file (the
-scanning service's YAML, or a CSV with `Submission ID`, `First Name`,
-`Last Name`, `Email`) in `WORKSPACE/pdfs/`, then:
+A workspace can instead be handed one PDF per submission, `ID.pdf` in
+`WORKSPACE/pdfs/`, then served. The roster is given as above (**Roster**); a
+file name that carries exactly one roster ID names its submission, which the
+Names step can change like any other.
 
 ```sh
 uv run examinator serve path/to/my_exam -w WORKSPACE
