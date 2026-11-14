@@ -140,7 +140,8 @@
   // What runs for this page (a read, a check, the recompute a change started) is said on the run
   // bar's line, and the page drawn again when it ends.
   const runs = Line('run-msg');
-  const watch = (job, each) => Changes.watch(job, {line: runs, each, done: refresh});
+  const redrawn = async () => { sayKept(await refresh()); };     // after a run: drawn again, drafts kept and said
+  const watch = (job, each) => Changes.watch(job, {line: runs, each, done: redrawn});
 
   // Every change to this page's rows (values, decisions) is about this submission's question:
   // one subject, so each is sent once the one before it was answered and drawn, against the
@@ -260,7 +261,7 @@
   const link = name => document.querySelector(`a[data-action="${name}"]`);
   const follow = name => ({available: () => !!link(name), run: () => link(name).click()});
   const hasFields = () => inputs().length > 0;
-  const run = (path, body) => Changes.run(`run:${path}:${body.check || ''}`, `${base}/${path}`, body, {line: runs, done: refresh});
+  const run = (path, body) => Changes.run(`run:${path}:${body.check || ''}`, `${base}/${path}`, body, {line: runs, done: redrawn});
   const actions = {
     'prev-student': {available: () => canGo(-1), run: () => go(-1)},
     'next-student': {available: () => canGo(1), run: () => go(1)},

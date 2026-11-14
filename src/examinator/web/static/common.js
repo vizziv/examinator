@@ -98,7 +98,7 @@ const Changes = (() => {
     c.tail = mine;
     return mine;
   }
-  const failed = o => (o.status !== 'done' && o.status !== 'skipped') || o.read < o.asked;
+  const failed = o => o.status !== 'done' || o.read < o.asked;
   function outcome(job) {
     if (job.state === 'running') return '';               // no longer waited for: it goes on
     if (job.state !== 'done') return `${job.state}${job.error ? ': ' + job.error : ''}`;
@@ -120,14 +120,17 @@ const Changes = (() => {
         if ((each && each(job) === true) || job.state !== 'running') break;
         await new Promise(go => setTimeout(go, 600));
       }
+      // `done` draws what the run left, whatever became of it; what it says is said of a run that finished
       const said = done ? await done(job) : '', out = outcome(job);
-      if (at.mine(me)) at.say([said, out].filter(Boolean).join(' · '), out ? 'bad' : '', me);
+      if (at.mine(me)) at.say([job.state === 'done' && said, out].filter(Boolean).join(' · '), out ? 'bad' : '', me);
       return job;
     } finally { busy(-1); }
   }
+  // A run holds its subject until it ends, and a press made meanwhile is dropped, not queued
+  // to start the run again.
   function run(subject, path, body, {line, each, done} = {}) {
     busy(1);
-    return send(subject, path, body, {line, done: async b => {
+    return send(subject, path, body, {line, ends: true, done: async b => {
       if (b.job) return watch(b.job, {line, each, done: job => done && done(job, b)});
       const said = done ? await done(null, b) : '';
       if (said) (line || Line('flash')).say(said);
