@@ -1,5 +1,7 @@
 # Exam 3: the acceptance target
 
+*Historical notes: they may describe mechanisms since removed (such as `[REVIEW: ...]` text markers, now a review status). The current design is MODEL.md and DESIGN.md.*
+
 Exam 3 is a real exam from a simulation course, graded with the last hand-built
 tool. It is described here so the new library can be proven against something
 real. **It is a test case, not the template.** If a library feature exists only

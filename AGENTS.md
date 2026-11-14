@@ -28,11 +28,13 @@ text. Answer keys never appear in any prompt.
 
 ```text
 src/examinator/
-  core/     definitions (one validation for the package and overrides), store, status rules
-            (the model: MODEL.md), runner, batch, workspace, overrides;
-            ask (one region, asked of the model: printed fields, names) and reading;
+  core/     defs (definitions; one validation for the package and overrides), result (what a
+            check returns; the block classes), context, reading (the reply shape; `Reader`),
+            ask (one region, asked of the model: printed fields, names); store, status (values,
+            results, decisions, the status rules: MODEL.md; `Ledger`), runner (the small changes),
+            isolate (check workers), batch, workspace, overrides, grid, focus (filters);
             split (pure boundary logic) and intake (sources, plans, accepting into made/);
-            identity (roster, reading name/ID boxes, pure proposals, the pick)
+            identity (name/ID fields, the pick) and roster (parsing, pure matching)
   pdf/      page rendering, scan layout, orientation, writing submission PDFs
   model/    loopback model client, scripted fake model
   std/      standard library: readers, prompts, fields, math (the keyed check), pseudocode, blocks
@@ -68,10 +70,11 @@ tests/
 ```sh
 uv sync                                   # install
 uv run pytest                             # tests (offline, fake model)
+uv run examinator selftest exams/toy_exam                      # an exam's fixtures, end to end
 uv run examinator synth exams/toy_exam /path/outside/repo/ws   # synthetic workspace
 uv run examinator synth exams/toy_exam /outside/repo/st --stacks          # synthetic stacks of scans
 uv run examinator intake exams/toy_exam -w WS --fake --roster R.csv A.pdf   # add scans, propose splits
 uv run examinator intake exams/toy_exam -w WS --fake --names                # read name/ID boxes, list proposals
-uv run examinator run exams/toy_exam --workspace WS --fake     # read, then check, from the CLI
+uv run examinator run exams/toy_exam --workspace WS --fake     # read from the CLI; checks follow
 uv run examinator serve exams/toy_exam --workspace WS --fake   # the app
 ```

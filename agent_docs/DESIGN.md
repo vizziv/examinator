@@ -1,20 +1,17 @@
 # Examinator: design
 
-Read [`README.md`](README.md) first for what is decided, recommended and open.
-Unless a section says **Decided**, what follows is **Recommended**: a design the
-user has seen and broadly accepted, with implementation detail left to you. All
-names are placeholders.
+The design as built. The model (fields, readers, checks, questions; values,
+results, decisions; the status of a grade) is [`MODEL.md`](MODEL.md); this
+document is the rest. **Decided** marks what the owner decided; the rest may
+change when something simpler is found.
 
 ## 1. Vocabulary
-
-The model (fields, readers, checks, questions; values, results, decisions;
-the status of a grade) is [`MODEL.md`](MODEL.md). This document is the rest.
 
 | Term | Meaning |
 | --- | --- |
 | Exam | One printed exam: its pages, its questions, its grader. One Python package. |
-| Workspace | A folder of one exam's data: scanned PDFs, a roster, the SQLite file, exports. |
-| Submission | One student's scanned PDF, identified by its file stem. |
+| Workspace | A folder of one exam's data: scans as added, submission PDFs, the SQLite file (values, results, decisions, the roster, overrides), a page cache. |
+| Submission | One student's paper: a PDF intake wrote (`made/`, an opaque id such as `s0001`) or one handed in already split (`pdfs/ID.pdf`). |
 | Field | A named slot for one value (text) read from paper, with a label (`'1.2'`) and usually a region. |
 | Region | A rectangle on a printed exam page, in per-mille of that page. |
 | Reader | What reads fields: the question's handwriting reader, or a field's own (`Printed`). |
@@ -29,8 +26,12 @@ the status of a grade) is [`MODEL.md`](MODEL.md). This document is the rest.
 
 ```text
 src/examinator/           the library and app (this repository)
-  core/                   definitions, store, status rules, runner, batch, overrides, focus;
-                          asking about one region (ask: `Ask`, `Printed`); intake (split, intake, identity); reading helpers (reading)
+  core/                   defs (definitions, one validation), result (what a check returns, blocks),
+                          context (what a check and a reader get), reading (replies, `Reader`),
+                          ask (one region asked: `Ask`, `Printed`); store, status (values, results,
+                          decisions, `Ledger`), runner (the small changes), isolate (check workers),
+                          batch, workspace, overrides, grid, focus (filters);
+                          split, intake (scans in), identity, roster (who wrote it)
   pdf/  model/            rendering, scan layout, orientation, writing PDFs; loopback model client
   std/                    the standard library: readers, prompts, fields, math, pseudocode, blocks
   web/                    server and browser interface
@@ -46,7 +47,7 @@ workspace/                one exam's data (never in a repository)
   made/  each submission's PDF as intake wrote it (named by the store)
   pdfs/  ID.pdf per submission handed in already split
   exam.sqlite
-  cache/  exports/
+  cache/  rendered pages
 ```
 
 ```sh
@@ -93,8 +94,9 @@ Design rules for this layer:
 
 ## 4. Readers and checks
 
-A **reader** reads some fields of one submission: `reader.read(ctx, fields) ->
-{label: text}`. Its context gives the question's selected pages, crops of
+A **reader** is an instance of a subclass of `core.reading.Reader` (anything
+else is refused when the question is added). It reads some fields of one
+submission: `reader.read(ctx, fields) -> {label: Reading or text}`. Its context gives the question's selected pages, crops of
 regions (with this submission's regions), and the loopback model (`ctx.model(prompt, images=, text=, expect=,
 step=)`; `step` tags the call). A reader may vouch for a value
 (`vouches(field, text)`), read each field's region rather than the question's
@@ -170,13 +172,15 @@ read into fields like anything else, and checks use it.
   ("as a number (3 or 4)"). A reading that is absent writes nothing (not read);
   an unsure one needs review. Never guess.
 - **A reader may vouch for its value**: `Printed` does for any non-empty value
-  the model was sure of, unless `verify=True`; `Ask` (handwriting) never does. Such a
+  the model was sure of, unless `verify=True`; `Ask` (handwriting) only with
+  `verify=False`. Such a
   value is verified by the reader; reading again replaces it, never a value a
   person verified. A value nothing expects is caught where it matters: a key
   per value with no key for it is undecided, naming the field and the value
   ("no key for width = 5").
 - A question with only printed fields and no checks holds the exam's printing.
-  Its grid column shows how its fields stand (not read, unverified, verified).
+  Its grid column shows how its fields stand (not read, review, unverified,
+  verified).
 - **A check reads other questions' fields** with `ctx.read(label,
   question=...)`. Nothing is declared: the library **records** what it read.
   A grade counts only once every field it read is verified; one unreadable
@@ -186,7 +190,7 @@ read into fields like anything else, and checks use it.
   question's own field, `std.fields.value(label, question=...)`,
   `std.fields.agree(...)` (fields that must agree, else undecided), or any
   `fn(ctx) -> value`.
-- Asking the model one thing about one region is `Ask.call`, the one call
+- Asking the model one thing about one region is `Ask.reading`, the one call
   path for printed fields, identity fields and intake's landmarks. Regions are instructor-defined template rectangles. Do
   **not** ask the model to locate regions (see `LESSONS.md`).
 
@@ -211,15 +215,17 @@ Result(grade, fields={'1.1': 'correct', '1.2': Judgement('incorrect', expected='
 - Per-field judgements are shown beside the field: an outcome, optionally the
   expected answer and a short note. Blocks are shown below, top-level images
   first in a row of figures.
-- Blocks come from a small vocabulary (`std.blocks`): note, table, code
-  excerpt, collapsed details, and image (a PNG, JPEG, GIF, WebP or SVG file's
+- Blocks come from a small vocabulary, five classes in `core.result`
+  (re-exported as `std.blocks`): `Note`, `Table`, `Code`, `Details` (collapsed)
+  and `Image` (a PNG, JPEG, GIF, WebP or SVG file's
   bytes; shown with `<img>`, so an SVG runs nothing; inverted in dark mode as
   scans are). A block is an object or the plain dict it stands for.
 - **One stored shape, enforced at one boundary.** `result.settle` turns what a
   check returned into what is stored (`Record`), in the check's process (the
   worker sends the record across its pipe): the grade through the check's
-  points, every block, however written, against the block grammar and limits
-  (image type, 2 MB per image, 8 MB per result, details 8 deep). What does not
+  points, every block, however written, against the block grammar (the block
+  classes' fields, `result.SHAPES`) and limits (image type, 2 MB per image,
+  8 MB per result, details 8 deep). What does not
   fit is a check error ("the check returned ..."), stored as an undecided
   result, never a bad row. There each image gets its digest and its bytes
   leave the result: they are stored once per result in the `image` table,
@@ -250,9 +256,10 @@ functions over stored rows, in `core/status.py`, with one test per row
 - Supporting work on the page is never read or checked. Graders judge it.
 - Status always comes from these rules, never from evidence contents.
 
-**Protection.** A value a person verified is never replaced by a read unless
-asked (`include_protected`); the replaced value goes to history. Nothing
-automatic touches a decision.
+**Protection.** What a person said about a value is never undone by a read: a
+value a person verified is not read unless asked (`include_protected`), and a
+read of the same text keeps it verified (or flagged, if a person flagged it).
+A replaced value goes to history. Nothing automatic touches a decision.
 
 **Automatic recomputation.** One background rule (`Runner.refresh`): a check
 whose result is not current is computed, if it has something to compute from:
@@ -281,28 +288,32 @@ create table row (
   primary key (submission, kind, name)
 );
 create table history (...);       -- the same plus replaced_at; a replaced value, decision or plan (not a result)
-create table submission (id text primary key, pdf text);         -- who it is: its pick
+create table submission (id text primary key, pdf text);         -- a handed-in file ('' if intake wrote it)
 create table setting (key text primary key, value text);        -- roster, counters
 create table override (scope, path, value, author, updated_at, rev,   -- live edits of exam data:
   primary key (scope, path));    -- scope '' (the exam), 'source:<id>', 'submission:<id>'; no history
 create table source (...);  create table made (...);             -- intake
 create table memo (submission, key, value);                      -- Split's landmark readings, by source
+create table image (submission, name, digest, media_type, data); -- a result's images
 ```
 
 In code and prose a row is written as the store's methods take it,
 `(submission, name, kind)`: `(sub, 'a/x', 'value')`, `(source id, '', 'split')`.
 
-Bodies: a value `{'text', 'verified': None | 'reader' | 'person', 'by'}`; a
+Bodies: a value `{'text', 'verified': None | 'reader' | 'person', 'by', 'review':
+None | note, 'flagged': None | 'reader' | 'person'}`; a
 result `{'grade', 'fields', 'blocks', 'reads': {'question/label': rev | None},
 'defn', 'code'}` (a field read at its default: revision `DEFAULT`, 0); a decision `{'grade', 'seen': {'question/label':
 rev | None}}`.
 
 - Every read on the normal path is a keyed lookup. The grid and the filter
-  page load every row in one query, leaving result blocks out. A result's
+  page load every row in one query, leaving result blocks out
+  (`status.Ledger.load`, the one loader of stored rows). What is computed from
+  stored rows is cached by `Store.version`, which moves on every write. A result's
   images are rows of their own (`image`: submission, name, digest), replaced
   with the result and gone with it or its submission.
 - A revision changes only when content changes (`keep_rev` for a value
-  verified or unverified). Writing the body a row already has is a no-op.
+  verified, unverified or flagged). Writing the body a row already has is a no-op.
 - All writes by people carry the revision they saw; a mismatch is rejected and
   the browser keeps its draft. A decision carries the revisions of the fields
   it was made on.
@@ -483,22 +494,34 @@ Read: the batch run; Names, one submission at a time) send every change the
 same way:
 
 - **Server.** A POST route is a *change* to a row, a *run* in a slot, or a
-  *query* (the route table says which: `change(...)`, `run(...)`, `query(...)`
-  in `web/app.py`). A change requires the revision drawn (`rev`, or each
-  item's in a multi-value save) and answers the new one; a stale one is
-  refused with 409, the reason in `error` and `current`, what is there now.
+  *query*: three mechanisms inside `create_app` in `web/app.py` that the route
+  table names (`change(path, fn, current)`, `run(path, fn, model=)` with
+  `start` owning the slot, `query(path, fn)`). A change requires the revision
+  drawn (`rev`, or each item's in a multi-value save) and answers the new one;
+  a stale one is refused with 409, the reason in `error` and what is there now
+  in `current`. Routes flagged `exclusive` run under the one
+  app-wide lock; one comment there states its rule (changes that check and
+  then write what no single row's revision covers: an override, Accept, the
+  roster, a batch's start). Stopping the batch (`/read/stop`) is a change
+  named by the batch's id. `/scans/{src}/read` is the run that reads a scan's
+  pages; `/scans/{src}/propose` only guesses again from what is stored.
   The reason is in the page's words, written where the kind of row is known
   (`store.Conflict` carries only which row: `runner.worded` names a field by
   its label, "x changed"; `identity.stale`, "the name changed: now Kit
   Absentia"; intake, "the plan changed"). A
   run (a read, a check, a batch, reading the name boxes, reading a scan's
   pages) names no revision: a slot runs one thing at a time, and a second
-  while one runs is refused as "already running". Every answer is JSON, an
+  while one runs is refused as "already running"; one that reads is refused
+  without a model. Every answer is JSON, an
   error as `{error}`; a token this run of the app did not give says to reload.
   Only the scan upload (a file, kept once by its digest) is none of these.
-- **Browser.** `Changes.send(subject, path, body, {done, redraw, line, ends})`
-  in `common.js` is the only way to POST a change (`request` only reads; a test
-  scans the scripts). *What is fixed at the press is what the person said: the
+- **Browser.** `Changes.send(subject, path, body, {done, redraw, line, ends,
+  long})` in `common.js` is the only way to POST a change, and
+  `Changes.run(subject, path, body, {line, each, done})` the only way to start
+  a run: sent like a change, then its job followed by `Changes.watch`, which
+  says every run's outcome in one wording ("N failed (…)"). `Changes.query`
+  posts a query, `Changes.get` only reads (tests scan the scripts for any other
+  POST or job polling). *What is fixed at the press is what the person said: the
   things it names, by identity (a field's key, a check, a submission by its
   first sheet, never a position), and the values they gave. The revisions are
   read when the change is sent (`body` is a function), from what the page last
@@ -521,15 +544,17 @@ same way:
   than the last change.
 - **When a change does not go through, the person gets one message, where they
   were working:** the server's reason, then what the page did with the draft
-  ("yours kept over X: save again to overwrite", `Changes.kept`, after a 409
-  that `redraw` answered by taking what is saved now). It goes to the caller's
+  ("yours kept over X: save again to overwrite", `Changes.kept`, or
+  `Changes.keptOver` for the drafts a drawing kept, after a 409 that `redraw`
+  answered by taking what is saved now). It goes to the caller's
   `line` (`Line` in `common.js`), else the header; a line belongs to the last
   change sent there ('…' while slow, then its outcome), so a message goes when
   the next change there starts. A refusal never throws a draft away.
 - **A held key acts once.** In `actions.js`: a key's auto-repeat never
   triggers a change, and never reaches the browser when its first press
   triggered an action (no Save dialog from a held Cmd+S, no "eee" in the field
-  E focused). Moves (cursors, looking around) opt in to repeating
+  E focused). `Actions.gate(group, test)` holds every action of a group
+  ('split-…', 'names-…') to one test (its tab shown, nothing long running). Moves (cursors, looking around) opt in to repeating
   (`repeat`). A held Enter or Space never presses a control again. A click
   acts on what was under the pointer: the second click of a double click that
   lands on something drawn since the first (a list the first one's answer
@@ -548,8 +573,13 @@ same way:
   again from the server at once. HTML is `no-store`; an image URL names its
   content (a scanned page's carries its PDF's render key, a sheet its source's
   digest), so images are immutable and a rewritten PDF is a new URL.
+- **One look per status.** `look(st)` in `web/app.py` is the one way a status
+  is drawn (its glyph, kind, sort key and title), on every page.
+- **Element ids are one namespace.** Each id is in one template (or the shared
+  base); CSS keyed by an id sits under its page's root class, `.p-<page>` (a
+  test checks both).
 
-Screens for the first version:
+Screens:
 
 - **Grid:** one row per submission, one column per check (a question with no
   checks has one column: how its fields stand). Shows
@@ -566,7 +596,7 @@ Screens for the first version:
 - **Question page:** each check's proposed grade and status with a control to
   decide it; the fields on the page (the question's own and those its checks
   read from other questions, linked), each with its scan crop, a badge only when
-  unverified, and each check's judgement beside it; blocks below, plots first,
+  it needs review or is unverified, and each check's judgement beside it; blocks below, plots first,
   details collapsed; read and run controls; the answer key the printing picks,
   collapsed; per-field history. The main actions are combinations: **Verify**
   (save edits and verify everything here), **save** (a person who sets a value
@@ -589,16 +619,17 @@ browser's own zoom.
 ### Words and colours on screen
 
 One word per idea, everywhere a person can see it (labels, titles, messages,
-docs). Internal names (`needs_review`, `core/focus.py`) may differ.
+docs). Internal names (`to_decide`, `core/focus.py`) may differ.
 
 - **submission**: one student's paper. Never "exam" for that; the exam is the exam itself.
-- **verify**: a person stands behind a value; before, **unverified**; after, **verified**.
+- **verify**: a person stands behind a value; before, **unverified**; after, **verified**. **all verified**: a step with nothing left. **verified too**: a read that also reads again what a person verified.
+- **review**: a value a person should look at (the model was unsure, or a person flagged it); the glyph `!`.
 - **decided**: a grade a person gave (never "by hand", "manual"); one plain look everywhere ("decided · who"). **to decide**: a person must give the grade.
 - **undecided**: no grade yet, the glyph `?` (never "not determined", "needs review", "unresolved", "open").
 - **filter**: the narrowed set of submissions (never "focus", "like this").
 - **print area**: where the printed page sits on the scanned page (a question page's print-area mode, Exam data).
-- **read pages** / **read names**: what the model does on Scans; **pages read** after; **N failed** when a call fails.
-- **not read yet** (nothing asked), **empty** (asked, the box had nothing), **N lines unclear** (a roster).
+- **read pages** / **read names**: what the model does on Scans; **pages read** after; **N failed (…)** for any run with failures.
+- **not read yet** (nothing asked), **empty** (asked, the box had nothing), **unreadable** (read, but what was read needs review), **N lines unclear** (a roster).
 - **put back** (a dropped page), **unverify**, **guess again**, **join with next**, **type name**.
 
 Buttons: only the one primary button of a panel is capitalised; the rest are
@@ -626,8 +657,6 @@ key hints; the blue `--ask` is only the `?` glyph. Success messages are not red.
 
 ## 15. Later layers, and what each needs from the core
 
-Do not build these in M1–M3. Do not block them either.
-
 | Later feature | What the core must already provide |
 | --- | --- |
 | Live editing of exam data (keys, regions, prompt notes) | **Built** (`core/overrides.py`, the Exam page and the question page's editors). Plain data addressed by path, stored in the `override` table (no history); an edit outdates exactly the checks whose definition it changes, which are recomputed. |
@@ -636,7 +665,7 @@ Do not build these in M1–M3. Do not block them either.
 | Listing which grades changed after a check changed | Not built. Results keep no history; it would compare old and new results at recompute time (MODEL.md). |
 | Static student view | A second renderer over stored rows; which blocks it shows is its own decision (no mark on blocks yet). |
 | Several exams in one process | No module-level state; exam packages loaded under distinct names. |
-| "Review me later" flag (a TA marks an answer for the professor to look over) | Not built. The glyph `!` is reserved for it in the grid and on the question page; `?` means only "a person must decide". The flag would be a small manual row per submission and question, with author and an optional note, and a built-in facet so the filter page can gather flagged answers. It must not affect whether a grade counts. |
+| "Review me later" flag (a TA marks an answer for the professor to look over) | Partly: a person can flag a value for review with a note (the field's ⋯ menu), shown `!`, which holds back the grades that read it. A flag that leaves the grade counting (a manual row per submission and question, with a built-in facet) is not built. |
 | A pluggable interpreter back end (vectorized, masked execution) | Not built; the closure interpreter is fast enough so far. The route: keep one front end (parse, whitelist, validate), expose the validated tree, and route operators through an overridable table; a masked executor is then a second back end. |
 
 ## 16. Intake: scans in, submissions out
@@ -672,7 +701,7 @@ is done on Split, before Accept.
   | `missing` | how many printed pages not scanned come before it (0: a person said none) |
   | `turn` | its own quarter turns clockwise, 1-3 |
 
-  Four rules hold it together:
+  Six rules hold it together:
   1. **A submission is its kept sheets.** It is the run of kept sheets from a
      start up to the next. Every operation ends by normalising: starts sit
      only on kept sheets (dropping a first page hands the start to the next
@@ -725,8 +754,9 @@ is done on Split, before Accept.
   flagged "too few pages"). `length` (sheets per submission, default the
   exam's pages) is only the splitter's grouping size: more means trailing
   extras are expected. A leading junk sheet is simply dropped.
-  Boundary logic is pure: `split.propose(n, length, read)` takes a reader
-  `sheet -> position | None` and is tested with plain dicts.
+  Boundary logic is pure: `split.propose(n, length, read)` takes a
+  `split.SheetReader` (`sheet -> position | None`) and is tested with plain
+  dicts.
   `intake.reguess` guesses a source's plan again and writes it (`split.guess`).
 - **Landmarks** (`Exam(landmarks=[Landmark(name, region, ask, reads)])`): like
   a printed field, a region and a question for the model about printed text, reading
@@ -734,9 +764,9 @@ is done on Split, before Accept.
   or, absent, the reading is the page number. Readings are taken only where
   needed: at the expected boundary, then neighbours back and forth (a page
   number jumps straight to the right place), and memoised per source, sheet,
-  landmark, orientation and print area (`core/reading.py`'s `region_key`, the key
-  `Ask` uses too). A reading is a printed page, 0-based. A landmark is asked as a `Printed`
-  would be (`Ask.call`). A
+  landmark, orientation and print area (`intake.memo_key`, in the `memo`
+  table). A reading is a printed page, 0-based. A landmark is asked as a
+  `Printed` would be (`Ask.reading`). A
   failed model call leaves its sheet unread, not read as nothing; the plan
   counts such sheets (`failed`) and is not marked checked when every call failed.
 - **Doubts** are computed, never stored: too few or too many pages, a first
@@ -803,9 +833,10 @@ is done on Split, before Accept.
     and so does where things are on them (its own regions and print area,
     drawn on the old pages; a region on a sheet it no longer has would not
     even validate); what a person said about the student stays (values a person
-    verified, decisions, the pick). A removed submission is gone with its
-    boxes; its id is never reused.
-- **Who** (`core/identity.py`). Three rules hold throughout:
+    verified, decisions, the pick). A removed submission is gone (its own
+    rows and boxes stay in the store, unused; Exam data marks its boxes
+    "gone"); its id is never reused.
+- **Who** (`core/identity.py`; the roster and matching, pure, in `core/roster.py`). Three rules hold throughout:
   1. *A naming is a change like any other* (§13, Changes): `{sub, rev, key |
      text | restore}` (take a proposal, pick from the list, type a name, unname,
      undo), about the submission drawn, against the pick's revision last drawn. The server refuses a stale `rev` (409,
@@ -821,7 +852,7 @@ is done on Split, before Accept.
      names", with "again" for values no person verified).
 
   A roster is optional. It is stored as a
-  setting, `[{'name', 'id', 'email', 'key'}]`, read from a CSV/TSV with a
+  setting, `[{'name', 'id', 'email', 'key'}]`, read (`roster.read_roster`) from a CSV/TSV with a
   header (generic column names only) or from plain lines (name and ID, comma
   or tab, either order; the ID is the part with no spaces and a digit). A
   roster is valid exactly when every person on it is found as themselves
@@ -837,7 +868,7 @@ is done on Split, before Accept.
     built-in group `@identity` (`defs.identity_group`): one field per roster
     column (`name`, `id`, `email`), those not mapped with no region. A field
     without a reader of its own is read by `Ask(defs.ASKS[column])`, about
-    the handwriting. The group is `exam.identity` (`apart=True`), not one of
+    the handwriting. The group is `exam.identity`, not one of
     `exam.questions` (the grid, totals, filter facets, the Read page, batch
     reads, prev/next question). Everything else is
     a field's: values with revisions, history and `verified`; `Runner.read`,
@@ -860,7 +891,7 @@ is done on Split, before Accept.
     roster text ever reaches a prompt. Each value shows under its crop on
     the Names tab, where it can be corrected (Enter) or verified (✓), through
     the question page's save endpoint.
-  - **Proposing** is pure: `propose(readings by roster field, roster)` ranks
+  - **Proposing** is pure (`core.roster`): `Matcher(roster).propose(readings by roster field)` ranks
     candidates (an exact ID first; then IDs that differ only in look-alike
     characters such as `l`/`1` and `o`/`0`, compared both ways round so IDs
     may mix letters and digits; then IDs within 2 edits for 8+ characters,

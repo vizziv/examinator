@@ -4,7 +4,7 @@ Everything stored per submission is a row with a JSON body and a revision,
 addressed (as `get`, `write` and `delete` take it) by `(submission, name, kind)`:
 
     name                kind        body
-    'question/label'    'value'     a field's value: {'text', 'verified', 'by'}   (`core.status`)
+    'question/label'    'value'     a field's value: {'text', 'verified', 'by', 'review', 'flagged'}   (`core.status`)
     'question/check'    'result'    a check's result: grade, evidence, what it read
     'question/check'    'decision'  a person's grade for a check, and what they saw
     ''                  'who'       who wrote it: the person picked (`core.identity`)

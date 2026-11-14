@@ -1,5 +1,7 @@
 # Lessons from three earlier graders
 
+*Historical notes: they may describe mechanisms since removed (such as `[REVIEW: ...]` text markers, now a review status). The current design is MODEL.md and DESIGN.md.*
+
 Three exams were graded with three hand-built tools, each copied from the last.
 This is what held up, what hurt, and what was tried and abandoned. It is
 background for judgment, not a specification.
