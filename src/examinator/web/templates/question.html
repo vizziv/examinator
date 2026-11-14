@@ -68,22 +68,8 @@
 <span class="rg-group">
 {{ rects.numbers('rg', count) }}
 </span>
-<span id="rg-region-btns" class="rg-group">
-<button type="button" id="rg-save" data-action="region-save-own" class="primary" title="this submission's own region">save for this submission</button>
-<button type="button" id="rg-save-all" data-action="region-save-all" title="every submission's region">save for all</button>
-<button type="button" id="rg-undo" data-action="region-undo" title="back to the saved region">undo</button>
-<button type="button" id="rg-clear-own" data-action="region-clear-own" class="danger" title="drop this submission's own region: back to every submission's" hidden>drop own</button>
-<button type="button" id="rg-clear-all" data-action="region-clear-all" class="danger" title="every submission's region back to the package's" hidden>revert all</button>
-</span>
-<span id="rg-pa-btns" class="rg-group" hidden>
-<button type="button" id="pa-save" data-action="print-save-own" class="primary" title="this submission's own print area">save for this submission</button>
-<button type="button" id="pa-save-scan" data-action="print-save-scan" title="the print area of every submission split from the same scan file"{% if not scopes.scan %} hidden{% endif %}>save for scan</button>
-<button type="button" id="pa-save-all" data-action="print-save-all" title="every submission's print area, but those with their own or their scan's">save for all</button>
-<button type="button" id="pa-undo" data-action="print-undo" title="back to the saved print area">undo</button>
-<button type="button" id="pa-clear-own" data-action="print-clear-own" class="danger" title="drop this submission's own print area: back to its scan's or every submission's" hidden>drop own</button>
-<button type="button" id="pa-clear-scan" data-action="print-clear-scan" class="danger" title="drop this scan's print area: its submissions go back to every submission's" hidden>drop scan's</button>
-<button type="button" id="pa-clear-all" data-action="print-clear-all" class="danger" title="every submission's print area back to the package's" hidden>revert all</button>
-</span>
+{{ rects.scopes('region', 'region') }}
+{{ rects.scopes('print', 'print area', scan=true, hidden=true) }}
 <span id="rg-msg" role="status"></span>
 </span>
 </div>

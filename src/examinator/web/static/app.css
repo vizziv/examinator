@@ -418,7 +418,7 @@ form.entry.k-region input[type=text] { flex: 0 1 14em; }
 .nl > i { font: 11px/1 var(--mono); font-style: normal; color: var(--muted); padding: 0 4px; display: inline-flex; align-items: center; }
 .nl > input { width: 4.9em; border: 0; border-radius: 0; }
 .p-question #rg-on[aria-pressed=true], .p-question #pa-on[aria-pressed=true], .p-question #scan-toggle[aria-pressed=true] { border-color: var(--accent2); color: var(--accent2-text); background: var(--accent2-soft); }
-.p-question #rg-save.dirty, .p-question #pa-save.dirty, .p-scans #wb-save.dirty { box-shadow: 0 0 0 2px var(--warn-bg), 0 0 0 3px var(--warn); }
+.rg-group button.dirty { box-shadow: 0 0 0 2px var(--warn-bg), 0 0 0 3px var(--warn); }
 .p-question #scan.editing { overflow-x: hidden; }
 .sheet { position: relative; line-height: 0; }
 /* What is edited is orange (--accent2); what is shown for context is primary and inert:

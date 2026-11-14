@@ -1128,33 +1128,25 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
 
     def scans_names(request: Request) -> Response:
         """Every submission's identity values, proposal and pick; where each identity
-        field is (its crop, this submission's own region); and the regions for every
-        submission, for the box editor."""
+        field is (its crop); and, for the box editor, each box at each scope (`levels`, as
+        the question page's region editor has them) and each column's path."""
         with lock:
             ats = {s.id: identity.at(ws, s.id) for s in store.submissions()}
             view = identity.overview(ws, cache=proposals, ats=ats)
         paths = {f.label: overrides.join(IDENTITY, 'fields', f.label, 'region') for f in identity.group(ws).fields}
-        own: dict[str, dict] = {}           # each submission's own boxes, by scope
-        for o in store.all_overrides():
-            if o.path in paths.values():
-                own.setdefault(o.scope, {})[o.path] = o
+        bases, stored = {c: overrides.entry(ws.exam, p).base for c, p in paths.items()}, store.overrides()
         for row in view['rows']:
             sid, a = row['sub'], ats[row['sub']]
             row['crops'] = [{'name': f.label, 'index': f.region.page - 1, 'box': box(a.layout, f.region)}
                             for f in a.fields]
-            mine = own.get(overrides.scope(SUBMISSION, sid), {})
-            row['own'] = {c: {'value': mine[p].value, 'rev': mine[p].rev} for c, p in paths.items() if p in mine}
+            lay = ws.layers(sid)
+            row['boxes'] = {c: levels(lay, p, bases[c], stored) for c, p in paths.items()}
             row['print_area'] = list(a.layout.print_area)     # for the boxes drawn on the page
             row['scan'] = scan_key(sid)                        # in its pages' URLs
-        stored = store.overrides()
         view['nobody'] = [identity.label(p) for p in view['nobody']]
         view['boxed'] = any(a.fields for a in ats.values())
         view['unread'] = len(identity.unread(ws, ats=ats))      # what "read names" reads
-        view['columns'] = []
-        for c, path in paths.items():           # the regions for every submission, for the box editor
-            e = overrides.entry(ws.exam, path)
-            view['columns'].append({'name': c, 'path': path, 'value': e.current, 'base': e.base,
-                                    'rev': stored[path].rev if path in stored else None})
+        view['columns'] = [{'name': c, 'path': p} for c, p in paths.items()]
         view['pad'] = ws.exam.crop_pad
         view['doubts'] = identity.DOUBTS
         view['roster'] = len(identity.people(ws))

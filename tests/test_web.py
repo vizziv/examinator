@@ -651,7 +651,7 @@ def test_print_area_at_each_scope(site):
     SCAN = 'source:src1'
     html = site.get('/s/s1/a').text                 # two editing modes; the region picker lists fields only
     assert 'data-action="regions"' in html and 'data-action="print-area"' in html
-    assert '#print-area' not in html and 'data-action="print-save-scan"' in html and SCAN in html
+    assert 'data-action="print-save-scan"' in html
     pa = lambda scope, value, rev: site.post('/exam/set' if value is not None else '/exam/clear',
                                              {'path': '@print_area', 'value': value, 'rev': rev, 'scope': scope,
                                               'sub': 's1'})
@@ -678,9 +678,8 @@ def test_print_area_at_each_scope(site):
     assert pa(OWN, [900, 0, 100, 1000], None).status_code == 400
     assert pa(OWN, [0, 0, 1000], None).status_code == 400
     assert site.post('/exam/set', {'path': '@print_area', 'value': [0, 0, 1000, 1000], 'scope': SCAN}).status_code == 400  # rev
-    assert site.get('/s/s2/a').text.count('data-action="print-save-scan"') == 1       # there, but hidden: no scan
-    assert 'id="pa-save-scan" data-action="print-save-scan" title="the print area of every submission split from the same scan file" hidden' \
-        in site.get('/s/s2/a').text
+    scopes = lambda sub: json.loads(re.search(r"data-scopes='([^']*)'", site.get(f'/s/{sub}/a').text).group(1))
+    assert scopes('s1')['scan'] == SCAN and scopes('s2')['scan'] is None      # s2 has no scan: nothing saved for one
 
 
 def test_the_exam_page_lists_every_scope(site):

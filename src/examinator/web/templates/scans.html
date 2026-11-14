@@ -136,13 +136,7 @@ each submission becomes its own PDF when you accept the split.
 <span class="rg-group"><span id="wb-add"></span>
 <button type="button" data-action="names-box-remove" class="danger" title="remove this box, for every submission">remove</button>
 </span>
-<span class="rg-group">
-<button type="button" id="wb-save" data-action="names-box-save-own" class="primary" title="this submission's own boxes">save for this submission</button>
-<button type="button" data-action="names-box-save" title="every submission's boxes">save for all</button>
-<button type="button" data-action="names-box-undo" title="back to the saved boxes">undo</button>
-<button type="button" data-action="names-box-drop-own" class="danger" title="drop this submission's own box: back to every submission's">drop own</button>
-<button type="button" data-action="names-box-revert" class="danger" title="every submission's boxes back to the exam's">revert all</button>
-</span>
+{{ rects.scopes('names-box', 'boxes') }}
 <span id="wb-msg" role="status"></span>
 </div>
 <div id="wb-sheet" class="sheet"><img alt="page"></div>

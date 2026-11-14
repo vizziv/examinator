@@ -386,9 +386,10 @@ def test_drawing_the_name_boxes_for_every_submission(site):
     check_and_accept(client, token, src)
     view = client.get('/scans/names').json()
     cols = {c['name']: c for c in view['columns']}
-    assert list(cols) == ['name', 'id', 'email'] and cols['email']['value'] is None     # not placed: "+ email"
-    assert cols['name']['path'] == '@identity/fields/name/region' and cols['name']['rev'] is None
-    assert cols['name']['value'] == cols['name']['base'] == [1, 100, 200, 800, 280]
+    boxes = view['rows'][0]['boxes']           # at each scope, as the question page's regions
+    assert list(cols) == ['name', 'id', 'email'] and boxes['email']['value'] is None     # not placed: "+ email"
+    assert cols['name']['path'] == '@identity/fields/name/region' and boxes['name']['all_rev'] is None
+    assert boxes['name']['value'] == boxes['name']['base'] == [1, 100, 200, 800, 280]
     wait(client, read_names(client, token).json()['job'])
     assert identity.unread(ws) == []
     before = {r['sub']: r['crops'] for r in view['rows']}
@@ -400,7 +401,7 @@ def test_drawing_the_name_boxes_for_every_submission(site):
     rev = r.json()['rev']
     assert post(client, token, '/exam/set', {'path': path, 'value': [1, 100, 190, 820, 300], 'rev': None}).status_code == 409
     view = client.get('/scans/names').json()
-    assert {c['name']: c['rev'] for c in view['columns']}['name'] == rev
+    assert all(r['boxes']['name']['all_rev'] == rev for r in view['rows'])
     assert all(r['crops'][0]['box'] != before[r['sub']][0]['box'] for r in view['rows'])
     assert all(r['crops'][1]['box'] == before[r['sub']][1]['box'] for r in view['rows'])
     assert identity.unread(ws) == [] and read_names(client, token).json()['n'] == 0
@@ -410,7 +411,8 @@ def test_drawing_the_name_boxes_for_every_submission(site):
     own = {'path': path, 'value': [1, 100, 120, 800, 200], 'rev': None, 'scope': 'submission:s0003'}
     assert post(client, token, '/exam/set', own).status_code == 200
     rows = {r['sub']: r for r in client.get('/scans/names').json()['rows']}
-    assert rows['s0003']['own']['name']['value'] == [1, 100, 120, 800, 200] and rows['s0002']['own'] == {}
+    assert rows['s0003']['boxes']['name']['own'] == [1, 100, 120, 800, 200]
+    assert all(b['own'] is None for b in rows['s0002']['boxes'].values())
     assert rows['s0003']['crops'][0]['box'] != rows['s0002']['crops'][0]['box']
     assert identity.unread(ws) == []
     # on the Exam data page, with the package's value, as a line for the package, and the submission's own

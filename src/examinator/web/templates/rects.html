@@ -8,3 +8,20 @@
 <label class="nl" title="width (right − left)"><i>w</i><input type="number" id="{{ prefix }}-w" min="5" max="1000" aria-label="width"></label>
 <label class="nl" title="height (bottom − top)"><i>h</i><input type="number" id="{{ prefix }}-h" min="5" max="1000" aria-label="height"></label>
 {%- endmacro %}
+
+{# Saving and dropping a rectangle at each scope, the same in every editor: the actions
+   `<a>-save-<scope>`, `<a>-undo`, `<a>-clear-<scope>` (scope 'own', 'scan' with `scan`, 'all').
+   `what`: the thing edited ("region", "print area", "boxes"). #}
+{% macro scopes(a, what, scan=false, hidden=false) -%}
+<span class="rg-group"{% if hidden %} hidden{% endif %} data-scopes="{{ a }}">
+<button type="button" data-action="{{ a }}-save-own" class="primary" title="this submission's own {{ what }}">Save for this submission</button>
+{% if scan %}<button type="button" data-action="{{ a }}-save-scan" title="the {{ what }} of every submission split from the same scan file">save for scan</button>
+{% endif %}
+<button type="button" data-action="{{ a }}-save-all" title="every submission's {{ what }}, but those with their own{% if scan %} or their scan's{% endif %}">save for all</button>
+<button type="button" data-action="{{ a }}-undo" title="back to the saved {{ what }}">undo</button>
+<button type="button" data-action="{{ a }}-clear-own" class="danger" title="drop this submission's own {{ what }}: back to {% if scan %}its scan's or {% endif %}every submission's">drop own</button>
+{% if scan %}<button type="button" data-action="{{ a }}-clear-scan" class="danger" title="drop this scan's {{ what }}: its submissions go back to every submission's">drop scan's</button>
+{% endif %}
+<button type="button" data-action="{{ a }}-clear-all" class="danger" title="every submission's {{ what }} back to the package's">revert all</button>
+</span>
+{%- endmacro %}

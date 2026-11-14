@@ -214,14 +214,15 @@
   if (want) want = decodeURIComponent(want);
 
   // --- the identity fields' boxes, drawn on the page shown ---
-  // One box per roster column (view.columns): its region for every submission ('value', the
-  // exam's override '<path>' or the package's 'base'; null: not placed), or this submission's
-  // own (row.own). Saved like a region on the question page: for this submission or for all.
+  // One box per roster column (view.columns): for the submission shown, its region at each
+  // scope (row.boxes[name], as the question page's region editor has them: `own`, `scan`,
+  // `all`, each with `<scope>_rev`; `base`, the package's; `value`, the one in force, null: not
+  // placed). Saved like a region on the question page: for this submission or for all.
   const bx = {edit: false, drafts: {}, touched: false, sel: ''};
-  const col = name => view.columns.find(c => c.name === name);
-  const saved = (r, name) => (r && r.own[name] ? r.own[name].value : col(name).value);
-  const savedAll = r => Object.fromEntries(view.columns.map(c => [c.name, saved(r, c.name)]));
-  const boxDirty = name => !Rects.same(bx.drafts[name], saved(row(), name));
+  const lv = (r, name) => r.boxes[name];
+  const every = lv => lv.all ?? lv.base;                  // what every submission has
+  const savedAll = r => Object.fromEntries(view.columns.map(c => [c.name, r ? lv(r, c.name).value : null]));
+  const boxDirty = name => !Rects.same(bx.drafts[name], lv(row(), name).value);
   const bxDirty = () => !!row() && view.columns.some(c => boxDirty(c.name));
   const placed = () => view.columns.filter(c => bx.drafts[c.name]).map(c => c.name);
   const cur = () => (bx.edit && bx.drafts[bx.sel] ? bx.drafts[bx.sel] : null);
@@ -244,12 +245,12 @@
     for (const name of placed()) {
       const d = bx.drafts[name];
       if (d[0] !== p) continue;
-      const el = Rects.box(name + (r.own[name] ? ' (own)' : ''), {sel: name === bx.sel, dirty: boxDirty(name)});
+      const el = Rects.box(name + (lv(r, name).own != null ? ' (own)' : ''), {sel: name === bx.sel, dirty: boxDirty(name)});
       el.dataset.name = name;
       Rects.place(el, d, r.print_area, view.pad);
       sheet.append(el);
     }
-    $('wb-save').classList.toggle('dirty', bxDirty());
+    $('wb').querySelector('[data-action=names-box-save-own]').classList.toggle('dirty', bxDirty());
     Actions.enable($('wb'));
   }
   const fill = Rects.numbers('wb', cur, put, el => { fill(cur(), el); drawBoxes(); });
@@ -264,7 +265,7 @@
     sel.value = bx.sel;
     sel.hidden = !names.length;
     for (const el of document.querySelectorAll('.wb-n, #wb-w, #wb-h')) el.closest('label').hidden = !names.length;
-    for (const b of $('wb-add').querySelectorAll('button')) b.hidden = !!bx.drafts[b.dataset.col];
+    for (const b of $('wb-add').querySelectorAll('button')) b.hidden = !!bx.drafts[b.dataset.box];
     fill(cur());
     drawBoxes();
   }
@@ -281,7 +282,7 @@
       say('new box: drag it onto the box on the page');
     }});
     const b = make('button', {type: 'button', textContent: `+ ${name}`, title: `a box where the ${name} is written`});
-    Object.assign(b.dataset, {action, col: name});
+    Object.assign(b.dataset, {action, box: name});
     $('wb-add').append(b);
   }
   S.register('names-boxes', {available: () => !!row(), run: () => { bx.edit = !bx.edit; say(''); render(); }});
@@ -298,74 +299,65 @@
   function changes(level) {
     const r = row(), out = [], scope = level === 'own' ? `submission:${r.sub}` : '';
     for (const c of view.columns) {
-      const d = bx.drafts[c.name];
+      const d = bx.drafts[c.name], l = lv(r, c.name), box = {name: c.name, path: c.path, scope};
       if (!boxDirty(c.name)) continue;
       if (level === 'own') {
-        if (!d) continue;
-        const own = r.own[c.name];
-        out.push(Rects.same(d, c.value) && own ? {name: c.name, path: c.path, scope, clear: true}
-          : {name: c.name, path: c.path, scope, value: d});
-      } else {
-        if (Rects.same(d, c.value)) continue;
-        if (Rects.same(d, c.base) && c.rev == null) continue;
-        out.push(Rects.same(d, c.base) ? {name: c.name, path: c.path, scope, clear: true} : {name: c.name, path: c.path, scope, value: d});
+        if (d) out.push(Rects.same(d, every(l)) && l.own != null ? {...box, clear: true} : {...box, value: d});
+      } else if (!Rects.same(d, every(l)) && !(Rects.same(d, l.base) && l.all == null)) {
+        out.push(Rects.same(d, l.base) ? {...box, clear: true} : {...box, value: d});
       }
     }
     return out;
   }
-  const WHERE = {own: 'this submission', all: 'all submissions'};
   // One override per box, each against what the view last drew of it; a refusal keeps the
   // drafts and takes what is saved now (the view loaded again), so saving again overwrites
   // knowingly. When every one is saved, the saved boxes are taken.
-  const savedRev = (sub, c, scope) => (scope ? view.byId[sub]?.own[c.name]?.rev : view.columns.find(x => x.path === c.path)?.rev) ?? null;
-  async function saveBoxes(list, what) {
-    const sub = row().sub, drafts = bx.drafts;
-    const answers = await Promise.all(list.map(c => override({...c, rev: () => savedRev(sub, c, c.scope), take: () => load()},
-                                                             {line: boxLine})));
+  async function saveBoxes(list, level, clear) {
+    const sub = row().sub, drafts = bx.drafts, key = level + '_rev';
+    const answers = await Promise.all(list.map(c => override({...c, rev: () => lv(view.byId[sub], c.name)[key] ?? null,
+                                                              take: () => load()}, {line: boxLine})));
     if (answers.some(b => !b)) return null;
     await load(false, true);
-    const shadowed = list.length && !list[0].scope && view.columns.some(c => view.byId[sub].own[c.name] && drafts[c.name]
-      && !Rects.same(drafts[c.name], view.byId[sub].own[c.name].value));
-    say(`${what}${shadowed ? ' · this submission keeps its own' : ''}`);
+    const keeps = level === 'all' && !clear && view.columns.some(c => {
+      const own = lv(view.byId[sub], c.name).own;
+      return own != null && drafts[c.name] && !Rects.same(drafts[c.name], own);
+    });
+    say(Rects.said('box', level, clear, keeps ? 'its own' : ''));
     return answers;
   }
-  S.register('names-box-save-own', {available: () => bx.edit && changes('own').length > 0,
-    run: () => saveBoxes(changes('own'), `saved · ${WHERE.own}`)});
-  S.register('names-box-save', {available: () => bx.edit && !!row() && changes('all').length > 0,
-    run: () => saveBoxes(changes('all'), `saved · ${WHERE.all}`)});
-  S.register('names-box-drop-own', {available: () => bx.edit && !!row() && !!row().own[bx.sel], run: () => {
-    if (!confirm(`Drop this submission's own box for ${bx.sel}?`)) return;
-    return saveBoxes([{name: bx.sel, path: col(bx.sel).path, scope: `submission:${row().sub}`, clear: true}], 'own box dropped');
+  const stored = level => view.columns.filter(c => lv(row(), c.name)[level] != null);
+  for (const level of ['own', 'all']) {
+    S.register(`names-box-save-${level}`, {available: () => bx.edit && !!row() && changes(level).length > 0,
+      run: () => saveBoxes(changes(level), level, false)});
+  }
+  S.register('names-box-clear-own', {available: () => bx.edit && !!row() && lv(row(), bx.sel)?.own != null, run: () => {
+    if (!Rects.dropping('own', `box for ${bx.sel}`)) return;
+    return saveBoxes([{name: bx.sel, path: view.columns.find(c => c.name === bx.sel).path, scope: `submission:${row().sub}`, clear: true}],
+                     'own', true);
   }});
-  S.register('names-box-revert', {available: () => bx.edit && view.columns.some(c => c.rev != null), run: () => {
-    if (!confirm("Back to the boxes the exam declares, for all submissions?")) return;
-    return saveBoxes(view.columns.filter(c => c.rev != null).map(c => ({name: c.name, path: c.path, scope: '', clear: true})), 'reverted · all submissions');
+  S.register('names-box-clear-all', {available: () => bx.edit && !!row() && stored('all').length > 0, run: () => {
+    if (!Rects.dropping('all', 'boxes')) return;
+    return saveBoxes(stored('all').map(c => ({name: c.name, path: c.path, scope: '', clear: true})), 'all', true);
   }});
   Rects.arrows(() => live() && cur(), put, () => { fill(cur()); drawBoxes(); });
   // dragging: inside a box moves it, a corner resizes it; a click on another box selects it
-  let drag = null;
   const sheetEl = $('wb-sheet');
-  sheetEl.addEventListener('pointerdown', e => {
-    const el = e.target.closest('.rbox');
-    if (e.button !== 0 || !el || !bx.edit) return;
-    if (el.dataset.name !== bx.sel) { select(el.dataset.name); return; }
-    const q = sheetEl.getBoundingClientRect(), [wl, wt, wr, wb] = row().print_area;
-    drag = {h: e.target.dataset.h || '', x: e.clientX, y: e.clientY, d: [...cur()],
-            kx: 1e6 / (q.width * (wr - wl)), ky: 1e6 / (q.height * (wb - wt))};     // pixels -> per-mille of the printed page
-    sheetEl.setPointerCapture(e.pointerId);
-    e.preventDefault();
+  Rects.drag(sheetEl, {
+    grab: e => {
+      const el = e.target.closest('.rbox');
+      if (!el || !bx.edit) return null;
+      if (el.dataset.name !== bx.sel) { select(el.dataset.name); return null; }
+      const q = sheetEl.getBoundingClientRect(), [wl, wt, wr, wb] = row().print_area;
+      return {d: [...cur()], kx: 1e6 / (q.width * (wr - wl)), ky: 1e6 / (q.height * (wb - wt))};   // pixels -> per-mille of the printed page
+    },
+    put: d => {
+      put(d);
+      const el = sheetEl.querySelector('.rbox.sel');
+      if (el) Rects.place(el, cur(), row().print_area, view.pad);
+    },
+    moved: () => fill(cur()),
+    dropped: drawBoxes,
   });
-  sheetEl.addEventListener('pointermove', e => {
-    if (!drag) return;
-    const dx = (e.clientX - drag.x) * drag.kx, dy = (e.clientY - drag.y) * drag.ky;
-    put(drag.h ? Rects.resize(drag.d, drag.h, dx, dy) : Rects.shift(drag.d, dx, dy));
-    const el = sheetEl.querySelector('.rbox.sel');
-    if (el) Rects.place(el, cur(), row().print_area, view.pad);
-    fill(cur());
-  });
-  const drop = () => { if (drag) { drag = null; drawBoxes(); } };
-  sheetEl.addEventListener('pointerup', drop);
-  sheetEl.addEventListener('pointercancel', drop);
   addEventListener('beforeunload', e => { if (bx.edit && bxDirty()) e.preventDefault(); });
 
   // --- an identity field's value: corrected or verified like any field's ---
