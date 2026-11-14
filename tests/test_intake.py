@@ -386,7 +386,7 @@ def test_accept_asks_about_what_a_person_said_and_says_what_goes(stacked):
         intake.accept(ws, one.id)
     assert e.value.submissions == ['s0002', 's0003']
     intake.accept(ws, one.id, allow=['s0002', 's0003'])
-    assert not ws.store.rows('s0001', 'value')                            # rewritten: read again later
+    assert not ws.store.all(submission='s0001', kinds=['value'])                            # rewritten: read again later
     assert identity.who(ws, 's0002')['name'] == "Someone Named"          # rewritten: the pick stays
     assert not ws.store.overrides(own)                                    # removed: its boxes go
     # a rewrite: its own boxes and what was read go, what a person verified stays
@@ -400,7 +400,7 @@ def test_accept_asks_about_what_a_person_said_and_says_what_goes(stacked):
                                                  'said': ['values', 'name', 'regions']}]     # typed counts too
     assert intake.accept(ws, one.id, allow=['s0002'])['rewritten'] == ['s0002']
     assert not ws.store.overrides(mine)
-    assert set(ws.store.rows('s0002', 'value')) == {'parity/A'}
+    assert {r.name for r in ws.store.all(submission='s0002', kinds=['value'])} == {'parity/A'}
 
 
 def test_ids_are_never_reused(stacked):

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .defs import Exam, Question, key
-from .status import COUNTING, FIELD_STATES, LABELS, STATES, Sheet, Status
+from .status import COUNTING, FIELD_STATES, LABELS, STATES, Ledger, Status, fields_state
 
 KINDS = ('choice', 'text')
 BLANK = '(blank)'        # the value of a blank answer, for facets that show one
@@ -64,22 +64,21 @@ class Facet:
 class View:
     """What a facet sees of one submission and one question."""
 
-    def __init__(self, question: Question, sheet: Sheet, status: Mapping[tuple[str, str], Status],
+    def __init__(self, question: Question, ledger: Ledger, status: Mapping[tuple[str, str], Status],
                  memo: dict | None = None):
-        self.question, self._sheet, self._status = question, sheet, status
+        self.question, self._ledger, self._status = question, ledger, status
         self.memo = memo if memo is not None else {}     # for facets that compute something costly
 
     def value(self, label: str, *, question: str | None = None) -> str | None:
         """A field's value (text), or None if not read."""
-        v = self._sheet.values.get(key(question or self.question.id, label))
+        v = self._ledger.values.get(key(question or self.question.id, label))
         return v.text if v is not None else None
 
     def status(self, check: str) -> Status:
         return self._status[(self.question.id, check)]
 
     def fields_state(self) -> str:
-        from .status import fields_state
-        return fields_state(self.question, self._sheet.values)
+        return fields_state(self.question, self._ledger.values)
 
 
 # --- built-in facets: from the status rules, never from evidence contents ---------
@@ -181,10 +180,9 @@ def values_table(exam: Exam, store, *, submission: str | None = None,
     """Every facet's values: `{facet_id: {submission: [values]}}`, for the whole
     workspace (or one submission). One query; `memo` keeps what facets compute
     (normal forms of answers) between calls."""
-    from .grid import sheets
-    every = sheets(store, submission)
+    every = Ledger.load(store, submission)
     subs = [submission] if submission is not None else [s.id for s in store.submissions()]
-    empty = Sheet({}, {}, {})
+    empty = Ledger()
     memo = {} if memo is None else memo
     out: dict[str, dict[str, list[str]]] = {}
     status = {sid: every.get(sid, empty).statuses(exam) for sid in subs}

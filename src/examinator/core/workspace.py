@@ -73,7 +73,7 @@ class Workspace:
         from . import identity
         made = self.store.made()
         pdfs = [p for p in sorted(self.pdfs.glob('*.pdf')) if not p.is_symlink() and p.stem not in made]
-        self.store.put_submissions([Submission(p.stem, "", "", p.name) for p in pdfs])
+        self.store.put_submissions([Submission(p.stem, p.name) for p in pdfs])
         identity.by_file(self)
         return len(pdfs)
 

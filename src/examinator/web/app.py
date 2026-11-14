@@ -395,7 +395,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
         rows, started, graded = [], False, ws.exam.questions     # started: anything of a graded question
         for row in grid.load(ws.exam, store):
             cells = []
-            started = started or any(split_key(k)[0] in graded for k in (*row.sheet.values, *row.sheet.results))
+            started = started or any(split_key(k)[0] in graded for k in (*row.ledger.values, *row.ledger.results))
             for q in ws.exam.questions.values():
                 for c in q.checks:
                     st = row.status[(q.id, c.name)]
@@ -450,7 +450,7 @@ def create_app(ws: Workspace, runner: Runner, *, author: str | None = None,
     def question_page(request: Request) -> Response:
         sub, q = target(request)
         exam, lay = ws.exam, ws.layers(sub.id)          # the definition, as it is for this submission
-        sheet = runner.sheet(sub.id)
+        sheet = runner.ledger(sub.id)
         layout = lay.layout
         try:
             count = ws.scan_page_count(sub.id)

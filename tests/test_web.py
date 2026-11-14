@@ -82,7 +82,7 @@ class Site:
 
     def state(self, sub, q, check='check'):
         question = self.exam.questions[q]
-        return self.runner.sheet(sub).status(self.exam, question, question.check(check))
+        return self.runner.ledger(sub).status(self.exam, question, question.check(check))
 
     def run_all(self, sub='s1', verify_printing=True):
         """Read 'p' and 'a' and run a's checks; with `verify_printing`, verify the printing,

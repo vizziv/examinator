@@ -58,7 +58,7 @@ def kenv(tmp_path):
 
 def status(runner, sid, qid, check='check'):
     q = runner.ws.exam.questions[qid]
-    st = runner.sheet(sid).status(runner.ws.exam, q, q.check(check))
+    st = runner.ledger(sid).status(runner.ws.exam, q, q.check(check))
     return st.state, st.value
 
 

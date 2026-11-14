@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from .runner import PROTECTED, Outcome, Runner, to_read
-from .status import Sheet
+from .status import Ledger
 from .workspace import Workspace
 
 ACTIONS = ('read', 'skip_protected', 'skip_present', 'blocked')
@@ -69,7 +69,7 @@ def plan(ws: Workspace, selection: Selection, *, model_available: bool) -> Plan:
             raise KeyError(qid)
     items: list[Item] = []
     for sub in selection.submissions:
-        values = Sheet.of(store.all(submission=sub, kinds=('value',))).values
+        values = Ledger.of(store, sub, kinds=('value',)).values
         gone, lay = ws.missing(sub), ws.layers(sub)
         for qid in selection.questions:
             r = to_read(lay.question(qid), values, gone, missing_only=selection.missing_only,

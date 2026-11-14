@@ -37,11 +37,14 @@ Pure functions over stored rows; nothing here is derived from evidence.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from .defs import DEFAULT, Check, Exam, Grade, Question, key
 from .reading import Reading
 from .store import Row
+
+if TYPE_CHECKING:
+    from .store import Store
 
 STATES = ('decided', 'decided_outdated', 'to_decide', 'not_run', 'outdated', 'review', 'unverified', 'graded')
 COUNTING = ('decided', 'graded')
@@ -272,24 +275,37 @@ def total(exam: Exam, statuses: Mapping[tuple[str, str], Status]) -> tuple[float
     return points, complete
 
 
+KINDS = ('value', 'result', 'decision')
+
+
 @dataclass(frozen=True)
-class Sheet:
-    """Everything stored for one submission, typed: what statuses need."""
-    values: dict[str, Value]
-    results: dict[str, Stored]
-    decisions: dict[str, Decision]
+class Ledger:
+    """Everything stored for one submission, typed: what statuses need. Loaded
+    only by `load` (a result without its display blocks)."""
+    values: dict[str, Value] = field(default_factory=dict)
+    results: dict[str, Stored] = field(default_factory=dict)
+    decisions: dict[str, Decision] = field(default_factory=dict)
 
     @staticmethod
-    def of(rows: list[Row]) -> 'Sheet':
-        values, results, decisions = {}, {}, {}
-        for r in rows:
+    def load(store: 'Store', submission: str | None = None, *, kinds: Sequence[str] = KINDS,
+             prefix: str | None = None) -> dict[str, 'Ledger']:
+        """Every submission's ledger (or one's) that has a row, in one query: rows of
+        `kinds` whose name starts with `prefix`."""
+        out: dict[str, Ledger] = {}
+        for r in store.all(kinds=kinds, drop='$.blocks', submission=submission, prefix=prefix):
+            got = out.setdefault(r.submission, Ledger())
             if r.kind == 'value':
-                values[r.name] = Value.of(r)
+                got.values[r.name] = Value.of(r)
             elif r.kind == 'result':
-                results[r.name] = Stored.of(r)
-            elif r.kind == 'decision':
-                decisions[r.name] = Decision.of(r)
-        return Sheet(values, results, decisions)
+                got.results[r.name] = Stored.of(r)
+            else:
+                got.decisions[r.name] = Decision.of(r)
+        return out
+
+    @staticmethod
+    def of(store: 'Store', submission: str, *, kinds: Sequence[str] = KINDS) -> 'Ledger':
+        """One submission's ledger (empty if nothing is stored)."""
+        return Ledger.load(store, submission, kinds=kinds).get(submission) or Ledger()
 
     def status(self, exam: Exam, q: Question, c: Check) -> Status:
         k = key(q.id, c.name)

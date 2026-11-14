@@ -26,7 +26,7 @@ from .defs import DEFAULT, Exam, Field, Grade, Question, key, one_line
 from .reading import Reading
 from .isolate import CheckTimeout, Pool, PoolClosed
 from .result import BadResult, Undecided, settle, undecided
-from .status import Decision, Sheet, Stored, Value, current
+from .status import Decision, Ledger, Stored, Value, current
 from .store import ANY, Conflict
 from .workspace import Workspace
 
@@ -226,11 +226,11 @@ class Runner:
 
     # --- what is stored -------------------------------------------------------
 
-    def sheet(self, submission: str) -> Sheet:
-        return Sheet.of(self.store.all(submission=submission, kinds=('value', 'result', 'decision'), drop='$.blocks'))
+    def ledger(self, submission: str) -> Ledger:
+        return Ledger.of(self.store, submission)
 
     def values(self, submission: str) -> dict[str, Value]:
-        return {k: Value.of(r) for k, r in self.store.rows(submission, 'value').items()}
+        return Ledger.of(self.store, submission, kinds=('value',)).values
 
     # --- read -------------------------------------------------------------------
 
@@ -354,17 +354,17 @@ class Runner:
         question has a value (stored, or its default). So a check is 'not run' only
         while its question has a field not read. Never touches a value or a decision.
         Called after anything that may leave such a check (`refresh` in MODEL.md)."""
-        sheet, exam = self.sheet(submission), self.ws.exam
+        ledger, exam = self.ledger(submission), self.ws.exam
         outs = []
         for q in exam.questions.values():
             for c in q.checks:
                 if c.fn is None:
                     continue
-                stored = sheet.results.get(key(q.id, c.name))
+                stored = ledger.results.get(key(q.id, c.name))
                 if stored is None:
-                    if not all(key(q.id, f.label) in sheet.values or f.default is not None for f in q.fields):
+                    if not all(key(q.id, f.label) in ledger.values or f.default is not None for f in q.fields):
                         continue
-                elif current(stored, sheet.values, defn=exam.check_hash(q, c), code=exam.code_hash):
+                elif current(stored, ledger.values, defn=exam.check_hash(q, c), code=exam.code_hash):
                     continue
                 outs.append(self.compute(submission, q.id, c.name))
         return outs

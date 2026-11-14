@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from .defs import IDENTITY, Field, Question, digest, split_key
-from .status import Value
+from .status import Ledger, Value
 from .store import ANY, Conflict
 
 WHO = 'who'
@@ -215,10 +215,8 @@ def at(ws, sid: str) -> At:
 
 def values(ws, sid: str | None = None) -> dict[str, dict[str, Value]]:
     """Every submission's identity values (or one's): {submission: {column: Value}}."""
-    out: dict[str, dict[str, Value]] = {}
-    for r in ws.store.all(kinds=['value'], submission=sid, prefix=IDENTITY + '/'):
-        out.setdefault(r.submission, {})[split_key(r.name)[1]] = Value.of(r)
-    return out
+    return {s: {split_key(k)[1]: v for k, v in got.values.items()}
+            for s, got in Ledger.load(ws.store, sid, kinds=('value',), prefix=IDENTITY + '/').items()}
 
 
 def unread(ws, *, again: bool = False, ats: Mapping[str, At] | None = None) -> list[str]:

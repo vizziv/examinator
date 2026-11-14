@@ -80,7 +80,7 @@ def grade(exam, qid, answers, printing=None, check=None):
 
 def status(runner, sub, qid, check='check'):
     q = runner.ws.exam.questions[qid]
-    return runner.sheet(sub).status(runner.ws.exam, q, q.check(check))
+    return runner.ledger(sub).status(runner.ws.exam, q, q.check(check))
 
 
 def read_and_verify(runner, sub, questions):
@@ -228,7 +228,7 @@ def test_two_bits_combine_into_a_printing(exam, pkg, tmp_path):
         for sid in ('agree', 'split'):
             read_and_verify(runner, sid, ('info', 'q5'))
         assert printed('agree') == info(5)
-        reads = runner.sheet('agree').results['q5/check'].reads
+        reads = runner.ledger('agree').results['q5/check'].reads
         assert {k for k in reads if k.startswith('info/')} == \
             {f'info/{f.label}' for b in (1, 4) for f in v.FIELDS[b]}      # bits 1 and 4, not bit 2
         assert (status(runner, 'agree', 'q5').state, status(runner, 'agree', 'q5').value) == ('graded', True)

@@ -439,7 +439,7 @@ def selftest(exam: Exam, root: str | Path, cases: list[Case] | None = None) -> l
                     qid, label = k.split('/', 1)
                     runner.verify(case.name, qid, label, author='selftest', expect_rev=v.rev)
             runner.refresh(case.name)
-            sheet = runner.sheet(case.name)
+            sheet = runner.ledger(case.name)
             for qid, q in exam.questions.items():
                 for c in q.checks:
                     col = q.column(c.name)

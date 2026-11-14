@@ -25,7 +25,7 @@ def value(ws, sub, k):
 
 def state(runner, sub, qid, check):
     q = runner.ws.exam.questions[qid]
-    return runner.sheet(sub).status(runner.ws.exam, q, q.check(check))
+    return runner.ledger(sub).status(runner.ws.exam, q, q.check(check))
 
 
 def read_all(runner, sub):

@@ -329,7 +329,7 @@ def test_the_group_is_kept_apart_from_grading(written):
     identity.read(runner, 's0001')
     exam = ws.exam
     row = next(r for r in grid.load(exam, ws.store) if r.submission.id == 's0001')
-    assert '@identity/name' in row.sheet.values
+    assert '@identity/name' in row.ledger.values
     assert all(q != IDENTITY for q, _ in row.status) and IDENTITY not in row.fields
     assert IDENTITY not in {d['id'] for d in focus.describe_facets(exam)}
     assert not any(k.startswith(IDENTITY) for k in focus.values_table(exam, ws.store))

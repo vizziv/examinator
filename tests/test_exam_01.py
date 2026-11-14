@@ -72,7 +72,7 @@ def grade(exam, qid, answers, printing=None):
 
 def status(runner, sub, qid):
     q = runner.ws.exam.questions[qid]
-    return runner.sheet(sub).status(runner.ws.exam, q, q.check('check'))
+    return runner.ledger(sub).status(runner.ws.exam, q, q.check('check'))
 
 
 # --- the fixtures end to end ----------------------------------------------------------

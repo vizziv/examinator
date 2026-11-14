@@ -55,7 +55,7 @@ def snapshot(ws, sub):
 
 def st(runner, sub, qid, check):
     q = runner.ws.exam.questions[qid]
-    return runner.sheet(sub).status(runner.ws.exam, q, q.check(check))
+    return runner.ledger(sub).status(runner.ws.exam, q, q.check(check))
 
 
 def test_a_check_whose_key_changes_is_recomputed_and_nothing_else_moves(tmp_path):

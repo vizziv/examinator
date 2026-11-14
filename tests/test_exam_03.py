@@ -71,7 +71,7 @@ def both(exam, qid, answers):
 
 def status(runner, sub, qid, check='check'):
     q = runner.ws.exam.questions[qid]
-    return runner.sheet(sub).status(runner.ws.exam, q, q.check(check))
+    return runner.ledger(sub).status(runner.ws.exam, q, q.check(check))
 
 
 def text_of(runner, sub, qid):
@@ -554,7 +554,7 @@ def test_workflow_rules(exam, pkg, env):
     runner.set(S, 'q2', 'huge_constant', '20', author='ta')
     assert st('q2', 'shiny').state == 'outdated'
     runner.refresh(S)
-    assert (st('q2', 'shiny').state, runner.sheet(S).results['q2/shiny'].fields['2.2']['note']) == \
+    assert (st('q2', 'shiny').state, runner.ledger(S).results['q2/shiny'].fields['2.2']['note']) == \
         ('graded', 'huge_constant = 20')
     runner.unset(S, 'q2', 'huge_constant')
     assert st('q2', 'shiny').state == 'outdated'
@@ -572,7 +572,7 @@ def test_workflow_rules(exam, pkg, env):
     assert (st('q2', 'shiny').state, st('q2', 'shiny').value) == ('decided', False)
     assert text_of(runner, S, 'q9') == f.ANSWERS['alternate']['q9']         # what a person set stays
     # A batch only reads: the result with the grader's constant stays.
-    assert 'huge_constant = 20' in runner.sheet(S).results['q2/shiny'].fields['2.2']['note']
+    assert 'huge_constant = 20' in runner.ledger(S).results['q2/shiny'].fields['2.2']['note']
 
 
 def test_disagreeing_printed_fields_are_undecided_until_a_grader_corrects_info(exam, pkg, tmp_path):

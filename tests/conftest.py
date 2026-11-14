@@ -79,7 +79,7 @@ def workspace(tmp_path, exam, subs=('s1', 's2')):
     for sid in subs:
         pages[0].save(root / 'pdfs' / f'{sid}.pdf', 'PDF', save_all=True, append_images=pages[1:])
     ws = Workspace(root, exam)
-    ws.store.put_submissions([Submission(s, s, "", f'{s}.pdf') for s in subs])
+    ws.store.put_submissions([Submission(s, f'{s}.pdf') for s in subs])
     return ws
 
 

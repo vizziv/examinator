@@ -486,7 +486,7 @@ def accept(ws, id: str, *, author: str | None = None, allow: Collection[str] = (
             for r in writes:
                 sid = r['id']
                 ws.store.set_made(Made(sid, id, tuple(r['pages']), tuple(r['orient']), now, r['file']))
-                ws.store.put_submissions([Submission(sid, '', '', '')])      # its file is `made`'s
+                ws.store.put_submissions([Submission(sid)])      # its file is `made`'s
                 if r['state'] == 'changed':
                     repaged(ws, sid)
             for sid in gone:

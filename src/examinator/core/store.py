@@ -118,12 +118,13 @@ class Row:
 
 @dataclass(frozen=True)
 class Submission:
-    """A submission: its id and file. Who it is (`name`, `email`, `student`: their
-    ID) is read from its pick (`core.identity`), never stored here; '' when nobody."""
+    """A submission: its id and its handed-in file (`pdf`; '' for one intake made,
+    whose file is `made`'s). Who it is (`name`, `email`, `student`: their ID) is read
+    from its pick (`core.identity`) when loaded, never stored here; '' when nobody."""
     id: str
-    name: str
-    email: str
-    pdf: str
+    pdf: str = ''
+    name: str = ''
+    email: str = ''
     student: str = ''
 
 
@@ -208,13 +209,6 @@ class Store:
                 (submission, kind, name)).fetchone()
         return _row(r) if r else None
 
-    def rows(self, submission: str, kind: str) -> dict[str, Row]:
-        """One kind's rows of a submission, by name (every field value, say)."""
-        with self._lock:
-            rows = self._db.execute(
-                f'select {COLUMNS} from row where submission=? and kind=?', (submission, kind)).fetchall()
-        return {r[1]: _row(r) for r in rows}
-
     def all(self, *, kinds: Iterable[str] | None = None, drop: str | None = None,
             submission: str | None = None, prefix: str | None = None) -> list[Row]:
         """Every row (of some kinds, of one submission, whose name starts with
@@ -242,8 +236,9 @@ class Store:
         return [_row(r) for r in rows]
 
     def version(self) -> int:
-        """Changes whenever anything per submission or an override is written:
-        a key for caching what is computed from stored rows."""
+        """Changes whenever anything is written (a row, an override, a submission,
+        a source, what intake made, a setting, the memo): a key for caching what
+        is computed from what is stored."""
         return self.setting('changes', 0)
 
     def history(self, submission: str, name: str, kind: str) -> list[Row]:
@@ -399,9 +394,10 @@ class Store:
         with self._lock, self._tx():
             for s in subs:
                 self._db.execute('insert or replace into submission (id, pdf) values (?,?)', (s.id, s.pdf))
+            self._changed()
 
-    _SUBMISSIONS = ("select s.id, coalesce(json_extract(w.body, '$.name'), ''), "
-                    "coalesce(json_extract(w.body, '$.email'), ''), s.pdf, coalesce(json_extract(w.body, '$.id'), '') "
+    _SUBMISSIONS = ("select s.id, s.pdf, coalesce(json_extract(w.body, '$.name'), ''), "
+                    "coalesce(json_extract(w.body, '$.email'), ''), coalesce(json_extract(w.body, '$.id'), '') "
                     "from submission s left join row w on w.submission = s.id and w.kind = 'who' and w.name = ''")
 
     def submissions(self) -> list[Submission]:
@@ -431,9 +427,10 @@ class Store:
     # --- intake: sources and the submissions made from them ---
 
     def add_source(self, src: Source) -> None:
-        with self._lock:
+        with self._lock, self._tx():
             self._db.execute('insert into source values (?,?,?,?,?,?)',
                              (src.id, src.file, src.name, src.sha256, src.pages, src.added_at))
+            self._changed()
 
     def sources(self) -> list[Source]:
         with self._lock:
@@ -455,14 +452,16 @@ class Store:
         return _made(r) if r else None
 
     def set_made(self, m: Made) -> None:
-        with self._lock:
+        with self._lock, self._tx():
             self._db.execute(f'insert or replace into made ({MADE}) values (?,?,?,?,?,?)',
                              (m.submission, m.source, json.dumps(list(m.pages)), json.dumps(list(m.orient)),
                               m.made_at, m.file))
+            self._changed()
 
     def delete_made(self, submission: str) -> None:
-        with self._lock:
+        with self._lock, self._tx():
             self._db.execute('delete from made where submission=?', (submission,))
+            self._changed()
 
     def setting(self, key: str, default: Any = None) -> Any:
         with self._lock:
@@ -471,8 +470,9 @@ class Store:
 
     def set_setting(self, key: str, value: Any) -> None:
         assert key not in ('rev', 'changes')
-        with self._lock:
+        with self._lock, self._tx():
             self._db.execute('insert or replace into setting values (?, ?)', (key, json.dumps(value)))
+            self._changed()
 
     # The memo: Split's landmark readings, by source (`intake.LandmarkReader`).
 
@@ -483,8 +483,9 @@ class Store:
         return r[0] if r else None
 
     def set_memo(self, submission: str, key: str, value: str) -> None:
-        with self._lock:
+        with self._lock, self._tx():
             self._db.execute('insert or replace into memo values (?,?,?)', (submission, key, value))
+            self._changed()
 
 
 class _Tx:
