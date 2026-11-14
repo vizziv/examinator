@@ -210,8 +210,14 @@
     const w = pref('scanWidth', 0), at = scan.scrollTop / (scan.scrollHeight || 1);
     if (w) main.style.setProperty('--scan-w', w + 'px');
     if (px) scan.scrollTop = at * scan.scrollHeight;      // the same place on the pages at the new width
-    drawCrops();
   }
+  // The crops are laid out for the work area's width: drawn again (before the next paint) whenever
+  // it changes, by the window, the divider, or the pages shown or hidden.
+  let workWidth = 0;
+  new ResizeObserver(() => {
+    const work = $('work');
+    if (work.clientWidth !== workWidth) { workWidth = work.clientWidth; drawCrops(work); }
+  }).observe($('work'));
   function showScan() {
     const hide = !!pref('hideScan', false);
     main.classList.toggle('no-scan', hide);
@@ -242,22 +248,20 @@
     if (split.classList.contains('dragging')) scanWidth(e.clientX - scan.getBoundingClientRect().left);
   });
   for (const name of ['pointerup', 'pointercancel']) split.addEventListener(name, () => split.classList.remove('dragging'));
-  // Ctrl+scroll over the pages grows or shrinks their panel (over the work area: the crop scale).
-  scan.addEventListener('wheel', e => {
+  // Pinch or Ctrl+scroll (they arrive alike) over an image zooms it: over a page, the pages
+  // panel's width; over a crop, the crop scale. Anywhere else it is the browser's own zoom.
+  document.addEventListener('wheel', e => {
     if (!e.ctrlKey) return;
+    const crop = e.target.closest?.('.crop'), sheet = e.target.closest?.('#scan .sheet');
+    if (!crop && !sheet) return;
     e.preventDefault();
-    scanWidth(scan.getBoundingClientRect().width * Math.exp(-e.deltaY * 0.001));
+    const by = Math.exp(-e.deltaY * 0.001);
+    if (crop) setCropScale(cropScale() * by);
+    else scanWidth(scan.getBoundingClientRect().width * by);
   }, {passive: false});
   document.addEventListener('click', e => {
     for (const m of document.querySelectorAll('.fmenu[open]')) if (!m.contains(e.target)) m.open = false;
   });
-
-  // Ctrl+scroll over the work area changes the crop scale (a pinch on a trackpad arrives the same way).
-  $('work').addEventListener('wheel', e => {
-    if (!e.ctrlKey) return;
-    e.preventDefault();
-    setCropScale(cropScale() * Math.exp(-e.deltaY * 0.001));
-  }, {passive: false});
   document.addEventListener('toggle', e => { if (e.target.id === 'others') drawCrops(e.target); }, true);
 
   // --- actions: buttons (data-action) and keys trigger the same ones ---

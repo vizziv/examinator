@@ -580,7 +580,11 @@ Screens for the first version:
 Details that graders relied on and should survive: keyboard navigation between
 students that keeps the current question; keys for verify, edit and save; a
 separate PDF window that follows the current student and question; drafts that
-are never silently discarded; an adjustable crop scale (header slider, Ctrl+scroll).
+are never silently discarded; an adjustable crop scale (header slider; pinch or
+Ctrl+scroll over a crop). A crop is drawn at that scale everywhere, never shrunk to fit:
+wider than its room, it scrolls sideways, and a multi-line value's crop goes above the
+value instead of beside it. Pinch or Ctrl+scroll over anything but an image is the
+browser's own zoom.
 
 ### Words and colours on screen
 
